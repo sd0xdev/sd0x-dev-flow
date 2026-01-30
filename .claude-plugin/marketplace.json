@@ -4,8 +4,11 @@
   "plugins": [
     {
       "name": "sd0x-dev-flow",
-      "source": ".",
-      "description": "Development workflow plugin with 88+ tools for code review, testing, investigation, and DevOps automation"
+      "source": {
+        "source": "github",
+        "repo": "sd0xdev/sd0x-dev-flow"
+      },
+      "description": "Development workflow plugin with 90+ tools for code review, testing, investigation, and DevOps automation"
     }
   ]
 }
