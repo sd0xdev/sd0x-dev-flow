@@ -1,8 +1,8 @@
-# claude-codex-flow
+# sd0x-dev-flow
 
-Claude + Codex collaborative development workflow plugin for [Claude Code](https://claude.com/claude-code).
+Development workflow plugin for [Claude Code](https://claude.com/claude-code) with optional Codex MCP integration.
 
-83 tools covering code review, testing, investigation, security audit, and DevOps automation.
+90+ tools covering code review, testing, investigation, security audit, and DevOps automation.
 
 ## Requirements
 
@@ -13,21 +13,31 @@ Claude + Codex collaborative development workflow plugin for [Claude Code](https
 
 ```bash
 # Add marketplace
-/plugin marketplace add sd0xdev/claude-codex-flow
+/plugin marketplace add sd0xdev/sd0x-dev-flow
 
 # Install plugin
-/plugin install claude-codex-flow@sd0xdev-marketplace
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
 ```
+
+## Quick Start
+
+After installing, run `/project-setup` to auto-detect your project environment and configure all placeholders:
+
+```bash
+/project-setup
+```
+
+This will detect your framework, package manager, database, entrypoints, and script commands, then update `CLAUDE.md` accordingly.
 
 ## What's Included
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 35 | `/codex-review-fast`, `/verify`, `/bug-fix` |
-| Skills | 22 | code-explore, code-investigate, codex-brainstorm |
+| Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| Skills | 23 | project-setup, code-explore, code-investigate, codex-brainstorm |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
-| Rules | 8 | auto-loop, security, testing, git-workflow |
+| Rules | 9 | auto-loop, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
 ## Workflow
@@ -38,6 +48,9 @@ sequenceDiagram
     participant C as Claude
     participant X as Codex MCP
     participant V as Verify
+
+    D->>C: /project-setup
+    C-->>D: CLAUDE.md configured
 
     D->>C: /repo-intake
     C-->>D: Project map
@@ -75,6 +88,7 @@ sequenceDiagram
 
 | Command | Description |
 |---------|-------------|
+| `/project-setup` | Auto-detect and configure project |
 | `/repo-intake` | One-time project intake scan |
 | `/bug-fix` | Bug/Issue fix workflow |
 | `/codex-implement` | Codex writes code |
@@ -143,31 +157,48 @@ sequenceDiagram
 | `security` | OWASP Top 10 checklist |
 | `git-workflow` | Branch naming, commit conventions |
 | `docs-writing` | Tables > paragraphs, Mermaid > text |
+| `docs-numbering` | Document prefix convention (0-feasibility, 2-spec) |
 | `logging` | Structured JSON, no secrets |
 
 ## Hooks
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
-| `post-edit-format` | After Edit/Write | Auto prettier |
+| `post-edit-format` | After Edit/Write | Auto prettier (only if project has prettier) |
 | `post-tool-review-state` | After Edit/Bash | Track review state |
 | `pre-edit-guard` | Before Edit/Write | Prevent editing .env/.git |
-| `stop-guard` | Before stop | Block incomplete reviews |
+| `stop-guard` | Before stop | Warn on incomplete reviews (default: warn) |
 | `stop-check` | Before stop | Smart task completion check |
+
+### Hook Configuration
+
+Hooks are safe by default. Use environment variables to customize behavior:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STOP_GUARD_MODE` | `warn` | Set `strict` to block stop on missing review steps |
+| `HOOK_NO_FORMAT` | (unset) | Set `1` to disable auto-formatting |
+| `HOOK_BYPASS` | (unset) | Set `1` to skip all stop-guard checks |
+| `HOOK_DEBUG` | (unset) | Set `1` to output debug info |
+| `GUARD_EXTRA_PATTERNS` | (unset) | Regex patterns for extra protected paths (e.g. `src/locales/.*\.json$`) |
+
+**Dependencies**: Hooks require `jq`. Auto-format requires `prettier` installed in the project. Missing dependencies are handled gracefully (hooks skip silently).
 
 ## Customization
 
-After installing, customize placeholders in your project:
+Run `/project-setup` to auto-detect and configure all placeholders, or manually edit `CLAUDE.md`:
 
 | Placeholder | Description | Example |
 |-------------|-------------|---------|
+| `{PROJECT_NAME}` | Your project name | my-app |
 | `{FRAMEWORK}` | Your framework | MidwayJS 3.x, NestJS, Express |
 | `{CONFIG_FILE}` | Main config file | src/configuration.ts |
 | `{BOOTSTRAP_FILE}` | Bootstrap entry | bootstrap.js, main.ts |
 | `{DATABASE}` | Database | MongoDB, PostgreSQL |
 | `{TEST_COMMAND}` | Test command | yarn test:unit |
-| `{FRAMEWORK_MOCK_LIB}` | Test mock library | @midwayjs/mock, @nestjs/testing |
-| `{PRIMARY_PROVIDER}` | External data provider | Your API provider |
+| `{LINT_FIX_COMMAND}` | Lint auto-fix | yarn lint:fix |
+| `{BUILD_COMMAND}` | Build command | yarn build |
+| `{TYPECHECK_COMMAND}` | Type checking | yarn typecheck |
 
 ## Architecture
 
