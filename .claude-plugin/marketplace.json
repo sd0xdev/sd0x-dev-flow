@@ -1,0 +1,11 @@
+{
+  "name": "sd0xdev-marketplace",
+  "owner": { "name": "sd0xdev" },
+  "plugins": [
+    {
+      "name": "sd0x-dev-flow",
+      "source": ".",
+      "description": "Development workflow plugin with 88+ tools for code review, testing, investigation, and DevOps automation"
+    }
+  ]
+}
