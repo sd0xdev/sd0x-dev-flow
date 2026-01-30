@@ -8,7 +8,6 @@ skills: project-setup
 ## Context
 
 - Repo root: !`git rev-parse --show-toplevel`
-- package.json exists: !`test -f package.json && echo "yes" || echo "no"`
 
 ## Task
 
