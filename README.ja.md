@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**言語**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | 日本語 | [한국어](README.ko.md) | [Español](README.es.md)
+
 [Claude Code](https://claude.com/claude-code) 向け開発ワークフロープラグイン。Codex MCP 連携はオプションです。
 
 90以上のツールでコードレビュー、テスト、調査、セキュリティ監査、DevOps 自動化をカバー。
@@ -92,7 +94,7 @@ sequenceDiagram
 | `/repo-intake` | プロジェクト初回スキャン（1回のみ） |
 | `/bug-fix` | バグ/Issue 修正ワークフロー |
 | `/codex-implement` | Codex がコードを書く |
-| `/codex-architect` | アーキテクチャ相談（第三の視点） |
+| `/codex-architect` | アーキテクチャ相談（第三の頭脳） |
 | `/code-explore` | コードベースの高速探索 |
 | `/git-investigate` | コード変更履歴の追跡 |
 | `/issue-analyze` | Issue の深堀り分析 |
@@ -157,7 +159,7 @@ sequenceDiagram
 | `security` | OWASP Top 10 チェックリスト |
 | `git-workflow` | ブランチ命名・コミット規約 |
 | `docs-writing` | テーブル > 段落、Mermaid > テキスト |
-| `docs-numbering` | ドキュメント接頭辞規約（0-フィージビリティ, 2-仕様） |
+| `docs-numbering` | ドキュメント接頭辞規約（0-feasibility, 2-spec） |
 | `logging` | 構造化 JSON、シークレット禁止 |
 
 ## フック
@@ -208,7 +210,7 @@ sequenceDiagram
 
 - **コマンド**：ユーザーが `/...` で起動
 - **スキル**：オンデマンドで読み込まれるナレッジベース
-- **エージェント**：専用ツールを持つ隔離されたサブプロセス
+- **エージェント**：専用ツールを持つ隔離されたサブエージェント
 - **フック**：自動ガードレール（フォーマット、レビュー状態、ストップガード）
 - **ルール**：常時有効な規約（自動読み込み）
 

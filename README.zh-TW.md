@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**語言**: [English](README.md) | 繁體中文 | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
+
 [Claude Code](https://claude.com/claude-code) 的開發 Workflow Plugin，可選整合 Codex MCP。
 
 90+ 個工具，涵蓋 Code Review、測試、調查、安全稽核與 DevOps 自動化。
@@ -157,7 +159,7 @@ sequenceDiagram
 | `security` | OWASP Top 10 checklist |
 | `git-workflow` | Branch 命名、commit 慣例 |
 | `docs-writing` | 表格 > 段落，Mermaid > 文字 |
-| `docs-numbering` | 文件前綴慣例（0-可行性, 2-spec） |
+| `docs-numbering` | 文件前綴慣例（0-feasibility, 2-spec） |
 | `logging` | 結構化 JSON，禁止 secrets |
 
 ## Hooks
