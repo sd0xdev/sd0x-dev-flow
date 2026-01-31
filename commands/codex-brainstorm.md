@@ -1,6 +1,6 @@
 ---
-description: 對抗性腦力激盪。Claude 和 Codex 獨立調研專案後對抗辯論，直到納什均衡。
-argument-hint: "<議題描述>" [--constraints <約束>]
+description: Adversarial brainstorming. Claude and Codex independently research the project then debate until Nash equilibrium.
+argument-hint: "<topic description>" [--constraints <constraints>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bash(ls:*), Bash(find:*)
 skills: codex-brainstorm
 ---
@@ -14,51 +14,51 @@ skills: codex-brainstorm
 
 ## Task
 
-對議題進行對抗性腦力激盪，**雙方必須各自調研專案後**再辯論，直到達成納什均衡。
+Conduct adversarial brainstorming on the topic. **Both sides must independently research the project before** debating until Nash equilibrium is reached.
 
-### 議題
+### Topic
 
 ```
 $ARGUMENTS
 ```
 
-### ⚠️ 關鍵：雙方獨立調研 ⚠️
+### ⚠️ Key: Independent Research by Both Sides ⚠️
 
-| Phase | 執行者 | 調研要求                                   |
-| ----- | ------ | ------------------------------------------ |
-| 1     | Claude | 使用 Read/Grep/Glob 調研相關代碼，形成立場 |
-| 2     | Codex  | **自主執行** ls/grep/cat 調研，形成立場    |
+| Phase | Executor | Research Requirement                                   |
+| ----- | -------- | ------------------------------------------------------ |
+| 1     | Claude   | Use Read/Grep/Glob to research related code, form position |
+| 2     | Codex    | **Independently execute** ls/grep/cat to research, form position |
 
-**禁止**：Claude 把自己的分析結果餵給 Codex。Codex 必須自己調研。
+**Forbidden**: Claude feeding its analysis results to Codex. Codex must research independently.
 
-### Codex 自主調研設定
+### Codex Independent Research Setup
 
-呼叫 Codex 時必須使用：
+Must use when calling Codex:
 
 ```typescript
 mcp__codex__codex({
   prompt: '...',
-  sandbox: 'read-only', // 允許讀取檔案
-  'approval-policy': 'on-failure', // 命令失敗才需確認
+  sandbox: 'read-only', // Allow file reading
+  'approval-policy': 'on-failure', // Only confirm on command failure
 });
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和模板：
+Follow the workflow and templates in the skill:
 
-| 階段       | 參考文件                                                   |
-| ---------- | ---------------------------------------------------------- |
-| 流程       | @skills/codex-brainstorm/SKILL.md                  |
-| Codex 調研 | @skills/codex-brainstorm/SKILL.md#phase-2          |
-| 辯論技巧   | @skills/codex-brainstorm/references/techniques.md  |
-| 均衡判定   | @skills/codex-brainstorm/references/equilibrium.md |
-| 報告模板   | @skills/codex-brainstorm/references/templates.md   |
+| Phase          | Reference                                                  |
+| -------------- | ---------------------------------------------------------- |
+| Workflow       | @skills/codex-brainstorm/SKILL.md                  |
+| Codex Research | @skills/codex-brainstorm/SKILL.md#phase-2          |
+| Debate Techniques | @skills/codex-brainstorm/references/techniques.md |
+| Equilibrium    | @skills/codex-brainstorm/references/equilibrium.md |
+| Report Template| @skills/codex-brainstorm/references/templates.md   |
 
 ## Examples
 
 ```bash
-/codex-brainstorm "如何設計一個高併發的快取系統？"
-/codex-brainstorm "用戶配額管理功能" --constraints "不能改現有 API"
-/codex-brainstorm "Redis vs MongoDB 作為快取層？"
+/codex-brainstorm "How to design a high-concurrency cache system?"
+/codex-brainstorm "User quota management feature" --constraints "cannot change existing API"
+/codex-brainstorm "Redis vs MongoDB as cache layer?"
 ```

@@ -1,5 +1,5 @@
 ---
-description: 初始化專案設定。自動偵測框架、PM、資料庫，替換 CLAUDE.md 所有 placeholder。
+description: Initialize project settings. Auto-detect framework, package manager, database, and replace all CLAUDE.md placeholders.
 argument-hint: [--detect-only]
 allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
 skills: project-setup
@@ -11,7 +11,7 @@ skills: project-setup
 
 ## Task
 
-為當前專案初始化 CLAUDE.md 設定。
+Initialize CLAUDE.md settings for the current project.
 
 ### Arguments
 
@@ -19,23 +19,23 @@ skills: project-setup
 $ARGUMENTS
 ```
 
-- `--detect-only`：只偵測並顯示結果，不寫入 CLAUDE.md
+- `--detect-only`: Only detect and display results, do not write to CLAUDE.md
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和結構規範：
+Follow the workflow and structure standards in the skill:
 
-| 階段 | 參考文件 |
-| ---- | ------- |
-| 流程 | @skills/project-setup/SKILL.md |
-| 偵測規則 | @skills/project-setup/references/detection-rules.md |
+| Phase           | Reference                                            |
+| --------------- | ---------------------------------------------------- |
+| Workflow        | @skills/project-setup/SKILL.md                |
+| Detection Rules | @skills/project-setup/references/detection-rules.md |
 
 ## Examples
 
 ```bash
-# 自動偵測 + 確認 + 寫入
+# Auto-detect + confirm + write
 /project-setup
 
-# 只偵測，不修改
+# Detect only, do not modify
 /project-setup --detect-only
 ```

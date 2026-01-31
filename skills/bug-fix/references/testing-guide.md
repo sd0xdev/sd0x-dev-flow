@@ -1,25 +1,25 @@
-# Bug Fix 測試指引
+# Bug Fix Testing Guide
 
-## 測試層級要求
+## Test Level Requirements
 
-| Bug 類型               | 必須補充         | 建議補充         | 說明                         |
-| ---------------------- | ---------------- | ---------------- | ---------------------------- |
-| 邏輯錯誤（計算、條件） | Unit Test        | -                | 直接測試函數輸入輸出         |
-| Service 互動問題       | Unit Test        | Integration Test | Mock 依賴，測試 Service 行為 |
-| API 端點問題           | Integration Test | E2E Test         | 測試完整 HTTP 請求響應       |
-| 跨服務/資料流問題      | Integration Test | E2E Test         | 測試多個 Service 協作        |
-| 用戶流程問題           | E2E Test         | -                | 模擬完整用戶操作             |
+| Bug Type                      | Must Add         | Recommended      | Description                          |
+| ----------------------------- | ---------------- | ---------------- | ------------------------------------ |
+| Logic error (calculation, condition) | Unit Test | -                | Directly test function input/output  |
+| Service interaction issue     | Unit Test        | Integration Test | Mock dependencies, test Service behavior |
+| API endpoint issue            | Integration Test | E2E Test         | Test complete HTTP request/response  |
+| Cross-service/data flow issue | Integration Test | E2E Test         | Test multiple Service collaboration  |
+| User flow issue               | E2E Test         | -                | Simulate complete user operations    |
 
-## 測試檔案對應
+## Test File Mapping
 
 ```
 src/service/xxx.ts       → test/unit/service/xxx.test.ts
 src/provider/xxx.ts      → test/unit/provider/xxx.test.ts
 src/controller/xxx.ts    → test/integration/controller/xxx.test.ts
-用戶流程                  → test/e2e/xxx.test.ts
+User flow                → test/e2e/xxx.test.ts
 ```
 
-## 測試範例
+## Test Examples
 
 ### Unit Test
 
@@ -64,47 +64,47 @@ describe('POST /api/transfer (issue #123)', () => {
 // test/e2e/transfer-flow.test.ts
 describe('Transfer flow (issue #123)', () => {
   it('should show error message for invalid input', async () => {
-    // 1. 設置測試環境
-    // 2. 模擬用戶操作
-    // 3. 驗證錯誤訊息顯示
+    // 1. Set up test environment
+    // 2. Simulate user operations
+    // 3. Verify error message display
   });
 });
 ```
 
-## 檢查清單
+## Checklist
 
-### 必要檢查
+### Required Checks
 
-- [ ] **Unit Test**：修復的函數/方法有測試
-- [ ] **邊界條件**：null、undefined、空字串、空陣列
-- [ ] **極值**：0、負數、最大值、最小值
-- [ ] **錯誤路徑**：異常情況的處理
+- [ ] **Unit Test**: Function/method being fixed has tests
+- [ ] **Boundary conditions**: null, undefined, empty string, empty array
+- [ ] **Extreme values**: 0, negative numbers, max value, min value
+- [ ] **Error paths**: Exception handling
 
-### 視情況補充
+### Add As Needed
 
-- [ ] **Integration Test**：受影響的 API 有測試
-- [ ] **E2E Test**：受影響的用戶流程有測試
-- [ ] **效能測試**：如果 Bug 與效能相關
+- [ ] **Integration Test**: Affected APIs have tests
+- [ ] **E2E Test**: Affected user flows have tests
+- [ ] **Performance test**: If the bug is performance-related
 
-## 命名規範
+## Naming Convention
 
-測試描述應包含 Issue 編號，方便追溯：
+Test descriptions should include the issue number for traceability:
 
 ```typescript
-describe('issue #123 regression - <功能描述>', () => {
+describe('issue #123 regression - <feature description>', () => {
   // ...
 });
 ```
 
-## 執行測試
+## Running Tests
 
 ```bash
-# 單元測試
+# Unit tests
 yarn test:unit
 
-# 整合測試（單檔）
+# Integration test (single file)
 TEST_ENV=integration yarn jest test/integration/xxx.test.ts
 
-# E2E 測試（單檔）
+# E2E test (single file)
 TEST_ENV=e2e yarn jest test/e2e/xxx.test.ts
 ```

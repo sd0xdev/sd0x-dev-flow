@@ -1,5 +1,5 @@
 ---
-description: 用 Codex MCP 審核指定文件。支援循環審核上下文保持。
+description: Review documents using Codex MCP. Supports review loop with context preservation.
 argument-hint: [<file-path>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Glob
 skills: doc-review
@@ -13,234 +13,234 @@ skills: doc-review
 
 ## Task
 
-你現在要使用 Codex MCP 審核文件。
+You will use Codex MCP to review documents.
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-| 參數                    | 說明                       |
-| ----------------------- | -------------------------- |
-| `<file-path>`           | 文件路徑（可選，自動偵測） |
-| `--continue <threadId>` | 繼續之前的審核會話         |
+| Parameter               | Description                              |
+| ----------------------- | ---------------------------------------- |
+| `<file-path>`           | File path (optional, auto-detect)        |
+| `--continue <threadId>` | Continue a previous review session       |
 
-### Step 1: 確定目標文件
+### Step 1: Determine Target File
 
-**有指定路徑**：直接使用該路徑
+**Path specified**: Use that path directly
 
-**無指定路徑**：按優先順序自動選擇：
+**No path specified**: Auto-select in priority order:
 
-1. **Git 已修改的文檔** - `git diff --name-only HEAD` 中的 `.md` 文件
-2. **Git 已暫存的文檔** - `git diff --cached --name-only` 中的 `.md` 文件
-3. **新增的文檔** - `git ls-files --others --exclude-standard` 中的 `.md` 文件
+1. **Git modified docs** - `.md` files from `git diff --name-only HEAD`
+2. **Git staged docs** - `.md` files from `git diff --cached --name-only`
+3. **New docs** - `.md` files from `git ls-files --others --exclude-standard`
 
-如果找到多個文件，列出並詢問用戶要審核哪個。
+If multiple files found, list them and ask the user which to review.
 
-### Step 2: 讀取文件內容
+### Step 2: Read File Content
 
 ```bash
 Read(TARGET_FILE)
 ```
 
-將文件內容保存為 `FILE_CONTENT` 變數。
+Save file content as `FILE_CONTENT` variable.
 
-### Step 3: 執行審核
+### Step 3: Execute Review
 
-**情況 A：首次審核（無 `--continue`）**
+**Case A: First review (no `--continue`)**
 
-使用 `mcp__codex__codex` 工具啟動新審核會話：
+Use `mcp__codex__codex` to start a new review session:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是資深技術文件審核專家。請審核以下文件。
+  prompt: `You are a senior technical document reviewer. Please review the following document.
 
-## 文件資訊
-- 路徑：${FILE_PATH}
-- 類型：${FILE_TYPE}
-- 專案根目錄：${PROJECT_ROOT}
+## Document Info
+- Path: ${FILE_PATH}
+- Type: ${FILE_TYPE}
+- Project root: ${PROJECT_ROOT}
 
-## 文件內容
+## Document Content
 \`\`\`${FILE_TYPE}
 ${FILE_CONTENT}
 \`\`\`
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在審核「代碼與文檔一致性」時，你**必須**執行以下調研：
+When reviewing "code-documentation consistency", you **must** perform the following research:
 
-### 調研步驟
-1. 執行 \`ls src/\` 了解專案結構
-2. 搜尋文檔中提到的檔案/類別：\`grep -r "關鍵字" src/ --include="*.ts" -l | head -10\`
-3. 讀取相關檔案：\`cat <檔案路徑> | head -100\`
-4. 驗證：
-   - 文檔提到的檔案是否存在？
-   - 函數名/類別名是否正確？
-   - 技術描述是否與實際代碼一致？
+### Research Steps
+1. Run \`ls src/\` to understand project structure
+2. Search for files/classes mentioned in the document: \`grep -r "keyword" src/ --include="*.ts" -l | head -10\`
+3. Read related files: \`cat <file-path> | head -100\`
+4. Verify:
+   - Do files mentioned in the document exist?
+   - Are function/class names correct?
+   - Do technical descriptions match actual code?
 
-## 審核維度
+## Review Dimensions
 
-### 1. 架構設計（Architecture）
-- 系統邊界是否清晰
-- 組件職責是否單一
-- 依賴關係是否合理
-- 擴展性與可維護性
+### 1. Architecture Design
+- Are system boundaries clear
+- Are component responsibilities single
+- Are dependencies reasonable
+- Extensibility and maintainability
 
-### 2. 性能考量（Performance）
-- 是否有潛在性能瓶頸
-- 批量處理與並發設計
-- 緩存策略是否合適
-- 資源使用效率
+### 2. Performance Considerations
+- Are there potential performance bottlenecks
+- Batch processing and concurrency design
+- Is caching strategy appropriate
+- Resource usage efficiency
 
-### 3. 安全性（Security）
-- 是否有敏感資料洩露風險
-- 權限控制是否完善
-- 輸入驗證是否充分
-- 錯誤處理是否安全
+### 3. Security
+- Is there sensitive data leakage risk
+- Is access control comprehensive
+- Is input validation sufficient
+- Is error handling secure
 
-### 4. 文件品質（Documentation Quality）
-- 結構是否清晰
-- 內容是否完整
-- 技術描述是否準確
-- 範例是否充足
-- 是否符合 docs-writing 規範（表格優先、Mermaid 流程圖）
+### 4. Documentation Quality
+- Is structure clear
+- Is content complete
+- Are technical descriptions accurate
+- Are examples sufficient
+- Does it follow docs-writing standards (tables first, Mermaid diagrams)
 
-### 5. 代碼與文檔一致性（需自主調研）
-- 偽代碼是否與實際 codebase 風格一致
-- 引用的檔案/方法是否存在（**執行 grep/cat 驗證**）
-- 技術細節是否準確
+### 5. Code-Documentation Consistency (requires independent research)
+- Does pseudocode match actual codebase style
+- Do referenced files/methods exist (**verify with grep/cat**)
+- Are technical details accurate
 
-## 輸出格式
+## Output Format
 
-### 審核摘要
+### Review Summary
 
-| 維度         | 評分（1-5⭐） | 說明 |
-|--------------|--------------|------|
-| 架構設計     | ...          | ...  |
-| 性能考量     | ...          | ...  |
-| 安全性       | ...          | ...  |
-| 文件品質     | ...          | ...  |
-| 代碼一致性   | ...          | ...  |
+| Dimension              | Rating (1-5⭐) | Notes |
+|------------------------|----------------|-------|
+| Architecture Design    | ...            | ...   |
+| Performance            | ...            | ...   |
+| Security               | ...            | ...   |
+| Documentation Quality  | ...            | ...   |
+| Code Consistency       | ...            | ...   |
 
-### 🔴 必須修改（P0/P1）
+### 🔴 Must Fix (P0/P1)
 
-- [章節/行號] 問題描述 → 修改建議
+- [Section/Line] Issue description → Fix recommendation
 
-### 🟡 建議修改（P2）
+### 🟡 Suggested Changes (P2)
 
-- [章節/行號] 問題描述 → 修改建議
+- [Section/Line] Issue description → Fix recommendation
 
-### ⚪ 可選改進
+### ⚪ Optional Improvements
 
-- 建議
+- Suggestion
 
 ### Gate
 
-- ✅ 可合併：無 🔴 項目
-- ⛔ 需修改：有 🔴 項目`,
+- ✅ Mergeable: No 🔴 items
+- ⛔ Needs revision: Has 🔴 items`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-**記住返回的 `threadId`，用於後續循環審核。**
+**Remember the returned `threadId` for subsequent review loops.**
 
-**情況 B：循環審核（有 `--continue`）**
+**Case B: Loop review (has `--continue`)**
 
-使用 `mcp__codex__codex-reply` 繼續之前的會話：
+Use `mcp__codex__codex-reply` to continue the previous session:
 
 ```typescript
 mcp__codex__codex -
   reply({
-    threadId: '<從 --continue 參數獲取>',
-    prompt: `我已修改文件。請重新審核：
+    threadId: '<from --continue parameter>',
+    prompt: `I have revised the document. Please re-review:
 
-## 更新後的文件內容
+## Updated Document Content
 \`\`\`${FILE_TYPE}
 ${FILE_CONTENT}
 \`\`\`
 
-請驗證：
-1. 之前的 🔴 必須修改項目是否已修正？
-2. 修改是否引入了新問題？
-3. 修改後的文件品質如何？
-4. 更新 Gate 狀態`,
+Please verify:
+1. Have previous 🔴 must-fix items been addressed?
+2. Did revisions introduce new issues?
+3. What is the quality of the revised document?
+4. Update Gate status`,
   });
 ```
 
-### Step 4: 整合輸出
+### Step 4: Consolidate Output
 
-將 Codex 的審核結果整理為標準格式。
+Organize Codex review results into the standard format.
 
-## Review Loop 自動化
+## Review Loop Automation
 
-**⚠️ 遵循 @CLAUDE.md 審核循環規則 ⚠️**
+**⚠️ Follow @CLAUDE.md review loop rules ⚠️**
 
-當審核結果為 ⛔ 需修改 時：
+When review result is ⛔ Needs revision:
 
-1. 記住 `threadId`
-2. 修改文件
-3. 使用 `--continue <threadId>` 重新審核
-4. 重複直到 ✅ 可合併
+1. Remember the `threadId`
+2. Revise the document
+3. Re-review using `--continue <threadId>`
+4. Repeat until ✅ Mergeable
 
 ## Output
 
 ```markdown
-## 文件審核報告
+## Document Review Report
 
-### 審核文件
+### Reviewed Document
 
-- 路徑：<file-path>
-- 類型：<markdown|txt>
+- Path: <file-path>
+- Type: <markdown|txt>
 
-### 審核摘要
+### Review Summary
 
-| 維度       | 評分       | 說明 |
-| ---------- | ---------- | ---- |
-| 架構設計   | ⭐⭐⭐⭐☆  | ...  |
-| 性能考量   | ⭐⭐⭐☆☆   | ...  |
-| 安全性     | ⭐⭐⭐⭐⭐ | ...  |
-| 文件品質   | ⭐⭐⭐⭐☆  | ...  |
-| 代碼一致性 | ⭐⭐⭐☆☆   | ...  |
+| Dimension          | Rating     | Notes |
+| ------------------ | ---------- | ----- |
+| Architecture Design| ⭐⭐⭐⭐☆  | ...   |
+| Performance        | ⭐⭐⭐☆☆   | ...   |
+| Security           | ⭐⭐⭐⭐⭐ | ...   |
+| Documentation Quality | ⭐⭐⭐⭐☆ | ...  |
+| Code Consistency   | ⭐⭐⭐☆☆   | ...   |
 
-### 🔴 必須修改（P0/P1）
+### 🔴 Must Fix (P0/P1)
 
-1. [章節/行號] 問題描述 → 修改建議
+1. [Section/Line] Issue description → Fix recommendation
 
-### 🟡 建議修改（P2）
+### 🟡 Suggested Changes (P2)
 
-1. [章節/行號] 問題描述 → 修改建議
+1. [Section/Line] Issue description → Fix recommendation
 
-### ⚪ 可選改進
+### ⚪ Optional Improvements
 
-- 建議
+- Suggestion
 
 ### Gate
 
-✅ 可合併 / ⛔ 需修改 (N 個 🔴 項目)
+✅ Mergeable / ⛔ Needs revision (N 🔴 items)
 
-### 循環審核
+### Loop Review
 
-如需修改後重新審核，請使用：
+To re-review after revisions, use:
 `/codex-review-doc --continue <threadId>`
 ```
 
 ## Examples
 
 ```bash
-# 審核指定文件
+# Review a specific file
 /codex-review-doc docs/features/xxx/tech-spec.md
 
-# 自動偵測變更的文檔
+# Auto-detect changed documents
 /codex-review-doc
 
-# 修改後繼續審核（保持上下文）
+# Continue review after revisions (preserve context)
 /codex-review-doc --continue abc123
 ```
 
-## 相關規範
+## Related Standards
 
-審核時參考以下規範：
+Reference the following standards when reviewing:
 
-- @rules/docs-writing.md - 文檔撰寫規則
+- @rules/docs-writing.md - Documentation writing rules

@@ -1,6 +1,6 @@
 ---
-description: 從需求第一性原理出發，探索可能方案並量化評估可行性。在 /tech-spec 之前使用。
-argument-hint: <需求描述> [--constraints <約束>] [--context <相關代碼路徑>] [--no-codex]
+description: Start from first principles, explore possible solutions and quantitatively assess feasibility. Use before /tech-spec.
+argument-hint: <requirement description> [--constraints <constraints>] [--context <code path>] [--no-codex]
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*), Write, mcp__codex__codex, mcp__codex__codex-reply
 skills: codex-brainstorm
 ---
@@ -12,9 +12,9 @@ skills: codex-brainstorm
 
 ## Task
 
-你現在是 `feasibility-analyst` 專家。請從第一性原理分析以下需求，探索所有可能的解決方案：
+You are now a `feasibility-analyst` expert. Analyze the following requirement from first principles, exploring all possible solutions:
 
-### 輸入
+### Input
 
 ```
 $ARGUMENTS
@@ -22,343 +22,343 @@ $ARGUMENTS
 
 ---
 
-## ⚠️ 核心原則：必須與 Codex 深度討論 ⚠️
+## ⚠️ Core Principle: Must Have In-Depth Discussion with Codex ⚠️
 
-**在可行性研究過程中，任何想法、方案、更新、改動都必須與 Codex 進行深度討論。**
+**During the feasibility study, any idea, proposal, update, or change must be discussed in depth with Codex.**
 
-| 時機            | 動作                                       |
-| --------------- | ------------------------------------------ |
-| 開始分析前      | `/codex-brainstorm` 窮舉所有可能方向       |
-| 有新想法時      | `mcp__codex__codex-reply` 追問 Codex 意見  |
-| 方案成形後      | `/codex-architect --mode review` 評估方案  |
-| 對比多個方案時  | `/codex-architect --mode compare` 比較優劣 |
-| 修改/更新方案時 | 再次追問 Codex，驗證修改是否合理           |
-| 有任何不確定時  | 直接問 Codex，不要猜測                     |
+| Timing                  | Action                                          |
+| ----------------------- | ----------------------------------------------- |
+| Before starting analysis| `/codex-brainstorm` to enumerate all possibilities |
+| When new idea emerges   | `mcp__codex__codex-reply` to ask Codex's opinion|
+| After proposal forms    | `/codex-architect --mode review` to evaluate    |
+| Comparing proposals     | `/codex-architect --mode compare` to compare    |
+| When modifying proposal | Ask Codex again to verify changes are reasonable|
+| Any uncertainty         | Ask Codex directly, do not guess                |
 
-**❌ 禁止行為**：
+**❌ Forbidden behavior**:
 
-- 不與 Codex 討論就自行產出報告
-- 只在最後才問 Codex 走過場
-- 忽略 Codex 的不同意見
+- Producing a report without discussing with Codex
+- Only asking Codex at the end as a formality
+- Ignoring Codex's differing opinions
 
-**✅ 正確行為**：
+**✅ Correct behavior**:
 
-- 整個過程持續與 Codex 對話
-- 每個關鍵決策點都諮詢 Codex
-- 認真整合 Claude 與 Codex 的觀點差異
+- Continuous dialogue with Codex throughout the process
+- Consult Codex at every key decision point
+- Seriously integrate differing viewpoints from Claude and Codex
 
 ---
 
-### 分析流程
+### Analysis Flow
 
-#### Phase 1: 需求拆解（第一性原理）
+#### Phase 1: Requirement Decomposition (First Principles)
 
-用「5 Why」方法追問需求本質：
+Use the "5 Why" method to uncover the essence of the requirement:
 
-1. 用戶表面上要什麼？
-2. 為什麼要這個？（第一層）
-3. 為什麼？（繼續追問到核心問題）
-4. 成功標準是什麼？（可量化的驗收條件）
+1. What does the user superficially want?
+2. Why do they want this? (First layer)
+3. Why? (Continue probing to the core problem)
+4. What are the success criteria? (Quantifiable acceptance conditions)
 
-#### Phase 2: 約束分析
+#### Phase 2: Constraint Analysis
 
-盤點所有約束條件：
+Inventory all constraints:
 
-| 類型 | 約束           | 來源   | 彈性     |
-| ---- | -------------- | ------ | -------- |
-| 技術 | ...            | ...    | 無/低/中 |
-| 業務 | ...            | ...    | ...      |
-| 資源 | ...            | ...    | ...      |
-| 相容 | 不破壞現有 API | 穩定性 | 低       |
+| Type       | Constraint          | Source    | Flexibility |
+| ---------- | ------------------- | --------- | ----------- |
+| Technical  | ...                 | ...       | None/Low/Med|
+| Business   | ...                 | ...       | ...         |
+| Resource   | ...                 | ...       | ...         |
+| Compat     | No breaking changes | Stability | Low         |
 
-#### Phase 3: 代碼調研
+#### Phase 3: Code Research
 
-使用以下方式調研現有代碼能力：
+Research existing code capabilities:
 
 ```bash
-# 搜索相關模組
-grep -r "相關關鍵字" src/ --include="*.ts" | head -20
+# Search related modules
+grep -r "related keyword" src/ --include="*.ts" | head -20
 
-# 查看現有實現
+# Check existing implementations
 ls src/service/ src/provider/
 ```
 
-**必須確認**：
+**Must verify**:
 
-- 有沒有類似功能可以複用？
-- 現有代碼能支持哪些方案？
-- 有什麼設計模式可借鑒？
-- 有什麼技術債務需要繞過？
+- Are there similar features that can be reused?
+- What approaches does existing code support?
+- What design patterns can be leveraged?
+- What tech debt needs to be worked around?
 
-#### Phase 4: 方案探索（核心）
+#### Phase 4: Solution Exploration (Core)
 
-**腦暴至少 2-3 個不同方向的方案**（數量不限制，根據問題複雜度彈性產出）
+**Brainstorm at least 2-3 solutions in different directions** (no upper limit, scale with problem complexity)
 
-每個方案需要：
+Each solution needs:
 
-1. 核心思路（一句話）
-2. 實現路徑（步驟）
-3. 量化的可行性評估（見評估維度）
-4. 代價與取捨
+1. Core idea (one sentence)
+2. Implementation path (steps)
+3. Quantified feasibility assessment (see evaluation dimensions)
+4. Cost and trade-offs
 
-#### Phase 5: Codex 深度討論（核心步驟，無次數限制）
+#### Phase 5: In-Depth Codex Discussion (Core step, no round limit)
 
-**⚠️ 這是可行性研究的核心步驟，不是可選項 ⚠️**
+**⚠️ This is a core step of the feasibility study, not optional ⚠️**
 
-**除非 `$ARGUMENTS` 明確包含 `--no-codex`，否則必須進行深度討論**
+**Unless `$ARGUMENTS` explicitly contains `--no-codex`, in-depth discussion is required**
 
 ```mermaid
 flowchart LR
-    A[開始分析] --> B[/codex-brainstorm]
-    B --> C{有新想法?}
-    C -->|是| D[追問 Codex]
+    A[Start Analysis] --> B[/codex-brainstorm]
+    B --> C{New idea?}
+    C -->|Yes| D[Ask Codex]
     D --> C
-    C -->|收斂| E[/codex-architect]
-    E --> F{方案確定?}
-    F -->|修改| D
-    F -->|是| G[整合輸出]
+    C -->|Converge| E[/codex-architect]
+    E --> F{Proposal confirmed?}
+    F -->|Modify| D
+    F -->|Yes| G[Consolidate Output]
 ```
 
-**可用工具**：
+**Available tools**:
 
-| 工具                      | 用途                   | 何時使用              |
-| ------------------------- | ---------------------- | --------------------- |
-| `/codex-brainstorm`       | 深度討論，窮舉所有可能 | **必須** — 分析開始時 |
-| `/codex-architect`        | 架構建議，評估設計     | **必須** — 方案成形後 |
-| `mcp__codex__codex-reply` | 繼續對話，追問細節     | **隨時** — 有想法就問 |
+| Tool                      | Purpose                           | When to Use              |
+| ------------------------- | --------------------------------- | ------------------------ |
+| `/codex-brainstorm`       | Deep discussion, enumerate all options | **Required** — at start |
+| `/codex-architect`        | Architecture advice, evaluate design   | **Required** — after proposal forms |
+| `mcp__codex__codex-reply` | Continue conversation, ask details     | **Anytime** — ask whenever ideas arise |
 
-**深度討論範例**：
+**In-depth discussion examples**:
 
 ```bash
-# 1. 開始時：窮舉所有可能方案
-/codex-brainstorm "需求摘要 + 約束條件"
+# 1. At start: enumerate all possible solutions
+/codex-brainstorm "requirement summary + constraints"
 
-# 2. 有新想法：追問 Codex
+# 2. New idea: ask Codex
 mcp__codex__codex-reply({
   threadId: "<threadId>",
-  prompt: "我想到了方案 C，用 Redis 做分布式鎖。你覺得這個方向如何？有什麼潛在問題？"
+  prompt: "I thought of Option C, using Redis distributed locks. What do you think? Any potential issues?"
 });
 
-# 3. 方案更新：再次驗證
+# 3. Proposal update: verify again
 mcp__codex__codex-reply({
   threadId: "<threadId>",
-  prompt: "根據你的建議，我把方案 A 改成了 xxx。這樣修改合理嗎？"
+  prompt: "Based on your suggestion, I changed Option A to xxx. Is this modification reasonable?"
 });
 
-# 4. 方案成形：評估架構
-/codex-architect "評估方案 A 的架構" --mode review
+# 4. Proposal formed: evaluate architecture
+/codex-architect "Evaluate Option A architecture" --mode review
 
-# 5. 比較決策：對比方案
-/codex-architect "方案 A vs 方案 B vs 方案 C" --mode compare
+# 5. Decision comparison: compare options
+/codex-architect "Option A vs Option B vs Option C" --mode compare
 
-# 6. 還有疑問：繼續追問
+# 6. Still have questions: keep asking
 mcp__codex__codex-reply({
   threadId: "<threadId>",
-  prompt: "如果未來需要支持 xxx，哪個方案更容易擴展？"
+  prompt: "If we need to support xxx in the future, which option is easier to extend?"
 });
 ```
 
-**討論原則**：
+**Discussion principles**:
 
-| 原則          | 說明                                       |
-| ------------- | ------------------------------------------ |
-| 🔄 持續對話   | 不是問一次就結束，要多輪追問               |
-| 💡 有想法就問 | 任何新想法、修改、疑慮都要諮詢 Codex       |
-| 🔍 挑戰假設   | 主動問「這個假設對嗎？有什麼被忽略的？」   |
-| ⚖️ 整合差異   | Claude 和 Codex 意見不同時，分析原因並取捨 |
-| 📝 記錄過程   | 在報告中記錄 Codex 的關鍵建議和觀點差異    |
+| Principle            | Description                                           |
+| -------------------- | ----------------------------------------------------- |
+| 🔄 Continuous dialog | Not one-and-done, multiple rounds of follow-up        |
+| 💡 Ask on every idea | Any new idea, change, or concern should consult Codex |
+| 🔍 Challenge assumptions | Proactively ask "Is this assumption correct? What's being overlooked?" |
+| ⚖️ Integrate differences | When Claude and Codex disagree, analyze reasons and make trade-offs |
+| 📝 Record process    | Document Codex's key suggestions and differing viewpoints in the report |
 
-#### Phase 6: 對比決策
+#### Phase 6: Comparative Decision
 
-- 方案橫向對比表
-- 推薦方案及理由
-- 備選方案及適用場景
-- 開放問題（需進一步確認的事項）
+- Side-by-side comparison table
+- Recommended solution and rationale
+- Backup solution and applicable scenarios
+- Open questions (items needing further confirmation)
 
-## 評估維度標準
+## Evaluation Dimension Standards
 
-| 維度       | 🟢 高                | 🟡 中            | 🔴 低        |
-| ---------- | -------------------- | ---------------- | ------------ |
-| 技術可行性 | 有現成模式，直接套用 | 需要一些調整     | 需要大量創新 |
-| 工作量     | < 3 人天             | 3-10 人天        | > 10 人天    |
-| 風險       | 改動範圍小，可控     | 有些不確定性     | 大量未知     |
-| 擴展性     | 易於擴展             | 需要重構才能擴展 | 難以擴展     |
-| 維護成本   | 代碼簡潔，易理解     | 有一定複雜度     | 複雜，難維護 |
+| Dimension         | 🟢 High                      | 🟡 Medium                | 🔴 Low              |
+| ----------------- | ----------------------------- | ------------------------ | -------------------- |
+| Technical Feasibility | Has existing patterns, direct use | Needs some adaptation | Requires major innovation |
+| Effort            | < 3 person-days               | 3-10 person-days         | > 10 person-days     |
+| Risk              | Small change scope, manageable| Some uncertainty          | Many unknowns        |
+| Extensibility     | Easy to extend                | Needs refactoring to extend | Hard to extend     |
+| Maintenance Cost  | Clean code, easy to understand| Some complexity           | Complex, hard to maintain |
 
 ## Output
 
 ```markdown
-# [需求名稱] 可行性研究報告
+# [Requirement Name] Feasibility Study Report
 
-## 1. 問題本質
+## 1. Problem Essence
 
-### 1.1 表面需求
+### 1.1 Surface Requirement
 
-> 用戶說的是什麼
+> What the user is asking for
 
-### 1.2 深層問題
+### 1.2 Underlying Problem
 
-> 真正要解決的核心問題是什麼？
-> （5 Why 追問結果）
+> What is the core problem to actually solve?
+> (5 Why probing result)
 
-### 1.3 成功標準
+### 1.3 Success Criteria
 
-> 怎樣算是解決了問題？
-> （可量化的驗收條件）
+> How do we know the problem is solved?
+> (Quantifiable acceptance conditions)
 
-## 2. 約束條件
+## 2. Constraints
 
-| 類型 | 約束 | 來源 | 彈性 |
-| ---- | ---- | ---- | ---- |
-| ...  | ...  | ...  | ...  |
+| Type | Constraint | Source | Flexibility |
+| ---- | ---------- | ------ | ----------- |
+| ...  | ...        | ...    | ...         |
 
-## 3. 現有能力盤點
+## 3. Existing Capability Inventory
 
-### 3.1 相關模組
+### 3.1 Related Modules
 
-- `src/xxx.ts` - 可複用的 XX 邏輯
+- `src/xxx.ts` - Reusable XX logic
 
-### 3.2 設計模式
+### 3.2 Design Patterns
 
-- 類似功能的實現方式
+- Implementation approach of similar features
 
-### 3.3 技術債務
+### 3.3 Tech Debt
 
-- 需要繞過的已知問題
+- Known issues to work around
 
-## 4. 可能方案
+## 4. Possible Solutions
 
-### 方案 A: [描述]
+### Option A: [Description]
 
-**核心思路**: 一句話說明
+**Core idea**: One sentence
 
-**實現路徑**:
+**Implementation path**:
 
 1. ...
 2. ...
 
-**可行性評估**:
-| 維度 | 評分 | 說明 |
-|------|:----:|------|
-| 技術可行性 | 🟢/🟡/🔴 | ... |
-| 工作量 | ... | ... |
-| 風險 | ... | ... |
-| 擴展性 | ... | ... |
+**Feasibility assessment**:
+| Dimension | Rating | Notes |
+|-----------|:------:|-------|
+| Technical Feasibility | 🟢/🟡/🔴 | ... |
+| Effort | ... | ... |
+| Risk | ... | ... |
+| Extensibility | ... | ... |
 
-**代價**:
+**Cost**:
 
 - ...
 
 ---
 
-### 方案 B: [描述]
+### Option B: [Description]
 
-（同上結構）
+(Same structure)
 
 ---
 
-### 方案 C: [描述]
+### Option C: [Description]
 
-（同上結構，數量彈性）
+(Same structure, quantity is flexible)
 
-## 5. Codex 深度討論記錄
+## 5. Codex In-Depth Discussion Record
 
-### 5.1 討論過程摘要
+### 5.1 Discussion Process Summary
 
-> 記錄與 Codex 的討論輪次和關鍵對話
+> Record discussion rounds and key exchanges with Codex
 
-| 輪次 | 討論主題        | Codex 關鍵觀點 |
-| ---- | --------------- | -------------- |
-| 1    | 初步方案窮舉    | ...            |
-| 2    | 追問方案 A 細節 | ...            |
-| 3    | 提出修改後驗證  | ...            |
-| ...  | ...             | ...            |
+| Round | Discussion Topic        | Codex Key Viewpoint |
+| ----- | ----------------------- | ------------------- |
+| 1     | Initial solution enumeration | ...            |
+| 2     | Follow-up on Option A details | ...           |
+| 3     | Verify after modification | ...              |
+| ...   | ...                     | ...                 |
 
-### 5.2 Codex 建議的方案方向
-
-- ...
-- ...
-
-### 5.3 Codex 指出的風險/問題
+### 5.2 Solution Directions Suggested by Codex
 
 - ...
 - ...
 
-### 5.4 與 Claude 分析的差異
+### 5.3 Risks/Issues Identified by Codex
 
-| 觀點         | Claude | Codex | 採用 |
-| ------------ | ------ | ----- | ---- |
-| 核心問題理解 | ...    | ...   | ...  |
-| 推薦方向     | ...    | ...   | ...  |
-| 風險評估     | ...    | ...   | ...  |
+- ...
+- ...
 
-### 5.5 整合結論
+### 5.4 Differences from Claude's Analysis
 
-> 綜合兩個視角的建議，說明取捨理由
+| Viewpoint          | Claude | Codex | Adopted |
+| ------------------ | ------ | ----- | ------- |
+| Core problem understanding | ... | ... | ...  |
+| Recommended direction | ...  | ...   | ...     |
+| Risk assessment    | ...    | ...   | ...     |
 
-## 6. 方案對比
+### 5.5 Integrated Conclusion
 
-| 維度       | 方案 A | 方案 B | ... |
-| ---------- | :----: | :----: | :-: |
-| 技術可行性 |   🟢   |   🟡   | ... |
-| 工作量     |   5d   |  10d   | ... |
-| 風險       |   🟢   |   🟡   | ... |
-| 擴展性     |   🟡   |   🟢   | ... |
-| 維護成本   |   🟢   |   🟢   | ... |
+> Combined recommendation from both perspectives, with trade-off rationale
 
-## 7. 建議
+## 6. Solution Comparison
 
-**推薦**: 方案 X
-**理由**:
+| Dimension           | Option A | Option B | ... |
+| ------------------- | :------: | :------: | :-: |
+| Technical Feasibility |   🟢   |   🟡     | ... |
+| Effort              |   5d     |  10d     | ... |
+| Risk                |   🟢   |   🟡     | ... |
+| Extensibility       |   🟡   |   🟢     | ... |
+| Maintenance Cost    |   🟢   |   🟢     | ... |
 
-- 符合約束：[列出]
-- 平衡點：[說明取捨]
-- Codex 觀點：[是否一致/補充]
+## 7. Recommendation
 
-**備選**: 方案 Y
-**適用場景**: 如果 [條件]，則選 Y
+**Recommended**: Option X
+**Rationale**:
 
-## 8. 開放問題
+- Meets constraints: [list]
+- Balance point: [trade-off explanation]
+- Codex viewpoint: [agreement/additions]
 
-> 需要進一步確認才能做最終決定的事項
+**Backup**: Option Y
+**Applicable scenario**: If [condition], choose Y
 
-- [ ] 問題 1
-- [ ] 問題 2
+## 8. Open Questions
 
-## 9. 下一步
+> Items needing further confirmation before final decision
 
-完成後可執行：
+- [ ] Question 1
+- [ ] Question 2
 
-- `/tech-spec` - 對選定方案進行詳細設計
-- `/deep-analyze` - 對選定方案深化路線圖
+## 9. Next Steps
+
+After completion, run:
+
+- `/tech-spec` - Detailed design for the selected solution
+- `/deep-analyze` - Deepen the roadmap for the selected solution
 ```
 
 ## Examples
 
 ```bash
-# 基本用法
-/feasibility-study "新增用戶配額管理功能"
+# Basic usage
+/feasibility-study "Add user quota management feature"
 
-# 指定約束
-/feasibility-study "新增用戶配額管理功能" --constraints "不能改現有 API"
+# With constraints
+/feasibility-study "Add user quota management feature" --constraints "cannot change existing API"
 
-# 指定上下文
-/feasibility-study "優化資產快取" --context src/service/asset.service.ts
+# With context
+/feasibility-study "Optimize asset cache" --context src/service/asset.service.ts
 
-# 跳過 Codex（快速模式）
-/feasibility-study "新增日誌功能" --no-codex
+# Skip Codex (fast mode)
+/feasibility-study "Add logging feature" --no-codex
 ```
 
-## 與其他命令的關係
+## Relationship with Other Commands
 
 ```
-需求階段                    方案階段                    實施階段
-    │                          │                          │
-    ▼                          ▼                          ▼
-/feasibility-study   →    /tech-spec           →    /deep-analyze
-  (可行性研究)              (詳細方案)               (實施路線)
+Requirements Phase              Design Phase                    Implementation Phase
+    │                              │                              │
+    ▼                              ▼                              ▼
+/feasibility-study   ->    /tech-spec           ->    /deep-analyze
+  (Feasibility Study)       (Detailed Spec)          (Implementation Roadmap)
        │
-       ├── /codex-brainstorm  (深度討論，窮舉可能性)
-       ├── /codex-architect   (架構建議，評估設計)
-       └── 無次數限制，需要就呼叫
+       ├── /codex-brainstorm  (Deep discussion, enumerate possibilities)
+       ├── /codex-architect   (Architecture advice, evaluate design)
+       └── No round limit, call whenever needed
 ```

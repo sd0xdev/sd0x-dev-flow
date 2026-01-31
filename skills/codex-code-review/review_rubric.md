@@ -2,16 +2,16 @@
 
 ## Severity
 
-| Level | 定義                           | 例子           |
-| ----- | ------------------------------ | -------------- |
-| P0    | 安全漏洞、資料破壞、核心不可用 | SQLi, 權限繞過 |
-| P1    | 正確性風險、效能退化、測試缺口 | 競態, N+1      |
-| P2    | 設計瑕疵、可維護性問題         | 過深嵌套       |
-| Nit   | 風格、命名                     | 變數名         |
+| Level | Definition                                        | Examples                   |
+| ----- | ------------------------------------------------- | -------------------------- |
+| P0    | Security vulnerability, data corruption, core unavailable | SQLi, auth bypass     |
+| P1    | Correctness risk, performance regression, test gap | Race condition, N+1       |
+| P2    | Design flaw, maintainability issue                | Deep nesting               |
+| Nit   | Style, naming                                     | Variable naming            |
 
 ## Merge Gate
 
-| Gate       | 條件                          |
-| ---------- | ----------------------------- |
-| ✅ Ready   | 無 P0，P1 已修或有 mitigation |
-| ⛔ Blocked | 有 P0，或 checks failing      |
+| Gate      | Condition                              |
+| --------- | -------------------------------------- |
+| Ready     | No P0, P1 fixed or has mitigation      |
+| Blocked   | Has P0, or checks failing              |

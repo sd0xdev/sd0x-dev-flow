@@ -1,156 +1,156 @@
-# Codex Brainstorm 模板
+# Codex Brainstorm Templates
 
-## Phase 1: Claude 獨立分析
+## Phase 1: Claude Independent Analysis
 
 ```markdown
-## Claude 獨立分析
+## Claude Independent Analysis
 
-### 問題本質
+### Problem Essence
 
-#### 表面需求
+#### Surface Requirement
 
-用戶說要 [X]
+User wants [X]
 
-#### 5 Why 追問
+#### 5 Whys
 
-1. Why: 為什麼要 [X]？→ 因為 [Y]
-2. Why: 為什麼 [Y] 重要？→ 因為 [Z]
-3. Why: 為什麼 [Z] 是問題？→ 因為 [...]
+1. Why: Why do we need [X]? → Because [Y]
+2. Why: Why is [Y] important? → Because [Z]
+3. Why: Why is [Z] a problem? → Because [...]
 4. Why: ...
 5. Why: ...
 
-#### 核心問題
+#### Core Problem
 
-真正要解決的是 [核心問題]
+The real problem to solve is [core problem]
 
-### 約束盤點
+### Constraint Inventory
 
-| 類型 | 約束 | 彈性     | 如果打破... |
-| ---- | ---- | -------- | ----------- |
-| 技術 | ...  | 無/低/中 | 會怎樣？    |
-| 業務 | ...  | ...      | ...         |
-| 資源 | ...  | ...      | ...         |
+| Type     | Constraint | Flexibility  | If broken...       |
+| -------- | ---------- | ------------ | ------------------ |
+| Technical | ...       | None/Low/Med | What happens?      |
+| Business | ...        | ...          | ...                |
+| Resource | ...        | ...          | ...                |
 
-### Claude 的最優解假設
+### Claude's Optimal Hypothesis
 
-**方案：[具體方案]**
+**Proposal: [specific proposal]**
 
-理由：
+Rationale:
 
-1. [為什麼這是最優的]
+1. [Why this is optimal]
 2. [...]
 
-自我批判（潛在弱點）：
+Self-critique (potential weaknesses):
 
-1. [弱點 1]
-2. [弱點 2]
+1. [Weakness 1]
+2. [Weakness 2]
 
-### 準備對抗
+### Prepare for Debate
 
-預設 Codex 可能提出的方案：
+Anticipated proposals from Codex:
 
-1. [方案 A] → 我的攻擊點：[...]
-2. [方案 B] → 我的攻擊點：[...]
+1. [Proposal A] → My attack point: [...]
+2. [Proposal B] → My attack point: [...]
 ```
 
-## Phase 3: 辯論記錄
+## Phase 3: Debate Record
 
 ```markdown
-## 辯論記錄
+## Debate Record
 
 ### Round N
 
-**Codex 立場**：[方案 Y]
+**Codex Position**: [Proposal Y]
 
-- 理由：[...]
-- 自認弱點：[...]
+- Rationale: [...]
+- Self-identified weaknesses: [...]
 
-**Claude 攻擊**：
+**Claude Attack**:
 
-1. [攻擊點 1]
-2. [攻擊點 2]
+1. [Attack point 1]
+2. [Attack point 2]
 
-**Codex 反駁**：
+**Codex Rebuttal**:
 
-1. [反駁 1]
-2. [反駁 2]
+1. [Rebuttal 1]
+2. [Rebuttal 2]
 
-**Claude 回應**：
+**Claude Response**:
 
-- 對於反駁 1：[同意/不同意] + [理由]
-- 對於反駁 2：[同意/不同意] + [理由]
+- Regarding Rebuttal 1: [Agree/Disagree] + [Reason]
+- Regarding Rebuttal 2: [Agree/Disagree] + [Reason]
 
-**立場更新**：
+**Position Update**:
 
-- Claude：[維持/更新為 Z]
-- Codex：[維持/更新為 W]
+- Claude: [Maintain/Update to Z]
+- Codex: [Maintain/Update to W]
 
-**均衡檢查**：
+**Equilibrium Check**:
 
-- Claude 還有新攻擊？[是/否]
-- Codex 還有新攻擊？[是/否]
+- Can Claude raise new attacks? [Yes/No]
+- Can Codex raise new attacks? [Yes/No]
 ```
 
-## Phase 5: 最終報告
+## Phase 5: Final Report
 
 ```markdown
-# 納什均衡報告：[主題]
+# Nash Equilibrium Report: [Topic]
 
 ## Executive Summary
 
-| 項目     | 值                          |
-| -------- | --------------------------- |
-| 均衡類型 | 純策略 / 條件 / Pareto / 無 |
-| 辯論輪數 | N                           |
-| 最終方案 | [X]                         |
-| 信心度   | 高（雙方同意）/ 中 / 低     |
+| Item              | Value                                  |
+| ----------------- | -------------------------------------- |
+| Equilibrium Type  | Pure Strategy / Conditional / Pareto / None |
+| Debate Rounds     | N                                      |
+| Final Proposal    | [X]                                    |
+| Confidence        | High (both agree) / Medium / Low       |
 
-## 均衡解
+## Equilibrium Solution
 
-**方案：[X]**
+**Proposal: [X]**
 
-[方案描述]
+[Proposal description]
 
-### 為什麼這是最優解
+### Why This Is the Optimal Solution
 
-| 維度       | 評估 | 雙方共識 |
-| ---------- | ---- | -------- |
-| 技術可行性 | G    | Y        |
-| 工作量     | Y    | Y        |
-| 風險       | G    | Y        |
-| 擴展性     | G    | Y        |
+| Dimension            | Rating | Consensus |
+| -------------------- | ------ | --------- |
+| Technical Feasibility | G     | Y         |
+| Effort               | Y     | Y         |
+| Risk                 | G     | Y         |
+| Scalability          | G     | Y         |
 
-### 被否決的方案
+### Rejected Proposals
 
-| 方案 | 提出者 | 否決原因   | 否決輪次 |
-| ---- | ------ | ---------- | -------- |
-| [A]  | Claude | [致命缺陷] | R2       |
-| [B]  | Codex  | [致命缺陷] | R3       |
+| Proposal | Proposer | Rejection Reason | Rejected In |
+| -------- | -------- | ---------------- | ----------- |
+| [A]      | Claude   | [Fatal flaw]     | R2          |
+| [B]      | Codex    | [Fatal flaw]     | R3          |
 
-## 辯論過程摘要
+## Debate Summary
 
-### 關鍵轉折點
+### Key Turning Points
 
-1. **R2**: Claude 接受 Codex 對 [X] 的批評，放棄 [A]
-2. **R4**: Codex 承認 [約束] 無法迴避，更新立場
-3. **R5**: 雙方收斂到 [X]
+1. **R2**: Claude accepted Codex's criticism of [X], abandoned [A]
+2. **R4**: Codex acknowledged [constraint] is unavoidable, updated position
+3. **R5**: Both converged to [X]
 
-### 最有價值的論點
+### Most Valuable Arguments
 
-| 來源   | 論點   | 影響                   |
-| ------ | ------ | ---------------------- |
-| Claude | [論點] | 導致 Codex 放棄 [B]    |
-| Codex  | [論點] | 導致 Claude 更新到 [X] |
+| Source | Argument   | Impact                       |
+| ------ | ---------- | ---------------------------- |
+| Claude | [argument] | Led Codex to abandon [B]     |
+| Codex  | [argument] | Led Claude to update to [X]  |
 
-## 實施建議
+## Implementation Recommendations
 
-1. [具體步驟 1]
-2. [具體步驟 2]
-3. [具體步驟 3]
+1. [Specific step 1]
+2. [Specific step 2]
+3. [Specific step 3]
 
-## 風險與緩解
+## Risks and Mitigations
 
-| 風險     | 機率     | 緩解措施 |
-| -------- | -------- | -------- |
-| [風險 1] | 低/中/高 | [措施]   |
+| Risk     | Probability  | Mitigation   |
+| -------- | ------------ | ------------ |
+| [Risk 1] | Low/Med/High | [Mitigation] |
 ```

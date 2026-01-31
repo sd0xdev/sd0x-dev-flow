@@ -1,37 +1,37 @@
 ---
-description: 收尾重構：簡化代碼、消除重複、不改行為
+description: Wrap-up refactoring — simplify code, eliminate duplication, preserve behavior
 argument-hint: <file or directory>
 allowed-tools: Read, Grep, Glob, Edit, Bash(TEST_ENV=unit npx jest:*)
 ---
 
 ## Task
 
-針對 `$ARGUMENTS`：
+For `$ARGUMENTS`:
 
-1. **先跑測試**（確認 baseline）
-2. **重構**
+1. **Run tests first** (establish baseline)
+2. **Refactor**
    - Dead code removal
    - Extract duplicates (3+ repeats)
    - Simplify nesting (> 3 levels)
-3. **再跑測試**（確認沒破壞）
+3. **Run tests again** (confirm nothing broken)
 
 ## Output
 
 ```markdown
-## 重構摘要
+## Refactoring Summary
 
 - [file:line] <change>
 
-## 測試結果
+## Test Results
 
 ✅/❌
 
-## 下一步
+## Next Steps
 
 - <suggestions>
 ```
 
-## 限制
+## Constraints
 
-- ❌ 不改業務邏輯
-- ❌ 不加新功能
+- ❌ Do not change business logic
+- ❌ Do not add new features

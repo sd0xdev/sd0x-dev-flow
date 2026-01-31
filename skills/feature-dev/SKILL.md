@@ -1,6 +1,6 @@
 ---
 name: feature-dev
-description: Feature development workflow. Covers implementation, verification, pre-commit checks, refactoring. Guides through design → implement → verify → review → commit flow.
+description: Feature development workflow. Covers implementation, verification, pre-commit checks, refactoring. Guides through design -> implement -> verify -> review -> commit flow.
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -8,74 +8,74 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 ## Trigger
 
-- Keywords: 開發功能, 實作, 寫代碼, verify, precommit, 提交, 重構, simplify
+- Keywords: develop feature, implement, write code, verify, precommit, commit, refactor, simplify
 
 ## When NOT to Use
 
-- 只是想了解代碼（用 Explore）
-- 審核代碼（用 codex-code-review）
-- 審核文件（用 doc-review）
-- 測試相關（用 test-review）
+- Just want to understand code (use Explore)
+- Review code (use codex-code-review)
+- Review documents (use doc-review)
+- Test-related (use test-review)
 
 ## Workflow
 
 ```
-需求 → 設計 → 實作 → 測試 → 審查 → 提交
-        │        │        │        │        │
-        ▼        ▼        ▼        ▼        ▼
-   /codex-     /codex-  /verify  /codex-  /precommit
-   architect   implement         review-fast
+Requirements -> Design -> Implement -> Test -> Review -> Commit
+                │          │            │        │          │
+                ▼          ▼            ▼        ▼          ▼
+           /codex-     /codex-      /verify  /codex-    /precommit
+           architect   implement             review-fast
 ```
 
 ## Commands
 
-| 階段 | 命令                 | 說明                    |
-| ---- | -------------------- | ----------------------- |
-| 設計 | `/codex-architect`   | 獲取架構建議            |
-| 實作 | `/codex-implement`   | Codex 寫代碼            |
-| 驗證 | `/verify`            | 跑測試驗證              |
-| 審查 | `/codex-review-fast` | 代碼審查                |
-| 提交 | `/precommit`         | lint + typecheck + test |
-| 重構 | `/simplify`          | 收尾重構                |
+| Phase     | Command              | Description             |
+| --------- | -------------------- | ----------------------- |
+| Design    | `/codex-architect`   | Get architecture advice |
+| Implement | `/codex-implement`   | Codex writes code       |
+| Verify    | `/verify`            | Run tests to verify     |
+| Review    | `/codex-review-fast` | Code review             |
+| Commit    | `/precommit`         | lint + typecheck + test |
+| Refactor  | `/simplify`          | Final refactoring       |
 
 ## Verification
 
-- 所有測試通過
-- lint + typecheck 無錯誤
-- 代碼審查通過（Gate ✅）
+- All tests pass
+- lint + typecheck with no errors
+- Code review passed (Gate ✅)
 
 ## Testing Requirements
 
-| 變更類型              | 測試要求                        |
-| --------------------- | ------------------------------- |
-| 新增 Service/Provider | 必須有對應 unit test            |
-| 修改現有邏輯          | 確保現有測試通過 + 新邏輯有測試 |
-| 修復 Bug              | 必須加 regression test          |
+| Change Type               | Test Requirements                           |
+| ------------------------- | ------------------------------------------- |
+| New Service/Provider      | Must have corresponding unit test           |
+| Modify existing logic     | Ensure existing tests pass + new logic tested |
+| Bug fix                   | Must add regression test                    |
 
 ## Test File Mapping
 
 ```
-src/service/xxx.service.ts       → test/unit/service/xxx.service.test.ts
-src/provider/evm/parser.ts       → test/unit/provider/evm/parser.test.ts
-src/controller/xxx.controller.ts → test/integration/controller/xxx.test.ts
+src/service/xxx.service.ts       -> test/unit/service/xxx.service.test.ts
+src/provider/evm/parser.ts       -> test/unit/provider/evm/parser.test.ts
+src/controller/xxx.controller.ts -> test/integration/controller/xxx.test.ts
 ```
 
 ## Review Loop
 
-**⚠️ MUST re-review after fix until ✅ PASS**
+**MUST re-review after fix until PASS**
 
 ```
-Review → 有問題 → Fix → Re-review → ... → ✅ Pass → Done
+Review -> Issues found -> Fix -> Re-review -> ... -> ✅ Pass -> Done
 ```
 
 ## Examples
 
 ```
-輸入：幫我實作一個計算手續費的方法
-動作：/codex-architect → /codex-implement → /verify → /codex-review-fast → /precommit
+Input: Implement a fee calculation method
+Action: /codex-architect -> /codex-implement -> /verify -> /codex-review-fast -> /precommit
 ```
 
 ```
-輸入：這段代碼需要重構
-動作：/simplify → 精簡代碼、消除重複 → /codex-review-fast
+Input: This code needs refactoring
+Action: /simplify -> streamline code, eliminate duplication -> /codex-review-fast
 ```

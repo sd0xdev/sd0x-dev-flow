@@ -92,7 +92,7 @@ describeE2E('Feature Complete Flow E2E', () => {
   beforeAll(async () => {
     app = await createApp<Framework>();
     request = await createRequester(app);
-  }, 60000); // E2E 可能需要更長 timeout
+  }, 60000); // E2E may need longer timeout
 
   afterAll(async () => {
     await close(app);
@@ -161,7 +161,7 @@ describeE2E('Feature Job E2E', () => {
 ### Mock External Services (Integration only)
 
 ```typescript
-// Integration test 可以 mock 外部服務
+// Integration tests can mock external services
 jest.mock('../../../src/service/external.service', () => ({
   ExternalService: jest.fn().mockImplementation(() => ({
     fetchData: jest.fn().mockResolvedValue({ data: 'mocked' }),
@@ -172,8 +172,8 @@ jest.mock('../../../src/service/external.service', () => ({
 ### E2E - No Mocks
 
 ```typescript
-// E2E test 禁止 mock，使用真實服務
-// 如果外部服務不可用，使用 skip
+// E2E tests must not mock, use real services
+// If external service unavailable, use skip
 const skipIfNoExternalService = process.env.EXTERNAL_SERVICE_URL
   ? describe
   : describe.skip;
@@ -206,14 +206,14 @@ afterEach(async () => {
 
 ## Timeout Recommendations
 
-| 測試類型    | 建議 Timeout     |
-| ----------- | ---------------- |
-| Unit        | 5000ms (default) |
-| Integration | 30000ms          |
-| E2E         | 60000ms          |
+| Test Type   | Recommended Timeout |
+| ----------- | ------------------- |
+| Unit        | 5000ms (default)    |
+| Integration | 30000ms             |
+| E2E         | 60000ms             |
 
 ```typescript
-// 設定 timeout
+// Set timeout
 beforeAll(async () => {
   // ...
 }, 30000);

@@ -1,5 +1,5 @@
 ---
-description: 用 Codex MCP 為指定函數生成單元測試
+description: Generate unit tests for specified functions using Codex MCP
 argument-hint: <file-path> [--function <name>] [--output <path>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Write
 skills: test-review
@@ -11,79 +11,79 @@ skills: test-review
 
 ## Task
 
-你現在要使用 Codex MCP 生成單元測試。
+You will use Codex MCP to generate unit tests.
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-| 參數                | 說明                     |
-| ------------------- | ------------------------ |
-| `<file-path>`       | 必填，要生成測試的源檔案 |
-| `--function <name>` | 可選，指定函數名稱       |
-| `--output <path>`   | 可選，指定輸出路徑       |
+| Parameter           | Description                        |
+| ------------------- | ---------------------------------- |
+| `<file-path>`       | Required, source file to test      |
+| `--function <name>` | Optional, specific function name   |
+| `--output <path>`   | Optional, output path              |
 
-### Step 1: 讀取源檔案
+### Step 1: Read Source File
 
 ```bash
 Read(FILE_PATH)
 ```
 
-將源檔案內容保存為 `SOURCE_CONTENT`。
+Save source file content as `SOURCE_CONTENT`.
 
-### Step 2: 推導測試檔案路徑
+### Step 2: Derive Test File Path
 
-如果沒有指定 `--output`，自動推導：
+If `--output` not specified, auto-derive:
 
-- `src/service/xxx.service.ts` → `test/unit/service/xxx.service.test.ts`
-- `src/provider/yyy.ts` → `test/unit/provider/yyy.test.ts`
+- `src/service/xxx.service.ts` -> `test/unit/service/xxx.service.test.ts`
+- `src/provider/yyy.ts` -> `test/unit/provider/yyy.test.ts`
 
-### Step 3: 執行 Codex 生成測試
+### Step 3: Execute Codex Test Generation
 
-使用 `mcp__codex__codex` 工具：
+Use `mcp__codex__codex` tool:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是一位 測試專家。請為以下代碼生成完整的單元測試。
+  prompt: `You are a testing expert. Generate complete unit tests for the following code.
 
-## 源檔案
-- 路徑：${FILE_PATH}
-- 函數：${FUNCTION_NAME || 'all'}
+## Source File
+- Path: ${FILE_PATH}
+- Function: ${FUNCTION_NAME || 'all'}
 
 \`\`\`typescript
 ${SOURCE_CONTENT}
 \`\`\`
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在生成測試前，你**必須**執行以下調研：
+Before generating tests, you **must** perform the following research:
 
-### 調研步驟
-1. 了解測試結構：\`ls test/unit/\`、\`ls test/integration/\`
-2. 搜尋相似測試：\`ls test/unit/service/\` 或 \`grep -r "describe" test/unit/ --include="*.ts" -l | head -5\`
-3. 讀取現有測試範例：\`cat <相似測試路徑> | head -100\`
-4. 了解源碼依賴：\`grep -r "import" ${FILE_PATH} | head -10\`
-5. 搜尋相關 interface/type：\`grep -r "interface" src/ --include="*.ts" -l | head -5\`
+### Research Steps
+1. Understand test structure: \`ls test/unit/\`, \`ls test/integration/\`
+2. Search similar tests: \`ls test/unit/service/\` or \`grep -r "describe" test/unit/ --include="*.ts" -l | head -5\`
+3. Read existing test examples: \`cat <similar test path> | head -100\`
+4. Understand source dependencies: \`grep -r "import" ${FILE_PATH} | head -10\`
+5. Search related interface/type: \`grep -r "interface" src/ --include="*.ts" -l | head -5\`
 
-### 驗證重點
-- 專案使用什麼測試模式？
-- Mock 是如何設置的？
-- 現有測試使用什麼 assertion 風格？
+### Verification Focus
+- What test patterns does the project use?
+- How are mocks set up?
+- What assertion style do existing tests use?
 
-## 測試框架
+## Test Framework
 - Jest
 - {FRAMEWORK_MOCK_LIB}
 
-## 測試規範
-1. 每個 public 方法至少一個測試
-2. 覆蓋正常路徑和邊界情況
-3. 使用 mock 隔離外部依賴
-4. 測試名稱清晰描述預期行為
-5. 遵循 AAA 模式（Arrange-Act-Assert）
+## Test Standards
+1. At least one test per public method
+2. Cover happy path and edge cases
+3. Use mocks to isolate external dependencies
+4. Test names clearly describe expected behavior
+5. Follow AAA pattern (Arrange-Act-Assert)
 
-## 測試模板
+## Test Template
 \`\`\`typescript
 import { createApp, close } from '{FRAMEWORK_MOCK_LIB}';
 // import { Framework } from '{FRAMEWORK_WEB}';
@@ -112,20 +112,20 @@ describe('ServiceName', () => {
 });
 \`\`\`
 
-## 輸出要求
-1. 只輸出完整的測試代碼
-2. 包含所有必要的 import
-3. 使用 describe/it 組織測試
-4. 參考專案現有測試風格
-5. 添加適當的註釋說明測試目的`,
+## Output Requirements
+1. Output only complete test code
+2. Include all necessary imports
+3. Organize tests with describe/it
+4. Reference existing project test style
+5. Add appropriate comments describing test purpose`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-### Step 4: 保存測試檔案
+### Step 4: Save Test File
 
-將 Codex 生成的測試代碼保存到目標路徑：
+Save Codex-generated test code to target path:
 
 ```bash
 Write(OUTPUT_PATH, TEST_CODE)
@@ -134,40 +134,40 @@ Write(OUTPUT_PATH, TEST_CODE)
 ## Output
 
 ```markdown
-## 測試生成報告
+## Test Generation Report
 
-### 檔案資訊
+### File Info
 
-- 源檔案：<source-path>
-- 測試檔案：<test-path>
-- 函數：<function-name or all>
+- Source file: <source-path>
+- Test file: <test-path>
+- Function: <function-name or all>
 
-### 生成結果
+### Generation Result
 
-測試代碼已保存到：`<test-path>`
+Test code saved to: `<test-path>`
 
-### 測試結構
+### Test Structure
 
 - describe: <ServiceName>
   - describe: <methodName>
     - it: should ...
     - it: should ...
 
-### 下一步
+### Next Steps
 
-1. 執行測試：`TEST_ENV=unit yarn jest <test-path>`
-2. 審查測試：`/codex-test-review <test-path>`
+1. Run tests: `TEST_ENV=unit yarn jest <test-path>`
+2. Review tests: `/codex-test-review <test-path>`
 ```
 
 ## Examples
 
 ```bash
-# 為整個檔案生成測試
+# Generate tests for entire file
 /codex-test-gen src/service/user/user.service.ts
 
-# 為特定函數生成測試
+# Generate tests for specific function
 /codex-test-gen src/service/user/user.service.ts --function getUserById
 
-# 指定輸出路徑
+# Specify output path
 /codex-test-gen src/service/xxx.ts --output test/unit/xxx.test.ts
 ```

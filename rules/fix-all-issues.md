@@ -1,70 +1,70 @@
 # Fix All Issues Rule ⚠️ CRITICAL
 
-**發現就要修，不得跳過**
+**Fix every issue found, no skipping allowed**
 
-## 核心原則
+## Core Principles
 
-| 原則       | 說明                                         |
-| ---------- | -------------------------------------------- |
-| **零容忍** | 任何發現的問題都必須修復                     |
-| **不跳過** | 禁止以「無關」「不影響」「之後再說」為由跳過 |
-| **找原因** | 不只修表面，要找出根本原因                   |
-| **當下修** | 發現當下立即修，不留待後續                   |
+| Principle          | Description                                                        |
+| ------------------ | ------------------------------------------------------------------ |
+| **Zero tolerance** | Every discovered issue must be fixed                               |
+| **No skipping**    | Cannot skip with excuses like "unrelated", "no impact", "fix later"|
+| **Find root cause**| Don't just fix the surface; find the root cause                    |
+| **Fix immediately**| Fix the moment it's found; don't defer                             |
 
-## 適用場景
+## Applicable Scenarios
 
-| 場景                 | 適用      |
-| -------------------- | --------- |
-| 開發中發現問題       | ✅ 立即修 |
-| 跑測試發現失敗       | ✅ 立即修 |
-| Lint/TypeCheck 錯誤  | ✅ 立即修 |
-| Code Review 指出問題 | ✅ 立即修 |
-| 順便看到的問題       | ✅ 立即修 |
-| 「不相關」的問題     | ✅ 立即修 |
+| Scenario                       | Action         |
+| ------------------------------ | -------------- |
+| Issue found during development | ✅ Fix now     |
+| Test failure discovered        | ✅ Fix now     |
+| Lint/TypeCheck errors          | ✅ Fix now     |
+| Code Review flagged issue      | ✅ Fix now     |
+| Issue noticed in passing       | ✅ Fix now     |
+| "Unrelated" issue              | ✅ Fix now     |
 
-## 禁止行為
-
-```
-❌ "這個問題跟當前任務無關，跳過"
-❌ "這是 pre-existing 問題，不處理"
-❌ "這個錯誤不影響主流程"
-❌ "之後再修"
-❌ "已知問題，忽略"
-```
-
-## 正確行為
+## Prohibited Behaviors
 
 ```
-✅ "發現 X 問題，正在修復..."
-✅ "測試失敗，分析原因：Y，修復中..."
-✅ "順便發現 Z 錯誤，一併修復"
-✅ "Lint 報錯 3 處，全部修正"
+❌ "This issue is unrelated to the current task, skipping"
+❌ "This is a pre-existing issue, not handling"
+❌ "This error doesn't affect the main flow"
+❌ "Fix it later"
+❌ "Known issue, ignoring"
 ```
 
-## 根因分析要求
-
-修復時必須回答：
-
-1. **是什麼** — 問題的具體表現
-2. **為什麼** — 根本原因（不是表面原因）
-3. **怎麼修** — 修復方案
-4. **防復發** — 如何避免同類問題
-
-## 例外情況（僅限）
-
-| 例外             | 條件                       |
-| ---------------- | -------------------------- |
-| 用戶明確要求跳過 | 用戶說「這個不用管」       |
-| 超出當前權限     | 需要架構級變更，報告並記錄 |
-| 第三方庫問題     | 無法修改，記錄 workaround  |
-
-## 與其他規則的關係
-
-此規則優先級高於任務範圍限制：
+## Correct Behaviors
 
 ```
-發現問題 → 修復 → 繼續原任務
-         ↑
-    不問「要修嗎？」
-    不說「跟任務無關」
+✅ "Found issue X, fixing..."
+✅ "Test failed, analyzing cause: Y, fixing..."
+✅ "Also found error Z, fixing it as well"
+✅ "Lint reported 3 errors, fixing all"
+```
+
+## Root Cause Analysis Requirements
+
+When fixing, must answer:
+
+1. **What** — The specific symptom of the issue
+2. **Why** — The root cause (not the surface cause)
+3. **How to fix** — The fix approach
+4. **Prevent recurrence** — How to avoid the same type of issue
+
+## Exceptions (Only)
+
+| Exception                  | Condition                                           |
+| -------------------------- | --------------------------------------------------- |
+| User explicitly asks to skip | User says "don't worry about this"                |
+| Beyond current scope       | Requires architecture-level changes; report and log |
+| Third-party library issue  | Cannot modify; document workaround                  |
+
+## Relationship to Other Rules
+
+This rule takes priority over task scope constraints:
+
+```
+Issue found -> Fix -> Continue original task
+              ↑
+    Don't ask "should I fix it?"
+    Don't say "unrelated to the task"
 ```

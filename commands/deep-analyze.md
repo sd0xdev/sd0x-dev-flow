@@ -1,6 +1,6 @@
 ---
-description: 深入分析初步方案，調研代碼實現，產出可執行路線圖與替代方案
-argument-hint: <初步方案描述或檔案路徑>
+description: Deep-dive analysis of an initial proposal — research code implementation, produce an actionable roadmap and alternatives
+argument-hint: <initial proposal description or file path>
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Write
 skills: tech-spec
 ---
@@ -12,68 +12,68 @@ skills: tech-spec
 
 ## Task
 
-你現在是 `solution-architect` 專家。請深入分析以下初步方案：
+You are now a `solution-architect` expert. Perform a deep analysis of the following initial proposal:
 
-### 輸入
+### Input
 
 ```
 $ARGUMENTS
 ```
 
-### 分析流程
+### Analysis Flow
 
-#### Phase 1: 理解與驗證
+#### Phase 1: Understand & Validate
 
-1. 提取初步方案的核心目標
-2. 識別關鍵假設（可能是錯的）
-3. 列出需要驗證的技術點
+1. Extract the core objectives of the initial proposal
+2. Identify key assumptions (which may be wrong)
+3. List technical points that need verification
 
-#### Phase 2: 代碼深潛
+#### Phase 2: Code Deep Dive
 
-深入調研現有代碼：
+Research the existing codebase thoroughly:
 
 ```bash
-# 找相關實現
-grep -r "關鍵字" src/ --include="*.ts" -l | head -10
+# Find related implementations
+grep -r "keyword" src/ --include="*.ts" -l | head -10
 
-# 查看類似功能
+# Check similar features
 ls src/service/ src/provider/
 
-# 分析具體實現
+# Analyze specific implementation
 cat src/service/similar.service.ts | head -100
 ```
 
-**必須確認**：
+**Must verify**:
 
-- 命名慣例（駝峰/底線？前綴？）
-- DI 注入模式（@Inject/@InjectModel？）
-- 錯誤處理模式（throw/return？）
-- 類似功能的實現方式
+- Naming conventions (camelCase/snake_case? prefixes?)
+- DI injection patterns (@Inject/@InjectModel?)
+- Error handling patterns (throw/return?)
+- Implementation patterns of similar features
 
-#### Phase 3: 路線圖產出
+#### Phase 3: Roadmap Output
 
-根據調研，產出：
+Based on the research, produce:
 
-1. 實施步驟（可立即執行）
-2. 關鍵偽代碼（**僅核心 1-3 行，非必要不放**）
-3. 替代方案對比
+1. Implementation steps (immediately actionable)
+2. Key pseudocode (**only core 1-3 lines, omit if not necessary**)
+3. Alternative comparison
 
 ## Output
 
 ````markdown
-# [方案名稱] 實施路線圖
+# [Proposal Name] Implementation Roadmap
 
-## 方案驗證
+## Proposal Validation
 
-| 假設 | 驗證結果 | 影響 |
-| ---- | -------- | ---- |
+| Assumption | Verification Result | Impact |
+| ---------- | ------------------- | ------ |
 
-## 代碼調研摘要
+## Code Research Summary
 
-| 模組 | 現有實現 | 可複用 |
-| ---- | -------- | ------ |
+| Module | Existing Implementation | Reusable |
+| ------ | ----------------------- | -------- |
 
-## 實施路線圖
+## Implementation Roadmap
 
 ```mermaid
 flowchart LR
@@ -81,52 +81,52 @@ flowchart LR
 ```
 ````
 
-### Step 1: [標題]
+### Step 1: [Title]
 
-**目標**：一句話
-**檔案**：`src/xxx.ts` (修改/新增)
+**Objective**: One sentence
+**Files**: `src/xxx.ts` (modify/create)
 
-**偽代碼**（僅必要時，1-3 行）：
+**Pseudocode** (only when necessary, 1-3 lines):
 
 ```typescript
-// 參考: src/xxx.ts:50
+// Reference: src/xxx.ts:50
 await this.cache.set(key, data, TTL);
 ```
 
 ### Step 2: ...
 
-## 替代方案
+## Alternatives
 
-### 方案 B: [名稱]
+### Option B: [Name]
 
-| 維度   | 方案 A（建議） | 方案 B |
-| ------ | -------------- | ------ |
-| 複雜度 |                |        |
-| 風險   |                |        |
+| Dimension  | Option A (Recommended) | Option B |
+| ---------- | ---------------------- | -------- |
+| Complexity |                        |          |
+| Risk       |                        |          |
 
-**建議**：...
+**Recommendation**: ...
 
-## 風險與緩解
+## Risks & Mitigations
 
-| 風險 | 機率 | 緩解 |
-| ---- | ---- | ---- |
+| Risk | Probability | Mitigation |
+| ---- | ----------- | ---------- |
 
-## 立即行動
+## Immediate Actions
 
-1. [ ] 第一個任務
-2. [ ] 第二個任務
+1. [ ] First task
+2. [ ] Second task
 
 ````
 
 ## Examples
 
 ```bash
-# 從描述分析
-/deep-analyze "初步想法：用 Redis 快取 token 價格，TTL 5 分鐘"
+# Analyze from description
+/deep-analyze "Initial idea: use Redis to cache token prices with TTL 5 minutes"
 
-# 從檔案分析
+# Analyze from file
 /deep-analyze docs/features/xxx/tech-spec.md
 
-# 從需求單分析
+# Analyze from request doc
 /deep-analyze docs/features/xxx/requests/2026-01-20-xxx.md
 ````

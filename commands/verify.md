@@ -1,5 +1,5 @@
 ---
-description: 驗證迴圈：lint → typecheck → unit → integration → e2e
+description: Verification loop — lint -> typecheck -> unit -> integration -> e2e
 argument-hint: [fast|full]
 allowed-tools: Bash(node:*), Bash(yarn:*), Bash(npx:*), Read, Grep
 ---
@@ -17,9 +17,9 @@ allowed-tools: Bash(node:*), Bash(yarn:*), Bash(npx:*), Read, Grep
 node scripts/verify-runner.js $ARGUMENTS
 ```
 
-2. `$ARGUMENTS` == "fast" → lint + unit only
-3. Otherwise → lint → typecheck → unit → integration → e2e
-4. Integration/E2E 預設只跑單檔，需明確指定路徑：
+2. `$ARGUMENTS` == "fast" -> lint + unit only
+3. Otherwise -> lint -> typecheck -> unit -> integration -> e2e
+4. Integration/E2E default to single file only; specify path explicitly:
 
 ```
 node scripts/verify-runner.js --integration test/integration/xxx.test.ts
@@ -37,7 +37,7 @@ node scripts/verify-runner.js --e2e test/e2e/xxx.test.ts
 | typecheck | ✅/❌  |
 | unit      | ✅/❌  |
 
-## Failures（如有）
+## Failures (if any)
 
 - Root cause: <first error>
 - Fix: <suggestion>

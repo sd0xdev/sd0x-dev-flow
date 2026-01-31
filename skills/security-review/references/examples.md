@@ -59,48 +59,48 @@ if (url.hostname === 'localhost' || url.hostname.startsWith('10.')) {
 
 ### Never Log
 
-- 私鑰、助記詞、seed phrase
-- API keys、access tokens
-- 用戶密碼、PIN 碼
-- 完整地址（可記錄前後 6 位）
+- Private keys, mnemonic phrases, seed phrases
+- API keys, access tokens
+- User passwords, PIN codes
+- Full addresses (only log first/last 6 characters)
 
 ### Encryption
 
-- 敏感資料必須加密
-- 禁止 MD5、SHA1 用於安全場景
-- 使用 HTTPS 傳輸
+- Sensitive data must be encrypted
+- MD5 and SHA1 are prohibited for security purposes
+- Use HTTPS for transmission
 
 ## Output Report Template
 
 ```markdown
-# 安全審查報告
+# Security Review Report
 
-## 發現摘要
+## Findings Summary
 
-| 等級 | 數量 | 類型 |
-| ---- | ---- | ---- |
+| Severity | Count | Type |
+| -------- | ----- | ---- |
 
-## 詳細發現
+## Detailed Findings
 
-### [P0] <問題>
+### [P0] <Issue>
 
-- **位置**: file:line
-- **類型**: OWASP 類別
-- **影響**: 潛在危害
-- **修復**: 具體建議
-- **測試**: 驗證方式
+- **Location**: file:line
+- **Type**: OWASP category
+- **Impact**: Potential harm
+- **Fix**: Specific recommendation
+- **Test**: Verification method
 
 ## Gate
 
-✅ 無 P0 問題 → 可合併
-⛔ 有 P0 問題 → 必須修復
+✅ No P0 issues → Can merge
+⛔ Has P0 issues → Must fix
 ```
 
 ## Dep Audit Severity
 
-| Level    | Description      | Action     |
-| -------- | ---------------- | ---------- |
-| critical | 最嚴重           | 立即修復   |
-| high     | 高風險           | 盡快修復   |
-| moderate | 中等風險（預設） | 評估後修復 |
-| low      | 低風險           | 可延後處理 |
+| Level    | Description           | Action              |
+| -------- | --------------------- | -------------------- |
+| critical | Most severe           | Fix immediately      |
+| high     | High risk             | Fix as soon as possible |
+| moderate | Medium risk (default) | Assess and fix       |
+| low      | Low risk              | Can be deferred      |

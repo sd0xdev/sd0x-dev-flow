@@ -3,13 +3,13 @@
 ## Entrypoints
 
 - `{CONFIG_FILE}` - ILifeCycle
-- `{BOOTSTRAP_FILE}` - 啟動入口
-- `src/provider/factory.ts` - Provider 工廠
+- `{BOOTSTRAP_FILE}` - Bootstrap entry
+- `src/provider/factory.ts` - Provider factory
 
 ## Test Patterns
 
-| Pattern                               | 類型        |
+| Pattern                               | Type        |
 | ------------------------------------- | ----------- |
 | `createApp()` / `createHttpRequest()` | Integration |
-| `createBootstrap()` → {BOOTSTRAP_FILE}    | E2E         |
-| 無 app 啟動                           | Unit        |
+| `createBootstrap()` -> {BOOTSTRAP_FILE}   | E2E         |
+| No app startup                        | Unit        |

@@ -1,37 +1,37 @@
 ---
-description: 根據需求產出技術功能方案文件
-argument-hint: <需求描述> [--request] [--no-save]
+description: Produce a technical spec document from requirements
+argument-hint: <requirement description> [--request] [--no-save]
 allowed-tools: Read, Grep, Glob, Bash(git:*), Write
 skills: tech-spec
 ---
 
 ## Task
 
-根據需求產出技術方案文件。
+Produce a technical spec document based on requirements.
 
-### 需求
+### Requirements
 
 ```
 $ARGUMENTS
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和模板：
+Follow the workflow and templates in the skill:
 
-| 階段     | 參考文件                                         |
+| Phase    | Reference                                        |
 | -------- | ------------------------------------------------ |
-| 流程     | @skills/tech-spec/SKILL.md               |
-| 方案模板 | @skills/tech-spec/references/template.md |
+| Workflow | @skills/tech-spec/SKILL.md               |
+| Template | @skills/tech-spec/references/template.md |
 
-### 參數說明
+### Parameter Description
 
-- `--request` - 同時生成需求單
-- `--no-save` - 不儲存到 docs/
+- `--request` - Also generate a request document
+- `--no-save` - Do not save to docs/
 
 ## Examples
 
 ```bash
-/tech-spec "新增用戶配額管理功能"
-/tech-spec "優化快取效能" --request
+/tech-spec "Add user quota management feature"
+/tech-spec "Optimize cache performance" --request
 ```

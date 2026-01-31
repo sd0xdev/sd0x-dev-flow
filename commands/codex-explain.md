@@ -1,5 +1,5 @@
 ---
-description: 用 Codex MCP 解釋複雜代碼邏輯
+description: Explain complex code logic using Codex MCP
 argument-hint: <file-path> [--lines <start>-<end>] [--depth brief|normal|deep]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
 ---
@@ -10,102 +10,102 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
 
 ## Task
 
-你現在要使用 Codex MCP 解釋代碼邏輯。
+You will use Codex MCP to explain code logic.
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-| 參數                    | 說明                               |
-| ----------------------- | ---------------------------------- |
-| `<file-path>`           | 必填，要解釋的檔案                 |
-| `--lines <start>-<end>` | 可選，指定行範圍                   |
-| `--depth <level>`       | 可選，解釋深度 (brief/normal/deep) |
+| Parameter               | Description                                    |
+| ----------------------- | ---------------------------------------------- |
+| `<file-path>`           | Required, file to explain                      |
+| `--lines <start>-<end>` | Optional, specify line range                   |
+| `--depth <level>`       | Optional, explanation depth (brief/normal/deep)|
 
 ### Depth Levels
 
-| Level  | 說明                                 |
-| ------ | ------------------------------------ |
-| brief  | 一句話摘要                           |
-| normal | 標準解釋（預設）                     |
-| deep   | 深入分析：設計模式、複雜度、潛在問題 |
+| Level  | Description                                          |
+| ------ | ---------------------------------------------------- |
+| brief  | One-sentence summary                                 |
+| normal | Standard explanation (default)                       |
+| deep   | In-depth: design patterns, complexity, potential issues |
 
-### Step 1: 讀取目標檔案
+### Step 1: Read Target File
 
 ```bash
 Read(FILE_PATH)
 ```
 
-如果指定了 `--lines`，只提取該範圍的代碼。
+If `--lines` specified, extract only that range of code.
 
-### Step 2: 執行 Codex 解釋
+### Step 2: Execute Codex Explanation
 
-使用 `mcp__codex__codex` 工具：
+Use `mcp__codex__codex` tool:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是一位資深軟體工程師。請解釋以下代碼。
+  prompt: `You are a senior software engineer. Explain the following code.
 
-## 檔案資訊
-- 路徑：${FILE_PATH}
-- 範圍：${LINE_RANGE}
-- 深度：${DEPTH}
+## File Info
+- Path: ${FILE_PATH}
+- Range: ${LINE_RANGE}
+- Depth: ${DEPTH}
 
-## 代碼內容
+## Code Content
 \`\`\`typescript
 ${CODE_CONTENT}
 \`\`\`
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在解釋代碼前，你**必須**執行以下調研：
+Before explaining code, you **must** perform the following research:
 
-### 調研步驟
-1. 了解專案結構：\`ls src/\`
-2. 搜尋相關依賴：\`grep -r "import.*from" ${FILE_PATH} | head -10\`
-3. 讀取被引用的模組：\`cat <依賴路徑> | head -100\`
-4. 搜尋調用此代碼的地方：\`grep -r "函數名" src/ --include="*.ts" -l | head -5\`
+### Research Steps
+1. Understand project structure: \`ls src/\`
+2. Search related dependencies: \`grep -r "import.*from" ${FILE_PATH} | head -10\`
+3. Read referenced modules: \`cat <dependency path> | head -100\`
+4. Search where this code is called: \`grep -r "function name" src/ --include="*.ts" -l | head -5\`
 
-### 驗證重點
-- 這段代碼在專案中的角色是什麼？
-- 它與其他模組如何互動？
-- 有哪些地方調用了這段代碼？
+### Verification Focus
+- What role does this code play in the project?
+- How does it interact with other modules?
+- Where is this code called from?
 
-## 解釋要求（根據深度）
+## Explanation Requirements (by depth)
 
 ### brief
-一句話摘要功能。
+One-sentence functional summary.
 
 ### normal
-1. 功能概述
-2. 執行流程（步驟分解）
-3. 關鍵概念說明
+1. Functional overview
+2. Execution flow (step-by-step breakdown)
+3. Key concept explanation
 
 ### deep
-1. 功能概述
-2. 執行流程（步驟分解）
-3. 使用的設計模式
-4. 時間/空間複雜度
-5. 潛在問題或改進建議
-6. 依賴關係分析
+1. Functional overview
+2. Execution flow (step-by-step breakdown)
+3. Design patterns used
+4. Time/space complexity
+5. Potential issues or improvement suggestions
+6. Dependency analysis
 
-## 輸出格式（使用繁體中文）
+## Output Format
 
-### 功能摘要
-<一句話描述>
+### Functional Summary
+<one-sentence description>
 
-### 詳細解釋
-<逐段解釋>
+### Detailed Explanation
+<section-by-section explanation>
 
-### 關鍵概念
-- <概念1>: <說明>
-- <概念2>: <說明>
+### Key Concepts
+- <concept1>: <description>
+- <concept2>: <description>
 
-### 專案關聯（基於調研）
-- 被哪些模組調用
-- 依賴哪些模組`,
+### Project Context (based on research)
+- Called by which modules
+- Depends on which modules`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
@@ -114,41 +114,41 @@ ${CODE_CONTENT}
 ## Output
 
 ```markdown
-## 代碼解釋報告
+## Code Explanation Report
 
-### 檔案資訊
+### File Info
 
-- 路徑：<file-path>
-- 範圍：<line-range>
-- 深度：<depth>
+- Path: <file-path>
+- Range: <line-range>
+- Depth: <depth>
 
-### 功能摘要
+### Functional Summary
 
-<一句話描述>
+<one-sentence description>
 
-### 詳細解釋
+### Detailed Explanation
 
-<逐段解釋>
+<section-by-section explanation>
 
-### 關鍵概念
+### Key Concepts
 
-- <概念>: <說明>
+- <concept>: <description>
 
-### 專案關聯
+### Project Context
 
-- 被調用位置：<locations>
-- 依賴模組：<dependencies>
+- Called from: <locations>
+- Dependencies: <dependencies>
 ```
 
 ## Examples
 
 ```bash
-# 解釋整個檔案
+# Explain entire file
 /codex-explain src/service/order/order.service.ts
 
-# 解釋特定行範圍
+# Explain specific line range
 /codex-explain src/service/order/order.service.ts --lines 50-100
 
-# 深入分析
+# Deep analysis
 /codex-explain src/service/xxx.ts --depth deep
 ```

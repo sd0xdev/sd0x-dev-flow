@@ -1,92 +1,92 @@
-# 納什均衡判定
+# Nash Equilibrium Determination
 
-## 定義
+## Definition
 
 ```
-納什均衡 = 給定對方的策略，任何一方都無法通過單方面改變策略來改善自己的結果
+Nash Equilibrium = Given the other party's strategy, neither party can improve their outcome by unilaterally changing strategy
 
-技術方案的均衡 = 給定所有約束和反駁，任何一方都無法提出新的有效攻擊來推翻當前共識
+Technical proposal equilibrium = Given all constraints and rebuttals, neither party can raise a new valid attack to overturn the current consensus
 ```
 
-## 判定流程
+## Determination Flow
 
 ```
 ┌─────────────────────────────────────────┐
-│ 輪次 N 結束                              │
+│ Round N Complete                         │
 ├─────────────────────────────────────────┤
-│ Q1: Claude 能提出新攻擊嗎？              │
-│     - 是 → 繼續辯論                      │
-│     - 否 → Q2                            │
+│ Q1: Can Claude raise a new attack?       │
+│     - Yes → Continue debate              │
+│     - No  → Q2                           │
 ├─────────────────────────────────────────┤
-│ Q2: Codex 能提出新攻擊嗎？               │
-│     - 是 → 繼續辯論                      │
-│     - 否 → 達到均衡                      │
+│ Q2: Can Codex raise a new attack?        │
+│     - Yes → Continue debate              │
+│     - No  → Equilibrium reached          │
 └─────────────────────────────────────────┘
 ```
 
-## 均衡類型
+## Equilibrium Types
 
-| 類型             | 定義                           | 報告方式                            |
-| ---------------- | ------------------------------ | ----------------------------------- |
-| **純策略均衡**   | 雙方收斂到同一方案             | 「均衡解：方案 X」                  |
-| **混合策略均衡** | 雙方同意在不同條件下用不同方案 | 「條件均衡：若 A 則 X，若 B 則 Y」  |
-| **Pareto 最優**  | 存在多個均衡，無法比較優劣     | 「Pareto 集：{X, Y, Z}」            |
-| **無均衡**       | 達到最大輪數仍有分歧           | 「分歧點：[列出]，需要 [額外資訊]」 |
+| Type                      | Definition                                        | Report Format                                     |
+| ------------------------- | ------------------------------------------------- | ------------------------------------------------- |
+| **Pure Strategy**         | Both converge to the same proposal                | "Equilibrium: Proposal X"                         |
+| **Mixed Strategy**        | Both agree to use different proposals under different conditions | "Conditional equilibrium: If A then X, if B then Y" |
+| **Pareto Optimal**        | Multiple equilibria exist, cannot rank             | "Pareto set: {X, Y, Z}"                          |
+| **No Equilibrium**        | Max rounds reached with remaining divergence       | "Divergence points: [list], need [additional info]" |
 
-## 每輪均衡檢查
+## Per-Round Equilibrium Check
 
 ```markdown
-## 均衡檢查 (輪次 N)
+## Equilibrium Check (Round N)
 
-### 我的立場
+### My Position
 
-- 當前方案：[X]
-- 是否更新：[是/否]
+- Current proposal: [X]
+- Updated: [Yes/No]
 
-### 攻擊能力檢查
+### Attack Capability Check
 
-- 我還能對 Codex 的方案提出新的、未被反駁的攻擊嗎？
-  - [ ] 是 → 繼續（列出攻擊）
-  - [ ] 否 → 我方達到均衡
+- Can I raise a new, un-rebutted attack against Codex's proposal?
+  - [ ] Yes → Continue (list attacks)
+  - [ ] No → My side reached equilibrium
 
-### Codex 攻擊能力檢查
+### Codex Attack Capability Check
 
-- Codex 還能對我的方案提出新的、未被反駁的攻擊嗎？
-  - [ ] 是 → 繼續
-  - [ ] 否 → 雙方達到均衡
+- Can Codex raise a new, un-rebutted attack against my proposal?
+  - [ ] Yes → Continue
+  - [ ] No → Both sides reached equilibrium
 
-### 均衡狀態
+### Equilibrium Status
 
-- [ ] 繼續辯論
-- [ ] 達到純策略均衡：方案 [X]
-- [ ] 達到條件均衡：若 [A] 則 [X]，若 [B] 則 [Y]
-- [ ] Pareto 最優集：{X, Y}
-- [ ] 最大輪數，輸出分歧報告
+- [ ] Continue debate
+- [ ] Pure strategy equilibrium reached: Proposal [X]
+- [ ] Conditional equilibrium reached: If [A] then [X], if [B] then [Y]
+- [ ] Pareto optimal set: {X, Y}
+- [ ] Max rounds reached, output divergence report
 ```
 
-## 無法達成均衡時的處理
+## Handling When Equilibrium Cannot Be Reached
 
 ```markdown
-# 分歧報告：[主題]
+# Divergence Report: [Topic]
 
-## 辯論摘要
+## Debate Summary
 
-- 總輪數：N（達到上限）
-- 仍有分歧
+- Total rounds: N (limit reached)
+- Divergence remains
 
-## 分歧點
+## Divergence Points
 
-| 議題 | Claude 立場 | Codex 立場 | 分歧原因 |
-| ---- | ----------- | ---------- | -------- |
-| [X]  | ...         | ...        | 假設不同 |
+| Issue | Claude Position | Codex Position | Reason for Divergence |
+| ----- | --------------- | -------------- | --------------------- |
+| [X]   | ...             | ...            | Different assumptions |
 
-## 需要額外資訊
+## Additional Information Needed
 
-1. [如果知道 A，可以判斷 B]
-2. [如果確認 C 約束，可以收斂]
+1. [If A is known, B can be determined]
+2. [If constraint C is confirmed, convergence is possible]
 
-## 條件建議
+## Conditional Recommendations
 
-- 如果 [條件 1]：建議 Claude 方案
-- 如果 [條件 2]：建議 Codex 方案
+- If [condition 1]: Recommend Claude's proposal
+- If [condition 2]: Recommend Codex's proposal
 ```

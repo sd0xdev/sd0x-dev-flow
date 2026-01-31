@@ -9,57 +9,57 @@ context: fork
 
 ## Trigger
 
-- Keywords: codex cli review, cli review, 腳本審核, script review
+- Keywords: codex cli review, cli review, script review
 
 ## When to Use
 
-- 需要 Codex 自主探索整個專案（完整磁碟讀取）
-- 不需要 MCP 的上下文保持功能
-- 想要使用 Codex CLI 原生的審核格式
+- Need Codex to independently explore the entire project (full disk read)
+- Don't need MCP's context persistence feature
+- Want to use Codex CLI's native review format
 
 ## When NOT to Use
 
-- 需要循環審核（用 `/codex-review-fast --continue`）
-- 需要追問 Codex（用 MCP 版本）
-- 只想看 diff 不想等 Codex 探索（用 `/codex-review-fast`）
+- Need iterative review (use `/codex-review-fast --continue`)
+- Need to follow up with Codex (use MCP version)
+- Only want to see diff without waiting for Codex exploration (use `/codex-review-fast`)
 
 ## Difference from MCP Version
 
-| 特性       | CLI 版本（本 skill） | MCP 版本         |
-| ---------- | -------------------- | ---------------- |
-| 自主探索   | ✅ 完整磁碟讀取      | ⚠️ 需明確指示    |
-| 上下文保持 | ❌ 無                | ✅ threadId      |
-| 循環審核   | ❌ 每次獨立          | ✅ --continue    |
-| 格式       | Codex 原生格式       | 自訂 prompt 格式 |
-| 執行方式   | 腳本調用             | MCP tool 調用    |
+| Feature             | CLI Version (this skill) | MCP Version           |
+| ------------------- | ------------------------ | --------------------- |
+| Independent explore | Full disk read           | Needs explicit instruction |
+| Context persistence | None                     | threadId              |
+| Iterative review    | Each run independent     | --continue            |
+| Format              | Codex native format      | Custom prompt format  |
+| Execution method    | Script invocation        | MCP tool invocation   |
 
 ## Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 1: 檢查變更                                                │
+│ Step 1: Check Changes                                           │
 ├─────────────────────────────────────────────────────────────────┤
 │ git status --porcelain                                          │
-│ 無變更 → 提早退出                                               │
+│ No changes -> Early exit                                        │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 2: 執行 Codex CLI                                          │
+│ Step 2: Execute Codex CLI                                       │
 ├─────────────────────────────────────────────────────────────────┤
 │ codex review --uncommitted                                      │
 │   -c 'sandbox_permissions=["disk-full-read-access"]'            │
 │                                                                 │
-│ Codex 會自主：                                                   │
-│ - 讀取變更的檔案                                                 │
-│ - 探索相關的依賴                                                 │
-│ - 查看現有測試                                                   │
-│ - 理解專案結構                                                   │
+│ Codex will independently:                                       │
+│ - Read changed files                                            │
+│ - Explore related dependencies                                  │
+│ - Check existing tests                                          │
+│ - Understand project structure                                  │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ Step 3: 輸出審核結果                                            │
+│ Step 3: Output Review Results                                   │
 ├─────────────────────────────────────────────────────────────────┤
-│ Codex 原生格式：                                                 │
+│ Codex native format:                                            │
 │ - Summary                                                       │
 │ - Issues (Critical/Major/Minor/Suggestion)                      │
 │ - Recommendations                                               │
@@ -74,11 +74,11 @@ bash skills/codex-cli-review/scripts/review.sh [options]
 
 ### Options
 
-| 參數                | 說明           |
-| ------------------- | -------------- |
-| `--base <branch>`   | 與指定分支比較 |
-| `--title "<text>"`  | 設定審核標題   |
-| `--prompt "<text>"` | 自訂審核指令   |
+| Parameter           | Description                |
+| ------------------- | -------------------------- |
+| `--base <branch>`   | Compare with specified branch |
+| `--title "<text>"`  | Set review title           |
+| `--prompt "<text>"` | Custom review instructions |
 
 ### I/O Contract
 
@@ -88,35 +88,35 @@ bash skills/codex-cli-review/scripts/review.sh [options]
 
 **Output:**
 
-- Codex 審核報告（stdout）
-- Exit code: 0 = 成功, 非 0 = 失敗
+- Codex review report (stdout)
+- Exit code: 0 = success, non-0 = failure
 
 ## Verification
 
-- [ ] 腳本執行無錯誤
-- [ ] Codex 有探索專案（看 output 中有 file references）
-- [ ] 輸出包含 Issues 分類
+- [ ] Script executes without errors
+- [ ] Codex explored the project (file references visible in output)
+- [ ] Output includes issue classification
 
 ## Examples
 
 ```bash
-# 審核未提交變更
+# Review uncommitted changes
 /codex-cli-review
 
-# 與 main 分支比較
+# Compare with main branch
 /codex-cli-review --base main
 
-# 帶標題
+# With title
 /codex-cli-review --title "Feature: User Auth"
 
-# 自訂審核指令
+# Custom review instructions
 /codex-cli-review --prompt "Focus on security and performance"
 ```
 
 ## Related
 
-| 命令/Skill             | 差異                      |
-| ---------------------- | ------------------------- |
-| `/codex-review-fast`   | MCP 版本，支援循環審核    |
-| `/codex-review`        | MCP 版本，含 lint + build |
-| `/codex-review-branch` | MCP 版本，審核整個分支    |
+| Command/Skill          | Difference                           |
+| ---------------------- | ------------------------------------ |
+| `/codex-review-fast`   | MCP version, supports iterative review |
+| `/codex-review`        | MCP version, includes lint + build   |
+| `/codex-review-branch` | MCP version, reviews entire branch   |

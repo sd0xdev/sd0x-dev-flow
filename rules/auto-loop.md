@@ -1,106 +1,106 @@
 # Auto-Loop Rule ⚠️ CRITICAL
 
-**修復 → 立即重審 → 未過 → 再修 → ... → ✅ Pass → 下一步**
+**Fix -> immediately re-review -> fail -> fix again -> ... -> ✅ Pass -> next step**
 
-## 禁止行為
+## Prohibited Behaviors
 
-❌ 修復後問「要我重審嗎？」「是否繼續？」
-❌ 輸出摘要後停止，不執行審核
-❌ 等待用戶指示
-❌ **宣告當執行**：說「需要執行 X」但沒有調用工具
-❌ **摘要即完成**：輸出漂亮總結後停止，未執行下一步
+❌ Asking "Should I re-review?" or "Continue?" after fixing
+❌ Stopping after outputting a summary without executing review
+❌ Waiting for user instructions
+❌ **Declaring as executing**: Saying "need to run X" without actually invoking the tool
+❌ **Summary as completion**: Outputting a polished summary then stopping, without executing the next step
 
-## 自動觸發
+## Auto-Trigger
 
-| 變更類型  | 事件           | 立即執行             |
-| --------- | -------------- | -------------------- |
-| `.ts/.js` | 修復 P0/P1/P2  | `/codex-review-fast` |
-| `.ts/.js` | review Pass    | `/precommit`         |
-| `.ts/.js` | precommit 失敗 | 修復 → 重跑          |
-| `.md`     | 修復文檔問題   | `/codex-review-doc`  |
-| `.md`     | review 失敗    | 修復 → 重跑          |
+| Change Type | Event              | Execute Immediately  |
+| ----------- | ------------------ | -------------------- |
+| `.ts/.js`   | Fix P0/P1/P2       | `/codex-review-fast` |
+| `.ts/.js`   | review Pass        | `/precommit`         |
+| `.ts/.js`   | precommit failure  | Fix -> re-run        |
+| `.md`       | Fix doc issues     | `/codex-review-doc`  |
+| `.md`       | review failure     | Fix -> re-run        |
 
-## 退出條件（僅限）
+## Exit Conditions (Only)
 
 - ✅ All Pass
-  - 程式碼變更：review + precommit 全過
-  - 文檔變更：doc review 通過即可
-- ⛔ Need Human — 架構變更、刪除功能、用戶喊停
-- 🔄 3 輪同問題 — 報告卡點，請求介入
+  - Code changes: review + precommit all passed
+  - Doc changes: doc review passed
+- ⛔ Need Human — Architecture changes, feature removal, user requests stop
+- 🔄 3 rounds on same issue — Report blocker, request intervention
 
-## 正確行為
-
-```
-"已修復 3 個問題，正在執行 /codex-review-fast..."
-[執行]
-"通過，正在執行 /precommit..."
-[執行]
-"全部通過 ✅"
-```
-
-## ⚠️ 行為錨定：同一回覆內執行
-
-### 正確模式
+## Correct Behavior
 
 ```
-[完成編輯] → 同一個回覆中調用審核工具 → 等待結果 → 報告
+"Fixed 3 issues, running /codex-review-fast..."
+[Execute]
+"Passed, running /precommit..."
+[Execute]
+"All passed ✅"
+```
+
+## ⚠️ Behavior Anchor: Execute Within the Same Reply
+
+### Correct Pattern
+
+```
+[Edit complete] -> Invoke review tool in the same reply -> Wait for result -> Report
 ```
 
 ```
-Claude: [Edit tool 完成]
+Claude: [Edit tool complete]
         ↓
-        "已更新，正在執行審核..."
+        "Updated, running review..."
         ↓
-        [Skill tool: /codex-review-doc]  ← 同一回覆
+        [Skill tool: /codex-review-doc]  <- Same reply
         ↓
-        "審核通過 ✅" 或 "發現問題，修復中..."
+        "Review passed ✅" or "Issues found, fixing..."
 ```
 
-### 錯誤模式
+### Incorrect Pattern
 
 ```
-[完成編輯] → 輸出摘要 → [停止] → 用戶追問 → 才執行審核
+[Edit complete] -> Output summary -> [Stop] -> User follows up -> Then execute review
 ```
 
 ```
-Claude: [Edit tool 完成]
+Claude: [Edit tool complete]
         ↓
-        "已更新需求單 ✅"
+        "Updated requirements doc ✅"
         ↓
-        [輸出漂亮的表格摘要]
+        [Output polished table summary]
         ↓
-        "下一步建議執行 /codex-review-doc"  ← ❌ 宣告當執行
+        "Next step: suggest running /codex-review-doc"  <- ❌ Declaring as executing
         ↓
-        [停止，等待用戶]  ← ❌ 違反規則
+        [Stop, waiting for user]  <- ❌ Violates rule
 ```
 
-### 關鍵原則
+### Key Principles
 
-| 原則            | 說明                                    |
-| --------------- | --------------------------------------- |
-| **宣告 ≠ 執行** | 說「需要執行」不等於已經執行            |
-| **摘要 ≠ 完成** | 輸出總結後，審核流程仍在進行中          |
-| **同回覆執行**  | Edit 完成後，同一回覆內必須調用審核工具 |
-| **結果才停止**  | 只有看到審核結果（Pass/Fail）才能停止   |
+| Principle                  | Description                                                      |
+| -------------------------- | ---------------------------------------------------------------- |
+| **Declaring ≠ Executing**  | Saying "need to run" does not equal having run it                |
+| **Summary ≠ Completion**   | After outputting a summary, the review process is still ongoing  |
+| **Execute in same reply**  | After Edit completes, must invoke review tool in the same reply  |
+| **Stop only on result**    | Can only stop after seeing review result (Pass/Fail)             |
 
-## 強制執行機制
+## Enforcement Mechanism
 
-### 雙層防線
+### Dual-Layer Defense
 
 ```
-[Edit/Write] → [PostToolUse Hook] → [狀態檔更新]
+[Edit/Write] -> [PostToolUse Hook] -> [State file update]
                                           ↓
-[Stop Hook] ← 讀取狀態檔 ← [審核命令執行]
+[Stop Hook] <- Read state file <- [Review command executed]
 ```
 
-| 層級        | 機制                    | 觸發時機       |
-| ----------- | ----------------------- | -------------- |
-| PostToolUse | 追蹤文件變更 + 審核結果 | Edit/Bash 執行 |
-| Stop Hook   | 阻止未完成審核即停止    | 嘗試停止時     |
+| Layer       | Mechanism                          | Trigger              |
+| ----------- | ---------------------------------- | -------------------- |
+| PostToolUse | Track file changes + review result | Edit/Bash execution  |
+| Stop Hook   | Block stopping before review done  | When attempting stop  |
 
-### 狀態檔 Schema
+### State File Schema
 
-**檔案**：`.claude_review_state.json`（本地忽略）
+**File**: `.claude_review_state.json` (locally ignored)
 
 ```json
 {
@@ -122,18 +122,18 @@ Claude: [Edit tool 完成]
 }
 ```
 
-> **Note**: 上述為完整欄位示意，實際 hook 可能只更新部分欄位。
+> **Note**: The above shows the full field schema; the actual hook may only update a subset of fields.
 
-### Debug 與逃生口
+### Debug and Escape Hatch
 
-| 環境變數        | 用途                | 使用場景 |
-| --------------- | ------------------- | -------- |
-| `HOOK_DEBUG=1`  | 輸出調試信息        | 排查問題 |
-| `HOOK_BYPASS=1` | 跳過 Stop Hook 檢查 | 緊急情況 |
+| Environment Variable | Purpose                   | Use Case        |
+| -------------------- | ------------------------- | --------------- |
+| `HOOK_DEBUG=1`       | Output debug information  | Troubleshooting |
+| `HOOK_BYPASS=1`      | Skip Stop Hook checks     | Emergency       |
 
-### 標準 Sentinel
+### Standard Sentinel
 
-審核命令必須輸出標準標記，供 Hook 解析：
+Review commands must output standard markers for Hook parsing:
 
-- `## Gate: ✅` / `✅ All Pass` — 通過
-- `## Gate: ⛔` / `⛔ Block` — 未通過
+- `## Gate: ✅` / `✅ All Pass` — Passed
+- `## Gate: ⛔` / `⛔ Block` — Failed

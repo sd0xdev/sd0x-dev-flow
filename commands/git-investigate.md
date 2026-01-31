@@ -1,34 +1,34 @@
 ---
-description: 調查代碼歷史，追蹤變更來源和根本原因
-argument-hint: <file:line> 或 <關鍵字>
+description: Investigate code history, track change origins and root causes
+argument-hint: <file:line> or <keyword>
 allowed-tools: Bash(git:*), Read, Grep, Glob
 skills: git-investigate
 ---
 
 ## Task
 
-調查代碼歷史，找出變更來源。
+Investigate code history to find the source of changes.
 
-### 調查目標
+### Investigation Target
 
 ```
 $ARGUMENTS
 ```
 
-支援格式：
+Supported formats:
 
-- `src/path/file.ts:123` - 特定檔案行號
-- `functionName` - 函數名稱
-- `"error message"` - 關鍵字搜尋
+- `src/path/file.ts:123` - Specific file and line number
+- `functionName` - Function name
+- `"error message"` - Keyword search
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和命令：
+Follow the workflow and commands in the skill:
 
-| 階段     | 參考文件                                               |
-| -------- | ------------------------------------------------------ |
-| 流程     | @skills/git-investigate/SKILL.md               |
-| Git 命令 | @skills/git-investigate/references/commands.md |
+| Phase        | Reference                                              |
+| ------------ | ------------------------------------------------------ |
+| Workflow     | @skills/git-investigate/SKILL.md               |
+| Git Commands | @skills/git-investigate/references/commands.md |
 
 ## Examples
 

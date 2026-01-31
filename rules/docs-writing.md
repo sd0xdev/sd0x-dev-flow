@@ -1,16 +1,16 @@
-# 文檔撰寫規則
+# Documentation Writing Rules
 
-| 原則       | 說明                             |
-| ---------- | -------------------------------- |
-| 簡潔扼要   | 能用表格不用段落，能用圖不用文字 |
-| 不失訊息量 | 關鍵資訊必須保留，不過度精簡     |
-| 調研先行   | 偽代碼前必須調研現有實現         |
+| Principle          | Description                                         |
+| ------------------ | --------------------------------------------------- |
+| Concise            | Use tables over paragraphs, diagrams over text      |
+| Information-rich   | Preserve key information; don't over-simplify       |
+| Research first     | Research existing implementations before pseudocode |
 
-| 場景      | 使用                    | 避免       |
-| --------- | ----------------------- | ---------- |
-| 對比/列表 | 表格                    | 長段落     |
-| 流程說明  | Mermaid sequenceDiagram | 純文字描述 |
-| 架構層級  | ASCII 圖 / flowchart    | 巢狀列表   |
-| 代碼範例  | 實際 codebase 片段      | 憑空偽代碼 |
+| Scenario           | Use                       | Avoid              |
+| ------------------ | ------------------------- | ---------------    |
+| Comparison/lists   | Tables                    | Long paragraphs    |
+| Process flow       | Mermaid sequenceDiagram   | Plain text         |
+| Architecture layers| ASCII diagram / flowchart | Nested lists       |
+| Code examples      | Actual codebase snippets  | Made-up pseudocode |
 
-放偽代碼前: grep 搜尋相似實現 → read 確認命名 → 標註參考來源
+Before adding pseudocode: grep for similar implementations -> read to confirm naming -> annotate reference source

@@ -9,126 +9,126 @@ allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
 
 ## Trigger
 
-- Keywords: project setup, init, 初始化, 設定專案, configure project, setup CLAUDE.md, customize placeholders
+- Keywords: project setup, init, initialize, configure project, setup CLAUDE.md, customize placeholders
 
 ## When NOT to Use
 
-- CLAUDE.md placeholder 已全部替換完成（無 `{...}` 殘留）
-- 非 Node.js/TypeScript 專案（本偵測邏輯針對 JS/TS 生態）
-- 只想修改單一 placeholder — 直接 Edit CLAUDE.md 即可
+- CLAUDE.md placeholders are already fully replaced (no `{...}` remaining)
+- Non Node.js/TypeScript project (detection logic targets JS/TS ecosystem)
+- Only want to modify a single placeholder -- just Edit CLAUDE.md directly
 
 ## Workflow
 
 ```
-Phase 1: 偵測專案環境
+Phase 1: Detect project environment
     │
-    ├─ 讀取 package.json (dependencies, devDependencies, scripts)
-    ├─ 偵測 lockfile (yarn.lock / pnpm-lock.yaml / package-lock.json)
-    ├─ 偵測 entrypoints (glob src/)
-    └─ 彙整結果
+    ├─ Read package.json (dependencies, devDependencies, scripts)
+    ├─ Detect lockfile (yarn.lock / pnpm-lock.yaml / package-lock.json)
+    ├─ Detect entrypoints (glob src/)
+    └─ Compile results
     │
-Phase 2: 確認偵測結果
+Phase 2: Confirm detection results
     │
-    ├─ 呈現偵測結果表格
-    └─ 等待使用者確認或修正
+    ├─ Present detection results table
+    └─ Wait for user confirmation or corrections
     │
-Phase 3: 寫入 CLAUDE.md (除非 --detect-only)
+Phase 3: Write to CLAUDE.md (unless --detect-only)
     │
-    ├─ 用 Edit tool 逐一替換 placeholder
-    └─ 每個 placeholder 一次 Edit
+    ├─ Use Edit tool to replace placeholders one by one
+    └─ One Edit per placeholder
     │
-Phase 4: 驗證
+Phase 4: Verify
     │
-    ├─ 讀取 CLAUDE.md 確認無殘留 placeholder
-    └─ 輸出最終摘要
+    ├─ Read CLAUDE.md to confirm no remaining placeholders
+    └─ Output final summary
 ```
 
-## Phase 1: 偵測專案環境
+## Phase 1: Detect Project Environment
 
-依序執行以下偵測，規則詳見 `references/detection-rules.md`：
+Execute the following detections in order; see `references/detection-rules.md` for detailed rules:
 
-### 1.1 讀取 package.json
+### 1.1 Read package.json
 
 ```
 Read package.json
 ```
 
-提取：
-- `name` → `{PROJECT_NAME}` 候選
-- `dependencies` + `devDependencies` → 框架、資料庫偵測
-- `scripts` → 指令偵測
+Extract:
+- `name` → `{PROJECT_NAME}` candidate
+- `dependencies` + `devDependencies` → framework, database detection
+- `scripts` → command detection
 
-### 1.2 偵測 Package Manager
+### 1.2 Detect Package Manager
 
 ```
 Glob: yarn.lock / pnpm-lock.yaml / package-lock.json
 ```
 
-| 檔案 | PM |
+| File | PM |
 |------|----|
 | `yarn.lock` | yarn |
 | `pnpm-lock.yaml` | pnpm |
-| `package-lock.json` 或 fallback | npm |
+| `package-lock.json` or fallback | npm |
 
-PM 結果影響 `{TEST_COMMAND}`、`{LINT_FIX_COMMAND}`、`{BUILD_COMMAND}`、`{TYPECHECK_COMMAND}` 的前綴。
+PM result affects the prefix for `{TEST_COMMAND}`, `{LINT_FIX_COMMAND}`, `{BUILD_COMMAND}`, `{TYPECHECK_COMMAND}`.
 
-### 1.3 偵測 Framework
+### 1.3 Detect Framework
 
-從 `dependencies` 判斷：
+Determine from `dependencies`:
 
-| 依賴 | Framework |
+| Dependency | Framework |
 |------|-----------|
 | `@midwayjs/core` | MidwayJS 3.x |
 | `@nestjs/core` | NestJS |
-| `express`（無 midway/nest） | Express |
+| `express` (no midway/nest) | Express |
 | `fastify` | Fastify |
 | `koa` | Koa |
 
-### 1.4 偵測 Database
+### 1.4 Detect Database
 
-從 `dependencies` 判斷：
+Determine from `dependencies`:
 
-| 依賴 | Database |
+| Dependency | Database |
 |------|----------|
 | `mongoose` / `mongodb` | MongoDB |
 | `pg` / `typeorm` + `pg` | PostgreSQL |
 | `mysql2` / `typeorm` + `mysql` | MySQL |
-| `prisma` | 讀 `prisma/schema.prisma` 的 `provider` |
-| `redis` / `ioredis` | Redis (補充) |
+| `prisma` | Read `prisma/schema.prisma` `provider` |
+| `redis` / `ioredis` | Redis (supplementary) |
 
-### 1.5 偵測 Entrypoints
+### 1.5 Detect Entrypoints
 
 ```
 Glob: src/configuration.ts, src/app.module.ts, src/main.ts, src/index.ts, bootstrap.js, bootstrap.ts
 ```
 
-| Framework | Config 候選 | Bootstrap 候選 |
-|-----------|------------|----------------|
-| MidwayJS | `src/configuration.ts` | `bootstrap.js` 或 `bootstrap.ts` |
+| Framework | Config Candidates | Bootstrap Candidates |
+|-----------|------------------|---------------------|
+| MidwayJS | `src/configuration.ts` | `bootstrap.js` or `bootstrap.ts` |
 | NestJS | `src/app.module.ts` | `src/main.ts` |
-| Express | `src/app.ts` 或 `src/index.ts` | `src/index.ts` |
+| Express | `src/app.ts` or `src/index.ts` | `src/index.ts` |
 
-### 1.6 偵測 Scripts
+### 1.6 Detect Scripts
 
-從 `package.json` 的 `scripts` 欄位：
+From `package.json` `scripts` field:
 
-| Placeholder | 優先取 | Fallback | 格式 |
+| Placeholder | Preferred | Fallback | Format |
 |-------------|--------|----------|------|
 | `{TEST_COMMAND}` | `test:unit` | `test` | `{PM} test:unit` |
 | `{LINT_FIX_COMMAND}` | `lint:fix` | `lint` | `{PM} lint:fix` |
 | `{BUILD_COMMAND}` | `build` | `compile` | `{PM} build` |
 | `{TYPECHECK_COMMAND}` | `typecheck` | `type-check` | `{PM} typecheck` |
 
-若 script 不存在，值設為 `# N/A (no script found)` 讓使用者手動填。
+If script does not exist, set value to `# N/A (no script found)` for user to fill manually.
 
-## Phase 2: 確認偵測結果
+## Phase 2: Confirm Detection Results
 
-呈現偵測結果：
+Present detection results:
 
 ```markdown
-## 偵測結果
+## Detection Results
 
-| Placeholder | 偵測值 | 來源 |
+| Placeholder | Detected Value | Source |
 |-------------|--------|------|
 | `{PROJECT_NAME}` | my-app | package.json name |
 | `{FRAMEWORK}` | NestJS | @nestjs/core detected |
@@ -140,17 +140,17 @@ Glob: src/configuration.ts, src/app.module.ts, src/main.ts, src/index.ts, bootst
 | `{BUILD_COMMAND}` | yarn build | scripts.build exists |
 | `{TYPECHECK_COMMAND}` | yarn typecheck | scripts.typecheck exists |
 
-以上正確嗎？如需修正請告知。
+Are these correct? Please let me know if any corrections are needed.
 ```
 
-等使用者確認後才進入 Phase 3。
+Wait for user confirmation before proceeding to Phase 3.
 
-## Phase 3: 寫入 CLAUDE.md
+## Phase 3: Write to CLAUDE.md
 
-**前提**：使用者已確認，且非 `--detect-only` 模式。
+**Prerequisite**: User has confirmed, and not in `--detect-only` mode.
 
-1. 讀取 CLAUDE.md
-2. 對每個 placeholder 執行 `Edit`（使用 `replace_all: true`）：
+1. Read CLAUDE.md
+2. Execute `Edit` for each placeholder (using `replace_all: true`):
 
 ```
 Edit CLAUDE.md:
@@ -159,20 +159,20 @@ Edit CLAUDE.md:
   replace_all: true
 ```
 
-依序替換全部 9 個 placeholder。
+Replace all 9 placeholders in order.
 
-3. 如果 CLAUDE.md 尚不存在，從 plugin 的 CLAUDE.md 模板複製一份到專案根目錄。
+3. If CLAUDE.md does not yet exist, copy from the plugin's CLAUDE.md template to the project root.
 
-## Phase 4: 驗證
+## Phase 4: Verify
 
-1. 讀取修改後的 CLAUDE.md
-2. 搜尋殘留的 `{` + 大寫字母 pattern：
+1. Read the modified CLAUDE.md
+2. Search for remaining `{` + uppercase letter pattern:
 
 ```
 Grep: \{[A-Z_]+\} in CLAUDE.md
 ```
 
-3. 輸出結果：
+3. Output results:
 
 ```markdown
 ## Setup Complete
@@ -181,7 +181,7 @@ Grep: \{[A-Z_]+\} in CLAUDE.md
 |-------------|-------|
 | ... | ... |
 
-殘留 placeholder: 0 (或列出未替換的)
+Remaining placeholders: 0 (or list unreplaced ones)
 ```
 
 ## Output Format
@@ -212,8 +212,8 @@ Remaining placeholders: 0
 User: /project-setup
 Claude: [Reads package.json, detects NestJS + pg + yarn]
 
-偵測結果：
-| Placeholder | 偵測值 |
+Detection Results:
+| Placeholder | Detected Value |
 | {PROJECT_NAME} | my-nest-api |
 | {FRAMEWORK} | NestJS |
 | {DATABASE} | PostgreSQL |
@@ -221,9 +221,9 @@ Claude: [Reads package.json, detects NestJS + pg + yarn]
 | {BOOTSTRAP_FILE} | src/main.ts |
 | {TEST_COMMAND} | yarn test:unit |
 
-以上正確嗎？
+Are these correct?
 
-User: 正確
+User: Correct
 Claude: [Edits CLAUDE.md, replaces all placeholders]
 Setup Complete. Remaining placeholders: 0
 ```
@@ -234,23 +234,23 @@ Setup Complete. Remaining placeholders: 0
 User: /project-setup
 Claude: [Reads package.json, detects MidwayJS + mongoose + pnpm]
 
-偵測結果：
+Detection Results:
 | {FRAMEWORK} | MidwayJS 3.x |
 | {DATABASE} | MongoDB |
 | {TEST_COMMAND} | pnpm test:unit |
 
-User: DB 應該是 PostgreSQL，我們有兩個 DB
-Claude: [修正 DATABASE 為 PostgreSQL + MongoDB]
+User: DB should be PostgreSQL, we have two DBs
+Claude: [Corrects DATABASE to PostgreSQL + MongoDB]
 [Edits CLAUDE.md]
 ```
 
-### Example 3: 只偵測
+### Example 3: Detect only
 
 ```
 User: /project-setup --detect-only
-Claude: [偵測並顯示結果，不修改任何檔案]
+Claude: [Detects and displays results, does not modify any files]
 ```
 
 ## References
 
-偵測規則詳見：[detection-rules.md](./references/detection-rules.md)
+See detection rules: [detection-rules.md](./references/detection-rules.md)

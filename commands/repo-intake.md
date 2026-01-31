@@ -1,5 +1,5 @@
 ---
-description: 專案初始化盤點（one-time）。首次接手或結構大改時使用。
+description: Project initialization inventory (one-time). Use when first onboarding or after major structural changes.
 argument-hint: [save|nosave]
 allowed-tools: Bash(git:*), Bash(node:*), Read, Write, Grep, Glob
 skills: repo-intake
@@ -7,60 +7,60 @@ skills: repo-intake
 
 ## Task
 
-專案初始化盤點（一次性執行，後續讀快取）。
+Project initialization inventory (one-time execution; subsequent runs read from cache).
 
-### 參數
+### Parameters
 
 ```
 $ARGUMENTS
 ```
 
-| 參數   | 說明                                   |
-| ------ | -------------------------------------- |
-| `save` | 寫入 `docs/ai/intake/<date>-intake.md` |
-| 無參數 | 只輸出不儲存                           |
+| Parameter | Description                                    |
+| --------- | ---------------------------------------------- |
+| `save`    | Write to `docs/ai/intake/<date>-intake.md`     |
+| No param  | Output only, do not save                       |
 
-### 執行流程
+### Execution Flow
 
 ```bash
-# Step 1: 檢查快取
+# Step 1: Check cache
 CACHE_DIR=~/.claude/cache/repo-intake
 if [ -f "$CACHE_DIR"/*/LATEST.json ]; then
-  echo "ℹ️ 已有快取，將使用 auto 模式（有變更才重掃）"
+  echo "ℹ️ Cache exists, will use auto mode (only rescan on changes)"
 fi
 
-# Step 2: 執行掃描
+# Step 2: Run scan
 node skills/repo-intake/scripts/intake_cached.js --mode auto --top 10
 
-# Step 3: 如果有 save 參數，寫入 docs
-# 輸出到 docs/ai/intake/$(date +%F)-intake.md
+# Step 3: If save parameter provided, write to docs
+# Output to docs/ai/intake/$(date +%F)-intake.md
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程：
+Follow the workflow in the skill:
 
-| 階段 | 參考文件                                    |
-| ---- | ------------------------------------------- |
-| 流程 | @skills/repo-intake/SKILL.md |
+| Phase    | Reference                                   |
+| -------- | ------------------------------------------- |
+| Workflow | @skills/repo-intake/SKILL.md |
 
 ## When to Use
 
-- ✅ 首次接手專案
-- ✅ 專案結構大改後
-- ✅ 快取過期需更新
+- ✅ First time onboarding a project
+- ✅ After major project structure changes
+- ✅ Cache expired, needs refresh
 
 ## When NOT to Use
 
-- ❌ 日常開發（快取已存在）
-- ❌ 只需查找特定文件（用 Glob/Grep）
+- ❌ Daily development (cache already exists)
+- ❌ Only need to find specific files (use Glob/Grep)
 
 ## Examples
 
 ```bash
-# 首次盤點
+# Initial inventory
 /repo-intake
 
-# 盤點並寫入 docs
+# Inventory and write to docs
 /repo-intake save
 ```

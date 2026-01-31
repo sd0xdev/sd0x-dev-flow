@@ -6,11 +6,11 @@
 
 ## Endpoints
 
-| Endpoint     | Method | Description    |
-| ------------ | ------ | -------------- |
-| `/positions` | POST   | 獲取 Portfolio 持倉 |
-| `/chains`    | GET    | 支援鏈列表     |
-| `/protocols` | GET    | 支援協議列表   |
+| Endpoint     | Method | Description             |
+| ------------ | ------ | ----------------------- |
+| `/positions` | POST   | Get portfolio positions |
+| `/chains`    | GET    | Supported chains list   |
+| `/protocols` | GET    | Supported protocols list |
 
 ## POST /positions
 
@@ -18,14 +18,14 @@
 
 ```typescript
 {
-  accountAddress: string;      // 必填，錢包地址
-  networkId: string;           // 必填，如 '<impl>--<chainId>'
-  protocolIds?: string;        // 可選，逗號分隔
-  isForceRefresh?: boolean;    // 繞過緩存
-  summaryOnly?: boolean;       // 僅返回總額
+  accountAddress: string;      // Required, wallet address
+  networkId: string;           // Required, e.g. '<impl>--<chainId>'
+  protocolIds?: string;        // Optional, comma-separated
+  isForceRefresh?: boolean;    // Bypass cache
+  summaryOnly?: boolean;       // Return totals only
   sortBy?: 'value_desc' | 'value_asc' | 'none';
-  groupMerge?: boolean;        // 合併 LP positions（預設 true）
-  currency?: string;           // 預設 'usd'
+  groupMerge?: boolean;        // Merge LP positions (default true)
+  currency?: string;           // Default 'usd'
 }
 ```
 
@@ -34,14 +34,14 @@
 ```typescript
 interface Position {
   networkId: string; // '<impl>--<chainId>', '<impl>--<chainId>'
-  owner: string; // 錢包地址
+  owner: string; // Wallet address
   protocol: string; // 'aave-v3', 'uniswap-v3'
   protocolName?: string;
   category: PositionCategory; // lending, staking, liquidity, etc.
 
-  assets: PositionAsset[]; // 存款、LP 代幣
-  debts: PositionDebt[]; // 借入金額
-  rewards: PositionReward[]; // 可領取獎勵
+  assets: PositionAsset[]; // Deposits, LP tokens
+  debts: PositionDebt[]; // Borrowed amounts
+  rewards: PositionReward[]; // Claimable rewards
   metrics: PositionMetrics; // APY, HF, LTV
 
   source: PositionSource; // provider, fetchedAt, cached
@@ -67,10 +67,10 @@ enum PositionCategory {
 
 ```typescript
 {
-  totalValue: number;      // 資產總值
-  totalReward: number;     // 獎勵總值
-  totalDebt: number;       // 債務總值
-  netWorth: number;        // 淨資產 = value + reward - debt
+  totalValue: number;      // Total asset value
+  totalReward: number;     // Total reward value
+  totalDebt: number;       // Total debt value
+  netWorth: number;        // Net worth = value + reward - debt
   chains: string[];
   protocolCount: number;
   positionCount: number;
@@ -79,23 +79,23 @@ enum PositionCategory {
 
 ### ProtocolSummary
 
-按協議聚合：協議資訊 + 聚合指標 + 位置引用
+Aggregated by protocol: protocol info + aggregated metrics + position references
 
 ## Currency Conversion (3-Tier)
 
-| Tier | Condition        | Handling     |
-| ---- | ---------------- | ------------ |
-| 1    | {PRIMARY_PROVIDER} 原生支援  | 直接傳給 API |
-| 2    | CoinGecko 有匯率 | USD × 匯率   |
-| 3    | 無匯率           | 回退 USD     |
+| Tier | Condition                   | Handling         |
+| ---- | --------------------------- | ---------------- |
+| 1    | {PRIMARY_PROVIDER} natively supported | Pass directly to API |
+| 2    | CoinGecko has exchange rate | USD x rate       |
+| 3    | No exchange rate            | Fallback to USD  |
 
-**原生貨幣**：usd, eur, gbp, jpy, cny, krw, aud, cad, chf, nzd, inr, btc, eth
+**Native currencies**: usd, eur, gbp, jpy, cny, krw, aud, cad, chf, nzd, inr, btc, eth
 
 ## Feature Toggles
 
-| Config                                | Description  |
-| ------------------------------------- | ------------ |
-| `features.portfolio.enabled`          | 全局開關     |
-| `features.portfolio.positionsTtl`     | 位置 TTL     |
-| `features.portfolio.maxStale`         | 最大過期時間 |
-| `features.portfolio.providerGroupMerge` | 合併 LP      |
+| Config                                | Description        |
+| ------------------------------------- | ------------------ |
+| `features.portfolio.enabled`          | Global toggle      |
+| `features.portfolio.positionsTtl`     | Positions TTL      |
+| `features.portfolio.maxStale`         | Max stale duration |
+| `features.portfolio.providerGroupMerge` | Merge LP         |

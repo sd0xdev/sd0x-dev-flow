@@ -8,11 +8,11 @@
 > **Created**: {YYYY-MM-DD}
 > **Status**: Pending
 > **Priority**: {P0|P1|P2}
-> **Tech Spec**: [Link](../planning/xxx.md) ← 方案細節見此
+> **Tech Spec**: [Link](../planning/xxx.md) <- See spec for details
 
 ## Background
 
-{1-2 句說明問題與背景}
+{1-2 sentences describing the problem and context}
 
 ## Requirements
 
@@ -21,17 +21,17 @@
 
 ## Scope
 
-| 範圍 | 說明                     |
-| ---- | ------------------------ |
-| ✅   | {在此單處理的項目}       |
-| ❌   | {不在此單處理，另案處理} |
+| Scope | Description                        |
+| ----- | ---------------------------------- |
+| In    | {Items handled in this request}    |
+| Out   | {Items not handled, separate request} |
 
 ## Related Files
 
-| File                 | Action | Description |
-| -------------------- | ------ | ----------- |
-| `src/service/xxx.ts` | Modify | {簡述變更}  |
-| `src/entity/xxx.ts`  | New    | {簡述用途}  |
+| File                 | Action | Description          |
+| -------------------- | ------ | -------------------- |
+| `src/service/xxx.ts` | Modify | {Brief change description} |
+| `src/entity/xxx.ts`  | New    | {Brief purpose}      |
 
 ## Acceptance Criteria
 
@@ -42,14 +42,14 @@
 
 ## Progress
 
-| Phase | Status | Note |
-| ----- | ------ | ---- |
-| 分析  | ⬜     |      |
-| 開發  | ⬜     |      |
-| 測試  | ⬜     |      |
-| 驗收  | ⬜     |      |
+| Phase      | Status | Note |
+| ---------- | ------ | ---- |
+| Analysis   | -      |      |
+| Development | -     |      |
+| Testing    | -      |      |
+| Acceptance | -      |      |
 
-**Status**: ⬜ 未開始 / 🔄 進行中 / ✅ 完成 / ⛔ 卡住
+**Status**: Not Started / In Progress / Done / Blocked
 
 ## References
 
@@ -62,10 +62,10 @@
 **Format**: `YYYY-MM-DD-kebab-case-title.md`
 
 ```
-2026-01-23-api-performance-optimization.md   ✅
-2026-01-23-api-cache-ttl.md     ✅
-api-optimization.md                         ❌ Missing date
-2026-01-23-API_Optimization.md              ❌ Wrong case
+2026-01-23-api-performance-optimization.md   OK
+2026-01-23-api-cache-ttl.md     OK
+api-optimization.md                         Missing date
+2026-01-23-API_Optimization.md              Wrong case
 ```
 
 ## File Location
@@ -90,10 +90,10 @@ docs/features/{feature}/requests/YYYY-MM-DD-title.md
 
 ## Writing Guidelines
 
-| Principle  | Description                                 |
-| ---------- | ------------------------------------------- |
-| 簡潔扼要   | 背景 1-2 句，需求用列表                     |
-| 引用不內嵌 | 偽代碼/方案細節放 Tech Spec，需求單只引用   |
-| 追蹤進度   | Progress 區塊標記各階段狀態                 |
-| 明確範圍   | Scope 區塊標明「做什麼」與「不做什麼」      |
-| 可驗收     | Acceptance Criteria 用 checkbox，可勾選驗收 |
+| Principle           | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| Concise             | Background 1-2 sentences, requirements as lists      |
+| Reference, don't inline | Pseudocode/spec details go in Tech Spec, request only links |
+| Track progress      | Progress section marks each phase status             |
+| Clear scope         | Scope section defines "what to do" and "what not to do" |
+| Verifiable          | Acceptance Criteria use checkboxes for verification  |

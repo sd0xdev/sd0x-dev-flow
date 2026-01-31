@@ -3,16 +3,16 @@
 ```markdown
 ## Summary
 
-<1-3 句風險與結論>
+<1-3 sentences on risks and conclusions>
 
 ## Findings
 
 ### P0
 
 - [file:line] <title>
-  - 影響：
-  - 修復：
-  - 測試：
+  - Impact:
+  - Fix:
+  - Test:
 
 ### P1
 
@@ -28,13 +28,13 @@
 
 ## Tests
 
-- unit: <建議>
-- integration: <建議>
-- e2e: <建議>
+- unit: <suggestion>
+- integration: <suggestion>
+- e2e: <suggestion>
 
 ## Merge Gate
 
-✅ Ready / ⛔ Blocked
+Ready / Blocked
 
-- 阻擋條件（如有）：
+- Blocking conditions (if any):
 ```

@@ -1,5 +1,5 @@
 ---
-description: PR 自我檢視：review changes、產出 checklist、更新 rules
+description: PR self-review — review changes, produce checklist, update rules
 allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 ---
 
@@ -11,9 +11,9 @@ allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 
 ## Task
 
-1. Review：correctness, security, perf
-2. PR checklist：tests, rollout, compat
-3. 發現新規則 → 更新 CLAUDE.md 或 .claude/rules/
+1. Review: correctness, security, perf
+2. PR checklist: tests, rollout, compat
+3. Discover new rules -> update CLAUDE.md or .claude/rules/
 
 ## Output
 
@@ -28,7 +28,7 @@ allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 - [ ] No breaking changes
 - [ ] Docs updated
 
-## Rules Update（如有）
+## Rules Update (if any)
 
 - <proposed patch>
 ```

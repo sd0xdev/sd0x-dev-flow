@@ -1,118 +1,118 @@
 # Code Investigate Output Template
 
-## 報告結構
+## Report Structure
 
 ```
 ┌────────────────────────────────────────┐
-│ 1. 調查問題                            │
+│ 1. Investigation Question              │
 ├────────────────────────────────────────┤
-│ 2. Claude 視角                         │
-│    - 相關檔案                          │
-│    - 核心邏輯                          │
-│    - 資料流                            │
+│ 2. Claude Perspective                  │
+│    - Related files                     │
+│    - Core logic                        │
+│    - Data flow                         │
 ├────────────────────────────────────────┤
-│ 3. Codex 視角                          │
-│    - 相關檔案（獨立發現）              │
-│    - 核心邏輯                          │
-│    - 資料流                            │
+│ 3. Codex Perspective                   │
+│    - Related files (independently found)│
+│    - Core logic                        │
+│    - Data flow                         │
 ├────────────────────────────────────────┤
-│ 4. 整合結論                            │
-│    - 共識點                            │
-│    - 差異點（表格）                    │
-│    - 最終結論                          │
-│    - 可能遺漏                          │
+│ 4. Consolidated Conclusion             │
+│    - Agreement points                  │
+│    - Divergence points (table)         │
+│    - Final conclusion                  │
+│    - Possible gaps                     │
 └────────────────────────────────────────┘
 ```
 
-## 標準報告格式
+## Standard Report Format
 
 ```markdown
-# 代碼調查報告：[主題]
+# Code Investigation Report: [Topic]
 
-## 調查問題
+## Investigation Question
 
-[用戶的原始問題]
-
----
-
-## Claude 視角
-
-### 相關檔案
-
-| 檔案                  | 用途         |
-| --------------------- | ------------ |
-| `src/service/xxx.ts`  | 主要處理邏輯 |
-| `src/provider/yyy.ts` | 外部資料來源 |
-
-### 核心邏輯
-
-[Claude 的理解，含關鍵代碼片段]
-
-### 資料流
-
-[Claude 的分析：輸入 → 處理 → 輸出]
+[User's original question]
 
 ---
 
-## Codex 視角
+## Claude Perspective
 
-### 相關檔案
+### Related Files
 
-| 檔案                 | 用途         | 備註           |
-| -------------------- | ------------ | -------------- |
-| `src/service/xxx.ts` | 主要處理邏輯 | 與 Claude 相同 |
-| `src/util/zzz.ts`    | 工具函數     | Claude 未發現  |
+| File                  | Purpose              |
+| --------------------- | -------------------- |
+| `src/service/xxx.ts`  | Main processing logic|
+| `src/provider/yyy.ts` | External data source |
 
-### 核心邏輯
+### Core Logic
 
-[Codex 的理解]
+[Claude's understanding, with key code snippets]
 
-### 資料流
+### Data Flow
 
-[Codex 的分析]
+[Claude's analysis: input -> processing -> output]
 
 ---
 
-## 整合結論
+## Codex Perspective
 
-### 共識點
+### Related Files
 
-- [雙方都認同的發現 1]
-- [雙方都認同的發現 2]
+| File                 | Purpose              | Note                  |
+| -------------------- | -------------------- | --------------------- |
+| `src/service/xxx.ts` | Main processing logic| Same as Claude        |
+| `src/util/zzz.ts`   | Utility functions    | Not found by Claude   |
 
-### 差異點
+### Core Logic
 
-| 議題     | Claude        | Codex        |
-| -------- | ------------- | ------------ |
-| [議題 1] | [Claude 觀點] | [Codex 觀點] |
+[Codex's understanding]
 
-### 最終結論
+### Data Flow
 
-[整合後的完整理解]
+[Codex's analysis]
 
-### 可能遺漏
+---
 
-- [Codex 發現但 Claude 沒注意到的]
-- [需要進一步調查的面向]
+## Consolidated Conclusion
+
+### Agreement Points
+
+- [Finding both sides agree on 1]
+- [Finding both sides agree on 2]
+
+### Divergence Points
+
+| Topic      | Claude            | Codex             |
+| ---------- | ----------------- | ----------------- |
+| [Topic 1]  | [Claude's view]   | [Codex's view]    |
+
+### Final Conclusion
+
+[Complete understanding after integration]
+
+### Possible Gaps
+
+- [Found by Codex but missed by Claude]
+- [Aspects needing further investigation]
 ```
 
-## 報告撰寫原則
+## Report Writing Principles
 
-| 原則     | 說明                      | 檢查項               |
-| -------- | ------------------------- | -------------------- |
-| 視角分離 | Claude/Codex 結論分開呈現 | 兩個視角各有獨立區塊 |
-| 標示來源 | 每個發現標明是誰找到的    | 差異點表格註明來源   |
-| 差異優先 | 重點呈現雙方不同的發現    | 差異點有詳細說明     |
-| 整合總結 | 最後給出整合後的完整理解  | 有最終結論區塊       |
-| 承認遺漏 | 列出可能被忽略的面向      | 有可能遺漏區塊       |
+| Principle            | Description                              | Checklist                           |
+| -------------------- | ---------------------------------------- | ----------------------------------- |
+| Separate perspectives| Claude/Codex conclusions presented separately | Two perspectives have independent sections |
+| Mark sources         | Each finding attributed to who found it  | Divergence table notes source       |
+| Prioritize differences| Focus on presenting differing findings  | Divergence points have detailed explanation |
+| Integrated summary   | Provide complete understanding at the end| Has final conclusion section        |
+| Acknowledge gaps     | List potentially overlooked aspects      | Has possible gaps section           |
 
-## 報告品質檢查
+## Report Quality Checklist
 
-| 檢查項       | 標準                    |
-| ------------ | ----------------------- |
-| 問題清晰     | 調查問題明確記錄        |
-| 視角獨立     | Claude/Codex 結論未混淆 |
-| 檔案路徑完整 | 使用絕對路徑            |
-| 代碼片段相關 | 引用的代碼支持結論      |
-| 差異有解釋   | 差異點說明為何不同      |
-| 結論可行動   | 讀者知道下一步做什麼    |
+| Check                | Standard                                |
+| -------------------- | --------------------------------------- |
+| Question is clear    | Investigation question clearly recorded |
+| Views independent    | Claude/Codex conclusions not mixed      |
+| File paths complete  | Using absolute paths                    |
+| Code snippets relevant| Quoted code supports conclusions       |
+| Differences explained| Divergence points explain why they differ|
+| Conclusion actionable| Reader knows what to do next            |

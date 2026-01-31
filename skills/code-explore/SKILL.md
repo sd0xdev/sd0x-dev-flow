@@ -9,144 +9,144 @@ context: fork
 
 ## Trigger
 
-- Keywords: code explore, 代碼調查, 調研代碼, trace code, 追蹤代碼, 功能理解, 快速調查, 代碼探索
+- Keywords: code explore, code investigation, research code, trace code, feature understanding, quick investigation, code exploration
 
 ## When to Use
 
-- 快速理解某功能如何運作
-- 追蹤執行路徑 / 資料流
-- 診斷問題根因
-- 不需要雙重確認（不需 Codex 交叉驗證）
+- Quickly understand how a feature works
+- Trace execution paths / data flow
+- Diagnose problem root causes
+- No dual confirmation needed (no Codex cross-validation)
 
 ## When NOT to Use
 
-| 場景         | 替代方案                              |
-| ------------ | ------------------------------------- |
-| 需要雙重確認 | `/code-investigate`（Claude + Codex） |
-| Git 歷史追蹤 | `/git-investigate`                    |
-| 系統驗證     | `/feature-verify`                     |
-| 代碼審查     | `/codex-review-fast`                  |
+| Scenario                | Alternative                           |
+| ----------------------- | ------------------------------------- |
+| Need dual confirmation  | `/code-investigate` (Claude + Codex)  |
+| Git history tracking    | `/git-investigate`                    |
+| System verification     | `/feature-verify`                     |
+| Code review             | `/codex-review-fast`                  |
 
 ## Workflow
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│ Phase 1: 定位入口                                         │
+│ Phase 1: Locate Entry Point                                │
 ├──────────────────────────────────────────────────────────┤
-│ 1. Grep 關鍵字 → 找相關檔案                               │
-│ 2. 識別入口點（Controller / Service / Provider）          │
-│ 3. 建立檔案清單                                           │
+│ 1. Grep keywords -> find related files                     │
+│ 2. Identify entry points (Controller / Service / Provider) │
+│ 3. Build file list                                         │
 └──────────────────────────────────────────────────────────┘
                           ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Phase 2: 追蹤路徑                                         │
+│ Phase 2: Trace Path                                        │
 ├──────────────────────────────────────────────────────────┤
-│ 1. 從入口點開始 Read                                      │
-│ 2. 識別依賴 → 繼續追蹤                                    │
-│ 3. 畫出調用鏈（A → B → C）                                │
+│ 1. Start from entry point, Read                            │
+│ 2. Identify dependencies -> continue tracing               │
+│ 3. Map call chain (A -> B -> C)                            │
 └──────────────────────────────────────────────────────────┘
                           ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Phase 3: 理解邏輯                                         │
+│ Phase 3: Understand Logic                                  │
 ├──────────────────────────────────────────────────────────┤
-│ 1. 核心邏輯是什麼？                                       │
-│ 2. 資料流向如何？                                         │
-│ 3. 錯誤處理機制？                                         │
-│ 4. 關鍵決策點？                                           │
+│ 1. What is the core logic?                                 │
+│ 2. How does data flow?                                     │
+│ 3. Error handling mechanisms?                              │
+│ 4. Key decision points?                                    │
 └──────────────────────────────────────────────────────────┘
                           ↓
 ┌──────────────────────────────────────────────────────────┐
-│ Phase 4: 輸出報告                                         │
+│ Phase 4: Output Report                                     │
 ├──────────────────────────────────────────────────────────┤
-│ 1. 架構概覽（圖 / 表）                                    │
-│ 2. 關鍵檔案清單                                           │
-│ 3. 執行流程                                               │
-│ 4. 發現 / 注意事項                                        │
+│ 1. Architecture overview (diagram / table)                 │
+│ 2. Key files list                                          │
+│ 3. Execution flow                                          │
+│ 4. Findings / notes                                        │
 └──────────────────────────────────────────────────────────┘
 ```
 
-## 搜尋策略
+## Search Strategy
 
-| 目標        | 策略                                                     |
-| ----------- | -------------------------------------------------------- |
-| 功能入口    | `Grep "export class.*Controller"` / `Grep "@Get\|@Post"` |
-| Service 層  | `Grep "export class.*Service"`                           |
-| Provider 層 | `Glob "src/provider/**/*.ts"`                            |
-| 配置        | `Read {CONFIG_FILE}`                              |
-| 資料模型    | `Glob "src/model/**/*.ts"`                               |
+| Target          | Strategy                                                 |
+| --------------- | -------------------------------------------------------- |
+| Feature entry   | `Grep "export class.*Controller"` / `Grep "@Get\|@Post"` |
+| Service layer   | `Grep "export class.*Service"`                           |
+| Provider layer  | `Glob "src/provider/**/*.ts"`                            |
+| Configuration   | `Read {CONFIG_FILE}`                                     |
+| Data models     | `Glob "src/model/**/*.ts"`                               |
 
-## 輸出格式
+## Output Format
 
 ```markdown
-## 調查報告：{主題}
+## Investigation Report: {Topic}
 
-### 架構概覽
+### Architecture Overview
 
-{ASCII 或 Mermaid 圖}
+{ASCII or Mermaid diagram}
 
-### 關鍵檔案
+### Key Files
 
-| 檔案              | 職責 |
-| ----------------- | ---- |
-| `path/to/file.ts` | 說明 |
+| File              | Responsibility |
+| ----------------- | -------------- |
+| `path/to/file.ts` | Description   |
 
-### 執行流程
+### Execution Flow
 
-1. {步驟 1}
-2. {步驟 2}
+1. {Step 1}
+2. {Step 2}
 3. ...
 
-### 資料流
+### Data Flow
 
-{描述資料如何流動}
+{Describe how data flows}
 
-### 發現
+### Findings
 
-- {重要發現 1}
-- {重要發現 2}
+- {Important finding 1}
+- {Important finding 2}
 
-### 注意事項
+### Notes
 
-- {潛在問題 / edge case}
+- {Potential issue / edge case}
 ```
 
 ## Examples
 
-### 功能理解
+### Feature Understanding
 
 ```
-輸入：調查 用戶資料怎麼查詢的
-Phase 1: Grep "balance" → 找到 UserService, UserController
-Phase 2: Controller → Service → Provider 調用鏈
-Phase 3: 理解 查詢 + cache 機制
-Phase 4: 輸出報告 + 流程圖
+Input: Investigate how user data queries work
+Phase 1: Grep "balance" -> find UserService, UserController
+Phase 2: Controller -> Service -> Provider call chain
+Phase 3: Understand query + cache mechanism
+Phase 4: Output report + flow diagram
 ```
 
-### 問題診斷
+### Problem Diagnosis
 
 ```
-輸入：為什麼 某個 API 回傳有時候是空的？
-Phase 1: Grep "getData" + "cache" → 相關檔案
-Phase 2: 追蹤 資料獲取路徑
-Phase 3: 識別 fallback 邏輯 + timeout 處理
-Phase 4: 列出可能原因 + 建議
+Input: Why does this API sometimes return empty?
+Phase 1: Grep "getData" + "cache" -> related files
+Phase 2: Trace data retrieval path
+Phase 3: Identify fallback logic + timeout handling
+Phase 4: List possible causes + recommendations
 ```
 
-### 架構理解
+### Architecture Understanding
 
 ```
-輸入：用戶模組的整體架構是什麼？
-Phase 1: Glob "src/**/*user*" → 列出所有相關檔案
-Phase 2: 識別層級關係（Controller → Service → Provider）
-Phase 3: 理解各層職責
-Phase 4: 輸出架構圖 + 模組說明
+Input: What is the overall architecture of the user module?
+Phase 1: Glob "src/**/*user*" -> list all related files
+Phase 2: Identify layer relationships (Controller -> Service -> Provider)
+Phase 3: Understand each layer's responsibilities
+Phase 4: Output architecture diagram + module description
 ```
 
-## 與 code-investigate 的差異
+## Difference from code-investigate
 
-| 維度   | code-explore       | code-investigate   |
-| ------ | ------------------ | ------------------ |
-| 速度   | 快（單視角）       | 慢（雙視角）       |
-| 確認度 | 單一視角           | 交叉驗證           |
-| 工具   | 純 Claude          | Claude + Codex     |
-| 適用   | 快速調查、日常理解 | 重要決策、需要確認 |
+| Dimension    | code-explore           | code-investigate       |
+| ------------ | ---------------------- | ---------------------- |
+| Speed        | Fast (single view)     | Slow (dual view)       |
+| Confirmation | Single perspective     | Cross-validation       |
+| Tools        | Pure Claude            | Claude + Codex         |
+| Use case     | Quick investigation    | Important decisions    |

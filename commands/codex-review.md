@@ -1,5 +1,5 @@
 ---
-description: 用 Codex MCP 取得完整 second-opinion（含 lint:fix + build）。支援循環審核上下文保持。
+description: Full second-opinion using Codex MCP (with lint:fix + build). Supports review loop with context preservation.
 argument-hint: [--no-tests] [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Read, Grep, Glob
 ---
@@ -11,24 +11,24 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yar
 
 ## Task
 
-你現在要使用 Codex MCP 進行完整代碼審查（含 lint:fix + build + review）。
+You will use Codex MCP for a full code review (with lint:fix + build + review).
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-| 參數                    | 說明                             |
-| ----------------------- | -------------------------------- |
-| `--no-tests`            | 跳過 lint:fix 和 build 步驟      |
-| `--focus "<text>"`      | 聚焦特定區域（如 "auth"）        |
-| `--base <gitref>`       | 與指定分支比較（如 origin/main） |
-| `--continue <threadId>` | 繼續之前的審核會話               |
+| Parameter               | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `--no-tests`            | Skip lint:fix and build steps               |
+| `--focus "<text>"`      | Focus on specific area (e.g. "auth")        |
+| `--base <gitref>`       | Compare with specified branch (e.g. origin/main) |
+| `--continue <threadId>` | Continue a previous review session          |
 
-### Step 1: 執行本地檢查（除非 --no-tests）
+### Step 1: Run Local Checks (unless --no-tests)
 
-如果沒有 `--no-tests` 參數，先執行本地檢查：
+If `--no-tests` not specified, run local checks first:
 
 ```bash
 # lint:fix
@@ -38,216 +38,216 @@ $ARGUMENTS
 {BUILD_COMMAND}
 ```
 
-記錄檢查結果（成功/失敗），保存為 `LOCAL_CHECKS`。
+Record check results (pass/fail), save as `LOCAL_CHECKS`.
 
-### Step 2: 收集 Git Diff
+### Step 2: Collect Git Diff
 
 ```bash
-# 如果有 --base 參數，與指定分支比較；否則查看未提交變更
+# If --base parameter, compare with specified branch; otherwise check uncommitted changes
 git diff HEAD --no-color | head -2000
 ```
 
-將 diff 內容保存為 `GIT_DIFF` 變數。
+Save diff content as `GIT_DIFF` variable.
 
-### Step 3: 執行審核
+### Step 3: Execute Review
 
-**情況 A：首次審核（無 `--continue`）**
+**Case A: First review (no `--continue`)**
 
-使用 `mcp__codex__codex` 工具啟動新審核會話：
+Use `mcp__codex__codex` to start a new review session:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是資深 Code Reviewer。請對以下代碼變更進行全面審核。
+  prompt: `You are a senior Code Reviewer. Perform a comprehensive review of the following code changes.
 
-## 本地檢查結果
-${LOCAL_CHECKS || '跳過（--no-tests）'}
+## Local Check Results
+${LOCAL_CHECKS || 'Skipped (--no-tests)'}
 
 ## Git Diff
 \`\`\`diff
 ${GIT_DIFF}
 \`\`\`
 
-${FOCUS ? `## 聚焦區域\n請特別關注：${FOCUS}` : ''}
+${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在審核代碼時，你**必須**執行以下調研，不要只依賴上面提供的 diff：
+When reviewing code, you **must** perform the following research, do not rely only on the diff above:
 
-### Git 探索（優先）
-1. 查看變更狀態：\`git status\`
-2. 查看變更的檔案：\`git diff --name-only HEAD\`
-3. 查看特定檔案的完整變更：\`git diff HEAD -- <file-path>\`
-4. 查看變更檔案的完整內容：\`cat <變更的檔案> | head -200\`
+### Git Exploration (Priority)
+1. Check change status: \`git status\`
+2. Check changed files: \`git diff --name-only HEAD\`
+3. Check full changes for specific file: \`git diff HEAD -- <file-path>\`
+4. Check full content of changed files: \`cat <changed file> | head -200\`
 
-### 專案調研
-1. 了解專案結構：\`ls src/\`、\`ls test/\`
-2. 搜尋相關源碼：\`grep -r "functionName" src/ --include="*.ts" -l | head -10\`
-3. 讀取完整源碼了解上下文：\`cat <源碼路徑> | head -200\`
-4. 搜尋現有測試：\`ls test/unit/\` 或 \`grep -r "describe" test/ --include="*.ts" -l | head -5\`
-5. 讀取相關測試了解預期行為：\`cat <測試路徑> | head -100\`
+### Project Research
+1. Understand project structure: \`ls src/\`, \`ls test/\`
+2. Search related source: \`grep -r "functionName" src/ --include="*.ts" -l | head -10\`
+3. Read full source for context: \`cat <source path> | head -200\`
+4. Search existing tests: \`ls test/unit/\` or \`grep -r "describe" test/ --include="*.ts" -l | head -5\`
+5. Read related tests for expected behavior: \`cat <test path> | head -100\`
 
-### 驗證重點
-- 變更是否符合現有代碼風格？
-- 變更是否有對應的測試？
-- 變更是否影響其他模組？
-- 變更中的依賴是否正確？
+### Verification Focus
+- Do changes follow existing code style?
+- Do changes have corresponding tests?
+- Do changes affect other modules?
+- Are dependencies correct?
 
-## 審核維度
+## Review Dimensions
 
-### 正確性
-- 邏輯錯誤、邊界條件、null 處理
-- 類型安全（TypeScript）
-- 錯誤處理覆蓋
+### Correctness
+- Logic errors, boundary conditions, null handling
+- Type safety (TypeScript)
+- Error handling coverage
 
-### 安全性
-- 注入攻擊（SQL/NoSQL/Command）
-- 認證/授權繞過
-- 敏感資料處理
+### Security
+- Injection attacks (SQL/NoSQL/Command)
+- Authentication/authorization bypass
+- Sensitive data handling
 - OWASP Top 10
 
-### 效能
-- N+1 查詢
-- 記憶體洩漏
-- 阻塞操作
-- 不必要的計算
+### Performance
+- N+1 queries
+- Memory leaks
+- Blocking operations
+- Unnecessary computations
 
-### 可維護性
-- 命名清晰度
-- 函數職責單一
-- 適當的抽象層級
-- 測試可測性
+### Maintainability
+- Naming clarity
+- Single responsibility
+- Appropriate abstraction level
+- Testability
 
-## 嚴重等級
+## Severity Levels
 
-- **P0**: 系統崩潰、資料遺失、安全漏洞
-- **P1**: 功能異常、效能嚴重下降
-- **P2**: 程式碼品質、可維護性
-- **Nit**: 風格建議
+- **P0**: System crash, data loss, security vulnerability
+- **P1**: Functional anomaly, severe performance degradation
+- **P2**: Code quality, maintainability
+- **Nit**: Style suggestion
 
-## 輸出格式
+## Output Format
 
 ### Findings
 
 #### P0
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
 #### P1
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
 #### P2
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-### Tests 建議
-- 建議新增的測試案例
+### Tests Recommendation
+- Suggested new test cases
 
 ### Merge Gate
-- ✅ Ready：無 P0/P1
-- ⛔ Blocked：有 P0/P1，需修復`,
+- ✅ Ready: No P0/P1
+- ⛔ Blocked: Has P0/P1, needs fix`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-**記住返回的 `threadId`，用於後續循環審核。**
+**Remember the returned `threadId` for subsequent review loops.**
 
-**情況 B：循環審核（有 `--continue`）**
+**Case B: Loop review (has `--continue`)**
 
-使用 `mcp__codex__codex-reply` 繼續之前的會話：
+Use `mcp__codex__codex-reply` to continue the previous session:
 
 ```typescript
 mcp__codex__codex -
   reply({
-    threadId: '<從 --continue 參數獲取>',
-    prompt: `我已修復之前指出的問題。請重新審核：
+    threadId: '<from --continue parameter>',
+    prompt: `I have fixed the previously identified issues. Please re-review:
 
-## 本地檢查結果
-${LOCAL_CHECKS || '跳過'}
+## Local Check Results
+${LOCAL_CHECKS || 'Skipped'}
 
-## 新的 Git Diff
+## New Git Diff
 \`\`\`diff
 ${GIT_DIFF}
 \`\`\`
 
-請驗證：
-1. 之前的 P0/P1 問題是否已正確修復？
-2. 修復是否引入了新問題？
-3. 更新 Merge Gate 狀態`,
+Please verify:
+1. Have previous P0/P1 issues been correctly fixed?
+2. Did fixes introduce new issues?
+3. Update Merge Gate status`,
   });
 ```
 
-### Step 4: 整合輸出
+### Step 4: Consolidate Output
 
-將 Codex 的審核結果和本地檢查結果整合為標準格式。
+Integrate Codex review results and local check results into the standard format.
 
-## Review Loop 自動化
+## Review Loop Automation
 
-**⚠️ 遵循 @CLAUDE.md 審核循環規則 ⚠️**
+**⚠️ Follow @CLAUDE.md review loop rules ⚠️**
 
-當審核結果為 ⛔ Blocked 時：
+When review result is ⛔ Blocked:
 
-1. 記住 `threadId`
-2. 修復 P0/P1 問題
-3. 使用 `--continue <threadId>` 重新審核
-4. 重複直到 ✅ Ready
+1. Remember the `threadId`
+2. Fix P0/P1 issues
+3. Re-review using `--continue <threadId>`
+4. Repeat until ✅ Ready
 
 ## Output
 
 ```markdown
-## Codex 完整審核報告
+## Codex Full Review Report
 
-### 本地檢查
+### Local Checks
 
 - lint:fix: ✅ Pass / ❌ Fail
 - build: ✅ Pass / ❌ Fail
 
-### 審核範圍
+### Review Scope
 
-- 變更統計：<git diff --stat 摘要>
-- 聚焦區域：<focus 或 "全部">
+- Change stats: <git diff --stat summary>
+- Focus area: <focus or "all">
 
 ### Findings
 
-#### P0 (必須修復)
+#### P0 (Must Fix)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-#### P1 (應該修復)
+#### P1 (Should Fix)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-#### P2 (建議改進)
+#### P2 (Suggested Improvement)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-### Tests 建議
+### Tests Recommendation
 
-- 建議新增的測試案例
+- Suggested new test cases
 
 ### Merge Gate
 
-✅ Ready / ⛔ Blocked (需修復 N 個 P0/P1)
+✅ Ready / ⛔ Blocked (need to fix N P0/P1 issues)
 
-### 循環審核
+### Loop Review
 
-如需修復後重新審核，請使用：
+To re-review after fixes, use:
 `/codex-review --continue <threadId>`
 ```
 
 ## Examples
 
 ```bash
-# 完整審核（含 lint + build）
+# Full review (with lint + build)
 /codex-review
 
-# 跳過本地檢查
+# Skip local checks
 /codex-review --no-tests
 
-# 聚焦特定區域
+# Focus on specific area
 /codex-review --focus "database queries"
 
-# 與 main 分支比較
+# Compare with main branch
 /codex-review --base origin/main
 
-# 修復後繼續審核（保持上下文）
+# Continue review after fixes (preserve context)
 /codex-review --continue abc123
 ```
