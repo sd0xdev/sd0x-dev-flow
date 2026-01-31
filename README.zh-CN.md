@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**语言**: [English](README.md) | [繁體中文](README.zh-TW.md) | 简体中文 | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
+
 [Claude Code](https://claude.com/claude-code) 开发工作流插件，可选集成 Codex MCP。
 
 90+ 个工具，覆盖代码审查、测试、问题排查、安全审计与 DevOps 自动化。
@@ -61,20 +63,20 @@ sequenceDiagram
     V-->>D: 通过/失败 + 修复建议
 
     D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + 门禁 + threadId
+    X-->>D: P0/P1/P2 + Gate + threadId
 
     alt 发现问题
         D->>D: 修复 P0/P1
         D->>X: /codex-review-fast --continue <threadId>
         Note over X: 上下文保留
-        X-->>D: 验证修复 + 更新门禁
+        X-->>D: 验证修复 + 更新 Gate
     end
 
     D->>X: /codex-test-review
     X-->>D: 覆盖率 + 建议
 
     D->>C: /precommit
-    C-->>D: 门禁 + 准备提交
+    C-->>D: Gate + 准备提交
 
     opt PR 准备
         D->>C: /pr-review
@@ -92,7 +94,7 @@ sequenceDiagram
 | `/repo-intake` | 一次性项目盘点扫描 |
 | `/bug-fix` | 缺陷修复工作流 |
 | `/codex-implement` | Codex 编写代码 |
-| `/codex-architect` | 架构建议（第三视角） |
+| `/codex-architect` | 架构建议（第三大脑） |
 | `/code-explore` | 快速代码探索 |
 | `/git-investigate` | 追踪代码历史 |
 | `/issue-analyze` | 深度问题分析 |
@@ -116,9 +118,9 @@ sequenceDiagram
 
 | 命令 | 说明 |
 |------|------|
-| `/verify` | lint -> 类型检查 -> 单元 -> 集成 -> 端到端 |
-| `/precommit` | lint 修复 -> 构建 -> 单元测试 |
-| `/precommit-fast` | lint 修复 -> 单元测试 |
+| `/verify` | lint -> typecheck -> unit -> integration -> e2e |
+| `/precommit` | lint:fix -> build -> test:unit |
+| `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | npm 依赖安全审计 |
 
 ### 规划
@@ -157,7 +159,7 @@ sequenceDiagram
 | `security` | OWASP Top 10 检查清单 |
 | `git-workflow` | 分支命名、提交规范 |
 | `docs-writing` | 表格 > 段落，Mermaid > 文字 |
-| `docs-numbering` | 文档前缀规范（0-可行性, 2-规格） |
+| `docs-numbering` | 文档前缀规范（0-feasibility, 2-spec） |
 | `logging` | 结构化 JSON，禁止泄露敏感信息 |
 
 ## 钩子
@@ -208,7 +210,7 @@ sequenceDiagram
 
 - **命令**：用户通过 `/...` 触发
 - **技能**：按需加载的知识库
-- **代理**：拥有特定工具的隔离子进程
+- **代理**：拥有特定工具的隔离子代理
 - **钩子**：自动化防护栏（格式化、审查状态、停止守卫）
 - **规则**：始终生效的规范（自动加载）
 

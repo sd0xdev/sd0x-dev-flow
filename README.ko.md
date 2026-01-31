@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**언어**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | 한국어 | [Español](README.es.md)
+
 [Claude Code](https://claude.com/claude-code)용 개발 워크플로 플러그인. Codex MCP 연동은 선택 사항입니다.
 
 90개 이상의 도구로 코드 리뷰, 테스트, 이슈 조사, 보안 감사, DevOps 자동화를 지원합니다.
@@ -92,7 +94,7 @@ sequenceDiagram
 | `/repo-intake` | 프로젝트 초기 스캔 (최초 1회) |
 | `/bug-fix` | Bug/Issue 수정 워크플로 |
 | `/codex-implement` | Codex가 코드 작성 |
-| `/codex-architect` | 아키텍처 자문 (제3의 시각) |
+| `/codex-architect` | 아키텍처 자문 (제3의 두뇌) |
 | `/code-explore` | 코드베이스 빠른 탐색 |
 | `/git-investigate` | 코드 변경 이력 추적 |
 | `/issue-analyze` | Issue 심층 분석 |
@@ -144,7 +146,7 @@ sequenceDiagram
 | `/de-ai-flavor` | AI 생성 흔적 제거 |
 | `/create-skill` | 새 스킬 생성 |
 | `/pr-review` | PR 셀프 리뷰 |
-| `/zh-tw` | 정체자 중국어로 변환 |
+| `/zh-tw` | 번체 중국어로 변환 |
 
 ## Rules
 
@@ -157,7 +159,7 @@ sequenceDiagram
 | `security` | OWASP Top 10 체크리스트 |
 | `git-workflow` | 브랜치 네이밍, 커밋 컨벤션 |
 | `docs-writing` | 테이블 > 문단, Mermaid > 텍스트 |
-| `docs-numbering` | 문서 접두사 컨벤션 (0-타당성, 2-스펙) |
+| `docs-numbering` | 문서 접두사 컨벤션 (0-feasibility, 2-spec) |
 | `logging` | 구조화된 JSON, 시크릿 금지 |
 
 ## Hooks
@@ -208,7 +210,7 @@ Command (진입점) -> Skill (기능) -> Agent (실행 환경)
 
 - **Commands**: 사용자가 `/...`로 실행
 - **Skills**: 요청 시 로드되는 지식 베이스
-- **Agents**: 전용 도구를 가진 격리된 서브프로세스
+- **Agents**: 전용 도구를 가진 격리된 서브에이전트
 - **Hooks**: 자동화 가드레일 (포맷팅, 리뷰 상태, 스톱 가드)
 - **Rules**: 항상 활성화된 컨벤션 (자동 로드)
 

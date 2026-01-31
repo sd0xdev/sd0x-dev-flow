@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**Idioma**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | Español
+
 Plugin de workflow de desarrollo para [Claude Code](https://claude.com/claude-code) con integración opcional de Codex MCP.
 
 Más de 90 herramientas para code review, testing, investigación, auditoría de seguridad y automatización DevOps.
@@ -44,7 +46,7 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 
 ```mermaid
 sequenceDiagram
-    participant D as Developer
+    participant D as Desarrollador
     participant C as Claude
     participant X as Codex MCP
     participant V as Verify
@@ -92,7 +94,7 @@ sequenceDiagram
 | `/repo-intake` | Escaneo inicial del proyecto (una sola vez) |
 | `/bug-fix` | Workflow de corrección de bugs |
 | `/codex-implement` | Codex escribe código |
-| `/codex-architect` | Consultoría de arquitectura (tercera perspectiva) |
+| `/codex-architect` | Consultoría de arquitectura (tercer cerebro) |
 | `/code-explore` | Exploración rápida del codebase |
 | `/git-investigate` | Rastreo del historial de código |
 | `/issue-analyze` | Análisis profundo de issues |
@@ -157,7 +159,7 @@ sequenceDiagram
 | `security` | Checklist OWASP Top 10 |
 | `git-workflow` | Naming de branches, convenciones de commits |
 | `docs-writing` | Tablas > párrafos, Mermaid > texto |
-| `docs-numbering` | Prefijos de documentos (0-viabilidad, 2-spec) |
+| `docs-numbering` | Prefijos de documentos (0-feasibility, 2-spec) |
 | `logging` | JSON estructurado, sin secrets |
 
 ## Hooks
@@ -208,7 +210,7 @@ Command (entrada) -> Skill (capacidad) -> Agent (entorno)
 
 - **Commands**: El usuario los ejecuta con `/...`
 - **Skills**: Knowledge bases cargadas bajo demanda
-- **Agents**: Subprocesos aislados con herramientas específicas
+- **Agents**: Subagentes aislados con herramientas específicas
 - **Hooks**: Guardrails automatizados (formateo, estado de review, stop guard)
 - **Rules**: Convenciones siempre activas (carga automática)
 
