@@ -8,60 +8,60 @@ allowed-tools: Read, Grep, Glob, Write, Task
 
 ## Trigger
 
-- Keywords: create skill, new skill, 建 skill, refactor skill, update skill, 重構 skill
+- Keywords: create skill, new skill, build skill, refactor skill, update skill, restructure skill
 
 ## Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│         Phase 1: 確認目標                                        │
+│         Phase 1: Confirm Objective                              │
 ├─────────────────────────────────────────────────────────────────┤
-│ 1. 新建 or 重構？                                                │
-│ 2. Skill 名稱（kebab-case）                                      │
-│ 3. 用途（一句話）                                                │
-│ 4. 觸發關鍵字                                                    │
+│ 1. New or Refactor?                                             │
+│ 2. Skill name (kebab-case)                                      │
+│ 3. Purpose (one sentence)                                       │
+│ 4. Trigger keywords                                             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│         Phase 2: 選擇載體                                        │
+│         Phase 2: Choose Vehicle                                 │
 ├─────────────────────────────────────────────────────────────────┤
 │ ┌─────────────┬────────────────────────────────────────────┐    │
-│ │ 載體        │ 適用場景                                   │    │
+│ │ Vehicle     │ Applicable Scenario                        │    │
 │ ├─────────────┼────────────────────────────────────────────┤    │
-│ │ CLAUDE.md   │ 全域、每次都需要、穩定規則                 │    │
-│ │ Skill       │ 按需載入、領域知識、工作流                 │    │
-│ │ Hook        │ 每次必做、零例外（lint、禁止操作）         │    │
-│ │ Subagent    │ 大量讀檔、隔離上下文                       │    │
+│ │ CLAUDE.md   │ Global, always needed, stable rules        │    │
+│ │ Skill       │ On-demand, domain knowledge, workflows     │    │
+│ │ Hook        │ Every time, zero exceptions (lint, blocks) │    │
+│ │ Subagent    │ Heavy file reading, isolated context       │    │
 │ └─────────────┴────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│         Phase 3: 設計結構                                        │
+│         Phase 3: Design Structure                               │
 ├─────────────────────────────────────────────────────────────────┤
 │ skills/{name}/                                          │
-│ ├── SKILL.md              # 工作流（觸發載入）                   │
-│ ├── references/           # 知識庫（需要才讀）                   │
+│ ├── SKILL.md              # Workflow (loaded on trigger)        │
+│ ├── references/           # Knowledge base (read on demand)     │
 │ │   └── *.md                                                    │
-│ └── scripts/              # 可執行腳本（確定性操作）             │
+│ └── scripts/              # Executable scripts (deterministic)  │
 │     └── *.sh                                                    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│         Phase 4: 撰寫 SKILL.md                                   │
+│         Phase 4: Write SKILL.md                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│ 1. Frontmatter（name, description, allowed-tools, context）      │
+│ 1. Frontmatter (name, description, allowed-tools, context)      │
 │ 2. When to use / NOT to use                                     │
-│ 3. Workflow（步驟化）                                            │
-│ 4. 驗證方式                                                      │
-│ 5. Examples（2-5 個）                                            │
+│ 3. Workflow (step-by-step)                                      │
+│ 4. Verification method                                          │
+│ 5. Examples (2-5)                                               │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│         Phase 5: 驗證                                            │
+│         Phase 5: Verify                                         │
 ├─────────────────────────────────────────────────────────────────┤
-│ 1. 觸發測試：用關鍵字能正確載入？                                │
-│ 2. 流程測試：執行完整工作流                                      │
-│ 3. 邊界測試：錯誤輸入處理                                        │
+│ 1. Trigger test: Does keyword correctly load the skill?         │
+│ 2. Flow test: Execute complete workflow                         │
+│ 3. Edge test: Error input handling                              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -70,7 +70,7 @@ allowed-tools: Read, Grep, Glob, Write, Task
 ```markdown
 ---
 name: { kebab-case-name }
-description: { 一句話說明用途與觸發時機 }
+description: { One sentence describing purpose and trigger }
 allowed-tools: Read, Grep, Glob, Write
 context: fork
 ---
@@ -79,66 +79,66 @@ context: fork
 
 ## Trigger
 
-- Keywords: {觸發關鍵字}
+- Keywords: {trigger keywords}
 
 ## When NOT to Use
 
-- {不適用場景}
+- {scenarios where this skill should not be used}
 
 ## Workflow
 
-{步驟化流程，用 ASCII 或 Mermaid}
+{Step-by-step flow, using ASCII or Mermaid}
 
 ## Verification
 
-{如何驗證成功}
+{How to verify success}
 
 ## Examples
 
-{2-5 個使用範例}
+{2-5 usage examples}
 ```
 
-## Frontmatter 參考
+## Frontmatter Reference
 
-| 欄位                       | 說明                       | 預設值  |
-| -------------------------- | -------------------------- | ------- |
-| `name`                     | 唯一識別名（kebab-case）   | 必填    |
-| `description`              | 觸發描述（含關鍵字）       | 必填    |
-| `allowed-tools`            | 限制可用工具               | 全部    |
-| `context`                  | `fork`（隔離）/ 無（共享） | 共享    |
-| `agent`                    | `Explore` / `Plan` 等      | 無      |
-| `disable-model-invocation` | 禁止模型自動觸發           | `false` |
-| `user-invocable`           | 是否出現在 `/` 選單        | `true`  |
+| Field                      | Description                            | Default |
+| -------------------------- | -------------------------------------- | ------- |
+| `name`                     | Unique identifier (kebab-case)         | Required |
+| `description`              | Trigger description (with keywords)    | Required |
+| `allowed-tools`            | Restrict available tools               | All     |
+| `context`                  | `fork` (isolated) / none (shared)      | Shared  |
+| `agent`                    | `Explore` / `Plan` etc.               | None    |
+| `disable-model-invocation` | Prevent model auto-triggering          | `false` |
+| `user-invocable`           | Whether it appears in `/` menu         | `true`  |
 
-## 設計檢查表
+## Design Checklist
 
-| 項目               | 檢查                                       |
-| ------------------ | ------------------------------------------ |
-| Description 清晰   | 一句話說清「做什麼 + 何時用」              |
-| SKILL.md 精簡      | ≤ 必要資訊，多餘移到 references            |
-| 脆弱流程有保護     | deploy/commit → `disable-model-invocation` |
-| 機械步驟用 scripts | 並在 SKILL.md 寫清 I/O 合約                |
-| 硬規則用 hook      | 不靠純文字要求                             |
-| 有驗證方式         | 測試/lint/指令輸出                         |
+| Item                        | Check                                               |
+| --------------------------- | --------------------------------------------------- |
+| Description is clear        | One sentence explaining "what it does + when to use" |
+| SKILL.md is concise         | Only essential info; extras go to references         |
+| Fragile flows are protected | deploy/commit -> `disable-model-invocation`          |
+| Mechanical steps use scripts | With I/O contract documented in SKILL.md            |
+| Hard rules use hooks        | Not relying on plain text instructions               |
+| Has verification method     | Tests/lint/command output                            |
 
-## 重構模式
+## Refactoring Pattern
 
-重構現有 skill 時：
+When refactoring an existing skill:
 
-1. **讀取現有 SKILL.md** - 理解當前結構
-2. **識別問題** - 太長？觸發不準？缺驗證？
-3. **套用準則** - 參考 `references/skill-design-guide.md`
-4. **精簡內容** - 移動細節到 references
-5. **測試觸發** - 確認關鍵字仍有效
+1. **Read existing SKILL.md** - Understand current structure
+2. **Identify issues** - Too long? Inaccurate triggers? Missing verification?
+3. **Apply guidelines** - Reference `references/skill-design-guide.md`
+4. **Simplify content** - Move details to references
+5. **Test triggers** - Confirm keywords still work
 
 ## References
 
-詳細設計準則見：[skill-design-guide.md](./references/skill-design-guide.md)
+For detailed design guidelines, see: [skill-design-guide.md](./references/skill-design-guide.md)
 
 ## Related Skills
 
-| Skill         | Purpose        |
-| ------------- | -------------- |
-| `doc-review`  | 審核文件       |
-| `tech-spec`   | 技術方案       |
-| `feature-dev` | 功能開發工作流 |
+| Skill         | Purpose              |
+| ------------- | -------------------- |
+| `doc-review`  | Document review      |
+| `tech-spec`   | Technical spec       |
+| `feature-dev` | Feature dev workflow |

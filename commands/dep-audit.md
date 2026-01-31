@@ -1,5 +1,5 @@
 ---
-description: 審計 npm 依賴安全風險
+description: Audit npm dependency security risks
 argument-hint: [--level <severity>] [--fix]
 allowed-tools: Bash(yarn audit *), Bash(npm audit *), Bash(bash *), Read
 skills: security-review
@@ -7,14 +7,14 @@ skills: security-review
 
 ## Arguments
 
-$ARGUMENTS = 可選參數
+$ARGUMENTS = optional parameters
 
-- `--level <severity>` - 最低報告等級（low/moderate/high/critical），預設 moderate
-- `--fix` - 嘗試自動修復
+- `--level <severity>` - Minimum reporting level (low/moderate/high/critical), default: moderate
+- `--fix` - Attempt automatic fix
 
 ## Task
 
-執行依賴安全審計：
+Execute dependency security audit:
 
 ```bash
 bash scripts/dep-audit.sh $ARGUMENTS
@@ -23,20 +23,20 @@ bash scripts/dep-audit.sh $ARGUMENTS
 ## Examples
 
 ```bash
-# 報告 moderate 以上漏洞（預設）
+# Report moderate and above vulnerabilities (default)
 /dep-audit
 
-# 只報告 high/critical
+# Only report high/critical
 /dep-audit --level high
 
-# 嘗試自動修復
+# Attempt automatic fix
 /dep-audit --fix
 ```
 
 ## Output
 
 ```markdown
-## 審計結果
+## Audit Results
 
 | Severity | Count |
 | :------- | ----: |
@@ -45,7 +45,7 @@ bash scripts/dep-audit.sh $ARGUMENTS
 | Moderate |     5 |
 | Low      |    10 |
 
-## 漏洞詳情
+## Vulnerability Details
 
 ### [high] Prototype Pollution
 
@@ -54,15 +54,15 @@ bash scripts/dep-audit.sh $ARGUMENTS
 
 ## Gate
 
-✅ **PASS** - 無 moderate 或以上等級漏洞
-❌ **FAIL** - 發現 high 等級漏洞
+✅ **PASS** - No moderate or above vulnerabilities
+❌ **FAIL** - Found high severity vulnerabilities
 ```
 
 ## Severity Levels
 
-| Level    | 說明               |
-| :------- | :----------------- |
-| critical | 最嚴重，需立即修復 |
-| high     | 高風險             |
-| moderate | 中等風險（預設）   |
-| low      | 低風險             |
+| Level    | Description                        |
+| :------- | :--------------------------------- |
+| critical | Most severe, fix immediately       |
+| high     | High risk                          |
+| moderate | Medium risk (default)              |
+| low      | Low risk                           |

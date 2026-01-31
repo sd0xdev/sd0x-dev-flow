@@ -1,5 +1,5 @@
 ---
-description: 用 Codex MCP 快速 second-opinion（只看 diff、不跑測試）。支援循環審核上下文保持。
+description: Quick second-opinion using Codex MCP (diff only, no tests). Supports review loop with context preservation.
 argument-hint: [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
 ---
@@ -11,183 +11,183 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Gr
 
 ## Task
 
-你現在要使用 Codex MCP 進行快速代碼審查（只看 diff，不跑 lint/build/test）。
+You will use Codex MCP for a quick code review (diff only, no lint/build/test).
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-| 參數                    | 說明                             |
-| ----------------------- | -------------------------------- |
-| `--focus "<text>"`      | 聚焦特定區域（如 "auth"）        |
-| `--base <gitref>`       | 與指定分支比較（如 origin/main） |
-| `--continue <threadId>` | 繼續之前的審核會話               |
+| Parameter               | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `--focus "<text>"`      | Focus on specific area (e.g. "auth")        |
+| `--base <gitref>`       | Compare with specified branch (e.g. origin/main) |
+| `--continue <threadId>` | Continue a previous review session          |
 
-### Step 1: 收集 Git Diff
+### Step 1: Collect Git Diff
 
-先收集需要審查的代碼變更：
+Collect the code changes to review:
 
 ```bash
-# 如果有 --base 參數，與指定分支比較；否則查看未提交變更
+# If --base parameter, compare with specified branch; otherwise check uncommitted changes
 git diff HEAD --no-color | head -2000
 ```
 
-將 diff 內容保存為 `GIT_DIFF` 變數。
+Save diff content as `GIT_DIFF` variable.
 
-### Step 2: 執行審核
+### Step 2: Execute Review
 
-**情況 A：首次審核（無 `--continue`）**
+**Case A: First review (no `--continue`)**
 
-使用 `mcp__codex__codex` 工具啟動新審核會話：
+Use `mcp__codex__codex` to start a new review session:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是資深 Code Reviewer。請審核以下代碼變更，聚焦於發現問題而非表揚。
+  prompt: `You are a senior Code Reviewer. Review the following code changes, focus on finding issues rather than praise.
 
 ## Git Diff
 \`\`\`diff
 ${GIT_DIFF}
 \`\`\`
 
-${FOCUS ? `## 聚焦區域\n請特別關注：${FOCUS}` : ''}
+${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在審核代碼時，你**必須**執行以下調研，不要只依賴上面提供的 diff：
+When reviewing code, you **must** perform the following research, do not rely only on the diff above:
 
-### Git 探索（優先）
-1. 查看變更狀態：\`git status\`
-2. 查看變更的檔案：\`git diff --name-only HEAD\`
-3. 查看特定檔案的完整變更：\`git diff HEAD -- <file-path>\`
-4. 查看變更檔案的完整內容：\`cat <變更的檔案> | head -200\`
+### Git Exploration (Priority)
+1. Check change status: \`git status\`
+2. Check changed files: \`git diff --name-only HEAD\`
+3. Check full changes for specific file: \`git diff HEAD -- <file-path>\`
+4. Check full content of changed files: \`cat <changed file> | head -200\`
 
-### 專案調研
-- 查看被調用的函數：\`grep -r "functionName" src/ --include="*.ts" -l\`
-- 讀取相關檔案：\`cat <檔案路徑> | head -100\`
-- 了解類別定義：\`grep -A 20 "class ClassName" src/\`
+### Project Research
+- Search called functions: \`grep -r "functionName" src/ --include="*.ts" -l\`
+- Read related files: \`cat <file-path> | head -100\`
+- Understand class definitions: \`grep -A 20 "class ClassName" src/\`
 
-## 審核維度
+## Review Dimensions
 
-| 維度 | 檢查項 |
-|------|--------|
-| 正確性 | 邏輯錯誤、邊界條件、null 處理、off-by-one |
-| 安全性 | 注入攻擊、認證繞過、敏感資料洩露、OWASP Top 10 |
-| 效能 | N+1 查詢、記憶體洩漏、不必要的迴圈、阻塞操作 |
-| 可維護性 | 命名清晰度、函數長度、重複代碼、過度抽象 |
+| Dimension      | Checklist |
+|----------------|-----------|
+| Correctness    | Logic errors, boundary conditions, null handling, off-by-one |
+| Security       | Injection attacks, auth bypass, sensitive data leaks, OWASP Top 10 |
+| Performance    | N+1 queries, memory leaks, unnecessary loops, blocking operations |
+| Maintainability| Naming clarity, function length, duplicate code, over-abstraction |
 
-## 嚴重等級定義
+## Severity Level Definitions
 
-- **P0**: 會導致系統崩潰、資料遺失、安全漏洞
-- **P1**: 會導致功能異常、效能嚴重下降
-- **P2**: 程式碼品質問題、可維護性問題
-- **Nit**: 風格建議、微小改進
+- **P0**: Would cause system crash, data loss, security vulnerability
+- **P1**: Would cause functional anomaly, severe performance degradation
+- **P2**: Code quality issues, maintainability concerns
+- **Nit**: Style suggestions, minor improvements
 
-## 輸出格式
+## Output Format
 
 ### Findings
 
-- [P0/P1/P2/Nit] <file:line> <問題描述> → <修復建議>
+- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation>
 
 ### Merge Gate
 
-- ✅ Ready：無 P0/P1，可合併
-- ⛔ Blocked：有 P0/P1，需修復`,
+- ✅ Ready: No P0/P1, safe to merge
+- ⛔ Blocked: Has P0/P1, needs fix`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-**記住返回的 `threadId`，用於後續循環審核。**
+**Remember the returned `threadId` for subsequent review loops.**
 
-**情況 B：循環審核（有 `--continue`）**
+**Case B: Loop review (has `--continue`)**
 
-使用 `mcp__codex__codex-reply` 繼續之前的會話：
+Use `mcp__codex__codex-reply` to continue the previous session:
 
 ```typescript
 mcp__codex__codex -
   reply({
-    threadId: '<從 --continue 參數獲取>',
-    prompt: `我已修復之前指出的問題。請重新審核：
+    threadId: '<from --continue parameter>',
+    prompt: `I have fixed the previously identified issues. Please re-review:
 
-## 新的 Git Diff
+## New Git Diff
 \`\`\`diff
 ${GIT_DIFF}
 \`\`\`
 
-請驗證：
-1. 之前的 P0/P1 問題是否已正確修復？
-2. 修復是否引入了新問題？
-3. 更新 Merge Gate 狀態`,
+Please verify:
+1. Have previous P0/P1 issues been correctly fixed?
+2. Did fixes introduce new issues?
+3. Update Merge Gate status`,
   });
 ```
 
-### Step 3: 整合輸出
+### Step 3: Consolidate Output
 
-將 Codex 的審核結果整理為標準格式。
+Organize Codex review results into the standard format.
 
-## Review Loop 自動化
+## Review Loop Automation
 
-**⚠️ 遵循 @CLAUDE.md 審核循環規則 ⚠️**
+**⚠️ Follow @CLAUDE.md review loop rules ⚠️**
 
-當審核結果為 ⛔ Blocked 時：
+When review result is ⛔ Blocked:
 
-1. 記住 `threadId`
-2. 修復 P0/P1 問題
-3. 使用 `--continue <threadId>` 重新審核
-4. 重複直到 ✅ Ready
+1. Remember the `threadId`
+2. Fix P0/P1 issues
+3. Re-review using `--continue <threadId>`
+4. Repeat until ✅ Ready
 
 ## Output
 
 ```markdown
-## Codex 快速審核報告
+## Codex Quick Review Report
 
-### 審核範圍
+### Review Scope
 
-- 變更統計：<git diff --stat 摘要>
-- 聚焦區域：<focus 或 "全部">
+- Change stats: <git diff --stat summary>
+- Focus area: <focus or "all">
 
 ### Findings
 
-#### P0 (必須修復)
+#### P0 (Must Fix)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-#### P1 (應該修復)
+#### P1 (Should Fix)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
-#### P2 (建議改進)
+#### P2 (Suggested Improvement)
 
-- [file:line] 問題 → 修復建議
+- [file:line] Issue -> Fix recommendation
 
 #### Nit
 
-- [file:line] 建議
+- [file:line] Suggestion
 
 ### Merge Gate
 
-✅ Ready / ⛔ Blocked (需修復 N 個 P0/P1)
+✅ Ready / ⛔ Blocked (need to fix N P0/P1 issues)
 
-### 循環審核
+### Loop Review
 
-如需修復後重新審核，請使用：
+To re-review after fixes, use:
 \`/codex-review-fast --continue <threadId>\`
 ```
 
 ## Examples
 
 ```bash
-# 基本用法 - 審核未提交變更
+# Basic usage - review uncommitted changes
 /codex-review-fast
 
-# 聚焦特定區域
+# Focus on specific area
 /codex-review-fast --focus "authentication"
 
-# 與 main 分支比較
+# Compare with main branch
 /codex-review-fast --base origin/main
 
-# 修復後繼續審核（保持上下文）
+# Continue review after fixes (preserve context)
 /codex-review-fast --continue abc123
 ```

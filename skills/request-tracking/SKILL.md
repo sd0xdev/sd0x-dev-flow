@@ -10,35 +10,35 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: 需求單, request, 進度追蹤, 狀態, 驗收標準, 技術方案
+- Keywords: request document, request, progress tracking, status, acceptance criteria, tech spec
 
 ## When NOT to Use
 
-- 建立新需求單（用 /create-request）
-- 技術方案撰寫（用 /tech-spec）
-- 代碼開發（用 feature-dev）
+- Create new request document (use /create-request)
+- Write tech spec (use /tech-spec)
+- Code development (use feature-dev)
 
 ## Document Hierarchy
 
 ```
-requests/        需求單（範疇 + 驗收）
-    ↓ 引用
-planning/        技術方案（實作細節）
-    ↓ 引用
-adr/             決策紀錄（為什麼）
-    ↓ 參考
-architecture/    架構文檔（系統設計）
+requests/        Request documents (scope + acceptance)
+    ↓ references
+planning/        Tech specs (implementation details)
+    ↓ references
+adr/             Decision records (rationale)
+    ↓ references
+architecture/    Architecture docs (system design)
 ```
 
 ## File Location
 
 ```
 docs/features/{feature}/
-├── requests/           # 活躍需求單
-│   └── archived/       # 已完成
-├── planning/           # 技術方案
-├── adr/                # 決策記錄
-└── architecture/       # 架構文檔
+├── requests/           # Active request documents
+│   └── archived/       # Completed
+├── planning/           # Tech specs
+├── adr/                # Decision records
+└── architecture/       # Architecture docs
 ```
 
 ## Naming Convention
@@ -47,37 +47,37 @@ docs/features/{feature}/
 
 ## Status & Priority
 
-| Status   | Description |
-| -------- | ----------- |
-| 待實作   | 未開始      |
-| 開發中   | 進行中      |
-| 審核通過 | 方案已確認  |
+| Status   | Description        |
+| -------- | ------------------ |
+| Pending  | Not started        |
+| In Dev   | In progress        |
+| Approved | Spec confirmed     |
 
-| Priority | Timeline |
-| -------- | -------- |
-| P0       | 立即     |
-| P1       | 本週     |
-| P2       | 本迭代   |
+| Priority | Timeline       |
+| -------- | -------------- |
+| P0       | Immediate      |
+| P1       | This week      |
+| P2       | This iteration |
 
 ## Verification
 
-- 需求單包含：背景、需求、驗收標準
-- 檔案命名符合規範
-- 正確連結技術方案
+- Request document includes: background, requirements, acceptance criteria
+- File naming follows convention
+- Correctly linked to tech spec
 
 ## References
 
-- `references/template.md` - 需求單模板
-- `references/operations.md` - 操作指南
+- `references/template.md` - Request document template
+- `references/operations.md` - Operations guide
 
 ## Examples
 
 ```
-輸入：需求單怎麼寫？
-動作：說明模板結構 + 引用 template.md
+Input: How to write a request document?
+Action: Explain template structure + reference template.md
 ```
 
 ```
-輸入：這個需求的進度如何追蹤？
-動作：說明進度表格 / Phase 分解方式
+Input: How to track progress for this request?
+Action: Explain progress table / Phase breakdown approach
 ```

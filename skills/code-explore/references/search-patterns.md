@@ -1,121 +1,121 @@
-# 搜尋模式參考
+# Search Patterns Reference
 
-## 專案結構
+## Project Structure
 
 ```
 src/
-├── controller/     # API 入口
-├── service/        # 業務邏輯
-├── provider/       # 外部服務對接
+├── controller/     # API entry points
+├── service/        # Business logic
+├── provider/       # External service integration
 │   ├── evm/
 │   ├── btc/
 │   └── sol/
-├── model/          # 資料模型
-├── config/         # 配置
-└── configuration.ts # DI 配置
+├── model/          # Data models
+├── config/         # Configuration
+└── configuration.ts # DI configuration
 ```
 
-## 常用搜尋模式
+## Common Search Patterns
 
-### 找 API 端點
+### Find API Endpoints
 
 ```bash
-# 找所有 Controller
+# Find all Controllers
 Grep "export class.*Controller"
 
-# 找特定 HTTP method
+# Find specific HTTP methods
 Grep "@Get|@Post|@Put|@Delete" --type ts
 
-# 找特定路由
+# Find specific route
 Grep "'/api/v1/token'" --type ts
 ```
 
-### 找 Service 方法
+### Find Service Methods
 
 ```bash
-# 找 Service 類別
+# Find Service classes
 Grep "export class.*Service"
 
-# 找特定方法
+# Find specific method
 Grep "async getBalance"
 
-# 找依賴注入
+# Find dependency injection
 Grep "@Inject().*Service"
 ```
 
-### 找 Provider 實作
+### Find Provider Implementations
 
 ```bash
-# 列出所有 provider
+# List all providers
 Glob "src/provider/**/*.ts"
 
-# 找特定鏈的實作
+# Find specific chain implementation
 Glob "src/provider/evm/*.ts"
 
-# 找 factory
+# Find factory
 Grep "ProviderFactory|getProvider"
 ```
 
-### 找資料模型
+### Find Data Models
 
 ```bash
-# 找所有 model
+# Find all models
 Glob "src/model/**/*.ts"
 
-# 找 MongoDB collection
+# Find MongoDB collections
 Grep "@Entity|@Collection"
 
-# 找特定欄位
+# Find specific field
 Grep "tokenAddress.*string"
 ```
 
-### 找配置
+### Find Configuration
 
 ```bash
-# 主配置
+# Main config
 Read {CONFIG_FILE}
 
-# 環境配置
+# Environment config
 Glob "src/config/*.ts"
 
-# 找特定配置項
+# Find specific config item
 Grep "redis|mongo|rpc" --glob "*.config.ts"
 ```
 
-## 追蹤技巧
+## Tracing Techniques
 
-### 從 API 往下追
-
-```
-1. Grep 路由 → 找到 Controller
-2. Read Controller → 找到 Service 調用
-3. Read Service → 找到 Provider/Model 調用
-4. Read Provider → 找到外部服務調用
-```
-
-### 從錯誤往上追
+### Trace Top-Down from API
 
 ```
-1. Grep 錯誤訊息 → 找到拋出點
-2. 識別 caller → 往上找調用者
-3. 重複直到找到入口
+1. Grep route -> find Controller
+2. Read Controller -> find Service call
+3. Read Service -> find Provider/Model call
+4. Read Provider -> find external service call
 ```
 
-### 找相關測試
+### Trace Bottom-Up from Error
+
+```
+1. Grep error message -> find throw point
+2. Identify caller -> trace upward
+3. Repeat until reaching entry point
+```
+
+### Find Related Tests
 
 ```bash
-# 對應的單元測試
+# Corresponding unit test
 test/unit/service/{ServiceName}.test.ts
 
-# 對應的整合測試
+# Corresponding integration test
 test/integration/controller/{ControllerName}.test.ts
 ```
 
-## 常見陷阱
+## Common Pitfalls
 
-| 陷阱     | 解法                          |
-| -------- | ----------------------------- |
-| 循環依賴 | 檢查 lazy getter              |
-| 動態載入 | 搜尋 `require()` / `import()` |
-| 配置覆蓋 | 檢查環境變數 + config 層級    |
-| 快取層   | 注意 Redis key pattern        |
+| Pitfall            | Solution                          |
+| ------------------ | --------------------------------- |
+| Circular dependency| Check lazy getters                |
+| Dynamic loading    | Search `require()` / `import()`  |
+| Config override    | Check env variables + config layers |
+| Cache layer        | Watch for Redis key patterns      |

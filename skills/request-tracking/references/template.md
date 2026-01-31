@@ -1,94 +1,94 @@
 # Request Document Template
 
 ```markdown
-# 標題
+# Title
 
-> **建立日期**: YYYY-MM-DD
-> **狀態**: 待實作
-> **優先級**: P1
-> **涵蓋服務**: server-service-onchain
-> **技術方案**: [連結](../planning/xxx.md)
+> **Created**: YYYY-MM-DD
+> **Status**: Pending
+> **Priority**: P1
+> **Covered Services**: server-service-onchain
+> **Tech Spec**: [Link](../planning/xxx.md)
 
-## 背景
+## Background
 
-簡述問題與現況。
+Brief description of the problem and current state.
 
-## 需求
+## Requirements
 
-- 需求點 1
-- 需求點 2
+- Requirement 1
+- Requirement 2
 
-## 交付項目
+## Deliverables
 
-| 項目 | 說明 | 檔案 |
-| ---- | ---- | ---- |
+| Item | Description | File |
+| ---- | ----------- | ---- |
 
-## 相關檔案
+## Related Files
 
-| 檔案                 | 變更類型 |
-| -------------------- | -------- |
-| `src/service/xxx.ts` | 修改     |
-| `src/entity/xxx.ts`  | 新增     |
+| File                 | Change Type |
+| -------------------- | ----------- |
+| `src/service/xxx.ts` | Modified    |
+| `src/entity/xxx.ts`  | New         |
 
-## 驗收標準
+## Acceptance Criteria
 
-- [ ] 標準 1
-- [ ] 標準 2
+- [ ] Criterion 1
+- [ ] Criterion 2
 
-## 風險與緩解
+## Risks & Mitigation
 
-| 風險 | 緩解方案 |
-| ---- | -------- |
+| Risk | Mitigation |
+| ---- | ---------- |
 ```
 
 ## Status Values
 
-| 狀態       | 說明           |
-| ---------- | -------------- |
-| `待實作`   | 未開始         |
-| `待開發`   | 已規劃，排隊中 |
-| `開發中`   | 正在進行       |
-| `審核通過` | 技術方案已通過 |
-| `⏸ 未啟動` | 主動暫停       |
+| Status      | Description              |
+| ----------- | ------------------------ |
+| `Pending`   | Not started              |
+| `Queued`    | Planned, in queue        |
+| `In Dev`    | In progress              |
+| `Approved`  | Tech spec approved       |
+| `On Hold`   | Actively paused          |
 
-**完成後**：移至 `archived/` 資料夾
+**After completion**: Move to `archived/` folder
 
 ## Priority
 
-| 等級 | 說明 | 處理時效 |
-| ---- | ---- | -------- |
-| P0   | 緊急 | 立即     |
-| P1   | 高優 | 本週     |
-| P2   | 中等 | 本迭代   |
+| Level | Description | Timeline       |
+| ----- | ----------- | -------------- |
+| P0    | Urgent      | Immediate      |
+| P1    | High        | This week      |
+| P2    | Medium      | This iteration |
 
 ## Progress Tracking
 
 ### Simple (Header)
 
 ```markdown
-> **狀態**: 開發中
+> **Status**: In Dev
 ```
 
 ### Complex (Table)
 
 ```markdown
-## 進度
+## Progress
 
-| 任務     | 優先級 | 狀態    | 負責人 |
-| -------- | ------ | ------- | ------ |
-| 延長 TTL | P0     | ✅ 完成 | @dev   |
-| 監控指標 | P1     | 開發中  | @dev   |
+| Task        | Priority | Status    | Owner |
+| ----------- | -------- | --------- | ----- |
+| Extend TTL  | P0       | ✅ Done   | @dev  |
+| Monitoring  | P1       | In Dev    | @dev  |
 ```
 
 ### Architecture (Phase)
 
 ```markdown
-## Phase 1: 基礎優化
+## Phase 1: Basic Optimization
 
-- [x] 任務 1
-- [ ] 任務 2
+- [x] Task 1
+- [ ] Task 2
 
-## Phase 2: 進階功能
+## Phase 2: Advanced Features
 
-- [ ] 任務 3
+- [ ] Task 3
 ```

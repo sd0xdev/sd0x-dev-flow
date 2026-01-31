@@ -1,6 +1,6 @@
 ---
-description: GitHub Issue 深度分析。讀取 issue → 分類問題 → 選擇調查策略 → 整合四種調查工具。
-argument-hint: <issue-number 或 issue-url>
+description: GitHub Issue deep analysis. Read issue -> classify problem -> select investigation strategy -> integrate four investigation tools.
+argument-hint: <issue-number or issue-url>
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
 skills: issue-analyze
 ---
@@ -12,7 +12,7 @@ skills: issue-analyze
 
 ## Task
 
-分析 GitHub Issue 並產出根因分析報告。
+Analyze a GitHub Issue and produce a root cause analysis report.
 
 ### Arguments
 
@@ -20,53 +20,53 @@ skills: issue-analyze
 $ARGUMENTS
 ```
 
-### 執行流程
+### Execution Flow
 
 ```bash
-# Step 1: 讀取 Issue
+# Step 1: Read Issue
 gh issue view <number> --json title,body,labels,comments,author,createdAt
 
-# Step 2: 問題分類（見 SKILL.md 決策樹）
-# - 回歸問題 → /git-investigate
-# - 功能不理解 → /code-explore
-# - 複雜根因 → /code-investigate
-# - 多種可能 → /codex-brainstorm
+# Step 2: Problem Classification (see SKILL.md decision tree)
+# - Regression -> /git-investigate
+# - Feature misunderstanding -> /code-explore
+# - Complex root cause -> /code-investigate
+# - Multiple possibilities -> /codex-brainstorm
 
-# Step 3: 執行調查
+# Step 3: Execute Investigation
 
-# Step 4: 產出報告
+# Step 4: Produce Report
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程：
+Follow the workflow in the skill:
 
-| 階段 | 參考文件                                                    |
-| ---- | ----------------------------------------------------------- |
-| 流程 | @skills/issue-analyze/SKILL.md                      |
-| 分類 | @skills/issue-analyze/references/classification.md  |
-| 報告 | @skills/issue-analyze/references/report-template.md |
+| Phase          | Reference                                                   |
+| -------------- | ----------------------------------------------------------- |
+| Workflow       | @skills/issue-analyze/SKILL.md                      |
+| Classification | @skills/issue-analyze/references/classification.md  |
+| Report         | @skills/issue-analyze/references/report-template.md |
 
 ## When to Use
 
-- ✅ 需要深入分析 GitHub Issue
-- ✅ 不確定問題根因
-- ✅ 需要系統性調查
+- ✅ Need deep analysis of a GitHub Issue
+- ✅ Root cause is uncertain
+- ✅ Systematic investigation needed
 
 ## When NOT to Use
 
-- ❌ 已知根因，直接修復（用 `/bug-fix`）
-- ❌ 簡單問題，直接查代碼
+- ❌ Root cause already known, fix directly (use `/bug-fix`)
+- ❌ Simple issue, just check code directly
 
 ## Examples
 
 ```bash
-# 分析指定 issue 編號
+# Analyze by issue number
 /issue-analyze 123
 
-# 分析 issue URL
+# Analyze by issue URL
 /issue-analyze https://github.com/user/repo/issues/123
 
-# 分析描述（無 issue 時）
-/issue-analyze "API 回傳 500 當 token 為空"
+# Analyze by description (no issue)
+/issue-analyze "API returns 500 when token is empty"
 ```

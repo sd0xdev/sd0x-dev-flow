@@ -10,64 +10,64 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: 安全審查, security review, OWASP, 漏洞, vulnerability, dep-audit, npm audit, 依賴安全
+- Keywords: security review, OWASP, vulnerability, dep-audit, npm audit, dependency security
 
 ## When NOT to Use
 
-- 一般代碼審查（用 codex-review）
-- 功能測試（用 test-review）
-- 效能問題（非安全相關）
+- General code review (use codex-review)
+- Functional testing (use test-review)
+- Performance issues (not security-related)
 
 ## Commands
 
-| Command           | Purpose           | When         |
-| ----------------- | ----------------- | ------------ |
-| `/codex-security` | OWASP Top 10 專項 | 安全敏感代碼 |
-| `/dep-audit`      | 依賴安全審計      | 定期/PR      |
+| Command           | Purpose                | When                   |
+| ----------------- | ---------------------- | ---------------------- |
+| `/codex-security` | OWASP Top 10 audit     | Security-sensitive code |
+| `/dep-audit`      | Dependency security audit | Periodic / PR        |
 
 ## OWASP Top 10
 
-| Code | Category           | Check Focus               |
-| ---- | ------------------ | ------------------------- |
-| A01  | Broken Access Ctrl | IDOR、權限繞過、CORS      |
-| A02  | Crypto Failures    | 敏感資料加密、弱加密      |
-| A03  | Injection          | SQL/NoSQL/Cmd Injection   |
-| A04  | Insecure Design    | Rate Limiting、業務邏輯   |
-| A05  | Misconfiguration   | Debug 模式、預設密碼      |
-| A06  | Vulnerable Comp    | 已知漏洞依賴              |
-| A07  | Auth Failures      | 暴力破解、Session、弱密碼 |
-| A08  | Integrity Failures | 反序列化、CI/CD           |
-| A09  | Logging Failures   | 敏感資料日誌、審計        |
-| A10  | SSRF               | URL 驗證、內網訪問        |
+| Code | Category           | Check Focus                          |
+| ---- | ------------------ | ------------------------------------ |
+| A01  | Broken Access Ctrl | IDOR, permission bypass, CORS        |
+| A02  | Crypto Failures    | Sensitive data encryption, weak crypto |
+| A03  | Injection          | SQL/NoSQL/Cmd Injection              |
+| A04  | Insecure Design    | Rate Limiting, business logic        |
+| A05  | Misconfiguration   | Debug mode, default passwords        |
+| A06  | Vulnerable Comp    | Known vulnerable dependencies        |
+| A07  | Auth Failures      | Brute force, session, weak passwords |
+| A08  | Integrity Failures | Deserialization, CI/CD               |
+| A09  | Logging Failures   | Sensitive data in logs, auditing     |
+| A10  | SSRF               | URL validation, internal network access |
 
 ## Verification
 
-- 每個問題標記嚴重程度（P0/P1/P2）
-- Gate 明確（✅ Pass / ⛔ Block）
-- 修復建議具體可行
-- 包含驗證測試方式
+- Mark severity for each issue (P0/P1/P2)
+- Gate is explicit (Pass / Block)
+- Fix recommendations are specific and actionable
+- Includes verification test method
 
 ## Severity Levels
 
-| Level    | Description | Action     |
-| -------- | ----------- | ---------- |
-| critical | 最嚴重      | 立即修復   |
-| high     | 高風險      | 盡快修復   |
-| moderate | 中等風險    | 評估後修復 |
-| low      | 低風險      | 可延後     |
+| Level    | Description       | Action              |
+| -------- | ----------------- | -------------------- |
+| critical | Most severe       | Fix immediately      |
+| high     | High risk         | Fix as soon as possible |
+| moderate | Medium risk       | Assess and fix       |
+| low      | Low risk          | Can be deferred      |
 
 ## References
 
-- `references/examples.md` - 安全範例 + 報告模板
+- `references/examples.md` - Security examples + report template
 
 ## Examples
 
 ```
-輸入：/codex-security --scope src/controller/
-動作：OWASP Top 10 檢查 → 輸出問題 + Gate
+Input: /codex-security --scope src/controller/
+Action: OWASP Top 10 check → output issues + Gate
 ```
 
 ```
-輸入：/dep-audit --level high
-動作：npm audit → 過濾 high/critical → 輸出報告
+Input: /dep-audit --level high
+Action: npm audit → filter high/critical → output report
 ```

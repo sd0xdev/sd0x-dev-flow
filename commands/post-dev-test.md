@@ -1,5 +1,5 @@
 ---
-description: 開發後測試補全。分析已開發功能，檢查 integration/e2e 覆蓋，不足則撰寫補充。
+description: Post-development test completion. Analyze developed features, check integration/e2e coverage, write missing tests.
 argument-hint: [--type integration|e2e] [--dry-run]
 allowed-tools: Read, Grep, Glob, Write, Bash
 skills: post-dev-test
@@ -14,7 +14,7 @@ skills: post-dev-test
 
 ## Task
 
-根據對話上下文，分析已開發的功能，檢查 integration/e2e 測試覆蓋，不足則撰寫補充。
+Based on conversation context, analyze developed features, check integration/e2e test coverage, and write missing tests.
 
 ### Arguments
 
@@ -22,73 +22,73 @@ skills: post-dev-test
 $ARGUMENTS
 ```
 
-| 參數                      | 說明                           |
-| ------------------------- | ------------------------------ |
-| `--type integration\|e2e` | 指定測試類型（預設兩者都檢查） |
-| `--dry-run`               | 只分析不寫入                   |
+| Parameter                 | Description                                     |
+| ------------------------- | ----------------------------------------------- |
+| `--type integration\|e2e` | Specify test type (default: check both)         |
+| `--dry-run`               | Analyze only, do not write                      |
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的 5 階段流程：
+Follow the 5-phase workflow in the skill:
 
-| Phase | 動作                               |
-| ----- | ---------------------------------- |
-| 1     | 分析對話上下文，識別開發的功能     |
-| 2     | 搜尋現有 integration/e2e 測試覆蓋  |
-| 3     | 決定測試策略（參考測試類型對照表） |
-| 4     | 撰寫缺失的測試                     |
-| 5     | 執行測試驗證                       |
+| Phase | Action                                           |
+| ----- | ------------------------------------------------ |
+| 1     | Analyze conversation context, identify features  |
+| 2     | Search existing integration/e2e test coverage    |
+| 3     | Decide test strategy (refer to test type matrix) |
+| 4     | Write missing tests                              |
+| 5     | Run tests to verify                              |
 
-### 參考
+### References
 
-| 檔案                                                      | 用途         |
-| --------------------------------------------------------- | ------------ |
-| @skills/post-dev-test/SKILL.md                    | 完整流程     |
-| @skills/post-dev-test/references/test-patterns.md | 測試模式參考 |
-| @rules/testing.md                                 | 測試規則     |
+| File                                                      | Purpose          |
+| --------------------------------------------------------- | ---------------- |
+| @skills/post-dev-test/SKILL.md                    | Full workflow    |
+| @skills/post-dev-test/references/test-patterns.md | Test pattern ref |
+| @rules/testing.md                                 | Testing rules    |
 
 ## Output
 
 ```markdown
-## 測試補全報告
+## Test Completion Report
 
-### 分析的功能
+### Analyzed Features
 
-- 功能名稱：<從上下文識別>
-- 涉及模組：<Service / Provider / Controller>
-- 代碼變更：✅ 有變更 / ❌ 無變更
+- Feature name: <identified from context>
+- Modules involved: <Service / Provider / Controller>
+- Code changes: ✅ Has changes / ❌ No changes
 
-### 現有覆蓋
+### Existing Coverage
 
-| 測試類型    | 檔案 | 覆蓋狀態 |
-| ----------- | ---- | -------- |
-| Integration | ...  | ✅/❌    |
-| E2E         | ...  | ✅/❌    |
+| Test Type   | File | Coverage Status |
+| ----------- | ---- | --------------- |
+| Integration | ...  | ✅/❌           |
+| E2E         | ...  | ✅/❌           |
 
-### 新增測試
+### Added Tests
 
-| 檔案路徑             | 類型        | 覆蓋場景 |
-| -------------------- | ----------- | -------- |
-| test/integration/... | Integration | ...      |
-| test/e2e/...         | E2E         | ...      |
+| File Path            | Type        | Covered Scenarios |
+| -------------------- | ----------- | ----------------- |
+| test/integration/... | Integration | ...               |
+| test/e2e/...         | E2E         | ...               |
 
-### 執行結果
+### Execution Results
 
-✅ 所有測試通過 / ❌ 有失敗（詳見下方）
+✅ All tests passed / ❌ Failures found (see below)
 
-> ⚠️ 即使覆蓋完整，有代碼變更時仍須執行測試確認無 regression
+> ⚠️ Even with full coverage, tests must be run when there are code changes to confirm no regression
 ```
 
 ## Examples
 
 ```bash
-# 自動分析並補全測試
+# Automatically analyze and complete tests
 /post-dev-test
 
-# 只補 e2e 測試
+# Only complete e2e tests
 /post-dev-test --type e2e
 
-# 只分析不寫入
+# Analyze only, do not write
 /post-dev-test --dry-run
 ```
 
@@ -97,5 +97,5 @@ $ARGUMENTS
 ```
 /feature-dev → /verify → /codex-review-fast → /post-dev-test → /precommit
                                                     ↑
-                                              （你在這裡）
+                                              (you are here)
 ```

@@ -1,107 +1,107 @@
 # Code Investigate Codex Prompts
 
-## 必要參數
+## Required Parameters
 
-| 參數              | 值          | 說明                   |
-| ----------------- | ----------- | ---------------------- |
-| `sandbox`         | `read-only` | 強制只讀，防止意外修改 |
-| `approval-policy` | `never`     | 自動批准 shell 命令    |
-| `cwd`             | 專案根目錄  | Codex 探索的起點       |
+| Parameter         | Value       | Description                          |
+| ----------------- | ----------- | ------------------------------------ |
+| `sandbox`         | `read-only` | Force read-only, prevent accidental modification |
+| `approval-policy` | `never`     | Auto-approve shell commands          |
+| `cwd`             | Project root| Codex exploration starting point     |
 
-## 標準調查 Prompt
+## Standard Investigation Prompt
 
 ```typescript
 mcp__codex__codex({
-  prompt: `# 代碼調查任務
+  prompt: `# Code Investigation Task
 
-## 問題
+## Question
 ${userQuestion}
 
-## 專案資訊
-- 路徑：${cwd}
-- 技術棧：{FRAMEWORK} + TypeScript + {DATABASE}
+## Project Info
+- Path: ${cwd}
+- Tech Stack: {FRAMEWORK} + TypeScript + {DATABASE}
 
-## 調查要求
+## Investigation Requirements
 
-請**獨立探索**代碼庫，回答以下問題：
+Please **independently explore** the codebase and answer the following:
 
-1. **相關檔案**：哪些檔案與此功能相關？
-2. **核心邏輯**：主要的處理流程是什麼？
-3. **資料流**：資料如何流動（輸入 → 處理 → 輸出）？
-4. **關鍵依賴**：依賴哪些服務/模組？
-5. **邊界情況**：有哪些特殊處理？
+1. **Related files**: Which files are related to this feature?
+2. **Core logic**: What is the main processing flow?
+3. **Data flow**: How does data flow (input -> processing -> output)?
+4. **Key dependencies**: Which services/modules does it depend on?
+5. **Edge cases**: What special handling exists?
 
-## 探索建議
+## Exploration Suggestions
 
-- 從 entrypoint 開始追蹤
-- 使用 grep 搜尋關鍵字
-- 閱讀相關 service/provider
-- 注意 DI 注入的依賴
+- Start tracing from the entrypoint
+- Use grep to search for keywords
+- Read related service/provider files
+- Pay attention to DI-injected dependencies
 
-請給出你的完整分析。`,
+Please provide your complete analysis.`,
   cwd: process.cwd(),
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-## 特定功能調查
+## Specific Feature Investigation
 
 ```typescript
 mcp__codex__codex({
-  prompt: `# 功能調查：${featureName}
+  prompt: `# Feature Investigation: ${featureName}
 
-專案路徑：${cwd}
+Project path: ${cwd}
 
-請獨立探索這個功能的實作：
+Please independently explore this feature's implementation:
 
-1. 找出所有相關檔案
-2. 追蹤呼叫鏈
-3. 理解資料結構
-4. 識別外部依賴
+1. Find all related files
+2. Trace the call chain
+3. Understand data structures
+4. Identify external dependencies
 
-不需要我提供任何線索，請自行探索並給出分析。`,
+No hints needed from me -- please explore on your own and provide your analysis.`,
   cwd: process.cwd(),
   sandbox: 'read-only',
 });
 ```
 
-## 問題追蹤調查
+## Problem Tracking Investigation
 
 ```typescript
 mcp__codex__codex({
-  prompt: `# 問題追蹤
+  prompt: `# Problem Tracking
 
-問題描述：${problemDescription}
+Problem description: ${problemDescription}
 
-專案路徑：${cwd}
+Project path: ${cwd}
 
-請獨立調查：
-1. 可能涉及的代碼區域
-2. 潛在的問題點
-3. 相關的邏輯分支
-4. 可能的根本原因
+Please investigate independently:
+1. Potentially involved code areas
+2. Potential problem points
+3. Related logic branches
+4. Possible root causes
 
-請自行探索，給出你的診斷。`,
+Please explore on your own and provide your diagnosis.`,
   cwd: process.cwd(),
   sandbox: 'read-only',
 });
 ```
 
-## 禁止的 Prompt 模式
+## Prohibited Prompt Patterns
 
-| 模式       | 問題                    | 錯誤範例                                   |
-| ---------- | ----------------------- | ------------------------------------------ |
-| 餵養結論   | Claude 結論洩漏給 Codex | `Claude 發現這些檔案：${findings}，請確認` |
-| 引導性問題 | 預設答案，限制探索      | `我認為問題出在 cache 機制，請驗證`        |
-| 限制範圍   | 阻止獨立探索            | `只看 src/service/ 目錄`               |
-| 確認式問題 | 不是探索，是驗證        | `這樣理解對嗎？`                           |
+| Pattern            | Problem                           | Bad Example                                       |
+| ------------------ | --------------------------------- | ------------------------------------------------- |
+| Feeding conclusion | Claude's findings leak to Codex   | `Claude found these files: ${findings}, confirm`  |
+| Leading question   | Presupposes answer, limits exploration | `I think problem is in cache, please verify`  |
+| Scope restriction  | Prevents independent exploration  | `Only look at src/service/ directory`             |
+| Confirmation question| Not exploration, just validation | `Is this understanding correct?`                  |
 
-## 正確的 Prompt 原則
+## Correct Prompt Principles
 
-| 原則         | 說明                 | 範例                        |
-| ------------ | -------------------- | --------------------------- |
-| 只給問題     | 不給 Claude 的發現   | `訂單處理怎麼運作？` |
-| 只給專案路徑 | 讓 Codex 自己探索    | `cwd: '/path/to/project'`   |
-| 開放式探索   | 不限制搜尋範圍       | 不加 `只看 xxx 目錄`        |
-| 要求獨立分析 | 明確說「請自行探索」 | `請獨立探索代碼庫`          |
+| Principle            | Description                      | Example                          |
+| -------------------- | -------------------------------- | -------------------------------- |
+| Only give question   | Don't share Claude's findings    | `How does order processing work?`|
+| Only give project path| Let Codex explore on its own    | `cwd: '/path/to/project'`       |
+| Open exploration     | Don't restrict search scope      | Don't add `only look at xxx dir` |
+| Request independent analysis | Explicitly say "explore on your own" | `Please independently explore the codebase` |

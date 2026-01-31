@@ -1,46 +1,46 @@
 ---
-description: 重構文件：精簡、不失訊息量、用 sequenceDiagram 視覺化流程。
+description: Refactor documents — simplify without losing information, visualize flows with sequenceDiagram.
 argument-hint: <file path>
 allowed-tools: Read, Grep, Glob, Edit
 ---
 
 ## Task
 
-針對 `$ARGUMENTS` 指定的文件：
+For the file specified by `$ARGUMENTS`:
 
-1. **分析原始內容**
+1. **Analyze original content**
 
-   - 計算行數
-   - 識別核心資訊 vs 冗餘
+   - Count lines
+   - Identify core information vs redundancy
 
-2. **重構**
+2. **Refactor**
 
-   - 長段落 → 表格
-   - 步驟 → sequenceDiagram
-   - 重複 → 單一來源
+   - Long paragraphs -> tables
+   - Steps -> sequenceDiagram
+   - Duplicates -> single source
 
-3. **驗證**
-   - 關鍵資訊保留
-   - 行數減少
+3. **Validate**
+   - Key information preserved
+   - Line count reduced
 
-## 精簡標準
+## Simplification Standards
 
-| 文件類型       | 目標行數 |
-| -------------- | -------- |
-| CLAUDE.md      | < 50     |
-| rules/\*.md    | < 30     |
-| agents/\*.md   | < 50     |
-| commands/\*.md | < 40     |
+| File Type      | Target Lines |
+| -------------- | ------------ |
+| CLAUDE.md      | < 50         |
+| rules/\*.md    | < 30         |
+| agents/\*.md   | < 50         |
+| commands/\*.md | < 40         |
 
 ## Output
 
 ```markdown
-## 重構結果
+## Refactoring Result
 
-- 原始：X 行
-- 精簡：Y 行（-Z%）
+- Original: X lines
+- Simplified: Y lines (-Z%)
 
-## 變更
+## Changes
 
 - <summary>
 ```

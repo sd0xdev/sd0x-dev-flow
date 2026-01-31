@@ -10,68 +10,68 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: 測試覆蓋, test review, 測試夠不夠, 生成測試, test gen, coverage, 覆蓋率
+- Keywords: test coverage, test review, are tests sufficient, generate tests, test gen, coverage
 
 ## When NOT to Use
 
-- 代碼審查（用 codex-code-review）
-- 文件審查（用 doc-review）
-- 只是想跑測試（用 `/verify`）
+- Code review (use codex-code-review)
+- Document review (use doc-review)
+- Just want to run tests (use `/verify`)
 
 ## Commands
 
-| 命令                 | 說明             | 適用場景     |
-| -------------------- | ---------------- | ------------ |
-| `/codex-test-review` | 審查測試是否足夠 | **必做**     |
-| `/codex-test-gen`    | 生成單元測試     | 補測試       |
-| `/check-coverage`    | 測試覆蓋率分析   | 功能開發完成 |
+| Command              | Description               | Use Case              |
+| -------------------- | ------------------------- | --------------------- |
+| `/codex-test-review` | Review test sufficiency   | **Required**          |
+| `/codex-test-gen`    | Generate unit tests       | Add missing tests     |
+| `/check-coverage`    | Test coverage analysis    | After feature dev     |
 
 ## Workflow
 
 ```
-讀取測試 → 對照源碼 → 評估覆蓋 → 輸出缺口 + Gate
+Read tests -> Compare with source code -> Assess coverage -> Output gaps + Gate
 ```
 
 ## Review Dimensions
 
-| 維度        | 評分標準                     | 權重 |
-| ----------- | ---------------------------- | ---- |
-| 正向路徑    | 所有 public 方法、主要流程   | 高   |
-| 錯誤處理    | try/catch、error callback    | 高   |
-| 邊界條件    | null/undefined、極值、空集合 | 中   |
-| Mock 合理性 | 不過度、不不足               | 中   |
+| Dimension       | Scoring Criteria                       | Weight |
+| --------------- | -------------------------------------- | ------ |
+| Happy path      | All public methods, main flows         | High   |
+| Error handling  | try/catch, error callbacks             | High   |
+| Edge cases      | null/undefined, extremes, empty sets   | Medium |
+| Mock quality    | Not excessive, not insufficient        | Medium |
 
 ## Verification
 
-- 覆蓋評估包含所有維度
-- Gate 明確（✅ 測試充足 / ⛔ 需補充）
-- 缺失測試有具體建議
+- Coverage assessment includes all dimensions
+- Gate is clear (✅ Tests sufficient / ⛔ Needs additions)
+- Missing tests have specific suggestions
 
 ## Three-Layer Tests
 
-| Type        | Directory           | Mock      | Focus        |
-| ----------- | ------------------- | --------- | ------------ |
-| Unit        | `test/unit/`        | ✅ 充分   | 單一函數邏輯 |
-| Integration | `test/integration/` | ⚠️ 僅外部 | 模組間互動   |
-| E2E         | `test/e2e/`         | ❌ 禁止   | 完整流程     |
+| Type        | Directory           | Mock             | Focus              |
+| ----------- | ------------------- | ---------------- | ------------------ |
+| Unit        | `test/unit/`        | ✅ Full          | Single function logic |
+| Integration | `test/integration/` | Only external    | Inter-module interaction |
+| E2E         | `test/e2e/`         | ❌ Prohibited    | Complete flow      |
 
 ## Common Boundaries
 
 | Type   | Cases                                            |
 | ------ | ------------------------------------------------ |
-| String | `""`, `" "`, `null`, `undefined`, 超長字串       |
+| String | `""`, `" "`, `null`, `undefined`, very long string |
 | Number | `0`, `-1`, `NaN`, `Infinity`, `MAX_SAFE_INTEGER` |
-| Array  | `[]`, `[null]`, 超大陣列, 嵌套陣列               |
-| Object | `{}`, `null`, 循環引用                           |
+| Array  | `[]`, `[null]`, very large array, nested array   |
+| Object | `{}`, `null`, circular reference                 |
 
 ## Examples
 
 ```
-輸入：這個 service 的測試夠嗎？
-動作：/codex-test-review → 評估覆蓋 → 輸出缺口 + Gate
+Input: Are this service's tests sufficient?
+Action: /codex-test-review -> Assess coverage -> Output gaps + Gate
 ```
 
 ```
-輸入：幫這個函數補測試
-動作：/codex-test-gen → 生成 AAA 模式測試 → /codex-test-review
+Input: Add tests for this function
+Action: /codex-test-gen -> Generate AAA pattern tests -> /codex-test-review
 ```

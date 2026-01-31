@@ -1,6 +1,6 @@
 ---
-description: 將技術方案轉換為 PM/CTO 可讀的執行摘要。精簡技術細節，聚焦商業價值。
-argument-hint: <技術方案路徑> [--output <輸出路徑>]
+description: Convert a technical spec into a PM/CTO-readable executive summary. Simplify technical details, focus on business value.
+argument-hint: <tech spec path> [--output <output path>]
 allowed-tools: Read, Grep, Glob, Write
 ---
 
@@ -10,113 +10,113 @@ allowed-tools: Read, Grep, Glob, Write
 
 ## Task
 
-你現在是 `brief-writer` 專家。請將技術方案轉換為 PM/CTO 可讀的執行摘要。
+You are now a `brief-writer` expert. Convert the technical spec into a PM/CTO-readable executive summary.
 
-### 輸入
+### Input
 
 ```
 $ARGUMENTS
 ```
 
-### 轉換規則
+### Conversion Rules
 
-| 技術方案段落 | PM/CTO 摘要處理      |
-| ------------ | -------------------- |
-| 信任邊界圖   | ⚠️ 簡化為 3 層架構圖 |
-| 代碼分析     | ❌ 移除              |
-| 可複用模組   | ❌ 移除              |
-| 系統架構圖   | ✅ 保留（簡化）      |
-| 實施路線圖   | ✅ 保留              |
-| 關鍵設計決策 | ❌ 移除              |
-| 替代方案表   | ✅ 保留              |
-| 風險與緩解   | ✅ 保留              |
-| 時間線       | ✅ 保留              |
-| 立即行動     | ⚠️ 簡化為決策點      |
+| Tech Spec Section       | PM/CTO Summary Treatment     |
+| ----------------------- | ---------------------------- |
+| Trust boundary diagram  | ⚠️ Simplify to 3-layer arch  |
+| Code analysis           | ❌ Remove                    |
+| Reusable modules        | ❌ Remove                    |
+| System architecture     | ✅ Keep (simplified)         |
+| Implementation roadmap  | ✅ Keep                      |
+| Key design decisions    | ❌ Remove                    |
+| Alternative comparison  | ✅ Keep                      |
+| Risks & mitigations     | ✅ Keep                      |
+| Timeline                | ✅ Keep                      |
+| Immediate actions       | ⚠️ Simplify to decision points |
 
-### 執行流程
+### Execution Flow
 
-#### Step 1: 讀取技術方案
+#### Step 1: Read Technical Spec
 
-- 讀取指定的技術方案檔案
-- 識別方案的核心價值主張
+- Read the specified tech spec file
+- Identify the core value proposition
 
-#### Step 2: 提取關鍵資訊
+#### Step 2: Extract Key Information
 
-- 專案概覽：一句話說明做什麼、為什麼、價值
-- 現狀與目標對比
-- 方案評估（保留優缺點比較）
-- 里程碑時間線
-- 風險摘要
-- 資源需求
+- Project overview: one sentence on what, why, and value
+- Current state vs target comparison
+- Solution evaluation (keep pros/cons comparison)
+- Milestone timeline
+- Risk summary
+- Resource requirements
 
-#### Step 3: 精簡技術細節
+#### Step 3: Simplify Technical Details
 
-- 移除代碼片段
-- 移除內部模組名稱
-- 移除技術實現細節
-- 保留業務邏輯描述
+- Remove code snippets
+- Remove internal module names
+- Remove technical implementation details
+- Keep business logic descriptions
 
-#### Step 4: 產出執行摘要
+#### Step 4: Produce Executive Summary
 
 ## Output
 
-產出 PM/CTO 可讀的執行摘要，格式如下：
+Produce a PM/CTO-readable executive summary in the following format:
 
 ```markdown
-# [專案名稱] 執行摘要
+# [Project Name] Executive Summary
 
-## 專案概覽
+## Project Overview
 
-> 一句話說明：做什麼、為什麼、價值
+> One sentence: what, why, and value
 
-## 現狀與目標
+## Current State vs Target
 
-| 維度 | 現狀 | 目標 |
-| ---- | ---- | ---- |
-|      |      |      |
+| Dimension | Current | Target |
+| --------- | ------- | ------ |
+|           |         |        |
 
-## 方案評估
+## Solution Evaluation
 
-| 方案     | 優點 | 缺點 | 建議    |
-| -------- | ---- | ---- | ------- |
-| 方案 A   |      |      |         |
-| 方案 B   |      |      |         |
-| 推薦方案 |      |      | ✅ 採用 |
+| Solution        | Pros | Cons | Recommendation |
+| --------------- | ---- | ---- | -------------- |
+| Option A        |      |      |                |
+| Option B        |      |      |                |
+| Recommended     |      |      | ✅ Adopt       |
 
-## 架構總覽
+## Architecture Overview
 
-（簡化版系統圖，最多 3 層）
+(Simplified system diagram, 3 layers max)
 
-## 里程碑
+## Milestones
 
-| 週次   | 交付物 | 依賴 |
-| ------ | ------ | ---- |
-| Week 1 |        |      |
-| Week 2 |        |      |
+| Week   | Deliverable | Dependencies |
+| ------ | ----------- | ------------ |
+| Week 1 |             |              |
+| Week 2 |             |              |
 
-## 風險摘要
+## Risk Summary
 
-| 風險 | 影響程度 | 緩解措施 |
-| ---- | -------- | -------- |
-|      |          |          |
+| Risk | Impact Level | Mitigation |
+| ---- | ------------ | ---------- |
+|      |              |            |
 
-## 資源需求
+## Resource Requirements
 
-- **人力**：
-- **時間**：
-- **外部依賴**：
+- **Headcount**:
+- **Timeline**:
+- **External Dependencies**:
 
-## 決策點
+## Decision Points
 
-> 需要 PM/CTO 決定的事項
+> Items requiring PM/CTO decision
 
-- [ ] 決策 1：
-- [ ] 決策 2：
+- [ ] Decision 1:
+- [ ] Decision 2:
 ```
 
 ## Save
 
-預設儲存到原檔案同目錄，檔名加上 `-brief` 後綴。
-例如：`docs/features/xxx/architecture.md` → `docs/features/xxx/architecture-brief.md`
+By default, save to the same directory as the original file with a `-brief` suffix.
+Example: `docs/features/xxx/architecture.md` -> `docs/features/xxx/architecture-brief.md`
 
-如果 `$ARGUMENTS` 包含 `--output <路徑>`，則儲存到指定位置。
+If `$ARGUMENTS` contains `--output <path>`, save to the specified location.

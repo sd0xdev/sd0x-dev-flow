@@ -1,5 +1,5 @@
 ---
-description: 綜合評估 Unit / Integration / E2E 三層測試覆蓋，找出缺口並給出補強建議。
+description: Comprehensive assessment of Unit / Integration / E2E three-layer test coverage, identify gaps and provide actionable recommendations.
 argument-hint: <docs-path>
 allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*), Bash(wc:*)
 skills: test-review
@@ -7,45 +7,45 @@ skills: test-review
 
 ## Context
 
-- 你現在是 `coverage-analyst` agent。
-- 目標：根據功能文件，**綜合評估 Unit / Integration / E2E 三層測試**覆蓋情況，識別缺口並給出可行動建議。
+- You are now a `coverage-analyst` agent.
+- Goal: Based on feature documentation, **comprehensively assess Unit / Integration / E2E three-layer test** coverage, identify gaps and provide actionable recommendations.
 
 ## Task
 
-### Step 1: 讀取功能文件
+### Step 1: Read Feature Documentation
 
 ```bash
-# 讀取指定的功能文件
-cat $ARGUMENTS/*.md 2>/dev/null || cat $ARGUMENTS.md 2>/dev/null || echo "請確認文件路徑"
+# Read specified feature docs
+cat $ARGUMENTS/*.md 2>/dev/null || cat $ARGUMENTS.md 2>/dev/null || echo "Please confirm the document path"
 ```
 
-從功能文件中提取：
+Extract from feature documentation:
 
-- 功能名稱與目標
-- 涉及的 Service / Provider / Entity
-- 核心流程與邊界條件
+- Feature name and objectives
+- Involved Service / Provider / Entity
+- Core flows and boundary conditions
 
-### Step 2: 識別相關源碼
+### Step 2: Identify Related Source Code
 
-根據功能文件內容，搜尋相關源碼：
+Search related source code based on feature documentation:
 
 ```bash
-# 搜尋相關 Service
+# Search related Services
 ls src/service/ | grep -i "<keyword>"
 
-# 搜尋相關 Provider
+# Search related Providers
 ls src/provider/ | grep -i "<keyword>"
 
-# 搜尋相關 Entity
+# Search related Entities
 ls src/entity/ | grep -i "<keyword>"
 ```
 
-建立源碼清單：
-| 模組類型 | 檔案路徑 | 核心功能 |
+Build source code inventory:
+| Module Type | File Path | Core Functionality |
 
-### Step 3: 對應測試檔案
+### Step 3: Map Test Files
 
-檢查每個源碼檔案是否有對應測試：
+Check whether each source file has corresponding tests:
 
 ```bash
 # Unit tests
@@ -55,83 +55,83 @@ find test/unit -name "*.test.ts" | xargs grep -l "<ServiceName>" 2>/dev/null
 find test/integration -name "*.test.ts" | xargs grep -l "<ServiceName>" 2>/dev/null
 ```
 
-### Step 4: 分析覆蓋缺口
+### Step 4: Analyze Coverage Gaps
 
-對每個源碼檔案：
+For each source file:
 
-1. **讀取源碼**：識別 public methods、重要分支、錯誤處理
-2. **讀取測試**：識別已覆蓋的 cases
-3. **比對缺口**：
-   - 哪些 methods 沒有測試？
-   - 哪些分支沒有覆蓋？
-   - 哪些錯誤情境沒有測試？
+1. **Read source**: Identify public methods, important branches, error handling
+2. **Read tests**: Identify covered cases
+3. **Compare gaps**:
+   - Which methods have no tests?
+   - Which branches are not covered?
+   - Which error scenarios are not tested?
 
-### Step 5: 分類與建議
+### Step 5: Classify and Recommend
 
-根據缺口嚴重程度分類：
+Classify gaps by severity:
 
-- 🔴 Critical：核心邏輯、資料寫入、金額計算
-- 🟠 Major：重要分支、錯誤處理
-- 🟡 Minor：Edge case、輔助功能
-- ⚪ Nice-to-have：日誌、格式化
+- 🔴 Critical: Core logic, data writes, amount calculations
+- 🟠 Major: Important branches, error handling
+- 🟡 Minor: Edge cases, utility functions
+- ⚪ Nice-to-have: Logging, formatting
 
 ## Output
 
 ```markdown
-# 測試覆蓋率分析報告
+# Test Coverage Analysis Report
 
-## 功能概覽
+## Feature Overview
 
-- 功能名稱：<從文件提取>
-- 文件位置：$ARGUMENTS
-- 相關模組：<列出涉及的 Service/Provider/Entity>
+- Feature name: <from documentation>
+- Documentation path: $ARGUMENTS
+- Related modules: <list involved Service/Provider/Entity>
 
-## 覆蓋現況
+## Current Coverage
 
-| 模組 | 源碼位置 | 測試位置 | 覆蓋狀態 |
-| ---- | -------- | -------- | -------- |
-| ...  | src/...  | test/... | ✅/⚠️/❌ |
+| Module | Source Path | Test Path | Coverage Status |
+| ------ | ----------- | --------- | --------------- |
+| ...    | src/...     | test/...  | ✅/⚠️/❌        |
 
-## 覆蓋缺口
+## Coverage Gaps
 
 ### 🔴 Critical
 
-1. **[缺口描述]**
-   - 位置：`<file:function>`
-   - 原因：<為何重要>
-   - 建議測試：<測試案例描述>
+1. **[Gap Description]**
+   - Location: `<file:function>`
+   - Reason: <why it matters>
+   - Suggested test: <test case description>
 
 ### 🟠 Major
 
-（如有）
+(if any)
 
 ### 🟡 Minor
 
-（如有）
+(if any)
 
-## 建議新增測試
+## Recommended New Tests
 
-| 優先級 | 測試類型    | 測試案例 | 目標檔案             |
-| ------ | ----------- | -------- | -------------------- |
-| P0     | Unit        | ...      | test/unit/...        |
-| P1     | Integration | ...      | test/integration/... |
+| Priority | Test Type   | Test Case | Target File          |
+| -------- | ----------- | --------- | -------------------- |
+| P0       | Unit        | ...       | test/unit/...        |
+| P1       | Integration | ...       | test/integration/... |
 
-## 覆蓋率摘要
+## Coverage Summary
 
-| 指標       | 狀態     |
-| ---------- | -------- |
-| 功能覆蓋   | X/Y (Z%) |
-| Happy path | ✅/❌    |
-| Error path | ✅/❌    |
-| Edge cases | ✅/❌    |
+| Metric     | Status    |
+| ---------- | --------- |
+| Feature coverage | X/Y (Z%) |
+| Happy path | ✅/❌     |
+| Error path | ✅/❌     |
+| Edge cases | ✅/❌     |
 
-## 下一步
+## Next Steps
 
-1. <最優先要補的測試>
-2. <次優先>
+1. <highest priority test to add>
+2. <second priority>
 ```
 
-## 使用範例
+## Usage Examples
 
 ```bash
 /check-coverage docs/features/auth/login-flow

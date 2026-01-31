@@ -1,5 +1,5 @@
 ---
-description: 提交前檢查：lint:fix → build → test:unit
+description: Pre-commit checks — lint:fix -> build -> test:unit
 allowed-tools: Bash(node:*), Read
 ---
 
@@ -9,13 +9,13 @@ allowed-tools: Bash(node:*), Read
 
 ## Task
 
-一律使用腳本指令 `scripts/precommit-runner.js` 先執行所有檢查。
-如有需要，可以手動執行 `{LINT_FIX_COMMAND}` 和 `{BUILD_COMMAND}` 和 `{TEST_COMMAND}`。
+Always use the script `scripts/precommit-runner.js` to run all checks first.
+If needed, manually run `{LINT_FIX_COMMAND}` and `{BUILD_COMMAND}` and `{TEST_COMMAND}`.
 
 ## Output
 
 ```markdown
-## 結果
+## Results
 
 | Step      | Status |
 | --------- | ------ |
@@ -23,12 +23,12 @@ allowed-tools: Bash(node:*), Read
 | build     | ✅/❌  |
 | test:unit | ✅/❌  |
 
-## 變更檔案（lint:fix 後）
+## Changed Files (after lint:fix)
 
 - <files>
 
 ## Checklist
 
-- [ ] 三件套全過
-- [ ] git status 乾淨
+- [ ] All three checks pass
+- [ ] git status clean
 ```

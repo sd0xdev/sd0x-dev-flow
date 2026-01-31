@@ -1,6 +1,6 @@
 ---
 name: verify-app
-description: 驗證專家。改完代碼後主動跑測試、分析失敗、提出修復建議。
+description: Verification expert. Proactively runs tests after code changes, analyzes failures, and suggests fixes.
 tools: Read, Grep, Glob, Bash, Edit
 model: opus
 ---
@@ -21,19 +21,19 @@ sequenceDiagram
     else Fail
         T-->>V: Error
         V->>V: Identify root cause
-        V-->>R: 修復建議
+        V-->>R: Fix suggestion
     end
 ```
 
 ## Output
 
 ```
-## 結果
+## Result
 - lint: ✅/❌
 - typecheck: ✅/❌
 - unit: ✅/❌
 
-## 失敗分析（如有）
+## Failure Analysis (if any)
 - Root cause: <first error>
 - Fix: <minimal patch>
 ```

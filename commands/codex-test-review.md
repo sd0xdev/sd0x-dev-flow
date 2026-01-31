@@ -1,6 +1,6 @@
 ---
-description: 用 Codex MCP 審查測試案例是否足夠，建議增加的邊界案例。支援循環審核上下文保持。
-argument-hint: [<file-or-dir|描述>] [--type unit|integration|e2e] [--continue <threadId>]
+description: Review test case sufficiency using Codex MCP, suggest additional edge cases. Supports review loop with context preservation.
+argument-hint: [<file-or-dir|description>] [--type unit|integration|e2e] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
 skills: test-review
 ---
@@ -12,252 +12,252 @@ skills: test-review
 
 ## Task
 
-你現在要使用 Codex MCP 審查測試覆蓋是否足夠。
+You will use Codex MCP to review whether test coverage is sufficient.
 
-### Arguments 解析
+### Arguments Parsing
 
 ```
 $ARGUMENTS
 ```
 
-### 智能輸入
+### Smart Input
 
-| 輸入           | 範例                     | 行為                         |
-| -------------- | ------------------------ | ---------------------------- |
-| 檔案路徑       | `test/unit/xxx.test.ts`  | 直接審查該檔案               |
-| 目錄           | `test/unit/service/`     | 審查目錄下所有測試           |
-| 「未提交」描述 | `"檢查未提交代碼的測試"` | 自動找 git diff 變更的檔案   |
-| 模組名稱       | `"portfolio service"`    | 搜尋相關測試檔案             |
-| 無參數         | -                        | 自動偵測 git diff 或最近修改 |
-| `--continue`   | `--continue <threadId>`  | 繼續之前的審核會話           |
+| Input               | Example                    | Behavior                               |
+| ------------------- | -------------------------- | -------------------------------------- |
+| File path           | `test/unit/xxx.test.ts`    | Directly review that file              |
+| Directory           | `test/unit/service/`       | Review all tests in directory          |
+| Description         | `"check uncommitted tests"`| Auto-find files changed in git diff    |
+| Module name         | `"portfolio service"`      | Search related test files              |
+| No parameter        | -                          | Auto-detect git diff or recent changes |
+| `--continue`        | `--continue <threadId>`    | Continue previous review session       |
 
-### Step 1: 智能偵測審查目標
+### Step 1: Smart Detection of Review Target
 
-根據 $ARGUMENTS 決定審查目標：
+Determine review target based on $ARGUMENTS:
 
-1. **有具體檔案/目錄路徑**：直接使用
-2. **有描述性文字**：搜尋相關測試檔案
-3. **無參數**：偵測 git diff 中的測試檔案，或最近修改的測試
+1. **Has specific file/directory path**: Use directly
+2. **Has descriptive text**: Search related test files
+3. **No parameter**: Detect test files in git diff, or recently modified tests
 
-使用 `Read`、`Glob`、`Grep` 工具找出：
+Use `Read`, `Glob`, `Grep` tools to find:
 
-- `TEST_FILE`：測試檔案路徑
-- `SOURCE_FILE`：對應的源碼檔案（從測試路徑推測）
-- `TEST_TYPE`：unit / integration / e2e
+- `TEST_FILE`: Test file path
+- `SOURCE_FILE`: Corresponding source file (inferred from test path)
+- `TEST_TYPE`: unit / integration / e2e
 
-### Step 2: 讀取測試與源碼內容
+### Step 2: Read Test and Source Content
 
 ```bash
-# 讀取測試檔案
+# Read test file
 Read(TEST_FILE)
 
-# 讀取對應源碼（如果存在）
-# test/unit/service/xxx.test.ts → src/service/xxx.ts
+# Read corresponding source (if exists)
+# test/unit/service/xxx.test.ts -> src/service/xxx.ts
 Read(SOURCE_FILE)
 ```
 
-### Step 3: 執行審核
+### Step 3: Execute Review
 
-**情況 A：首次審核（無 `--continue`）**
+**Case A: First review (no `--continue`)**
 
-使用 `mcp__codex__codex` 工具啟動新審核會話：
+Use `mcp__codex__codex` to start a new review session:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是資深測試工程師，專精於 TypeScript/Jest 測試。請審查測試覆蓋是否足夠。
+  prompt: `You are a senior test engineer specializing in TypeScript/Jest testing. Review whether test coverage is sufficient.
 
-## 測試類型：${TEST_TYPE}
+## Test Type: ${TEST_TYPE}
 
-## 測試檔案
+## Test File
 \`\`\`typescript
 ${TEST_CONTENT}
 \`\`\`
 
-## 對應源碼
+## Corresponding Source
 \`\`\`typescript
 ${SOURCE_CONTENT}
 \`\`\`
 
-## ⚠️ 重要：你必須自主調研專案 ⚠️
+## ⚠️ Important: You must independently research the project ⚠️
 
-在審核測試覆蓋時，你**必須**執行以下調研，不要只依賴上面提供的內容：
+When reviewing test coverage, you **must** perform the following research, do not rely only on the content above:
 
-### 調研步驟
-1. 了解專案結構：\`ls src/\`、\`ls test/\`
-2. 搜尋相關源碼：\`grep -r "className" src/ --include="*.ts" -l | head -10\`
-3. 讀取源碼了解完整邏輯：\`cat <源碼路徑> | head -150\`
-4. 搜尋現有測試模式：\`ls test/unit/\` 或 \`cat test/unit/xxx.test.ts | head -50\`
-5. 找出源碼中的所有分支和錯誤處理路徑
+### Research Steps
+1. Understand project structure: \`ls src/\`, \`ls test/\`
+2. Search related source: \`grep -r "className" src/ --include="*.ts" -l | head -10\`
+3. Read source to understand full logic: \`cat <source path> | head -150\`
+4. Search existing test patterns: \`ls test/unit/\` or \`cat test/unit/xxx.test.ts | head -50\`
+5. Find all branches and error handling paths in source
 
-### 驗證重點
-- 源碼中有哪些 public 方法？測試是否覆蓋？
-- 源碼中有哪些 if/else/switch 分支？測試是否覆蓋？
-- 源碼中有哪些 try/catch？測試是否覆蓋錯誤路徑？
-- 源碼中的參數驗證邏輯是否有測試？
+### Verification Focus
+- Which public methods exist in source? Are they tested?
+- Which if/else/switch branches exist? Are they covered?
+- Which try/catch blocks exist? Are error paths tested?
+- Is parameter validation logic tested?
 
-## 審核維度
+## Review Dimensions
 
-### 1. 覆蓋完整性
-- 所有 public 方法是否都有測試
-- 所有分支（if/else/switch）是否都覆蓋
-- 所有錯誤處理路徑是否都測試
+### 1. Coverage Completeness
+- Are all public methods tested
+- Are all branches (if/else/switch) covered
+- Are all error handling paths tested
 
-### 2. 邊界條件
-- 空值處理：null、undefined、空字串、空陣列
-- 極值處理：0、負數、最大值、最小值
-- 特殊字元：特殊符號、unicode、emoji
+### 2. Boundary Conditions
+- Null handling: null, undefined, empty string, empty array
+- Extreme values: 0, negative numbers, max, min
+- Special characters: special symbols, unicode, emoji
 
-### 3. 錯誤場景
-- 外部服務失敗（API 錯誤、超時）
-- 無效輸入
-- 資源不存在
-- 權限不足
+### 3. Error Scenarios
+- External service failure (API error, timeout)
+- Invalid input
+- Resource not found
+- Insufficient permissions
 
-### 4. 併發與狀態
-- 多次呼叫的行為
-- 狀態變更的正確性
+### 4. Concurrency & State
+- Behavior on multiple calls
+- State change correctness
 - Race condition
 
-### 5. Mock 合理性（僅 Unit Test）
-- Mock 是否過度（導致測試無效）
-- Mock 是否不足（導致測試不穩定）
+### 5. Mock Reasonableness (Unit Test only)
+- Is mocking excessive (making tests ineffective)
+- Is mocking insufficient (making tests flaky)
 
-## 輸出格式
+## Output Format
 
-### 覆蓋評估
+### Coverage Assessment
 
-| 維度 | 評分（1-5⭐） | 說明 |
-|------|--------------|------|
-| 正向路徑 | ... | ... |
-| 錯誤處理 | ... | ... |
-| 邊界條件 | ... | ... |
-| Mock 合理性 | ... | ... |
+| Dimension | Rating (1-5⭐) | Notes |
+|-----------|----------------|-------|
+| Happy path | ... | ... |
+| Error handling | ... | ... |
+| Boundary conditions | ... | ... |
+| Mock reasonableness | ... | ... |
 
-### 🔴 必須補充（P0/P1）
+### 🔴 Must Add (P0/P1)
 
-列出缺失的關鍵測試案例，並提供建議的測試程式碼。
+List missing critical test cases with suggested test code.
 
-### 🟡 建議補充（P2）
+### 🟡 Suggested Addition (P2)
 
-列出可選的邊界案例測試。
+List optional boundary case tests.
 
 ### Gate
 
-- 無 🔴 項目：✅ 測試充足
-- 有 🔴 項目：⛔ 需補充測試`,
+- No 🔴 items: ✅ Tests sufficient
+- Has 🔴 items: ⛔ Tests need supplementation`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
 ```
 
-**記住返回的 `threadId`，用於後續循環審核。**
+**Remember the returned `threadId` for subsequent review loops.**
 
-**情況 B：循環審核（有 `--continue`）**
+**Case B: Loop review (has `--continue`)**
 
-使用 `mcp__codex__codex-reply` 繼續之前的會話：
+Use `mcp__codex__codex-reply` to continue the previous session:
 
 ```typescript
 mcp__codex__codex -
   reply({
-    threadId: '<從 --continue 參數獲取>',
-    prompt: `我已補充測試案例。請重新審核：
+    threadId: '<from --continue parameter>',
+    prompt: `I have added test cases. Please re-review:
 
-## 更新後的測試檔案
+## Updated Test File
 \`\`\`typescript
 ${TEST_CONTENT}
 \`\`\`
 
-請驗證：
-1. 之前指出的 🔴 缺失是否已補充？
-2. 新增的測試是否正確覆蓋問題場景？
-3. 是否引入了新的測試問題？
-4. 更新 Gate 狀態`,
+Please verify:
+1. Have previously identified 🔴 gaps been filled?
+2. Do new tests correctly cover the problem scenarios?
+3. Did new tests introduce any issues?
+4. Update Gate status`,
   });
 ```
 
-### Step 4: 整合輸出
+### Step 4: Consolidate Output
 
-將 Codex 的審核結果整理為標準格式。
+Organize Codex review results into the standard format.
 
-## Review Loop 自動化
+## Review Loop Automation
 
-**⚠️ 遵循 @CLAUDE.md 審核循環規則 ⚠️**
+**⚠️ Follow @CLAUDE.md review loop rules ⚠️**
 
-當審核結果為 ⛔ 需補充測試 時：
+When review result is ⛔ Tests need supplementation:
 
-1. 記住 `threadId`
-2. 補充缺失的測試
-3. 使用 `--continue <threadId>` 重新審核
-4. 重複直到 ✅ 測試充足
+1. Remember the `threadId`
+2. Add missing tests
+3. Re-review using `--continue <threadId>`
+4. Repeat until ✅ Tests sufficient
 
 ## Output
 
 ````markdown
-## 測試覆蓋審查報告
+## Test Coverage Review Report
 
-### 審查範圍
+### Review Scope
 
-- 檔案：<TEST_FILE>
-- 類型：Unit / Integration / E2E
-- 對應源碼：<SOURCE_FILE>
+- File: <TEST_FILE>
+- Type: Unit / Integration / E2E
+- Corresponding source: <SOURCE_FILE>
 
-### 覆蓋評估
+### Coverage Assessment
 
-| 維度        | 評分      | 說明 |
-| ----------- | --------- | ---- |
-| 正向路徑    | ⭐⭐⭐⭐☆ | ...  |
-| 錯誤處理    | ⭐⭐⭐☆☆  | ...  |
-| 邊界條件    | ⭐⭐☆☆☆   | ...  |
-| Mock 合理性 | ⭐⭐⭐⭐☆ | ...  |
+| Dimension         | Rating    | Notes |
+| ----------------- | --------- | ----- |
+| Happy path        | ⭐⭐⭐⭐☆ | ...   |
+| Error handling    | ⭐⭐⭐☆☆  | ...   |
+| Boundary conditions | ⭐⭐☆☆☆ | ...   |
+| Mock reasonableness | ⭐⭐⭐⭐☆ | ...  |
 
-### 🔴 必須補充（P0/P1）
+### 🔴 Must Add (P0/P1)
 
-1. **缺失**：<description>
-   - **位置**：`src/xxx.ts:123`
-   - **建議測試**：
+1. **Missing**: <description>
+   - **Location**: `src/xxx.ts:123`
+   - **Suggested test**:
      ```typescript
      it('should ...', () => { ... });
      ```
 
-### 🟡 建議補充（P2）
+### 🟡 Suggested Addition (P2)
 
-1. **缺失**：<description>
-   - **邊界條件**：<edge case>
+1. **Missing**: <description>
+   - **Edge case**: <edge case>
 
-### 邊界案例建議
+### Edge Case Suggestions
 
-| 類型 | 案例                  | 優先級 |
-| ---- | --------------------- | ------ |
-| 空值 | null / undefined 輸入 | P1     |
-| 極值 | 最大/最小值邊界       | P2     |
-| 併發 | 多請求同時處理        | P2     |
-| 超時 | 外部服務超時          | P1     |
+| Type    | Case                    | Priority |
+| ------- | ----------------------- | -------- |
+| Null    | null / undefined input  | P1       |
+| Extreme | Max/min value boundary  | P2       |
+| Concurrency | Multiple concurrent requests | P2 |
+| Timeout | External service timeout | P1      |
 
 ### Gate
 
-✅ 測試充足 / ⛔ 需補充測試 (N 個 🔴 項目)
+✅ Tests sufficient / ⛔ Tests need supplementation (N 🔴 items)
 
-### 循環審核
+### Loop Review
 
-如需補充後重新審核，請使用：
+To re-review after additions, use:
 `/codex-test-review --continue <threadId>`
 ````
 
 ## Examples
 
 ```bash
-# 指定檔案
+# Specify file
 /codex-test-review test/unit/service/xxx.test.ts
 
-# 檢查未提交代碼
-/codex-test-review "檢查未提交代碼測試案例是否足夠"
+# Check uncommitted code
+/codex-test-review "Check if uncommitted code has sufficient tests"
 
-# 檢查特定模組
-/codex-test-review "portfolio service 測試"
+# Check specific module
+/codex-test-review "portfolio service tests"
 
-# 自動偵測
+# Auto-detect
 /codex-test-review
 
-# 補充後繼續審核（保持上下文）
+# Continue review after additions (preserve context)
 /codex-test-review --continue abc123
 ```

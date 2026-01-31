@@ -1,9 +1,9 @@
 # Logging Rules
 
-日誌級別: error(立即處理) | warn(潛在問題) | info(業務事件) | debug(調試)
+Log levels: error (immediate action) | warn (potential issue) | info (business event) | debug (debugging)
 
-禁止記錄: 私鑰 | 助記詞 | API keys | 密碼 | 完整地址（可記錄前後 6 位）
+Never log: Private keys | Mnemonics | API keys | Passwords | Full addresses (may log first/last 6 chars)
 
-必須包含: traceId | service | method
+Must include: traceId | service | method
 
-格式: JSON 結構化日誌
+Format: JSON structured logs

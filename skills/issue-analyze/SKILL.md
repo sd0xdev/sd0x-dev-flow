@@ -1,6 +1,6 @@
 ---
 name: issue-analyze
-description: GitHub Issue 深度分析。讀取 issue → 分類問題 → 選擇調查策略 → 整合四種調查工具。
+description: GitHub Issue deep analysis. Read issue -> classify problem -> select investigation strategy -> integrate four investigation tools.
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
 ---
 
@@ -8,129 +8,129 @@ allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
 
 ## Trigger
 
-- Keywords: 分析 issue, analyze issue, 調查問題, 問題分析, root cause, 根因分析
+- Keywords: analyze issue, investigate problem, problem analysis, root cause, root cause analysis
 
 ## When NOT to Use
 
-- 已知根因，直接修復（用 `/bug-fix`）
-- 純功能開發（用 `/feature-dev`）
-- 只需代碼審查（用 `/codex-review`）
+- Known root cause, fix directly (use `/bug-fix`)
+- Pure feature development (use `/feature-dev`)
+- Only need code review (use `/codex-review`)
 
 ## Workflow
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 1: 讀取 Issue                                              │
+│ Phase 1: Read Issue                                             │
 ├─────────────────────────────────────────────────────────────────┤
 │ gh issue view <number> --json title,body,labels,comments        │
-│ 提取：症狀、重現步驟、錯誤訊息、相關檔案                         │
+│ Extract: symptoms, reproduction steps, error messages, files    │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 2: 問題分類                                                │
+│ Phase 2: Problem Classification                                 │
 ├─────────────────────────────────────────────────────────────────┤
-│ 判斷問題類型 → 選擇調查策略                                      │
+│ Determine problem type -> select investigation strategy         │
 │                                                                 │
 │ ┌────────────────┬──────────────────────────────────┐           │
-│ │ 類型           │ 調查策略                         │           │
+│ │ Type           │ Investigation Strategy            │           │
 │ ├────────────────┼──────────────────────────────────┤           │
-│ │ 功能不理解     │ /code-explore                    │           │
-│ │ 回歸問題       │ /git-investigate                 │           │
-│ │ 複雜根因       │ /code-investigate（雙視角）      │           │
-│ │ 多種可能原因   │ /codex-brainstorm（窮舉）        │           │
-│ │ 綜合問題       │ 組合使用多種策略                 │           │
+│ │ Unfamiliar     │ /code-explore                    │           │
+│ │ Regression     │ /git-investigate                 │           │
+│ │ Complex root   │ /code-investigate (dual view)    │           │
+│ │ Multiple cause │ /codex-brainstorm (exhaustive)   │           │
+│ │ Composite      │ Combine multiple strategies      │           │
 │ └────────────────┴──────────────────────────────────┘           │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 3: 執行調查                                                │
+│ Phase 3: Execute Investigation                                  │
 ├─────────────────────────────────────────────────────────────────┤
-│ 根據分類結果，調用對應的調查指令                                 │
+│ Based on classification, invoke corresponding investigation cmd │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ Phase 4: 整合報告                                                │
+│ Phase 4: Consolidated Report                                    │
 ├─────────────────────────────────────────────────────────────────┤
-│ 綜合調查結果，產出分析報告                                       │
+│ Synthesize investigation results, produce analysis report       │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## 問題分類決策樹
+## Problem Classification Decision Tree
 
 ```
-Issue 症狀
+Issue Symptoms
     │
-    ├─ 「以前可以，現在不行」 ──────→ /git-investigate
-    │                                  （找引入點）
+    ├─ "It used to work, now it doesn't" ───→ /git-investigate
+    │                                          (find introduction point)
     │
-    ├─ 「不知道這功能怎麼運作」 ────→ /code-explore
-    │                                  （快速理解）
+    ├─ "Don't know how this feature works" ─→ /code-explore
+    │                                          (quick understanding)
     │
-    ├─ 「有錯誤訊息 / stack trace」
+    ├─ "Has error message / stack trace"
     │       │
-    │       ├─ 錯誤明確 ─────────────→ /code-explore
-    │       │                          （追蹤路徑）
+    │       ├─ Clear error ────────────────→ /code-explore
+    │       │                                (trace path)
     │       │
-    │       └─ 錯誤模糊 / 間歇性 ────→ /code-investigate
-    │                                  （雙視角確認）
+    │       └─ Vague / intermittent ───────→ /code-investigate
+    │                                        (dual-view confirmation)
     │
-    ├─ 「可能原因很多」 ────────────→ /codex-brainstorm
-    │                                  （窮舉分析）
+    ├─ "Many possible causes" ────────────→ /codex-brainstorm
+    │                                        (exhaustive analysis)
     │
-    └─ 綜合 / 不確定 ──────────────→ 先 /code-explore
-                                       再依結果選擇
+    └─ Composite / uncertain ─────────────→ Start with /code-explore
+                                             then choose based on results
 ```
 
-## 調查工具對照
+## Investigation Tool Comparison
 
-| 工具                | 用途         | 速度 | 深度   |
-| ------------------- | ------------ | ---- | ------ |
-| `/code-explore`     | 快速理解代碼 | 快   | 單視角 |
-| `/git-investigate`  | 追蹤變更歷史 | 中   | 單視角 |
-| `/code-investigate` | 雙重確認     | 慢   | 雙視角 |
-| `/codex-brainstorm` | 窮舉可能性   | 最慢 | 對抗式 |
+| Tool                | Purpose                | Speed   | Depth      |
+| ------------------- | ---------------------- | ------- | ---------- |
+| `/code-explore`     | Quick code exploration | Fast    | Single     |
+| `/git-investigate`  | Track change history   | Medium  | Single     |
+| `/code-investigate` | Dual confirmation      | Slow    | Dual-view  |
+| `/codex-brainstorm` | Exhaust possibilities  | Slowest | Adversarial|
 
 ## Verification
 
-- [ ] Issue 內容完整提取
-- [ ] 問題類型正確分類
-- [ ] 調查策略合理選擇
-- [ ] 報告包含根因分析
-- [ ] 有具體修復建議
+- [ ] Issue content fully extracted
+- [ ] Problem type correctly classified
+- [ ] Investigation strategy reasonably selected
+- [ ] Report includes root cause analysis
+- [ ] Contains specific fix recommendations
 
 ## References
 
-- `references/classification.md` - 問題分類詳細指引
-- `references/report-template.md` - 報告模板
+- `references/classification.md` - Detailed problem classification guide
+- `references/report-template.md` - Report template
 
 ## Examples
 
-### 回歸問題
+### Regression Issue
 
 ```
-輸入：/issue-analyze 123
-Phase 1: gh issue view 123 → 「更新後 API 回傳 500」
-Phase 2: 分類 = 回歸問題
-Phase 3: /git-investigate → 找到引入 commit
-Phase 4: 報告 + 修復建議
+Input: /issue-analyze 123
+Phase 1: gh issue view 123 -> "API returns 500 after update"
+Phase 2: Classification = Regression
+Phase 3: /git-investigate -> find introducing commit
+Phase 4: Report + fix recommendation
 ```
 
-### 間歇性錯誤
+### Intermittent Error
 
 ```
-輸入：/issue-analyze 456
-Phase 1: gh issue view 456 → 「隨機出現 timeout」
-Phase 2: 分類 = 複雜根因（間歇性）
-Phase 3: /code-investigate → Claude + Codex 雙視角
-Phase 4: 整合報告 → 可能原因排序
+Input: /issue-analyze 456
+Phase 1: gh issue view 456 -> "Random timeout occurrences"
+Phase 2: Classification = Complex root cause (intermittent)
+Phase 3: /code-investigate -> Claude + Codex dual-view
+Phase 4: Consolidated report -> ranked possible causes
 ```
 
-### 未知功能
+### Unknown Feature
 
 ```
-輸入：/issue-analyze 789
-Phase 1: gh issue view 789 → 「為什麼會有這個行為？」
-Phase 2: 分類 = 功能不理解
-Phase 3: /code-explore → 追蹤執行路徑
-Phase 4: 報告 + 流程圖
+Input: /issue-analyze 789
+Phase 1: gh issue view 789 -> "Why does it behave this way?"
+Phase 2: Classification = Unfamiliar feature
+Phase 3: /code-explore -> trace execution path
+Phase 4: Report + flow diagram
 ```

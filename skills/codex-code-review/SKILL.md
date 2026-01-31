@@ -10,13 +10,13 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: review, PR, bug, security, performance, 測試覆蓋, 審查, 檢查
+- Keywords: review, PR, bug, security, performance, test coverage, audit, check
 
 ## When NOT to Use
 
-- 只是想了解代碼功能（用 Explore）
-- 需要實作修復（用 feature-dev）
-- 文檔審查（用 doc-review）
+- Just want to understand code functionality (use Explore)
+- Need to implement fixes (use feature-dev)
+- Document review (use doc-review)
 
 ## Workflow
 
@@ -27,7 +27,7 @@ sequenceDiagram
     participant C as Codex
 
     U->>S: review request
-    S->>C: /codex-review-fast 或 /codex-review
+    S->>C: /codex-review-fast or /codex-review
     C-->>S: second opinion
     S->>S: apply rubric
     S-->>U: P0/P1/P2/Nit + Gate
@@ -35,9 +35,9 @@ sequenceDiagram
 
 ## Verification
 
-- 每個問題標記嚴重程度（P0/P1/P2/Nit）
-- Gate 明確（✅ Pass / ⛔ Block）
-- 問題包含：位置、描述、修復建議
+- Each issue tagged with severity (P0/P1/P2/Nit)
+- Gate is clear (Pass / Block)
+- Issues include: location, description, fix suggestion
 
 ## References
 
@@ -47,16 +47,16 @@ sequenceDiagram
 ## Examples
 
 ```
-輸入：幫我 review 這個 PR
-動作：/codex-review-fast → 套用 rubric → 輸出 P0/P1/P2/Nit + Gate
+Input: Review this PR for me
+Action: /codex-review-fast -> Apply rubric -> Output P0/P1/P2/Nit + Gate
 ```
 
 ```
-輸入：檢查這段代碼的安全性
-動作：/codex-security → 套用 OWASP rubric → 輸出安全問題
+Input: Check the security of this code
+Action: /codex-security -> Apply OWASP rubric -> Output security issues
 ```
 
 ```
-輸入：這個函數有什麼問題嗎？
-動作：Read 函數 → 套用 rubric → 輸出問題列表
+Input: Any issues with this function?
+Action: Read function -> Apply rubric -> Output issue list
 ```

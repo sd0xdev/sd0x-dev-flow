@@ -14,39 +14,39 @@ context: fork
 
 ## When NOT to Use
 
-- 需要修改數據（此 skill 僅限讀取）
-- 單純代碼審查（用 codex-review）
-- 功能開發（用 feature-dev）
+- Need to modify data (this skill is read-only only)
+- Pure code review (use codex-review)
+- Feature development (use feature-dev)
 
 ## Core Principle
 
 ```
-⚠️ ALL OPERATIONS MUST BE READ-ONLY ⚠️
+ALL OPERATIONS MUST BE READ-ONLY
 ```
 
 ```
-Claude 獨立分析 → 形成結論 → Codex 第三視角確認 → 整合報告
+Claude independent analysis -> Form conclusion -> Codex third-perspective confirmation -> Integrated report
 ```
 
 ## Workflow
 
 ```
-Phase 1: Explore    → 理解系統架構、數據流、觸發點
-Phase 2: Plan       → 建立驗證清單，呈報用戶確認
-Phase 3: Execute    → 執行只讀查詢，記錄 expected vs actual
-Phase 4: Analyze    → Claude 獨立形成診斷結論
-Phase 5: Confirm    → /codex-brainstorm 第三視角驗證
-Phase 6: Integrate  → 綜合雙視角，產出最終報告
+Phase 1: Explore    -> Understand system architecture, data flow, trigger points
+Phase 2: Plan       -> Build verification checklist, present to user for confirmation
+Phase 3: Execute    -> Execute read-only queries, record expected vs actual
+Phase 4: Analyze    -> Claude independently forms diagnostic conclusion
+Phase 5: Confirm    -> /codex-brainstorm third-perspective verification
+Phase 6: Integrate  -> Synthesize dual perspectives, produce final report
 ```
 
 ## Safety Rules
 
-| Rule              | Description                            |
-| ----------------- | -------------------------------------- |
-| **READ-ONLY**     | 禁止任何寫入/更新/刪除操作             |
-| PLAN-FIRST        | 執行查詢前先呈報驗證計畫               |
-| CREDENTIAL-SAFETY | 輸出中不暴露完整憑證                   |
-| INDEPENDENT-FIRST | Claude 先獨立得出結論，再請 Codex 確認 |
+| Rule              | Description                                      |
+| ----------------- | ------------------------------------------------ |
+| **READ-ONLY**     | No write/update/delete operations allowed        |
+| PLAN-FIRST        | Present verification plan before executing queries |
+| CREDENTIAL-SAFETY | Do not expose full credentials in output         |
+| INDEPENDENT-FIRST | Claude forms conclusion first, then asks Codex to confirm |
 
 ## Verification Checklist
 
@@ -58,26 +58,26 @@ Phase 6: Integrate  → 綜合雙視角，產出最終報告
 
 ## Verification
 
-- 報告包含 Executive Summary + Status
-- 每項檢查有 expected/actual/status
-- Claude + Codex 視角都有記錄
-- 建議分為 Immediate / Further / Long-term
+- Report includes Executive Summary + Status
+- Each check has expected/actual/status
+- Both Claude + Codex perspectives are documented
+- Recommendations split into Immediate / Further / Long-term
 
 ## References
 
-- `references/queries.md` - 查詢模板 + 安全規則
-- `references/output-template.md` - 報告格式
+- `references/queries.md` - Query templates + safety rules
+- `references/output-template.md` - Report format
 
 ## Examples
 
 ```
-輸入：/feature-verify User Auth
-      MongoDB: mongodb://...
-      {ANALYTICS}: project_id={PROJECT_ID}
-動作：Explore → Plan → Execute queries → Analyze → Codex confirm → Report
+Input: /feature-verify User Auth
+       MongoDB: mongodb://...
+       {ANALYTICS}: project_id={PROJECT_ID}
+Action: Explore -> Plan -> Execute queries -> Analyze -> Codex confirm -> Report
 ```
 
 ```
-輸入：verify user auth is working correctly
-動作：Phase 1-6 流程 → 輸出診斷報告
+Input: verify user auth is working correctly
+Action: Phase 1-6 flow -> Output diagnostic report
 ```

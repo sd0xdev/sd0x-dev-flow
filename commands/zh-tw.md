@@ -1,11 +1,11 @@
 ---
-description: 將上一則回覆重寫成繁體中文版本
-argument-hint: [指定內容，如 "上面的報告" 或 "Codex 的審核結果"]
+description: Rewrite the previous reply in Traditional Chinese
+argument-hint: [specify content, e.g. "the report above" or "Codex review results"]
 ---
 
 ## Task
 
-將對話中的英文或簡體內容重寫成**繁體中文**。
+Rewrite English or Simplified Chinese content from the conversation into **Traditional Chinese**.
 
 ### Arguments
 
@@ -13,28 +13,28 @@ argument-hint: [指定內容，如 "上面的報告" 或 "Codex 的審核結果"
 $ARGUMENTS
 ```
 
-### 目標選擇
+### Target Selection
 
-| 參數                      | 翻譯目標             |
-| ------------------------- | -------------------- |
-| 無參數                    | 上一則回覆           |
-| 有描述（如 "上面的報告"） | 對話中符合描述的內容 |
+| Parameter                                   | Translation Target                          |
+| ------------------------------------------- | ------------------------------------------- |
+| No parameter                                | Previous reply                              |
+| Has description (e.g. "the report above")   | Content in conversation matching description|
 
-### 要求
+### Requirements
 
-| 項目 | 說明                                             |
-| ---- | ------------------------------------------------ |
-| 語言 | 繁體中文（台灣用語）                             |
-| 術語 | 技術術語、程式碼、檔案名保持原文                 |
-| 格式 | 保留原有的 markdown 格式（表格、代碼塊、列表等） |
-| 內容 | 完整重寫，不省略任何部分                         |
+| Item     | Description                                                         |
+| -------- | ------------------------------------------------------------------- |
+| Language | Traditional Chinese (Taiwan usage)                                  |
+| Terms    | Keep technical terms, code, and filenames in original language      |
+| Format   | Preserve original markdown format (tables, code blocks, lists, etc) |
+| Content  | Full rewrite, do not omit any part                                  |
 
-### 轉換規則
+### Conversion Rules
 
-- 簡體 → 繁體（詞彙轉換，非單純字體）
-- 英文說明 → 繁體中文
-- 保持專業術語一致性
+- Simplified Chinese -> Traditional Chinese (vocabulary conversion, not just font)
+- English descriptions -> Traditional Chinese
+- Maintain technical term consistency
 
-### 執行
+### Execution
 
-直接輸出重寫後的完整內容，無需額外說明。
+Output the fully rewritten content directly, no additional explanation needed.

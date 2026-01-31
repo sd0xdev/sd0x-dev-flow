@@ -10,52 +10,52 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: Portfolio, portfolio, 持倉, position, {PRIMARY_PROVIDER}, 協議, lending, staking, liquidity
+- Keywords: Portfolio, portfolio, position, {PRIMARY_PROVIDER}, protocol, lending, staking, liquidity
 
 ## When NOT to Use
 
-- 一般代幣查詢（非 Portfolio 持倉）
-- 交易構建（用對應 provider）
-- 非 portfolio 相關的 API 問題
+- General token queries (not Portfolio positions)
+- Transaction building (use corresponding provider)
+- Non-portfolio related API issues
 
 ## Core Files
 
-| Type       | File                                               | Purpose       |
-| ---------- | -------------------------------------------------- | ------------- |
-| Controller | `src/entity/portfolio/portfolio.controller.ts`     | REST API      |
-| Router     | `src/service/portfolio/source-router/*.service.ts` | 路由編排      |
-| Client     | `src/service/portfolio/providers/{provider}/*.ts`      | {PRIMARY_PROVIDER} 整合   |
-| Aggregator | `src/service/portfolio/aggregation/*.service.ts`   | 聚合計算      |
-| DTO        | `src/dto/portfolio/position.types.ts`              | Position 模型 |
+| Type       | File                                               | Purpose                 |
+| ---------- | -------------------------------------------------- | ----------------------- |
+| Controller | `src/entity/portfolio/portfolio.controller.ts`     | REST API                |
+| Router     | `src/service/portfolio/source-router/*.service.ts` | Routing orchestration   |
+| Client     | `src/service/portfolio/providers/{provider}/*.ts`  | {PRIMARY_PROVIDER} integration |
+| Aggregator | `src/service/portfolio/aggregation/*.service.ts`   | Aggregation computation |
+| DTO        | `src/dto/portfolio/position.types.ts`              | Position model          |
 
 ## API Overview
 
 **Base**: `/onchain/v1/portfolio`
 
-| Endpoint     | Method | Purpose        |
-| ------------ | ------ | -------------- |
-| `/positions` | POST   | 獲取 Portfolio 持倉 |
-| `/chains`    | GET    | 支援鏈列表     |
-| `/protocols` | GET    | 支援協議列表   |
+| Endpoint     | Method | Purpose               |
+| ------------ | ------ | --------------------- |
+| `/positions` | POST   | Get portfolio positions |
+| `/chains`    | GET    | Supported chains list |
+| `/protocols` | GET    | Supported protocols list |
 
 ## Verification
 
-- Position 資料正確標準化
-- 緩存命中/失效正常運作
-- 聚合計算準確
+- Position data correctly normalized
+- Cache hit/miss working properly
+- Aggregation calculations accurate
 
 ## Development Guide
 
 ### Add Protocol Support
 
-1. 確認 {PRIMARY_PROVIDER} 是否支援
-2. 若需自建：實作 `PortfolioPositionExtractor` + 註冊 + 配置路由
+1. Check if {PRIMARY_PROVIDER} supports it
+2. If custom build needed: implement `PortfolioPositionExtractor` + register + configure routing
 
 ### Add Data Source
 
-1. 實作 `ProviderClient` + `Adapter`
-2. 註冊到 `SourceRouter`
-3. 配置路由策略
+1. Implement `ProviderClient` + `Adapter`
+2. Register with `SourceRouter`
+3. Configure routing strategy
 
 ### Debug
 
@@ -67,9 +67,9 @@ curl -X POST /positions -d '{"isForceRefresh": true, ...}'
 
 ## References
 
-- `references/architecture.md` - 系統架構 + 緩存策略
-- `references/api.md` - API 參考 + 資料模型
-- @docs/features/portfolio/ - 詳細文檔
+- `references/architecture.md` - System architecture + cache strategy
+- `references/api.md` - API reference + data models
+- @docs/features/portfolio/ - Detailed documentation
 
 ## Tests
 
@@ -81,11 +81,11 @@ curl -X POST /positions -d '{"isForceRefresh": true, ...}'
 ## Examples
 
 ```
-輸入：Portfolio portfolio 怎麼查詢持倉？
-動作：說明 POST /positions API + 路由策略
+Input: How to query portfolio positions?
+Action: Explain POST /positions API + routing strategy
 ```
 
 ```
-輸入：{PRIMARY_PROVIDER} 整合怎麼運作？
-動作：說明 {PRIMARY_PROVIDER}Client + {PRIMARY_PROVIDER}Adapter 流程
+Input: How does {PRIMARY_PROVIDER} integration work?
+Action: Explain {PRIMARY_PROVIDER}Client + {PRIMARY_PROVIDER}Adapter flow
 ```

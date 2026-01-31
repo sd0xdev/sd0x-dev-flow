@@ -1,156 +1,156 @@
-# Codex Brainstorm 辯論技巧
+# Codex Brainstorm Debate Techniques
 
-## Phase 1: Claude 獨立分析模板
+## Phase 1: Claude Independent Analysis Template
 
 ```markdown
-## Claude 獨立分析
+## Claude Independent Analysis
 
-### 問題理解
+### Problem Understanding
 
-[對問題的理解]
+[Understanding of the problem]
 
-### 約束條件
+### Constraints
 
-[識別的約束]
+[Identified constraints]
 
-### Claude 的最優解假設
+### Claude's Optimal Hypothesis
 
-- 方案：[具體方案]
-- 理由：[為什麼這是最優的]
-- 潛在弱點：[自我批判]
+- Proposal: [specific proposal]
+- Rationale: [why this is optimal]
+- Potential weaknesses: [self-critique]
 
-### 準備攻擊 Codex 的論點
+### Prepare to Attack Codex's Arguments
 
-1. [預設 Codex 可能提出的方案] → [攻擊點]
+1. [Anticipated Codex proposal] → [Attack point]
 2. ...
 ```
 
-## Phase 2: Codex 獨立分析 Prompt
+## Phase 2: Codex Independent Analysis Prompt
 
-### 標準模板
+### Standard Template
 
 ```typescript
 mcp__codex__codex({
-  prompt: `你是一個批判性思考的技術架構師。
+  prompt: `You are a critical-thinking technical architect.
 
-## 問題
+## Problem
 ${problem}
 
-## 約束條件
+## Constraints
 ${constraints}
 
-## ⚠️ 重要：你必須自主調研 ⚠️
+## ⚠️ Important: You must research independently ⚠️
 
-在形成任何結論之前，你**必須**先執行以下調研：
+Before forming any conclusions, you **must** perform the following research:
 
-### 1. 專案結構理解
-- 執行 \`ls src/\` 了解目錄結構
-- 執行 \`ls src/service/\` 和 \`ls src/provider/\` 了解現有模組
+### 1. Project Structure Understanding
+- Run \`ls src/\` to understand directory structure
+- Run \`ls src/service/\` and \`ls src/provider/\` to understand existing modules
 
-### 2. 相關代碼搜尋
-- 搜尋與議題相關的關鍵字：\`grep -r "關鍵字" src/ --include="*.ts" -l | head -10\`
-- 讀取相關檔案內容：\`cat <檔案路徑> | head -100\`
+### 2. Related Code Search
+- Search keywords related to the topic: \`grep -r "keyword" src/ --include="*.ts" -l | head -10\`
+- Read relevant file contents: \`cat <file-path> | head -100\`
 
-### 3. 現有實現分析
-- 找類似功能的實現方式
-- 確認命名慣例、DI 模式、錯誤處理模式
+### 3. Existing Implementation Analysis
+- Find similar feature implementations
+- Confirm naming conventions, DI patterns, error handling patterns
 
-## 輸出要求
+## Output Requirements
 
-### 調研摘要
-| 調研項目 | 發現 |
-|----------|------|
-| 相關模組 | ... |
-| 現有模式 | ... |
-| 可複用元件 | ... |
+### Research Summary
+| Research Item      | Findings |
+|--------------------|----------|
+| Related modules    | ...      |
+| Existing patterns  | ...      |
+| Reusable components | ...     |
 
-### 我的立場
-基於調研結果，我認為最優解是：[立場 B]
+### My Position
+Based on research results, I believe the optimal solution is: [Position B]
 
-### 論據
-1. [基於代碼調研的論據]
-2. [基於現有架構的論據]
-3. [基於約束條件的論據]
+### Arguments
+1. [Argument based on code research]
+2. [Argument based on existing architecture]
+3. [Argument based on constraints]
 
-### 潛在風險
+### Potential Risks
 1. ...`,
   sandbox: 'read-only',
   'approval-policy': 'on-failure',
 });
 ```
 
-### 關鍵設定
+### Key Settings
 
-| 設定              | 值           | 說明                   |
-| ----------------- | ------------ | ---------------------- |
-| `sandbox`         | `read-only`  | 允許讀取檔案，禁止寫入 |
-| `approval-policy` | `on-failure` | 命令失敗才需確認       |
+| Setting           | Value        | Description                      |
+| ----------------- | ------------ | -------------------------------- |
+| `sandbox`         | `read-only`  | Allow file reads, prohibit writes |
+| `approval-policy` | `on-failure` | Approval needed only on failure  |
 
-## Phase 3: 對抗性辯論 Prompts
+## Phase 3: Adversarial Debate Prompts
 
-### Claude 攻擊 Codex
+### Claude Attacks Codex
 
 ```typescript
 mcp__codex__codex_reply({
   threadId: '<threadId>',
-  prompt: `我是 Claude，我不同意你的方案。
+  prompt: `I am Claude, and I disagree with your proposal.
 
-## 你的方案
+## Your Proposal
 ${codexSolution}
 
-## 我的攻擊
-1. **致命缺陷**: [指出最大問題]
-2. **忽略的約束**: [你沒考慮到的]
-3. **假設質疑**: [你的假設可能是錯的]
+## My Attacks
+1. **Fatal flaw**: [identify the biggest issue]
+2. **Ignored constraint**: [what you did not consider]
+3. **Assumption challenge**: [your assumption may be wrong]
 
-## 我的方案
+## My Proposal
 ${claudeSolution}
 
-## 為什麼我的更好
-[論證]
+## Why Mine Is Better
+[argument]
 
-請反駁我的攻擊，或承認並更新你的立場。`,
+Please rebut my attacks, or concede and update your position.`,
 });
 ```
 
-### 後續輪次
+### Subsequent Rounds
 
 ```typescript
 mcp__codex__codex_reply({
   threadId: '<threadId>',
-  prompt: `## 你的反駁
+  prompt: `## Your Rebuttal
 ${codexRebuttal}
 
-## 我的回應
-- 對於 [論點1]: [同意/反駁 + 理由]
-- 對於 [論點2]: [同意/反駁 + 理由]
+## My Response
+- Regarding [argument 1]: [agree/rebut + reason]
+- Regarding [argument 2]: [agree/rebut + reason]
 
-## 我是否更新立場
-- [是/否]
-- 如果是，新立場: [...]
-- 如果否，新攻擊: [...]
+## Whether I Update My Position
+- [Yes/No]
+- If yes, new position: [...]
+- If no, new attack: [...]
 
-## 均衡檢查
-我還能提出新攻擊嗎？[是/否]
-你還能提出新攻擊嗎？請回答。`,
+## Equilibrium Check
+Can I still raise new attacks? [Yes/No]
+Can you still raise new attacks? Please respond.`,
 });
 ```
 
-## 攻擊技巧
+## Attack Techniques
 
-| 類型     | 問法                                 | 目標         |
-| -------- | ------------------------------------ | ------------ |
-| 缺陷攻擊 | 「你的方案在 [場景] 會失敗」         | 找出邊界情況 |
-| 約束攻擊 | 「你忽略了 [約束]」                  | 檢驗完整性   |
-| 假設攻擊 | 「你假設 [X]，但如果 [Y] 呢？」      | 動搖根基     |
-| 比較攻擊 | 「我的方案在 [維度] 更優」           | 直接對比     |
-| 時間攻擊 | 「6 個月後 [場景] 你的方案會怎樣？」 | 長期視角     |
+| Type               | Approach                                          | Goal              |
+| ------------------ | ------------------------------------------------- | ----------------- |
+| Flaw attack        | "Your proposal fails in [scenario]"               | Find edge cases   |
+| Constraint attack  | "You ignored [constraint]"                        | Test completeness |
+| Assumption attack  | "You assume [X], but what if [Y]?"                | Undermine foundation |
+| Comparison attack  | "My proposal is superior in [dimension]"          | Direct comparison |
+| Temporal attack    | "In 6 months under [scenario], what happens to yours?" | Long-term perspective |
 
-## 防守技巧
+## Defense Techniques
 
-| 類型     | 回應方式                                   |
-| -------- | ------------------------------------------ |
-| 承認弱點 | 「你說得對，但這個弱點可以通過 [X] 緩解」  |
-| 反擊     | 「你的方案同樣有這個問題，而且更嚴重」     |
-| 轉移     | 「這個弱點在實際場景中影響很小，因為 [Y]」 |
-| 更新     | 「我接受你的批評，更新我的方案為 [Z]」     |
+| Type          | Response Approach                                              |
+| ------------- | -------------------------------------------------------------- |
+| Acknowledge   | "You're right, but this weakness can be mitigated by [X]"      |
+| Counter-attack | "Your proposal has the same issue, and it's more severe"      |
+| Deflect       | "This weakness has minimal real-world impact because [Y]"      |
+| Update        | "I accept your criticism and update my proposal to [Z]"        |

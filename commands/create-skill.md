@@ -1,5 +1,5 @@
 ---
-description: 創建或重構 Claude Code skill
+description: Create or refactor a Claude Code skill
 argument-hint: <skill-name> [docs-path]
 allowed-tools: Read, Grep, Glob, Write, Task
 skills: create-skill
@@ -7,25 +7,25 @@ skills: create-skill
 
 ## Task
 
-創建或重構 skill。
+Create or refactor a skill.
 
-### 參數
+### Parameters
 
 ```
 $ARGUMENTS
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和結構規範：
+Follow the workflow and structure standards in the skill:
 
-| 階段 | 參考文件                              |
-| ---- | ------------------------------------- |
-| 流程 | @skills/create-skill/SKILL.md |
+| Phase    | Reference                             |
+| -------- | ------------------------------------- |
+| Workflow | @skills/create-skill/SKILL.md |
 
 ## Examples
 
 ```bash
 /create-skill circuit-breaker docs/features/resilience
-/create-skill codex-brainstorm  # 重構現有 skill
+/create-skill codex-brainstorm  # Refactor existing skill
 ```

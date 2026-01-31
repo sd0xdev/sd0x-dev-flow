@@ -1,5 +1,5 @@
 ---
-description: 用 Codex 獲取架構/設計建議（第三大腦）
+description: Get architecture/design advice from Codex (third brain)
 argument-hint: "<question>" [--context <files>] [--mode design|review|compare]
 allowed-tools: Read, Grep, Glob, mcp__codex__codex, mcp__codex__codex-reply
 skills: codex-architect
@@ -7,26 +7,26 @@ skills: codex-architect
 
 ## Task
 
-獲取 Codex 的架構建議，形成雙視角。
+Get architecture advice from Codex to form a dual-perspective view.
 
-### 問題
+### Question
 
 ```
 $ARGUMENTS
 ```
 
-### 執行指引
+### Execution Guide
 
-遵循 skill 中的流程和模板：
+Follow the workflow and templates in the skill:
 
-| 階段     | 參考文件                                                        |
-| -------- | --------------------------------------------------------------- |
-| 流程     | @skills/codex-architect/SKILL.md                        |
-| 專案知識 | @skills/codex-architect/references/project-knowledge.md |
+| Phase             | Reference                                                       |
+| ----------------- | --------------------------------------------------------------- |
+| Workflow          | @skills/codex-architect/SKILL.md                        |
+| Project Knowledge | @skills/codex-architect/references/project-knowledge.md |
 
 ## Examples
 
 ```bash
-/codex-architect "這個快取設計合理嗎？" --context src/service/cache/
-/codex-architect "微服務 vs 單體？" --mode compare
+/codex-architect "Is this cache design reasonable?" --context src/service/cache/
+/codex-architect "Microservices vs monolith?" --mode compare
 ```

@@ -1,118 +1,118 @@
-# Issue 分析報告模板
+# Issue Analysis Report Template
 
-## 標準報告
+## Standard Report
 
 ```markdown
-# Issue #<number> 分析報告
+# Issue #<number> Analysis Report
 
-## Issue 摘要
+## Issue Summary
 
-| 欄位     | 內容         |
-| -------- | ------------ |
-| 標題     | <title>      |
-| 標籤     | <labels>     |
-| 報告者   | <reporter>   |
-| 報告時間 | <created_at> |
-| 症狀     | <症狀描述>   |
+| Field       | Content      |
+| ----------- | ------------ |
+| Title       | <title>      |
+| Labels      | <labels>     |
+| Reporter    | <reporter>   |
+| Reported At | <created_at> |
+| Symptoms    | <symptom description> |
 
-## 問題分類
+## Problem Classification
 
-| 維度   | 判斷結果                          |
-| ------ | --------------------------------- |
-| 時間性 | 回歸 / 一直如此 / 不確定          |
-| 確定性 | 必現 / 間歇性                     |
-| 複雜度 | 低 / 中 / 高                      |
-| 類型   | 邏輯錯誤 / 效能 / 資料問題 / 其他 |
+| Dimension   | Result                                    |
+| ----------- | ----------------------------------------- |
+| Temporality | Regression / Always existed / Uncertain   |
+| Certainty   | Reproducible / Intermittent               |
+| Complexity  | Low / Medium / High                       |
+| Type        | Logic error / Performance / Data / Other  |
 
-**選擇策略**：`/code-explore` | `/git-investigate` | `/code-investigate` | `/codex-brainstorm`
+**Selected Strategy**: `/code-explore` | `/git-investigate` | `/code-investigate` | `/codex-brainstorm`
 
-## 調查過程
+## Investigation Process
 
-### Phase 1: <策略名稱>
+### Phase 1: <Strategy Name>
 
-<調查過程摘要>
+<Investigation summary>
 
-### Phase 2: <如有第二階段>
+### Phase 2: <If second phase exists>
 
-<調查過程摘要>
+<Investigation summary>
 
-## 根因分析
+## Root Cause Analysis
 
-### 直接原因
+### Direct Cause
 
-<導致問題的直接原因>
+<The direct cause of the problem>
 
-### 根本原因
+### Root Cause
 
-<為什麼會發生這個直接原因>
+<Why the direct cause occurred>
 
-### 相關代碼
+### Related Code
 
-| 檔案      | 行號 | 說明       |
-| --------- | ---- | ---------- |
-| `src/...` | L123 | <問題代碼> |
+| File      | Line | Description      |
+| --------- | ---- | ---------------- |
+| `src/...` | L123 | <problematic code> |
 
-## 修復建議
+## Fix Recommendations
 
-### 建議方案
+### Recommended Approach
 
-<修復方案描述>
+<Fix approach description>
 
-### 預估影響
+### Estimated Impact
 
-- 影響範圍：<範圍>
-- 風險等級：低 / 中 / 高
-- 需要測試：Unit / Integration / E2E
+- Scope: <scope>
+- Risk Level: Low / Medium / High
+- Tests Needed: Unit / Integration / E2E
 
-## 後續行動
+## Follow-up Actions
 
-- [ ] 修復代碼
-- [ ] 補充測試
-- [ ] 更新文檔（如需）
+- [ ] Fix code
+- [ ] Add tests
+- [ ] Update documentation (if needed)
 ```
 
-## 快速報告（簡化版）
+## Quick Report (Simplified)
 
 ```markdown
-# Issue #<number> 快速分析
+# Issue #<number> Quick Analysis
 
-**症狀**：<一句話描述>
+**Symptoms**: <one-line description>
 
-**分類**：<類型> → 策略：<策略>
+**Classification**: <type> -> Strategy: <strategy>
 
-**根因**：<一句話描述根因>
+**Root Cause**: <one-line root cause description>
 
-**修復**：<修復建議>
+**Fix**: <fix recommendation>
 
-**相關檔案**：`src/xxx.ts:123`
+**Related Files**: `src/xxx.ts:123`
 ```
 
-## 分歧報告（用於 /codex-brainstorm 結果）
+## Divergence Report (For /codex-brainstorm results)
 
 ```markdown
-# Issue #<number> 分析報告（多視角）
+# Issue #<number> Analysis Report (Multi-perspective)
 
-## Claude 視角
+## Claude Perspective
 
-- 根因推測：<Claude 的結論>
-- 依據：<論據>
+- Root cause hypothesis: <Claude's conclusion>
+- Evidence: <arguments>
 
-## Codex 視角
+## Codex Perspective
 
-- 根因推測：<Codex 的結論>
-- 依據：<論據>
+- Root cause hypothesis: <Codex's conclusion>
+- Evidence: <arguments>
 
-## 共識點
+## Points of Agreement
 
-- <雙方同意的結論>
+- <conclusions both sides agree on>
 
-## 分歧點
+## Points of Divergence
 
-| 議題     | Claude | Codex  |
-| -------- | ------ | ------ |
-| <議題 1> | <立場> | <立場> |
+| Topic      | Claude     | Codex      |
+| ---------- | ---------- | ---------- |
+| <topic 1>  | <position> | <position> |
 
-## 最終結論
+## Final Conclusion
 
-<綜合分析後的結論>
+<Conclusion after comprehensive analysis>
 ```

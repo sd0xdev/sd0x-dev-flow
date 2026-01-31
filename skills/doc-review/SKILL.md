@@ -10,60 +10,60 @@ agent: Explore
 
 ## Trigger
 
-- Keywords: 審核文件, review doc, 文件審查, 技術方案審核, review-spec, doc-refactor, 精簡文件
+- Keywords: review doc, document review, tech spec review, review-spec, doc-refactor, streamline doc
 
 ## When NOT to Use
 
-- 代碼審查（用 codex-code-review）
-- 測試覆蓋審查（用 test-review）
-- 只是想讀文件（直接 Read）
+- Code review (use codex-code-review)
+- Test coverage review (use test-review)
+- Just want to read a document (use Read directly)
 
 ## Commands
 
-| 命令                | 說明                | 適用場景   |
-| ------------------- | ------------------- | ---------- |
-| `/codex-review-doc` | Codex 審核 .md 文件 | 文件變更   |
-| `/review-spec`      | 審核技術方案        | 方案確認   |
-| `/doc-refactor`     | 文件精簡重構        | 文件過長   |
-| `/update-docs`      | 調研後更新文件      | 代碼變更後 |
+| Command             | Description            | Use Case          |
+| ------------------- | ---------------------- | ----------------- |
+| `/codex-review-doc` | Codex reviews .md docs | Document changes  |
+| `/review-spec`      | Review tech spec       | Spec confirmation |
+| `/doc-refactor`     | Streamline documents   | Doc too long      |
+| `/update-docs`      | Research & update docs | After code change |
 
 ## Workflow
 
 ```
-偵測 .md 變更 → 選擇審核命令 → 輸出審核結果 + Gate
+Detect .md changes -> Select review command -> Output review result + Gate
 ```
 
 ## Review Dimensions
 
-| 維度     | 檢查項                         |
-| -------- | ------------------------------ |
-| 結構     | 標題層級、段落組織、目錄完整性 |
-| 內容     | 準確性、完整性、一致性         |
-| 代碼範例 | 範例正確性、與實際代碼一致     |
-| 技術方案 | 需求覆蓋、風險識別、測試策略   |
+| Dimension    | Checks                                          |
+| ------------ | ------------------------------------------------ |
+| Structure    | Heading hierarchy, paragraph organization, TOC   |
+| Content      | Accuracy, completeness, consistency              |
+| Code samples | Sample correctness, alignment with actual code   |
+| Tech spec    | Requirements coverage, risk identification, test strategy |
 
 ## Verification
 
-- 每個問題標記嚴重程度
-- Gate 明確（✅ Pass / ⛔ Block）
-- 修復建議具體可行
+- Each issue tagged with severity level
+- Gate is clear (✅ Pass / ⛔ Block)
+- Fix suggestions are specific and actionable
 
 ## Required Actions
 
-| 變更類型   | 必須執行                              |
-| ---------- | ------------------------------------- |
-| `.md` 文檔 | `/codex-review-doc` 或 `/review-spec` |
-| 技術方案   | `/review-spec`                        |
-| README     | `/codex-review-doc`                   |
+| Change Type | Must Execute                          |
+| ----------- | ------------------------------------- |
+| `.md` docs  | `/codex-review-doc` or `/review-spec` |
+| Tech spec   | `/review-spec`                        |
+| README      | `/codex-review-doc`                   |
 
 ## Examples
 
 ```
-輸入：幫我審核這份技術方案
-動作：/review-spec → 檢查完整性/可行性/風險 → 輸出 Gate
+Input: Review this tech spec for me
+Action: /review-spec -> Check completeness/feasibility/risks -> Output Gate
 ```
 
 ```
-輸入：這份文件太長了，幫我精簡
-動作：/doc-refactor → 表格化 + Mermaid → 輸出對比
+Input: This document is too long, streamline it
+Action: /doc-refactor -> Tabularize + Mermaid -> Output comparison
 ```
