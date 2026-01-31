@@ -1,5 +1,7 @@
 # sd0x-dev-flow
 
+**Language**: English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
+
 Development workflow plugin for [Claude Code](https://claude.com/claude-code) with optional Codex MCP integration.
 
 90+ tools covering code review, testing, investigation, security audit, and DevOps automation.
