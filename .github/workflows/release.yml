@@ -1,0 +1,97 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=v${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "refs/tags/${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate release notes
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          REPO="${{ github.repository }}"
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            RANGE="HEAD"
+            COMPARE_BASE=$(git rev-list --max-parents=0 HEAD | head -1)
+          else
+            RANGE="${LAST_TAG}..HEAD"
+            COMPARE_BASE="$LAST_TAG"
+          fi
+
+          # Collect commits
+          COMMITS=$(git log "$RANGE" --pretty=format:"%s (%h)" --no-merges)
+
+          # Categorize by conventional commit type
+          node -e "
+          const commits = process.argv[1].split('\n').filter(Boolean);
+          const cats = {
+            feat:     { title: 'New Features',    items: [] },
+            fix:      { title: 'Bug Fixes',       items: [] },
+            docs:     { title: 'Documentation',   items: [] },
+            refactor: { title: 'Refactoring',     items: [] },
+            test:     { title: 'Tests',           items: [] },
+            chore:    { title: 'Chores',          items: [] },
+            other:    { title: 'Other Changes',   items: [] },
+          };
+
+          for (const c of commits) {
+            const m = c.match(/^(\w+)(?:\(.+?\))?:\s*(.+)$/);
+            if (m) {
+              const type = m[1].toLowerCase();
+              (cats[type] || cats.other).items.push('- ' + c);
+            } else {
+              cats.other.items.push('- ' + c);
+            }
+          }
+
+          let body = \"## What's Changed in ${VERSION}\\n\\n\";
+          for (const cat of Object.values(cats)) {
+            if (cat.items.length === 0) continue;
+            body += '### ' + cat.title + '\n\n';
+            body += cat.items.join('\n') + '\n\n';
+          }
+
+          body += '**Full Changelog**: https://github.com/${REPO}/compare/${COMPARE_BASE}...${VERSION}\n';
+          process.stdout.write(body);
+          " "$COMMITS" > release-notes.md
+
+      - name: Create tag and release
+        if: steps.check.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
