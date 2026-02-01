@@ -141,7 +141,7 @@ test('dep-audit --level high ignores moderate-only findings', () => {
   assert.equal(result.status, 0);
 });
 
-test('dep-audit without jq defaults to zero counts', () => {
+test('dep-audit with failing jq defaults to zero counts', () => {
   const workDir = makeTempDir('sd0x-audit-no-jq-');
   const binDir = setupStubBin({ includeJq: false, includeCoreUtils: true });
   const vulnJsonPath = join(workDir, 'vuln.json');
@@ -150,11 +150,14 @@ test('dep-audit without jq defaults to zero counts', () => {
     '{"metadata":{"vulnerabilities":{"critical":1,"high":2,"moderate":3,"low":4}}}'
   );
 
+  // Shadow system jq with a stub that always fails,
+  // triggering the || echo "0" fallback in dep-audit.sh
+  writeExecutable(join(binDir, 'jq'), '#!/bin/sh\nexit 1\n');
+
   const result = runDepAudit(workDir, binDir, [], {
     STUB_AUDIT_JSON: vulnJsonPath,
     STUB_AUDIT_EXIT: '1',
-    PATH: `/bin:${binDir}`,
   });
   assert.equal(result.status, 0);
-  assert.match(result.stdout, /\\| High \\| 0 \\|/);
+  assert.match(result.stdout, /\| High \| 0 \|/);
 });

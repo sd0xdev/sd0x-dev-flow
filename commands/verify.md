@@ -44,17 +44,19 @@ intent:
 
 ## Task
 
-### Step 1: Try the runner script
+### Step 1: Check for runner script
+
+First, check if `scripts/verify-runner.js` exists in the project root. If the file exists, run it:
 
 ```bash
 node scripts/verify-runner.js $ARGUMENTS
 ```
 
-If this succeeds, use its output and skip to the Output section.
+If it succeeds, use its output and skip to the Output section.
 
-### Step 2: Fallback (if script not found)
+### Step 2: Fallback (no runner script)
 
-If the runner script does not exist (`MODULE_NOT_FOUND` / `ENOENT`), detect the project ecosystem and run steps manually.
+If `scripts/verify-runner.js` does not exist, **skip Step 1 entirely** and detect the project ecosystem to run steps manually.
 
 **Ecosystem detection** (check project root for manifest files):
 

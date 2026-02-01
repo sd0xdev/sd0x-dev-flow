@@ -23,15 +23,17 @@ $ARGUMENTS = optional parameters
 
 ## Task
 
-### Step 1: Try the audit script
+### Step 1: Check for audit script
+
+First, check if `scripts/dep-audit.sh` exists in the project root. If the file exists, run it:
 
 ```bash
 bash scripts/dep-audit.sh $ARGUMENTS
 ```
 
-If this succeeds, use its output and skip to the Output section.
+If it succeeds, use its output and skip to the Output section.
 
-### Step 2: Fallback (if script not found)
+### Step 2: Fallback (no audit script)
 
 If the script does not exist, detect the project ecosystem and run the audit manually.
 
