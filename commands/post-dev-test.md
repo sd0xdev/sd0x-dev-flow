@@ -2,8 +2,11 @@
 description: Post-development test completion. Analyze developed features, check integration/e2e coverage, write missing tests.
 argument-hint: [--type integration|e2e] [--dry-run]
 allowed-tools: Read, Grep, Glob, Write, Bash
-skills: post-dev-test
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/post-dev-test/SKILL.md
 
 ## Context
 
@@ -26,26 +29,6 @@ $ARGUMENTS
 | ------------------------- | ----------------------------------------------- |
 | `--type integration\|e2e` | Specify test type (default: check both)         |
 | `--dry-run`               | Analyze only, do not write                      |
-
-### Execution Guide
-
-Follow the 5-phase workflow in the skill:
-
-| Phase | Action                                           |
-| ----- | ------------------------------------------------ |
-| 1     | Analyze conversation context, identify features  |
-| 2     | Search existing integration/e2e test coverage    |
-| 3     | Decide test strategy (refer to test type matrix) |
-| 4     | Write missing tests                              |
-| 5     | Run tests to verify                              |
-
-### References
-
-| File                                                      | Purpose          |
-| --------------------------------------------------------- | ---------------- |
-| @skills/post-dev-test/SKILL.md                    | Full workflow    |
-| @skills/post-dev-test/references/test-patterns.md | Test pattern ref |
-| @rules/testing.md                                 | Testing rules    |
 
 ## Output
 

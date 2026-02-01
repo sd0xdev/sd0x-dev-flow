@@ -2,8 +2,12 @@
 description: OWASP Top 10 security review using Codex MCP. Supports review loop with context preservation.
 argument-hint: [--scope <dir>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
-skills: security-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/security-review/SKILL.md
+@skills/security-review/references/codex-prompt-security.md
 
 ## Context
 
@@ -35,9 +39,6 @@ Determine scope → Collect changes → Codex OWASP review → Findings + Gate �
 2. **Collect changes**: Uncommitted diff → recent commits → key security files
 3. **Codex review**: New session (`mcp__codex__codex`) or continue (`mcp__codex__codex-reply`)
 4. **Output**: Findings summary table + detailed findings (OWASP category, impact, fix, test) + Gate
-
-Full workflow + Codex prompt: @skills/security-review
-Prompt template: @skills/security-review/references/codex-prompt-security.md
 
 ### Key Rules
 

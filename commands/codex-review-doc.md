@@ -2,8 +2,12 @@
 description: Review documents using Codex MCP. Supports review loop with context preservation.
 argument-hint: [<file-path>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Glob
-skills: doc-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/doc-review/SKILL.md
+@skills/doc-review/references/codex-prompt-doc.md
 
 ## Context
 
@@ -36,9 +40,6 @@ Determine target → Read content → Codex review → Rating table + Gate → L
 2. **Read content**: Read full file content
 3. **Codex review**: New session (`mcp__codex__codex`) or continue (`mcp__codex__codex-reply`)
 4. **Output**: Rating table (5 dimensions) + severity-grouped findings + Gate
-
-Full workflow + Codex prompt: @skills/doc-review
-Prompt template: @skills/doc-review/references/codex-prompt-doc.md
 
 ### Key Rules
 

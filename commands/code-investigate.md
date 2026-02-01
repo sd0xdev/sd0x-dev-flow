@@ -2,8 +2,11 @@
 description: Dual-perspective code investigation. Claude and Codex explore independently, then integrate conclusions.
 argument-hint: "<question about code>"
 allowed-tools: Read, Grep, Glob, Bash(git:*), mcp__codex__codex, mcp__codex__codex-reply
-skills: code-investigate
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/code-investigate/SKILL.md
 
 ## Context
 
@@ -22,8 +25,6 @@ skills: code-investigate
 2. **Claude Conclude** — Form independent understanding (internal, not output)
 3. **Codex Explore** — Invoke Codex MCP to explore independently (no feeding Claude's conclusions)
 4. **Integrate** — Compare both perspectives, mark agreements and differences
-
-Refer to @skills/code-investigate/SKILL.md for Codex invocation rules and prohibited patterns.
 
 ## Key Rules
 

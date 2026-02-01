@@ -2,8 +2,12 @@
 description: Explain complex code logic using Codex MCP
 argument-hint: <file-path> [--lines <start>-<end>] [--depth brief|normal|deep]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
-skills: codex-explain
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-explain/SKILL.md
+@skills/codex-explain/references/codex-prompt-explain.md
 
 ## Context
 
@@ -34,9 +38,6 @@ Read target → Codex explain → Output explanation
 1. **Read target**: Read file content (or line range if `--lines`)
 2. **Codex explain**: `mcp__codex__codex` with explanation prompt
 3. **Output**: Functional summary + detailed explanation + key concepts + project context
-
-Full workflow: @skills/codex-explain
-Prompt template: @skills/codex-explain/references/codex-prompt-explain.md
 
 ### Key Rules
 

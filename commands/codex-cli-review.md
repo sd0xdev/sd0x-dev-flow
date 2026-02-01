@@ -2,8 +2,11 @@
 description: Review uncommitted changes using Codex CLI (not MCP). Codex autonomously explores the entire project.
 argument-hint: [--base <branch>] [--title "<text>"] [--prompt "<text>"]
 allowed-tools: Bash(bash:*)
-skills: codex-cli-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-cli-review/SKILL.md
 
 ## Context
 

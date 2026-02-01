@@ -2,8 +2,11 @@
 description: Investigate code history, track change origins and root causes
 argument-hint: <file:line> or <keyword>
 allowed-tools: Bash(git:*), Read, Grep, Glob
-skills: git-investigate
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/git-investigate/SKILL.md
 
 ## Task
 
@@ -20,15 +23,6 @@ Supported formats:
 - `src/path/file.ts:123` - Specific file and line number
 - `functionName` - Function name
 - `"error message"` - Keyword search
-
-### Execution Guide
-
-Follow the workflow and commands in the skill:
-
-| Phase        | Reference                                              |
-| ------------ | ------------------------------------------------------ |
-| Workflow     | @skills/git-investigate/SKILL.md               |
-| Git Commands | @skills/git-investigate/references/commands.md |
 
 ## Examples
 

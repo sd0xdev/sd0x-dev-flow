@@ -2,8 +2,11 @@
 description: GitHub Issue deep analysis. Read issue -> classify problem -> select investigation strategy -> integrate four investigation tools.
 argument-hint: <issue-number or issue-url>
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
-skills: issue-analyze
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/issue-analyze/SKILL.md
 
 ## Context
 
@@ -36,16 +39,6 @@ gh issue view <number> --json title,body,labels,comments,author,createdAt
 
 # Step 4: Produce Report
 ```
-
-### Execution Guide
-
-Follow the workflow in the skill:
-
-| Phase          | Reference                                                   |
-| -------------- | ----------------------------------------------------------- |
-| Workflow       | @skills/issue-analyze/SKILL.md                      |
-| Classification | @skills/issue-analyze/references/classification.md  |
-| Report         | @skills/issue-analyze/references/report-template.md |
 
 ## When to Use
 

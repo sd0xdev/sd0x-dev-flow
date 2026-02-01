@@ -2,7 +2,6 @@
 description: Audit dependency security risks
 argument-hint: [--level <severity>] [--fix]
 allowed-tools: Bash(yarn audit *), Bash(npm audit *), Bash(pnpm audit *), Bash(npx *), Bash(bash *), Read, Glob
-skills: security-review
 intent:
   goal: Audit project dependencies for known security vulnerabilities
   steps:
@@ -13,6 +12,10 @@ intent:
       safety: read-only
   failure-behavior: report-all
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/security-review/SKILL.md
 
 ## Arguments
 

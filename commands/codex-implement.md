@@ -2,8 +2,11 @@
 description: Implement feature code using Codex MCP, writing directly to files
 argument-hint: "<requirement>" [--target <file>] [--context <files>] [--spec <doc>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob, Edit, Write, AskUserQuestion, Skill
-skills: codex-implement
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-implement/SKILL.md
 
 ## Context
 
@@ -36,9 +39,6 @@ Parse → Decompose → Claude collects context → Codex implements per item �
 2. **Context**: Claude reads CLAUDE.md, target files, similar code — summarizes as PROJECT_CONTEXT
 3. **Iterate**: For each item, call Codex (`codex` for first, `codex-reply` for rest) → `git diff` → user confirms
 4. **Review**: `/codex-review-fast` → `/precommit` — issues found → `codex-reply` on same thread to fix → re-review
-
-Full workflow details: @skills/codex-implement
-Codex prompt templates: @skills/codex-implement/references/codex-prompts.md
 
 ### Key Rules
 

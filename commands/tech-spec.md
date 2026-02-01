@@ -2,8 +2,11 @@
 description: Produce a technical spec document from requirements
 argument-hint: <requirement description> [--request] [--no-save]
 allowed-tools: Read, Grep, Glob, Bash(git:*), Write
-skills: tech-spec
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/tech-spec/SKILL.md
 
 ## Task
 
@@ -14,15 +17,6 @@ Produce a technical spec document based on requirements.
 ```
 $ARGUMENTS
 ```
-
-### Execution Guide
-
-Follow the workflow and templates in the skill:
-
-| Phase    | Reference                                        |
-| -------- | ------------------------------------------------ |
-| Workflow | @skills/tech-spec/SKILL.md               |
-| Template | @skills/tech-spec/references/template.md |
 
 ### Parameter Description
 

@@ -2,8 +2,11 @@
 description: Create or refactor a Claude Code skill
 argument-hint: <skill-name> [docs-path]
 allowed-tools: Read, Grep, Glob, Write, Task
-skills: create-skill
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/create-skill/SKILL.md
 
 ## Task
 
@@ -14,14 +17,6 @@ Create or refactor a skill.
 ```
 $ARGUMENTS
 ```
-
-### Execution Guide
-
-Follow the workflow and structure standards in the skill:
-
-| Phase    | Reference                             |
-| -------- | ------------------------------------- |
-| Workflow | @skills/create-skill/SKILL.md |
 
 ## Examples
 

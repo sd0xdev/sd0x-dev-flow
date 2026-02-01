@@ -2,8 +2,11 @@
 description: Remove AI-generated artifacts from documents, including tool names, boilerplate patterns, over-structuring.
 argument-hint: [<file-or-directory>]
 allowed-tools: Read, Grep, Glob, Edit
-skills: de-ai-flavor
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/de-ai-flavor/SKILL.md
 
 ## Context
 
@@ -23,8 +26,6 @@ skills: de-ai-flavor
 2. Scan for AI-generated artifacts (tool names, boilerplate, over-structuring, service tone)
 3. Remove/Rewrite/Simplify each artifact
 4. Output change summary with stats
-
-Refer to @skills/de-ai-flavor/SKILL.md for detection rules and output format.
 
 ## Key Rules
 

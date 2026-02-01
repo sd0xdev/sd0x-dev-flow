@@ -2,8 +2,12 @@
 description: Generate unit tests for specified functions using Codex MCP
 argument-hint: <file-path> [--function <name>] [--output <path>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Write
-skills: test-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/test-review/SKILL.md
+@skills/test-review/references/codex-prompt-test-gen.md
 
 ## Context
 
@@ -36,9 +40,6 @@ Read source → Derive test path → Codex generate → Save test file → Sugge
 3. **Codex generate**: `mcp__codex__codex` with test generation prompt
 4. **Save**: Write generated test code to target path
 5. **Next steps**: Run tests, then `/codex-test-review`
-
-Full workflow + Codex prompt: @skills/test-review
-Prompt template: @skills/test-review/references/codex-prompt-test-gen.md
 
 ### Key Rules
 

@@ -2,8 +2,12 @@
 description: Quick second-opinion using Codex MCP (diff only, no tests). Supports review loop with context preservation.
 argument-hint: [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
-skills: codex-code-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-code-review/SKILL.md
+@skills/codex-code-review/references/codex-prompt-fast.md
 
 ## Context
 
@@ -35,9 +39,6 @@ git diff → Codex review (diff only) → Findings + Gate → Loop if Blocked
 1. **Collect diff**: `git diff HEAD --no-color | head -2000` (or `git diff <base>..HEAD` if `--base`)
 2. **Codex review**: New session (`mcp__codex__codex`) or continue (`mcp__codex__codex-reply`)
 3. **Output**: Severity-grouped findings + Merge Gate
-
-Full workflow + Codex prompt: @skills/codex-code-review
-Prompt template: @skills/codex-code-review/references/codex-prompt-fast.md
 
 ### Key Rules
 

@@ -2,8 +2,12 @@
 description: Full second-opinion using Codex MCP (with lint:fix + build). Supports review loop with context preservation.
 argument-hint: [--no-tests] [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Read, Grep, Glob
-skills: codex-code-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-code-review/SKILL.md
+@skills/codex-code-review/references/codex-prompt-full.md
 
 ## Context
 
@@ -37,9 +41,6 @@ lint:fix → build → git diff → Codex review (full) → Findings + Gate → 
 2. **Collect diff**: `git diff HEAD --no-color | head -2000`
 3. **Codex review**: New session (`mcp__codex__codex`) or continue (`mcp__codex__codex-reply`)
 4. **Output**: Local check results + severity-grouped findings + test recommendations + Merge Gate
-
-Full workflow + Codex prompt: @skills/codex-code-review
-Prompt template: @skills/codex-code-review/references/codex-prompt-full.md
 
 ### Key Rules
 

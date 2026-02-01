@@ -2,8 +2,11 @@
 description: Bug/Issue fix workflow. Investigate -> locate -> fix -> test -> review.
 argument-hint: [issue-url or problem description]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(git:*), Bash(yarn:*), Bash(gh:*)
-skills: bug-fix
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/bug-fix/SKILL.md
 
 ## Context
 
@@ -29,7 +32,7 @@ Follow the workflow in the skill:
 | Investigate | `gh issue view` / `Grep` / `/git-investigate`                              |
 | Locate      | `Read` related code                                                         |
 | Fix         | `Edit` minimal changes                                                      |
-| Test        | Add tests at appropriate level (see @skills/bug-fix/references/testing-guide.md) |
+| Test        | Add tests at appropriate level (see testing-guide in skill) |
 | Review      | `/verify` -> `/codex-review-fast` -> `/precommit`                           |
 
 ### Test Requirements ⚠️

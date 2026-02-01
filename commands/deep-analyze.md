@@ -2,8 +2,11 @@
 description: Deep-dive analysis of an initial proposal — research code implementation, produce an actionable roadmap and alternatives
 argument-hint: <initial proposal description or file path>
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Write
-skills: tech-spec
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/tech-spec/SKILL.md
 
 ## Context
 

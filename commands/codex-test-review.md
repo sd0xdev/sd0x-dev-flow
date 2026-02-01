@@ -2,8 +2,12 @@
 description: Review test case sufficiency using Codex MCP, suggest additional edge cases. Supports review loop with context preservation.
 argument-hint: [<file-or-dir|description>] [--type unit|integration|e2e] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
-skills: test-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/test-review/SKILL.md
+@skills/test-review/references/codex-prompt-test-review.md
 
 ## Context
 
@@ -41,9 +45,6 @@ Smart detect → Read test + source → Codex review (5 dimensions) → Coverage
 2. **Read content**: Test file + corresponding source file
 3. **Codex review**: New session (`mcp__codex__codex`) or continue (`mcp__codex__codex-reply`)
 4. **Output**: Coverage assessment table + severity-grouped gaps + Gate
-
-Full workflow + Codex prompt: @skills/test-review
-Prompt template: @skills/test-review/references/codex-prompt-test-review.md
 
 ### Key Rules
 

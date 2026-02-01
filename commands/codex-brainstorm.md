@@ -2,8 +2,11 @@
 description: Adversarial brainstorming. Claude and Codex independently research the project then debate until Nash equilibrium.
 argument-hint: "<topic description>" [--constraints <constraints>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bash(ls:*), Bash(find:*)
-skills: codex-brainstorm
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/codex-brainstorm/SKILL.md
 
 ## Context
 
@@ -42,18 +45,6 @@ mcp__codex__codex({
   'approval-policy': 'on-failure', // Only confirm on command failure
 });
 ```
-
-### Execution Guide
-
-Follow the workflow and templates in the skill:
-
-| Phase          | Reference                                                  |
-| -------------- | ---------------------------------------------------------- |
-| Workflow       | @skills/codex-brainstorm/SKILL.md                  |
-| Codex Research | @skills/codex-brainstorm/SKILL.md#phase-2          |
-| Debate Techniques | @skills/codex-brainstorm/references/techniques.md |
-| Equilibrium    | @skills/codex-brainstorm/references/equilibrium.md |
-| Report Template| @skills/codex-brainstorm/references/templates.md   |
 
 ## Examples
 

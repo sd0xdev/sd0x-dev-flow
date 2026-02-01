@@ -2,8 +2,11 @@
 description: Pure Claude code investigation. Quickly deep-dive into codebase — trace execution paths, understand architecture, diagnose issues.
 argument-hint: '<investigation target or question>'
 allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*)
-skills: code-explore
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/code-explore/SKILL.md
 
 ## Context
 
@@ -31,13 +34,6 @@ Follow the 4-phase workflow in the skill:
 | 2     | Trace Path    | Read entry points -> trace dependencies      |
 | 3     | Understand    | Analyze core logic, data flow, error handling |
 | 4     | Output Report | Architecture diagram + key files + flow       |
-
-### References
-
-| File                                                       | Purpose              |
-| ---------------------------------------------------------- | -------------------- |
-| @skills/code-explore/SKILL.md                      | Full workflow        |
-| @skills/code-explore/references/search-patterns.md | Search pattern ref   |
 
 ## Examples
 

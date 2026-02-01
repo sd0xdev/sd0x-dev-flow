@@ -2,8 +2,11 @@
 description: Start from first principles, explore possible solutions and quantitatively assess feasibility. Use before /tech-spec.
 argument-hint: <requirement description> [--constraints <constraints>] [--context <code path>] [--no-codex]
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*), Write, mcp__codex__codex, mcp__codex__codex-reply
-skills: feasibility-study
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/feasibility-study/SKILL.md
 
 ## Context
 
@@ -39,11 +42,6 @@ $ARGUMENTS
 4. **Solutions**: Brainstorm 2-3+ options with quantified feasibility assessment
 5. **Codex discussion**: `/codex-brainstorm` → `/codex-architect` → continuous dialog (unless `--no-codex`)
 6. **Decision**: Comparison table + recommendation + backup + open questions
-
-Full workflow: @skills/feasibility-study
-Analysis phases: @skills/feasibility-study/references/analysis-phases.md
-Codex discussion guide: @skills/feasibility-study/references/codex-discussion-guide.md
-Output template: @skills/feasibility-study/references/output-template.md
 
 ### Key Rules
 

@@ -2,8 +2,11 @@
 description: Review technical spec documents from completeness, feasibility, risk, and code consistency perspectives.
 argument-hint: <file path>
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*)
-skills: tech-spec
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/tech-spec/SKILL.md
 
 ## Context
 

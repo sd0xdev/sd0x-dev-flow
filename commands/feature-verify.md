@@ -2,8 +2,11 @@
 description: "System diagnosis skill (READ-ONLY). Verifies feature behavior through code analysis, data validation, and Codex confirmation."
 argument-hint: "<feature to verify>" [<data-source credentials>]
 allowed-tools: Read, Grep, Glob, Bash, WebFetch, Task, Skill, mcp__codex__codex, mcp__codex__codex-reply
-skills: feature-verify
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/feature-verify/SKILL.md
 
 ## Context
 
@@ -25,8 +28,6 @@ skills: feature-verify
 4. **Analyze** — Claude independently forms diagnostic conclusion
 5. **Confirm** — Codex third-perspective verification
 6. **Integrate** — Synthesize dual perspectives, produce final report
-
-Refer to @skills/feature-verify/SKILL.md for safety rules and verification checklist.
 
 ## Key Rules
 

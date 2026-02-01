@@ -2,8 +2,11 @@
 description: Project initialization inventory (one-time). Use when first onboarding or after major structural changes.
 argument-hint: [save|nosave]
 allowed-tools: Bash(git:*), Bash(node:*), Read, Write, Grep, Glob
-skills: repo-intake
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/repo-intake/SKILL.md
 
 ## Task
 
@@ -35,14 +38,6 @@ node skills/repo-intake/scripts/intake_cached.js --mode auto --top 10
 # Step 3: If save parameter provided, write to docs
 # Output to docs/ai/intake/$(date +%F)-intake.md
 ```
-
-### Execution Guide
-
-Follow the workflow in the skill:
-
-| Phase    | Reference                                   |
-| -------- | ------------------------------------------- |
-| Workflow | @skills/repo-intake/SKILL.md |
 
 ## When to Use
 

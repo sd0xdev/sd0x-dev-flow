@@ -1,6 +1,6 @@
 {
   "name": "sd0x-dev-flow",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Claude Code development workflow plugin with 90+ tools",
   "license": "MIT",
   "scripts": {

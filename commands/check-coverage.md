@@ -2,8 +2,11 @@
 description: Comprehensive assessment of Unit / Integration / E2E three-layer test coverage, identify gaps and provide actionable recommendations.
 argument-hint: <docs-path>
 allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*), Bash(wc:*)
-skills: test-review
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/test-review/SKILL.md
 
 ## Context
 

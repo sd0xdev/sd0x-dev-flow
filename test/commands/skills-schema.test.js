@@ -106,6 +106,25 @@ test('command @skills/ references point to existing files', () => {
   }
 });
 
+test('no command uses dead skills: frontmatter field', () => {
+  const commandsDir = resolve(__dirname, '../../commands');
+  const files = readdirSync(commandsDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => join(commandsDir, f));
+
+  for (const file of files) {
+    const content = readFileSync(file, 'utf8');
+    const { frontmatter } = splitFrontmatter(content);
+    if (!frontmatter) continue;
+
+    const hasSkillsFm = /^skills:\s/m.test(frontmatter);
+    assert.ok(
+      !hasSkillsFm,
+      `${file} has dead "skills:" frontmatter — use @skills/ body reference instead`
+    );
+  }
+});
+
 test('skills with references/ directory have at least one .md file', () => {
   const dirs = getSkillDirs();
 

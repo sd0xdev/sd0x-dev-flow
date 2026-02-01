@@ -2,8 +2,11 @@
 description: Create or update a request document. Auto-fill template on creation, sync with implementation progress on update.
 argument-hint: [--update <file-path>] [--feature <name>]
 allowed-tools: Read, Grep, Glob, Write, Bash
-skills: create-request
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/create-request/SKILL.md
 
 ## Context
 

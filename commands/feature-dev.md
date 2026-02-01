@@ -2,8 +2,11 @@
 description: Feature development workflow. Guides through design -> implement -> verify -> review -> commit flow.
 argument-hint: "<feature description>" [--skip-design] [--skip-review]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
-skills: feature-dev
 ---
+
+⚠️ **Must read and follow the skill below before executing this command:**
+
+@skills/feature-dev/SKILL.md
 
 ## Context
 
@@ -27,8 +30,6 @@ Requirements -> Design -> Implement -> Test -> Review -> Commit
            /codex-     /codex-      /verify  /codex-    /precommit
            architect   implement             review-fast
 ```
-
-Refer to @skills/feature-dev/SKILL.md for full workflow and test requirements.
 
 ## Key Rules
 
