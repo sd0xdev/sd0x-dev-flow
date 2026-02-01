@@ -121,7 +121,7 @@ sequenceDiagram
 | `/verify` | lint -> typecheck -> unit -> integration -> e2e |
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
-| `/dep-audit` | Auditoría de seguridad de dependencias npm |
+| `/dep-audit` | Auditoría de seguridad de dependencias |
 
 ### Planificación
 

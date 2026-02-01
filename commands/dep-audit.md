@@ -1,8 +1,17 @@
 ---
-description: Audit npm dependency security risks
+description: Audit dependency security risks
 argument-hint: [--level <severity>] [--fix]
-allowed-tools: Bash(yarn audit *), Bash(npm audit *), Bash(bash *), Read
+allowed-tools: Bash(yarn audit *), Bash(npm audit *), Bash(pnpm audit *), Bash(npx *), Bash(bash *), Read, Glob
 skills: security-review
+intent:
+  goal: Audit project dependencies for known security vulnerabilities
+  steps:
+    - name: audit
+      goal: Scan dependencies for vulnerabilities
+      preferred: ["audit"]
+      skip-if-missing: false
+      safety: read-only
+  failure-behavior: report-all
 ---
 
 ## Arguments
@@ -14,11 +23,34 @@ $ARGUMENTS = optional parameters
 
 ## Task
 
-Execute dependency security audit:
+### Step 1: Try the audit script
 
 ```bash
 bash scripts/dep-audit.sh $ARGUMENTS
 ```
+
+If this succeeds, use its output and skip to the Output section.
+
+### Step 2: Fallback (if script not found)
+
+If the script does not exist, detect the project ecosystem and run the audit manually.
+
+**Ecosystem detection** (check project root for manifest files):
+
+| Manifest | Ecosystem | Audit Command | Fix Command |
+|----------|-----------|---------------|-------------|
+| `package.json` + `pnpm-lock.yaml` | Node (pnpm) | `pnpm audit --audit-level {LEVEL}` | `pnpm audit --fix` |
+| `package.json` + `yarn.lock` | Node (yarn) | `yarn audit --level {LEVEL}` | `yarn audit --fix` or `npx yarn-audit-fix` |
+| `package.json` | Node (npm) | `npm audit --audit-level={LEVEL}` | `npm audit fix` |
+| `pyproject.toml` | Python | `pip-audit` or `safety check` | `pip-audit --fix` |
+| `Cargo.toml` | Rust | `cargo audit` | `cargo audit fix` |
+| `go.mod` | Go | `govulncheck ./...` | _(manual fix)_ |
+| `build.gradle` | Java | `./gradlew dependencyCheckAnalyze` | _(manual fix)_ |
+
+Default `{LEVEL}` is `moderate` unless `--level` argument is provided.
+
+If `--fix` is specified, run the fix command for the detected ecosystem after audit.
+If no recognized manifest file exists, report an error.
 
 ## Examples
 

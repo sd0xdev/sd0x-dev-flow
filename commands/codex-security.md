@@ -238,5 +238,5 @@ To re-review after fixes, use:
 
 | Command      | Description              |
 | ------------ | ------------------------ |
-| `/dep-audit` | npm dependency audit     |
+| `/dep-audit` | Dependency security audit |
 | `yarn audit` | npm native vulnerability scan |

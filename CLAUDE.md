@@ -64,7 +64,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/codex-test-review` | Review test coverage | **Required** |
 | `/post-dev-test` | Post-dev test completion | After feature |
 | `/check-coverage` | Test coverage analysis | Quality |
-| `/dep-audit` | npm vulnerability audit | Periodic / PR |
+| `/dep-audit` | Dependency vulnerability audit | Periodic / PR |
 | `/update-docs` | Sync docs with code | Doc changes |
 | `/doc-refactor` | Simplify documents | Doc changes |
 | `/create-request` | Create/update request docs | Planning |

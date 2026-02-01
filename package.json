@@ -1,0 +1,25 @@
+{
+  "name": "sd0x-dev-flow",
+  "version": "1.0.0",
+  "description": "Claude Code development workflow plugin with 90+ tools",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test test/**/*.test.js",
+    "test:unit": "node --test test/scripts/lib/*.test.js",
+    "test:integration": "node --test test/scripts/*.test.js",
+    "test:hooks": "node --test test/hooks/*.test.js",
+    "test:schema": "node --test test/commands/*.test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "scripts/",
+    "commands/",
+    "skills/",
+    "agents/",
+    "hooks/",
+    "rules/",
+    "CLAUDE.md"
+  ]
+}

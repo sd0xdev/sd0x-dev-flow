@@ -121,7 +121,7 @@ sequenceDiagram
 | `/verify` | lint -> typecheck -> unit -> integration -> e2e |
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
-| `/dep-audit` | npm 디펜던시 보안 감사 |
+| `/dep-audit` | 디펜던시 보안 감사 |
 
 ### 기획
 
