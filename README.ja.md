@@ -36,7 +36,7 @@
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
 | コマンド | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
-| スキル | 23 | project-setup, code-explore, code-investigate, codex-brainstorm |
+| スキル | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | auto-format, review state tracking, stop guard |
 | ルール | 9 | auto-loop, security, testing, git-workflow |

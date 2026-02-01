@@ -36,7 +36,7 @@
 | 类别 | 数量 | 示例 |
 |------|------|------|
 | 命令 | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
-| 技能 | 23 | project-setup, code-explore, code-investigate, codex-brainstorm |
+| 技能 | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | auto-format, review state tracking, stop guard |
 | 规则 | 9 | auto-loop, security, testing, git-workflow |

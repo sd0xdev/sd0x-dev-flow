@@ -36,7 +36,7 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
 | Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
-| Skills | 23 | project-setup, code-explore, code-investigate, codex-brainstorm |
+| Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
 | Rules | 9 | auto-loop, security, testing, git-workflow |
