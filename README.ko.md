@@ -213,6 +213,16 @@ Command (진입점) -> Skill (기능) -> Agent (실행 환경)
 - **Agents**: 전용 도구를 가진 격리된 서브에이전트
 - **Hooks**: 자동화 가드레일 (포맷팅, 리뷰 상태, 스톱 가드)
 - **Rules**: 항상 활성화된 컨벤션 (자동 로드)
+- **Scripts**: 검증 명령어용 선택적 가속 스크립트 (아래 참조)
+
+### 스크립트 폴백
+
+검증 명령어(`/precommit`, `/verify`, `/dep-audit`)는 **Try → Fallback** 패턴을 사용합니다:
+
+1. **Try**: 프로젝트 루트에 러너 스크립트(`scripts/precommit-runner.js` 등)가 있으면 이를 실행하여 빠르고 재현 가능한 결과를 얻습니다.
+2. **Fallback**: 스크립트가 없으면 Claude가 프로젝트 에코시스템(Node.js, Python, Rust, Go, Java)을 자동 감지하고 적절한 명령어를 직접 실행합니다.
+
+Fallback은 별도 설정 없이 바로 사용 가능합니다. 러너 스크립트는 본 플러그인에 포함되어 있지만, [Claude Code의 알려진 제한](https://github.com/anthropics/claude-code/issues/9354)(`${CLAUDE_PLUGIN_ROOT}`가 커맨드 마크다운에서 사용 불가)으로 인해 현재 플러그인 명령어에서 스크립트 경로를 자동 해석할 수 없습니다. 업스트림 이슈가 해결되면 업데이트 예정입니다.
 
 ## 기여
 

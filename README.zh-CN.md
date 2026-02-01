@@ -213,6 +213,16 @@ sequenceDiagram
 - **代理**：拥有特定工具的隔离子代理
 - **钩子**：自动化防护栏（格式化、审查状态、停止守卫）
 - **规则**：始终生效的规范（自动加载）
+- **脚本**：验证命令的可选加速脚本（见下方说明）
+
+### 脚本回退机制
+
+验证命令（`/precommit`、`/verify`、`/dep-audit`）采用 **Try → Fallback** 模式：
+
+1. **Try**：如果项目根目录存在 runner 脚本（`scripts/precommit-runner.js` 等），直接执行以获得快速、确定性的结果。
+2. **Fallback**：如果脚本不存在，Claude 会自动检测项目生态系统（Node.js、Python、Rust、Go、Java）并直接运行相应命令。
+
+Fallback 开箱即用，无需任何配置。Runner 脚本虽然包含在本插件中，但由于 [Claude Code 的已知限制](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` 在命令 markdown 中不可用），目前无法从插件命令中自动解析脚本路径。上游问题修复后将同步更新。
 
 ## 贡献
 

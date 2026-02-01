@@ -213,6 +213,16 @@ Command（入口）-> Skill（能力）-> Agent（環境）
 - **Agents**：擁有特定工具的隔離 sub-agent
 - **Hooks**：自動化 guardrails（format、review 狀態、stop guard）
 - **Rules**：始終啟用的慣例（自動載入）
+- **Scripts**：驗證指令的可選加速腳本（見下方說明）
+
+### 腳本備援機制
+
+驗證指令（`/precommit`、`/verify`、`/dep-audit`）採用 **Try → Fallback** 模式：
+
+1. **Try**：若專案根目錄存在 runner 腳本（`scripts/precommit-runner.js` 等），直接執行以獲得快速、可重現的結果。
+2. **Fallback**：若腳本不存在，Claude 會自動偵測專案生態系（Node.js、Python、Rust、Go、Java）並直接執行對應指令。
+
+Fallback 無需任何設定即可使用。Runner 腳本雖包含在本外掛中，但由於 [Claude Code 的已知限制](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` 在指令 markdown 中無法使用），目前無法從外掛指令中自動解析腳本路徑。待上游問題修復後將同步更新。
 
 ## 貢獻
 

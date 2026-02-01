@@ -213,6 +213,16 @@ Command (entrada) -> Skill (capacidad) -> Agent (entorno)
 - **Agents**: Subagentes aislados con herramientas específicas
 - **Hooks**: Guardrails automatizados (formateo, estado de review, stop guard)
 - **Rules**: Convenciones siempre activas (carga automática)
+- **Scripts**: Aceleradores opcionales para comandos de verificación (ver abajo)
+
+### Fallback de scripts
+
+Los comandos de verificación (`/precommit`, `/verify`, `/dep-audit`) usan un patrón **Try → Fallback**:
+
+1. **Try**: Si existe un script de ejecución en la raíz del proyecto (`scripts/precommit-runner.js`, etc.), se ejecuta para obtener resultados rápidos y reproducibles.
+2. **Fallback**: Si no se encuentra el script, Claude detecta el ecosistema del proyecto (Node.js, Python, Rust, Go, Java) y ejecuta los comandos correspondientes directamente.
+
+El fallback funciona sin ninguna configuración previa. Los scripts de ejecución están incluidos en este plugin, pero debido a una [limitación conocida de Claude Code](https://github.com/anthropics/claude-code/issues/9354) (`${CLAUDE_PLUGIN_ROOT}` no está disponible en el markdown de comandos), actualmente no se pueden resolver automáticamente las rutas de scripts desde comandos del plugin. Se actualizará cuando se resuelva el problema en upstream.
 
 ## Contribuir
 
