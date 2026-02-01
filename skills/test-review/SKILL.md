@@ -1,7 +1,7 @@
 ---
 name: test-review
-description: Test review knowledge base. Covers test coverage review, test generation, coverage analysis.
-allowed-tools: Read, Grep, Glob
+description: Test review knowledge base. Covers test coverage review, test generation, coverage analysis. Codex MCP integration.
+allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob, Write
 context: fork
 agent: Explore
 ---
@@ -14,23 +14,62 @@ agent: Explore
 
 ## When NOT to Use
 
-- Code review (use codex-code-review)
-- Document review (use doc-review)
+- Code review (use `codex-code-review`)
+- Document review (use `doc-review`)
 - Just want to run tests (use `/verify`)
 
 ## Commands
 
-| Command              | Description               | Use Case              |
-| -------------------- | ------------------------- | --------------------- |
-| `/codex-test-review` | Review test sufficiency   | **Required**          |
-| `/codex-test-gen`    | Generate unit tests       | Add missing tests     |
-| `/check-coverage`    | Test coverage analysis    | After feature dev     |
+| Command              | Description             | Use Case            |
+| -------------------- | ----------------------- | ------------------- |
+| `/codex-test-review` | Review test sufficiency | **Required**        |
+| `/codex-test-gen`    | Generate unit tests     | Add missing tests   |
+| `/check-coverage`    | Test coverage analysis  | After feature dev   |
 
-## Workflow
+## Workflow: `/codex-test-review`
 
 ```
-Read tests -> Compare with source code -> Assess coverage -> Output gaps + Gate
+Smart detect target → Read test + source → Codex review (5 dimensions) → Coverage assessment + Gate → Loop if Needs additions
 ```
+
+### Step 1: Smart Detection
+
+| Input | Behavior |
+|-------|----------|
+| File path | Review that file directly |
+| Directory | Review all tests in directory |
+| Description | Auto-find related test files |
+| Module name | Search related test files |
+| No parameter | Auto-detect from git diff |
+
+### Step 2: Read Test and Source
+
+- Read test file (`TEST_FILE`)
+- Read corresponding source (`SOURCE_FILE`, inferred from test path)
+
+### Step 3: Codex Review
+
+**First review**: `mcp__codex__codex` with test review prompt. See @references/codex-prompt-test-review.md.
+
+**Loop review**: `mcp__codex__codex-reply` with re-review template. See @references/codex-prompt-test-review.md.
+
+Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
+
+**Save the returned `threadId`.**
+
+## Workflow: `/codex-test-gen`
+
+```
+Read source → Derive test path → Codex generate → Save test file → Suggest review
+```
+
+### Steps
+
+1. Read source file
+2. Derive test path: `src/service/xxx.ts` → `test/unit/service/xxx.test.ts`
+3. Codex generates tests. See @references/codex-prompt-test-gen.md.
+4. Save to target path
+5. Suggest: run tests then `/codex-test-review`
 
 ## Review Dimensions
 
@@ -41,37 +80,53 @@ Read tests -> Compare with source code -> Assess coverage -> Output gaps + Gate
 | Edge cases      | null/undefined, extremes, empty sets   | Medium |
 | Mock quality    | Not excessive, not insufficient        | Medium |
 
-## Verification
-
-- Coverage assessment includes all dimensions
-- Gate is clear (✅ Tests sufficient / ⛔ Needs additions)
-- Missing tests have specific suggestions
-
 ## Three-Layer Tests
 
-| Type        | Directory           | Mock             | Focus              |
-| ----------- | ------------------- | ---------------- | ------------------ |
-| Unit        | `test/unit/`        | ✅ Full          | Single function logic |
-| Integration | `test/integration/` | Only external    | Inter-module interaction |
-| E2E         | `test/e2e/`         | ❌ Prohibited    | Complete flow      |
+| Type        | Directory           | Mock             | Focus               |
+| ----------- | ------------------- | ---------------- | -------------------- |
+| Unit        | `test/unit/`        | Full             | Single function      |
+| Integration | `test/integration/` | Only external    | Inter-module         |
+| E2E         | `test/e2e/`         | Prohibited       | Complete flow        |
 
 ## Common Boundaries
 
 | Type   | Cases                                            |
 | ------ | ------------------------------------------------ |
-| String | `""`, `" "`, `null`, `undefined`, very long string |
+| String | `""`, `" "`, `null`, `undefined`, very long      |
 | Number | `0`, `-1`, `NaN`, `Infinity`, `MAX_SAFE_INTEGER` |
-| Array  | `[]`, `[null]`, very large array, nested array   |
+| Array  | `[]`, `[null]`, very large, nested               |
 | Object | `{}`, `null`, circular reference                 |
+
+## Review Loop
+
+**⚠️ @CLAUDE.md auto-loop: fix → re-review → ... → ✅ PASS ⚠️**
+
+⛔ Needs additions → add tests → `/codex-test-review --continue <threadId>` → repeat until ✅ Sufficient.
+
+Max 3 rounds. Still failing → report blocker.
+
+## Verification
+
+- [ ] Coverage assessment includes all dimensions
+- [ ] Gate is clear (✅ Tests sufficient / ⛔ Needs additions)
+- [ ] Missing tests have specific code suggestions
+- [ ] Codex independently researched source code branches
+
+## References
+
+- Test review prompt: `references/codex-prompt-test-review.md`
+- Test gen prompt: `references/codex-prompt-test-gen.md`
+- Standards: @rules/testing.md
 
 ## Examples
 
 ```
-Input: Are this service's tests sufficient?
-Action: /codex-test-review -> Assess coverage -> Output gaps + Gate
-```
+Input: /codex-test-review test/unit/service/xxx.test.ts
+Action: Read test + source → Codex review → Coverage assessment + Gate
 
-```
-Input: Add tests for this function
-Action: /codex-test-gen -> Generate AAA pattern tests -> /codex-test-review
+Input: /codex-test-gen src/service/xxx.ts
+Action: Read source → Codex generate → Save test → Suggest review
+
+Input: Are this service's tests sufficient?
+Action: /codex-test-review → Assess coverage → Output gaps + Gate
 ```
