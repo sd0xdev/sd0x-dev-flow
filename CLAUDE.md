@@ -17,9 +17,20 @@ Feature: develop -> write tests -> /verify -> /codex-review-fast + /codex-test-r
 Bug fix: /issue-analyze -> /bug-fix -> investigate -> fix -> regression test -> /verify -> /codex-review-fast -> /precommit
 ```
 
-### Auto-Loop Rule
+### Auto-Loop Rule ⚠️
 
-**Fix -> re-review -> fail -> fix -> ... -> Pass -> next step** (see @rules/auto-loop.md)
+After editing code or docs, you **MUST** run the review command **in the same reply** — do not stop, do not ask, do not just summarize.
+
+| After editing... | Immediately run | Then on pass |
+|------------------|----------------|--------------|
+| `.ts/.js/.jsx/.tsx` code | `/codex-review-fast` | `/precommit` |
+| `.md` docs | `/codex-review-doc` | (done) |
+| Review found issues | Fix all → re-run same review | — |
+
+**Declaring ≠ Executing**: Saying "should run review" without invoking the Skill tool is a violation.
+**Summary ≠ Completion**: Outputting a table then stopping is a violation.
+
+Full spec: @rules/auto-loop.md
 
 ## Test Requirements
 
