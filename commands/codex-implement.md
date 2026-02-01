@@ -187,17 +187,36 @@ After all items are implemented:
 1. Run `git diff` to show the complete changeset
 2. Ask the user for final confirmation
 
-### Step 5: Auto Review
+### Step 5: Auto Review & Full Verification
 
-After user accepts, **must** execute:
+After user accepts, **must** execute the full review cycle. Scope is smaller per item, but **nothing can be skipped**:
 
-```bash
-/codex-review-fast
-```
+| Step | Command | What it checks |
+|------|---------|---------------|
+| 1 | `/codex-review-fast` | Code quality, correctness, security |
+| 2 | `/precommit` | lint:fix → build → test:unit |
+
+#### Test Requirements
+
+Implementation is **not complete** without corresponding tests:
+
+| Change Type | Required Tests |
+|-------------|---------------|
+| New service/provider | Unit tests (happy path + error + edge cases) |
+| New API endpoint | Unit + integration tests |
+| Modified logic | Existing tests pass + new tests for new logic |
+| Bug fix scenario | Regression test |
+
+If Codex did not generate tests, **Claude must add them** before proceeding to review.
 
 ## Review Loop
 
-**⚠️ Follow @CLAUDE.md review loop rules: must re-review after fix until ✅ PASS ⚠️**
+**⚠️ Follow @CLAUDE.md auto-loop rules: fix → re-review → fix → ... → ✅ PASS ⚠️**
+
+- Review found issues → fix all → re-run `/codex-review-fast` (same reply, no stopping)
+- Review passed → run `/precommit`
+- Precommit failed → fix → re-run `/precommit`
+- All passed → done
 
 ## Output
 
