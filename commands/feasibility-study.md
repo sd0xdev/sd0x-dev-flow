@@ -2,7 +2,7 @@
 description: Start from first principles, explore possible solutions and quantitatively assess feasibility. Use before /tech-spec.
 argument-hint: <requirement description> [--constraints <constraints>] [--context <code path>] [--no-codex]
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*), Write, mcp__codex__codex, mcp__codex__codex-reply
-skills: codex-brainstorm
+skills: feasibility-study
 ---
 
 ## Context

@@ -2,6 +2,7 @@
 description: Explain complex code logic using Codex MCP
 argument-hint: <file-path> [--lines <start>-<end>] [--depth brief|normal|deep]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
+skills: codex-explain
 ---
 
 ## Context

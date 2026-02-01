@@ -6,6 +6,26 @@
 
 90以上のツールでコードレビュー、テスト、調査、セキュリティ監査、DevOps 自動化をカバー。
 
+## 極小の Context 使用量
+
+本プラグインは Claude の 200k Context Window のわずか **~4%** で 90 以上のツールを提供します。これは重要なアーキテクチャ上の優位性です。
+
+| コンポーネント | トークン数 | 200k に対する割合 |
+|---------------|-----------|-----------------|
+| ルール（常時読み込み） | 5.1k | 2.6% |
+| スキル（オンデマンド） | 1.9k | 1.0% |
+| エージェント | 791 | 0.4% |
+| **合計** | **~8k** | **~4%** |
+
+なぜこれが重要か：
+
+| メリット | 説明 |
+|---------|------|
+| コードに多くの余裕 | 96% の Context をプロジェクトファイル、diff、会話に使えます |
+| パフォーマンスへの影響なし | プラグインのオーバーヘッドは極めて小さく、応答速度に影響しません |
+| スキルはオンデマンド読み込み | 実行したスキルのみ読み込まれ、未使用スキルはトークンを消費しません |
+| 複雑なシナリオに対応 | 1 セッションで複数ツールを使用しても Context 上限に到達しにくい |
+
 ## 必要環境
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| コマンド | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | スキル | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | auto-format, review state tracking, stop guard |
-| ルール | 9 | auto-loop, security, testing, git-workflow |
+| ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | スクリプト | 3 | precommit runner, verify runner, dep audit |
 
 ## ワークフロー
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | コード変更履歴の追跡 |
 | `/issue-analyze` | Issue の深堀り分析 |
 | `/post-dev-test` | 開発後のテスト補完 |
+| `/feature-dev` | 機能開発ワークフロー（設計 → 実装 → 検証 → レビュー） |
+| `/feature-verify` | システム診断（読み取り専用の検証、デュアル視点確認） |
+| `/code-investigate` | デュアル視点コード調査（Claude + Codex 独立探索） |
 
 ### レビュー（Codex MCP）
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | ルール | 説明 |
 |--------|------|
 | `auto-loop` | 修正 -> 再レビュー -> 修正 -> ... -> Pass（自動サイクル） |
+| `codex-invocation` | Codex は独立調査必須、結論の注入禁止 |
 | `fix-all-issues` | ゼロトレランス：見つけた問題はすべて修正 |
 | `framework` | フレームワーク固有の規約（カスタマイズ可） |
 | `testing` | Unit/Integration/E2E の分離 |

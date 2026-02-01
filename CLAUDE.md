@@ -131,6 +131,7 @@ Replace these placeholders with your project values:
 ## Rules
 
 - @rules/auto-loop.md -- Auto review loop (highest priority)
+- @rules/codex-invocation.md -- Codex must independently research (critical)
 - @rules/fix-all-issues.md -- Zero tolerance
 - @rules/testing.md
 - @rules/framework.md

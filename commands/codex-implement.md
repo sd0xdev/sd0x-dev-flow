@@ -2,6 +2,7 @@
 description: Implement feature code using Codex MCP, writing directly to files
 argument-hint: "<requirement>" [--target <file>] [--context <files>] [--spec <doc>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob, Edit, Write, AskUserQuestion, Skill
+skills: codex-implement
 ---
 
 ## Context

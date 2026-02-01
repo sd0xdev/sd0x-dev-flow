@@ -2,6 +2,7 @@
 description: Quick second-opinion using Codex MCP (diff only, no tests). Supports review loop with context preservation.
 argument-hint: [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
+skills: codex-code-review
 ---
 
 ## Context

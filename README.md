@@ -6,6 +6,26 @@ Development workflow plugin for [Claude Code](https://claude.com/claude-code) wi
 
 90+ tools covering code review, testing, investigation, security audit, and DevOps automation.
 
+## Minimal Context Footprint
+
+This plugin occupies only **~4% of Claude's 200k context window** while delivering 90+ tools — a key architectural advantage.
+
+| Component | Tokens | % of 200k |
+|-----------|--------|-----------|
+| Rules (always loaded) | 5.1k | 2.6% |
+| Skills (on-demand) | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **Total** | **~8k** | **~4%** |
+
+Why this matters:
+
+| Advantage | Description |
+|-----------|-------------|
+| More room for your code | 96% of context remains for your project files, diffs, and conversation |
+| No performance degradation | Plugin overhead is negligible — Claude responds just as fast |
+| Skills load on-demand | Only the skill you invoke gets loaded; idle skills cost zero tokens |
+| Scales with complexity | You can use multiple tools in one session without hitting context limits |
+
 ## Requirements
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@ This will detect your framework, package manager, database, entrypoints, and scr
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
-| Rules | 9 | auto-loop, security, testing, git-workflow |
+| Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
 ## Workflow
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | Track code history |
 | `/issue-analyze` | Deep issue analysis |
 | `/post-dev-test` | Post-dev test completion |
+| `/feature-dev` | Feature development workflow (design → implement → verify → review) |
+| `/feature-verify` | System diagnosis (read-only verification with dual-perspective) |
+| `/code-investigate` | Dual-perspective code investigation (Claude + Codex independent) |
 
 ### Review (Codex MCP)
 
@@ -143,7 +166,7 @@ sequenceDiagram
 | `/create-request` | Create/update request docs |
 | `/doc-refactor` | Simplify documents |
 | `/simplify` | Code simplification |
-| `/de-ai-flavor` | Remove AI artifacts |
+| `/de-ai-flavor` | Remove AI-generated artifacts from documents |
 | `/create-skill` | Create new skills |
 | `/pr-review` | PR self-review |
 | `/zh-tw` | Rewrite in Traditional Chinese |
@@ -153,6 +176,7 @@ sequenceDiagram
 | Rule | Description |
 |------|-------------|
 | `auto-loop` | Fix -> re-review -> fix -> ... -> Pass (auto cycle) |
+| `codex-invocation` | Codex must independently research, never feed conclusions |
 | `fix-all-issues` | Zero tolerance: fix every issue found |
 | `framework` | Framework-specific conventions (customizable) |
 | `testing` | Unit/Integration/E2E isolation |

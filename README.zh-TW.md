@@ -6,6 +6,26 @@
 
 90+ 個工具，涵蓋 Code Review、測試、調查、安全稽核與 DevOps 自動化。
 
+## 極小的 Context 佔用
+
+本 Plugin 僅佔用 Claude 200k Context Window 的 **~4%**，同時提供 90+ 個工具——這是核心架構優勢。
+
+| 組件 | Tokens | 佔 200k 比例 |
+|------|--------|-------------|
+| Rules（常駐載入） | 5.1k | 2.6% |
+| Skills（按需載入） | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **合計** | **~8k** | **~4%** |
+
+為什麼這很重要：
+
+| 優勢 | 說明 |
+|------|------|
+| 保留更多空間給程式碼 | 96% 的 Context 留給你的專案檔案、diff 與對話 |
+| 不影響效能 | Plugin 開銷極低，Claude 回應速度不受影響 |
+| Skills 按需載入 | 只有執行的 Skill 才會載入，閒置 Skill 不佔用任何 Token |
+| 應對複雜場景 | 單次對話可使用多個工具，不易觸及 Context 上限 |
+
 ## 需求
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
-| Rules | 9 | auto-loop, security, testing, git-workflow |
+| Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
 ## Workflow
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | 追蹤 code 歷史 |
 | `/issue-analyze` | 深度 Issue 分析 |
 | `/post-dev-test` | 開發後測試補全 |
+| `/feature-dev` | 功能開發流程（設計 → 實作 → 驗證 → Review） |
+| `/feature-verify` | 系統診斷（唯讀驗證，雙視角確認） |
+| `/code-investigate` | 雙視角程式碼調查（Claude + Codex 獨立探索） |
 
 ### Review（Codex MCP）
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | Rule | 說明 |
 |------|------|
 | `auto-loop` | 修正 -> 重新 review -> 修正 -> ... -> Pass（自動循環） |
+| `codex-invocation` | Codex 必須自主調研，禁止餵結論 |
 | `fix-all-issues` | 零容忍：修正所有發現的問題 |
 | `framework` | Framework 專屬慣例（可自訂） |
 | `testing` | Unit/Integration/E2E 隔離 |

@@ -6,6 +6,26 @@
 
 90+ 个工具，覆盖代码审查、测试、问题排查、安全审计与 DevOps 自动化。
 
+## 极小的 Context 占用
+
+本插件仅占用 Claude 200k Context Window 的 **~4%**，同时提供 90+ 个工具——这是核心架构优势。
+
+| 组件 | Tokens | 占 200k 比例 |
+|------|--------|-------------|
+| Rules（常驻加载） | 5.1k | 2.6% |
+| Skills（按需加载） | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **合计** | **~8k** | **~4%** |
+
+为什么这很重要：
+
+| 优势 | 说明 |
+|------|------|
+| 为代码留出更多空间 | 96% 的 Context 留给你的项目文件、diff 和对话 |
+| 不影响性能 | 插件开销极低，Claude 响应速度不受影响 |
+| Skills 按需加载 | 只有执行的 Skill 才会加载，闲置 Skill 不占用任何 Token |
+| 应对复杂场景 | 单次对话可使用多个工具，不易触及 Context 上限 |
+
 ## 环境要求
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| 命令 | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | 技能 | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | auto-format, review state tracking, stop guard |
-| 规则 | 9 | auto-loop, security, testing, git-workflow |
+| 规则 | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | 脚本 | 3 | precommit runner, verify runner, dep audit |
 
 ## 工作流
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | 追踪代码历史 |
 | `/issue-analyze` | 深度问题分析 |
 | `/post-dev-test` | 开发后补充测试 |
+| `/feature-dev` | 功能开发流程（设计 → 实现 → 验证 → 审查） |
+| `/feature-verify` | 系统诊断（只读验证，双视角确认） |
+| `/code-investigate` | 双视角代码调查（Claude + Codex 独立探索） |
 
 ### 审查（Codex MCP）
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | 规则 | 说明 |
 |------|------|
 | `auto-loop` | 修复 -> 重新审查 -> 修复 -> ... -> 通过（自动循环） |
+| `codex-invocation` | Codex 必须自主调研，禁止喂结论 |
 | `fix-all-issues` | 零容忍：修复所有发现的问题 |
 | `framework` | 框架专属规范（可自定义） |
 | `testing` | 单元/集成/端到端测试隔离 |

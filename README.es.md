@@ -6,6 +6,26 @@ Plugin de workflow de desarrollo para [Claude Code](https://claude.com/claude-co
 
 Más de 90 herramientas para code review, testing, investigación, auditoría de seguridad y automatización DevOps.
 
+## Mínimo consumo de Context
+
+Este plugin ocupa solo **~4% de la ventana de 200k tokens de Context** de Claude, proporcionando más de 90 herramientas — una ventaja arquitectónica clave.
+
+| Componente | Tokens | % de 200k |
+|------------|--------|-----------|
+| Rules (carga permanente) | 5.1k | 2.6% |
+| Skills (bajo demanda) | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **Total** | **~8k** | **~4%** |
+
+Por qué es importante:
+
+| Ventaja | Descripción |
+|---------|-------------|
+| Más espacio para tu código | El 96% del Context queda disponible para archivos, diffs y conversación |
+| Sin degradación de rendimiento | La sobrecarga del plugin es mínima — Claude responde igual de rápido |
+| Skills se cargan bajo demanda | Solo se carga el Skill que ejecutas; los inactivos no consumen tokens |
+| Escala con la complejidad | Puedes usar múltiples herramientas en una sesión sin alcanzar el límite |
+
 ## Requisitos
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
-| Rules | 9 | auto-loop, security, testing, git-workflow |
+| Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
 ## Workflow
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | Rastreo del historial de código |
 | `/issue-analyze` | Análisis profundo de issues |
 | `/post-dev-test` | Tests complementarios post-desarrollo |
+| `/feature-dev` | Workflow de desarrollo (diseño → implementación → verificación → review) |
+| `/feature-verify` | Diagnóstico de sistema (verificación de solo lectura, doble perspectiva) |
+| `/code-investigate` | Investigación de código con doble perspectiva (Claude + Codex independientes) |
 
 ### Review (Codex MCP)
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | Rule | Descripción |
 |------|-------------|
 | `auto-loop` | Fix -> re-review -> fix -> ... -> Pass (ciclo automático) |
+| `codex-invocation` | Codex debe investigar independientemente, nunca alimentar conclusiones |
 | `fix-all-issues` | Tolerancia cero: corregir todos los issues encontrados |
 | `framework` | Convenciones del framework (personalizables) |
 | `testing` | Aislamiento Unit/Integration/E2E |

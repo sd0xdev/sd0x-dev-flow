@@ -6,6 +6,26 @@
 
 90개 이상의 도구로 코드 리뷰, 테스트, 이슈 조사, 보안 감사, DevOps 자동화를 지원합니다.
 
+## 최소한의 Context 사용량
+
+본 플러그인은 Claude의 200k Context Window 중 **~4%** 만 사용하면서 90개 이상의 도구를 제공합니다. 이는 핵심적인 아키텍처 장점입니다.
+
+| 구성 요소 | 토큰 수 | 200k 대비 비율 |
+|-----------|---------|---------------|
+| Rules (상시 로드) | 5.1k | 2.6% |
+| Skills (온디맨드) | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **합계** | **~8k** | **~4%** |
+
+왜 중요한가:
+
+| 장점 | 설명 |
+|------|------|
+| 코드를 위한 충분한 공간 | 96%의 Context를 프로젝트 파일, diff, 대화에 사용 가능 |
+| 성능 저하 없음 | 플러그인 오버헤드가 극히 작아 응답 속도에 영향 없음 |
+| Skills 온디맨드 로드 | 실행한 Skill만 로드되며, 미사용 Skill은 토큰을 소비하지 않음 |
+| 복잡한 시나리오 대응 | 한 세션에서 여러 도구를 사용해도 Context 한도에 도달하기 어려움 |
+
 ## 요구 사항
 
 - Claude Code 2.1+
@@ -35,11 +55,11 @@
 
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
-| Commands | 36 | `/project-setup`, `/codex-review-fast`, `/verify`, `/bug-fix` |
+| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
-| Rules | 9 | auto-loop, security, testing, git-workflow |
+| Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
 ## 워크플로
@@ -99,6 +119,9 @@ sequenceDiagram
 | `/git-investigate` | 코드 변경 이력 추적 |
 | `/issue-analyze` | Issue 심층 분석 |
 | `/post-dev-test` | 개발 후 테스트 보완 |
+| `/feature-dev` | 기능 개발 워크플로 (설계 → 구현 → 검증 → 리뷰) |
+| `/feature-verify` | 시스템 진단 (읽기 전용 검증, 이중 관점 확인) |
+| `/code-investigate` | 이중 관점 코드 조사 (Claude + Codex 독립 탐색) |
 
 ### 리뷰 (Codex MCP)
 
@@ -153,6 +176,7 @@ sequenceDiagram
 | Rule | 설명 |
 |------|------|
 | `auto-loop` | 수정 -> 재리뷰 -> 수정 -> ... -> Pass (자동 순환) |
+| `codex-invocation` | Codex는 독립적으로 조사해야 하며, 결론 주입 금지 |
 | `fix-all-issues` | 제로 톨러런스: 발견된 이슈 전부 수정 |
 | `framework` | 프레임워크별 컨벤션 (커스터마이즈 가능) |
 | `testing` | Unit/Integration/E2E 격리 |

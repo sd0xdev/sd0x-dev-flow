@@ -2,6 +2,7 @@
 description: Fully automated review of an entire feature branch using Codex MCP
 argument-hint: [base-branch] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
+skills: codex-code-review
 ---
 
 ## Context

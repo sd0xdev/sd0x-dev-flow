@@ -2,6 +2,7 @@
 description: Full second-opinion using Codex MCP (with lint:fix + build). Supports review loop with context preservation.
 argument-hint: [--no-tests] [--focus "<text>"] [--base <gitref>] [--continue <threadId>]
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Read, Grep, Glob
+skills: codex-code-review
 ---
 
 ## Context
