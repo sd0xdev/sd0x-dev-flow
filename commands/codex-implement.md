@@ -48,7 +48,7 @@ Use `mcp__codex__codex` tool:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `You are a senior TypeScript developer. Implement feature code based on requirements.
+  prompt: `You are a senior developer. Implement feature code based on requirements.
 
 ## Requirement Description
 ${REQUIREMENT}
@@ -69,11 +69,11 @@ ${CONTEXT_CONTENT || 'None'}
 Before implementing code, you **must** perform the following research:
 
 ### Research Steps
-1. Understand project structure: \`ls src/\`, \`ls src/service/\`, \`ls src/provider/\`
-2. Search similar implementations: \`grep -r "related keyword" src/ --include="*.ts" -l | head -10\`
-3. Read similar code for style reference: \`cat <similar file> | head -150\`
-4. Understand existing interfaces: \`grep -r "interface" src/interface/ --include="*.ts" -l | head -5\`
-5. Search existing error handling patterns: \`grep -r "throw" src/ --include="*.ts" | head -10\`
+1. Read \`CLAUDE.md\` (or repo root docs) to learn the tech stack and conventions
+2. Identify the source root and list top-level directories: \`ls\`, \`ls src/\` (or equivalent)
+3. Search similar implementations: \`grep -rl "related keyword" <source-root> | head -10\`
+4. Read 2-3 similar files for style reference: \`cat <similar file> | head -150\`
+5. Search existing error handling patterns: \`grep -r "throw\\|raise\\|Error" <source-root> | head -10\`
 
 ### Verification Focus
 - What design patterns does the project use?
@@ -82,20 +82,14 @@ Before implementing code, you **must** perform the following research:
 - What error handling pattern is used?
 
 ## Project Architecture
-- Framework: {FRAMEWORK}
-- Language: TypeScript (strict mode)
-- Database: MongoDB (Mongoose)
-- Cache: Redis
-- Testing: Jest
+Detect from CLAUDE.md and project files. Do NOT assume any specific stack.
 
 ## Code Style Guidelines
-1. Use {FRAMEWORK} dependency injection (@Inject, @Provide)
-2. Services use @Provide() decorator
-3. Error handling uses project-unified error classes
-4. Use async/await, avoid callbacks
-5. Variable naming uses camelCase
-6. Private methods use private modifier
-7. Add necessary TypeScript type annotations
+1. **Research first** — read 2-3 similar files to learn the project's conventions
+2. Match existing patterns (naming, error handling, module system, DI if present)
+3. Use async/await, avoid callbacks
+4. Add necessary type annotations (if TypeScript project)
+5. Follow the project's existing error handling pattern
 
 ## Output Requirements
 1. Output complete executable code
