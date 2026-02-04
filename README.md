@@ -260,3 +260,7 @@ PRs welcome. Please:
 ## License
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left)](https://www.star-history.com/#sd0xdev/sd0x-dev-flow&type=date&legend=top-left)
