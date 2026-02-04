@@ -1,6 +1,7 @@
 ---
 name: tech-spec
-description: Tech spec knowledge base. Full workflow from requirement analysis, code research to spec output. Triggers: tech spec, feature design, requirement analysis.
+description: Tech spec knowledge base. Full workflow from requirement analysis, code research to spec output. 
+Triggers: tech spec, feature design, requirement analysis.
 allowed-tools: Read, Grep, Glob, Write, Bash(git:*)
 ---
 
