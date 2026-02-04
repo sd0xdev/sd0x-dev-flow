@@ -55,7 +55,7 @@
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| 命令 | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | 技能 | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | auto-format, review state tracking, stop guard |
@@ -112,6 +112,7 @@ sequenceDiagram
 |------|------|
 | `/project-setup` | 自动检测并配置项目 |
 | `/repo-intake` | 一次性项目盘点扫描 |
+| `/install-rules` | 安装插件规则到 `.claude/rules/` |
 | `/bug-fix` | 缺陷修复工作流 |
 | `/codex-implement` | Codex 编写代码 |
 | `/codex-architect` | 架构建议（第三大脑） |

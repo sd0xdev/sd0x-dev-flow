@@ -55,7 +55,7 @@
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
@@ -112,6 +112,7 @@ sequenceDiagram
 |------|------|
 | `/project-setup` | 自動偵測並設定專案 |
 | `/repo-intake` | 一次性專案盤點掃描 |
+| `/install-rules` | 安裝 plugin 規則到 `.claude/rules/` |
 | `/bug-fix` | Bug/Issue 修正 workflow |
 | `/codex-implement` | Codex 寫 code |
 | `/codex-architect` | 架構建議（第三大腦） |

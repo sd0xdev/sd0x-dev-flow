@@ -55,7 +55,7 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| コマンド | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | スキル | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | auto-format, review state tracking, stop guard |
@@ -112,6 +112,7 @@ sequenceDiagram
 |----------|------|
 | `/project-setup` | プロジェクトの自動検出・設定 |
 | `/repo-intake` | プロジェクト初回スキャン（1回のみ） |
+| `/install-rules` | プラグインルールを `.claude/rules/` にインストール |
 | `/bug-fix` | バグ/Issue 修正ワークフロー |
 | `/codex-implement` | Codex がコードを書く |
 | `/codex-architect` | アーキテクチャ相談（第三の頭脳） |

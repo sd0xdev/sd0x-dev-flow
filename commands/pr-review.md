@@ -1,5 +1,6 @@
 ---
 description: PR self-review — review changes, produce checklist, update rules
+argument-hint: [--base <branch>]
 allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 ---
 

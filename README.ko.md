@@ -55,7 +55,7 @@
 
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
-| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
@@ -112,6 +112,7 @@ sequenceDiagram
 |--------|------|
 | `/project-setup` | 프로젝트 자동 감지 및 설정 |
 | `/repo-intake` | 프로젝트 초기 스캔 (최초 1회) |
+| `/install-rules` | 플러그인 규칙을 `.claude/rules/`에 설치 |
 | `/bug-fix` | Bug/Issue 수정 워크플로 |
 | `/codex-implement` | Codex가 코드 작성 |
 | `/codex-architect` | 아키텍처 자문 (제3의 두뇌) |

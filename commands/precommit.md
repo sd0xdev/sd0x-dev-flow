@@ -1,5 +1,6 @@
 ---
 description: Pre-commit checks — lint:fix -> build -> test:unit
+argument-hint: [--skip-build] [--skip-lint]
 allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*), Bash(git:*), Read, Grep, Glob
 intent:
   goal: Run pre-commit quality checks before committing code

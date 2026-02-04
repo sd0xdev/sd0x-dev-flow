@@ -55,7 +55,7 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Commands | 40 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | auto-format, review state tracking, stop guard |
@@ -112,6 +112,7 @@ sequenceDiagram
 |---------|-------------|
 | `/project-setup` | Autodetección y configuración del proyecto |
 | `/repo-intake` | Escaneo inicial del proyecto (una sola vez) |
+| `/install-rules` | Instalar reglas del plugin en `.claude/rules/` |
 | `/bug-fix` | Workflow de corrección de bugs |
 | `/codex-implement` | Codex escribe código |
 | `/codex-architect` | Consultoría de arquitectura (tercer cerebro) |
