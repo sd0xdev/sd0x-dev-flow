@@ -55,10 +55,10 @@
 
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
-| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 5 | auto-format, review state tracking, stop guard |
+| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
@@ -113,6 +113,7 @@ sequenceDiagram
 | `/project-setup` | 프로젝트 자동 감지 및 설정 |
 | `/repo-intake` | 프로젝트 초기 스캔 (최초 1회) |
 | `/install-rules` | 플러그인 규칙을 `.claude/rules/`에 설치 |
+| `/install-hooks` | 플러그인 hooks를 `.claude/`에 설치 |
 | `/bug-fix` | Bug/Issue 수정 워크플로 |
 | `/codex-implement` | Codex가 코드 작성 |
 | `/codex-architect` | 아키텍처 자문 (제3의 두뇌) |
@@ -192,10 +193,9 @@ sequenceDiagram
 | Hook | 트리거 | 용도 |
 |------|--------|------|
 | `post-edit-format` | Edit/Write 후 | 자동 prettier (프로젝트에 prettier가 있을 때만) |
-| `post-tool-review-state` | Edit/Bash 후 | 리뷰 상태 트래킹 |
+| `post-tool-review-state` | Bash 후 | 리뷰 상태 트래킹 |
 | `pre-edit-guard` | Edit/Write 전 | .env/.git 편집 방지 |
 | `stop-guard` | 중지 전 | 리뷰 미완료 시 경고 (기본값: warn) |
-| `stop-check` | 중지 전 | 태스크 완료 여부 스마트 체크 |
 
 ### Hook 설정
 

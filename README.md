@@ -55,10 +55,10 @@ This will detect your framework, package manager, database, entrypoints, and scr
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 5 | auto-format, review state tracking, stop guard |
+| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
@@ -113,6 +113,7 @@ sequenceDiagram
 | `/project-setup` | Auto-detect and configure project |
 | `/repo-intake` | One-time project intake scan |
 | `/install-rules` | Install plugin rules to `.claude/rules/` |
+| `/install-hooks` | Install plugin hooks to `.claude/` |
 | `/bug-fix` | Bug/Issue fix workflow |
 | `/codex-implement` | Codex writes code |
 | `/codex-architect` | Architecture advice (third brain) |
@@ -192,10 +193,9 @@ sequenceDiagram
 | Hook | Trigger | Purpose |
 |------|---------|---------|
 | `post-edit-format` | After Edit/Write | Auto prettier (only if project has prettier) |
-| `post-tool-review-state` | After Edit/Bash | Track review state |
+| `post-tool-review-state` | After Bash | Track review state |
 | `pre-edit-guard` | Before Edit/Write | Prevent editing .env/.git |
 | `stop-guard` | Before stop | Warn on incomplete reviews (default: warn) |
-| `stop-check` | Before stop | Smart task completion check |
 
 ### Hook Configuration
 

@@ -7,7 +7,7 @@ allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash
 ## Context
 
 - Repo root: !`git rev-parse --show-toplevel`
-- Existing local rules: !`ls $(git rev-parse --show-toplevel)/.claude/rules/ 2>/dev/null || echo "(none)"`
+- Existing local rules: !`ls .claude/rules/ 2>/dev/null || echo "(none)"`
 
 ## Task
 

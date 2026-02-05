@@ -55,10 +55,10 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| コマンド | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | スキル | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
-| フック | 5 | auto-format, review state tracking, stop guard |
+| フック | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | スクリプト | 3 | precommit runner, verify runner, dep audit |
 
@@ -113,6 +113,7 @@ sequenceDiagram
 | `/project-setup` | プロジェクトの自動検出・設定 |
 | `/repo-intake` | プロジェクト初回スキャン（1回のみ） |
 | `/install-rules` | プラグインルールを `.claude/rules/` にインストール |
+| `/install-hooks` | プラグイン hooks を `.claude/` にインストール |
 | `/bug-fix` | バグ/Issue 修正ワークフロー |
 | `/codex-implement` | Codex がコードを書く |
 | `/codex-architect` | アーキテクチャ相談（第三の頭脳） |
@@ -192,10 +193,9 @@ sequenceDiagram
 | フック | トリガー | 用途 |
 |--------|----------|------|
 | `post-edit-format` | Edit/Write 後 | 自動 prettier（prettier 導入済みプロジェクトのみ） |
-| `post-tool-review-state` | Edit/Bash 後 | レビュー状態の追跡 |
+| `post-tool-review-state` | Bash 後 | レビュー状態の追跡 |
 | `pre-edit-guard` | Edit/Write 前 | .env/.git の編集を防止 |
 | `stop-guard` | 停止前 | 未完了レビュー時に警告（デフォルト：warn） |
-| `stop-check` | 停止前 | タスク完了状況のスマートチェック |
 
 ### フック設定
 

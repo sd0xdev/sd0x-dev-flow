@@ -84,6 +84,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/de-ai-flavor` | Remove AI artifacts | Doc changes |
 | `/zh-tw` | Rewrite in Traditional Chinese | i18n |
 | `/install-rules` | Install plugin rules to .claude/rules/ | Onboarding |
+| `/install-hooks` | Install plugin hooks to .claude/ | Onboarding |
 | `/project-setup` | Auto-detect and configure project | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
 

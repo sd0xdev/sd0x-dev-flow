@@ -125,6 +125,32 @@ test('no command uses dead skills: frontmatter field', () => {
   }
 });
 
+test('hooks.json references point to existing hook scripts', () => {
+  const hooksJsonPath = resolve(__dirname, '../../hooks/hooks.json');
+  if (!existsSync(hooksJsonPath)) return;
+
+  const hooksConfig = JSON.parse(readFileSync(hooksJsonPath, 'utf8'));
+  const hooksDir = resolve(__dirname, '../../hooks');
+
+  for (const [event, entries] of Object.entries(hooksConfig.hooks || {})) {
+    for (const entry of entries) {
+      for (const hook of entry.hooks || []) {
+        if (hook.command) {
+          // Extract script filename from ${CLAUDE_PLUGIN_ROOT}/hooks/<script>
+          const scriptMatch = hook.command.match(/\/hooks\/([^/]+)$/);
+          if (scriptMatch) {
+            const scriptPath = join(hooksDir, scriptMatch[1]);
+            assert.ok(
+              existsSync(scriptPath),
+              `hooks.json ${event} references "${scriptMatch[1]}" but file does not exist in hooks/`
+            );
+          }
+        }
+      }
+    }
+  }
+});
+
 test('skills with references/ directory have at least one .md file', () => {
   const dirs = getSkillDirs();
 

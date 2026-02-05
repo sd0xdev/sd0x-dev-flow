@@ -55,10 +55,10 @@
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Commands | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 5 | auto-format, review state tracking, stop guard |
+| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | Scripts | 3 | precommit runner, verify runner, dep audit |
 
@@ -113,6 +113,7 @@ sequenceDiagram
 | `/project-setup` | 自動偵測並設定專案 |
 | `/repo-intake` | 一次性專案盤點掃描 |
 | `/install-rules` | 安裝 plugin 規則到 `.claude/rules/` |
+| `/install-hooks` | 安裝 plugin hooks 到 `.claude/` |
 | `/bug-fix` | Bug/Issue 修正 workflow |
 | `/codex-implement` | Codex 寫 code |
 | `/codex-architect` | 架構建議（第三大腦） |
@@ -192,10 +193,9 @@ sequenceDiagram
 | Hook | 觸發時機 | 用途 |
 |------|----------|------|
 | `post-edit-format` | Edit/Write 之後 | 自動 prettier（僅限專案已安裝 prettier） |
-| `post-tool-review-state` | Edit/Bash 之後 | 追蹤 review 狀態 |
+| `post-tool-review-state` | Bash 之後 | 追蹤 review 狀態 |
 | `pre-edit-guard` | Edit/Write 之前 | 防止編輯 .env/.git |
 | `stop-guard` | 停止之前 | 未完成 review 時警告（預設：warn） |
-| `stop-check` | 停止之前 | 智慧 task 完成度檢查 |
 
 ### Hook 設定
 

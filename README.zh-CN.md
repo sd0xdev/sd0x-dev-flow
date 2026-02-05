@@ -55,10 +55,10 @@
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 41 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| 命令 | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
 | 技能 | 26 | project-setup, code-explore, codex-explain, feasibility-study |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
-| 钩子 | 5 | auto-format, review state tracking, stop guard |
+| 钩子 | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | 规则 | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
 | 脚本 | 3 | precommit runner, verify runner, dep audit |
 
@@ -113,6 +113,7 @@ sequenceDiagram
 | `/project-setup` | 自动检测并配置项目 |
 | `/repo-intake` | 一次性项目盘点扫描 |
 | `/install-rules` | 安装插件规则到 `.claude/rules/` |
+| `/install-hooks` | 安装插件 hooks 到 `.claude/` |
 | `/bug-fix` | 缺陷修复工作流 |
 | `/codex-implement` | Codex 编写代码 |
 | `/codex-architect` | 架构建议（第三大脑） |
@@ -192,10 +193,9 @@ sequenceDiagram
 | 钩子 | 触发时机 | 用途 |
 |------|----------|------|
 | `post-edit-format` | 编辑/写入之后 | 自动格式化（仅限项目已装 prettier） |
-| `post-tool-review-state` | 编辑/命令之后 | 追踪审查状态 |
+| `post-tool-review-state` | 命令之后 | 追踪审查状态 |
 | `pre-edit-guard` | 编辑/写入之前 | 禁止编辑 .env/.git |
 | `stop-guard` | 停止之前 | 未完成审查时告警（默认：warn） |
-| `stop-check` | 停止之前 | 智能任务完成度检查 |
 
 ### 钩子配置
 
