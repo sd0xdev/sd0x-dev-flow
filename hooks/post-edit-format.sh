@@ -23,15 +23,19 @@ if ! command -v jq &> /dev/null; then
   exit 0
 fi
 
-file_path=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
+# Use printf to avoid echo interpretation issues
+file_path=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
 
 if [[ -z "$file_path" ]]; then
   exit 0
 fi
 
-# P0 fix: Validate file_path — reject paths with shell metacharacters or null bytes
-if [[ "$file_path" =~ [\;\&\|\$\`\(] ]] || [[ "$file_path" == *$'\0'* ]]; then
-  echo "[Edit Hook] Rejected suspicious file path" >&2
+# Security: Reject paths with shell metacharacters that could enable injection
+# Block: ; & | ` $()
+# Note: $ alone is NOT blocked as it's valid in some filenames
+# Note: Null bytes cannot be reliably detected in bash (variables truncate at \0)
+if [[ "$file_path" =~ [\;\&\|\`] ]] || [[ "$file_path" =~ \$\( ]]; then
+  echo "[Edit Hook] Rejected suspicious file path: contains shell metacharacters" >&2
   exit 0
 fi
 
