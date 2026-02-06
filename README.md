@@ -55,8 +55,8 @@ This will detect your framework, package manager, database, entrypoints, and scr
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| Skills | 26 | project-setup, code-explore, codex-explain, feasibility-study |
+| Commands | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| Skills | 27 | project-setup, code-explore, codex-explain, feasibility-study |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |

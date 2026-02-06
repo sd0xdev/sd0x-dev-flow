@@ -24,6 +24,7 @@ const {
   appendLog,
   runCapture,
   runStep,
+  testStdoutFilter,
   gitRepoRoot,
   gitShortHead,
   gitHead,
@@ -179,10 +180,10 @@ async function main() {
     // test:unit
     if (hasScript(pkg, 'test:unit')) {
       const [cmd, testArgs] = pmCommand(pm, 'test:unit');
-      steps.push({ name: 'test_unit', cmd, args: testArgs });
+      steps.push({ name: 'test_unit', cmd, args: testArgs, stdoutFilter: testStdoutFilter });
     } else if (hasScript(pkg, 'test')) {
       const [cmd, testArgs] = pmCommand(pm, 'test');
-      steps.push({ name: 'test_unit', cmd, args: testArgs });
+      steps.push({ name: 'test_unit', cmd, args: testArgs, stdoutFilter: testStdoutFilter });
       process.stdout.write(`> fallback: using "test" instead of "test:unit"\n`);
     } else {
       process.stdout.write(`> skip test_unit (no "test:unit" or "test" script in package.json)\n`);
@@ -202,6 +203,7 @@ async function main() {
         tailFailure: args.tailFailure,
         tailLines: args.tail,
         heartbeatMs: 5000,
+        stdoutFilter: s.stdoutFilter,
       });
       results.push(r);
       appendLog(

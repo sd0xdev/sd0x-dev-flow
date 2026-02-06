@@ -128,6 +128,40 @@ function tailLinesFromFile(filePath, maxLines = 120, maxBytes = 250_000) {
   }
 }
 
+/**
+ * Filter function for stdout streaming.
+ * Returns true if the line should be printed to terminal.
+ * All lines are always written to the log file regardless.
+ */
+function defaultStdoutFilter(_line) {
+  return true;
+}
+
+/** Strip ANSI escape codes so regex matching works on coloured output. */
+function stripAnsi(s) {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1B\[[0-9;]*m/g, '');
+}
+
+/**
+ * For test steps: suppress individual PASS lines, keep FAIL + summary.
+ * This prevents 50+ "PASS test/..." lines from flooding the context.
+ */
+function testStdoutFilter(line) {
+  const clean = stripAnsi(line);
+  // Always show: FAIL, summary, errors, warnings
+  if (/^\s*FAIL\s/.test(clean)) return true;
+  if (/^Tests?:\s/.test(clean)) return true;
+  if (/^Test Suites?:\s/.test(clean)) return true;
+  if (/^Time:\s/.test(clean)) return true;
+  if (/^Ran all test suites/.test(clean)) return true;
+  if (/FAIL|ERROR|Error|✕|✖/.test(clean)) return true;
+  // Suppress: individual PASS lines
+  if (/^\s*PASS\s/.test(clean)) return false;
+  // Allow everything else (blank lines, other output)
+  return true;
+}
+
 async function runStep({
   name,
   cmd,
@@ -139,6 +173,7 @@ async function runStep({
   tailFailure,
   tailLines,
   heartbeatMs,
+  stdoutFilter,
 }) {
   const startedAt = Date.now();
   const logFile = path.join(logDir, `${name}.log`);
@@ -174,16 +209,27 @@ async function runStep({
     };
   }
 
+  const filter = stdoutFilter || defaultStdoutFilter;
+  let _lineBuf = '';
+
   if (child.stdout) {
     child.stdout.on('data', d => {
-      out.write(d);
-      process.stdout.write(d);
+      out.write(d); // always write full output to log
+      // Apply filter: buffer lines, only print matching ones
+      _lineBuf += d.toString();
+      const parts = _lineBuf.split('\n');
+      _lineBuf = parts.pop(); // keep incomplete last line in buffer
+      for (const line of parts) {
+        if (filter(line)) {
+          process.stdout.write(line + '\n');
+        }
+      }
     });
   }
   if (child.stderr) {
     child.stderr.on('data', d => {
-      out.write(d);
-      process.stderr.write(d);
+      out.write(d); // always write full output to log
+      process.stderr.write(d); // always show stderr
     });
   }
 
@@ -201,9 +247,23 @@ async function runStep({
     });
   });
 
+  // Flush remaining line buffer
+  if (_lineBuf) {
+    if (filter(_lineBuf)) {
+      process.stdout.write(_lineBuf + '\n');
+    }
+    _lineBuf = '';
+  }
+
   if (hbInterval) clearInterval(hbInterval);
-  out.end();
-  await new Promise(resolve => out.on('finish', resolve));
+  // Close log stream safely (error path may have already called out.end)
+  if (!out.writableEnded) {
+    out.end();
+  }
+  await new Promise(resolve => {
+    if (out.writableFinished) resolve();
+    else out.on('finish', resolve);
+  });
   const durationMs = Date.now() - startedAt;
 
   // Tail policy: success prints fewer lines, failure prints more.
@@ -254,6 +314,9 @@ module.exports = {
   runCapture,
   runStep,
   tailLinesFromFile,
+  stripAnsi,
+  defaultStdoutFilter,
+  testStdoutFilter,
   gitRepoRoot,
   gitShortHead,
   gitHead,

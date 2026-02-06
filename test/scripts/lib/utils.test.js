@@ -11,6 +11,9 @@ const {
   pmCommand,
   detectPackageManager,
   tailLinesFromFile,
+  stripAnsi,
+  defaultStdoutFilter,
+  testStdoutFilter,
 } = require('../../../scripts/lib/utils');
 
 const tempDirs = [];
@@ -95,4 +98,98 @@ test('tailLinesFromFile', () => {
 
   const missingPath = join(dir, 'missing.txt');
   assert.equal(tailLinesFromFile(missingPath, 5), '');
+});
+
+test('stripAnsi', () => {
+  // Plain text - no change
+  assert.equal(stripAnsi('hello world'), 'hello world');
+  assert.equal(stripAnsi(''), '');
+
+  // Single ANSI code
+  assert.equal(stripAnsi('\x1B[32mgreen\x1B[0m'), 'green');
+
+  // Multiple ANSI codes
+  assert.equal(
+    stripAnsi('\x1B[1m\x1B[32mPASS\x1B[39m\x1B[22m test/foo.test.js'),
+    'PASS test/foo.test.js'
+  );
+
+  // Bold + color reset
+  assert.equal(stripAnsi('\x1B[1mBold\x1B[0m Normal'), 'Bold Normal');
+
+  // Jest-style FAIL output with colors
+  assert.equal(
+    stripAnsi('\x1B[1m\x1B[31mFAIL\x1B[39m\x1B[22m test/bar.test.js'),
+    'FAIL test/bar.test.js'
+  );
+
+  // Mixed content
+  assert.equal(
+    stripAnsi('prefix \x1B[33mwarn\x1B[0m suffix'),
+    'prefix warn suffix'
+  );
+});
+
+test('defaultStdoutFilter', () => {
+  // Should always return true
+  assert.equal(defaultStdoutFilter('anything'), true);
+  assert.equal(defaultStdoutFilter(''), true);
+  assert.equal(defaultStdoutFilter('PASS test/foo.test.js'), true);
+  assert.equal(defaultStdoutFilter('FAIL test/bar.test.js'), true);
+});
+
+test('testStdoutFilter - PASS suppression', () => {
+  // Individual PASS lines should be suppressed
+  assert.equal(testStdoutFilter('PASS test/foo.test.js'), false);
+  assert.equal(testStdoutFilter('  PASS test/bar.test.js'), false);
+
+  // PASS with ANSI codes should also be suppressed
+  assert.equal(
+    testStdoutFilter('\x1B[1m\x1B[32mPASS\x1B[39m\x1B[22m test/foo.test.js'),
+    false
+  );
+});
+
+test('testStdoutFilter - FAIL always shown', () => {
+  // FAIL lines should always be shown
+  assert.equal(testStdoutFilter('FAIL test/foo.test.js'), true);
+  assert.equal(testStdoutFilter('  FAIL test/bar.test.js'), true);
+
+  // FAIL with ANSI codes
+  assert.equal(
+    testStdoutFilter('\x1B[1m\x1B[31mFAIL\x1B[39m\x1B[22m test/bar.test.js'),
+    true
+  );
+
+  // Lines containing FAIL anywhere
+  assert.equal(testStdoutFilter('Something FAIL something'), true);
+});
+
+test('testStdoutFilter - summary lines always shown', () => {
+  // Test summary lines
+  assert.equal(testStdoutFilter('Tests: 10 passed, 10 total'), true);
+  assert.equal(testStdoutFilter('Test Suites: 5 passed, 5 total'), true);
+  assert.equal(testStdoutFilter('Time: 2.5s'), true);
+  assert.equal(testStdoutFilter('Ran all test suites.'), true);
+});
+
+test('testStdoutFilter - error indicators always shown', () => {
+  // Error keywords
+  assert.equal(testStdoutFilter('ERROR: something went wrong'), true);
+  assert.equal(testStdoutFilter('Error: test failed'), true);
+  assert.equal(testStdoutFilter('✕ test name (5ms)'), true);
+  assert.equal(testStdoutFilter('✖ another test'), true);
+});
+
+test('testStdoutFilter - other output allowed', () => {
+  // Blank lines
+  assert.equal(testStdoutFilter(''), true);
+
+  // Regular output
+  assert.equal(testStdoutFilter('Running tests...'), true);
+  assert.equal(testStdoutFilter('> jest --coverage'), true);
+
+  // Partial matches that are NOT PASS/FAIL
+  assert.equal(testStdoutFilter('PASSING through'), true);
+  assert.equal(testStdoutFilter('FAILURE mode'), true);
 });

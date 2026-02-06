@@ -55,8 +55,8 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 42 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| スキル | 26 | project-setup, code-explore, codex-explain, feasibility-study |
+| コマンド | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
+| スキル | 27 | project-setup, code-explore, codex-explain, feasibility-study |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |

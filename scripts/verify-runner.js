@@ -19,6 +19,7 @@ const {
   writeJson,
   appendLog,
   runStep,
+  testStdoutFilter,
   gitRepoRoot,
   gitShortHead,
   gitHead,
@@ -160,11 +161,11 @@ async function main() {
 
   if (hasScript(pkg, 'test:unit')) {
     const [cmd, cmdArgs] = pmCommand(pm, 'test:unit');
-    steps.push({ name: 'test_unit', cmd, args: cmdArgs });
+    steps.push({ name: 'test_unit', cmd, args: cmdArgs, stdoutFilter: testStdoutFilter });
     commands.push([cmd, ...cmdArgs].join(' '));
   } else if (hasScript(pkg, 'test')) {
     const [cmd, cmdArgs] = pmCommand(pm, 'test');
-    steps.push({ name: 'test_unit', cmd, args: cmdArgs });
+    steps.push({ name: 'test_unit', cmd, args: cmdArgs, stdoutFilter: testStdoutFilter });
     commands.push([cmd, ...cmdArgs].join(' '));
   } else {
     steps.push({
@@ -180,7 +181,7 @@ async function main() {
         const [cmd, cmdArgs] = pmCommand(pm, 'test:integration', [
           args.integration,
         ]);
-        steps.push({ name: 'test_integration', cmd, args: cmdArgs });
+        steps.push({ name: 'test_integration', cmd, args: cmdArgs, stdoutFilter: testStdoutFilter });
         commands.push([cmd, ...cmdArgs].join(' '));
       } else {
         steps.push({
@@ -199,7 +200,7 @@ async function main() {
     if (hasScript(pkg, 'test:e2e')) {
       if (args.e2e) {
         const [cmd, cmdArgs] = pmCommand(pm, 'test:e2e', [args.e2e]);
-        steps.push({ name: 'test_e2e', cmd, args: cmdArgs });
+        steps.push({ name: 'test_e2e', cmd, args: cmdArgs, stdoutFilter: testStdoutFilter });
         commands.push([cmd, ...cmdArgs].join(' '));
       } else {
         steps.push({
@@ -242,6 +243,7 @@ async function main() {
         tailFailure: args.tailFailure,
         tailLines: args.tail,
         heartbeatMs: 5000,
+        stdoutFilter: s.stdoutFilter,
       });
       results.push(r);
       appendLog(
