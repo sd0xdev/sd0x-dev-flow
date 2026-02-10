@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "code_extensions": [
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+    ".py", ".pyw",
+    ".go",
+    ".rs",
+    ".java", ".kt", ".kts",
+    ".rb",
+    ".php",
+    ".swift",
+    ".c", ".cpp", ".cc", ".h", ".hpp",
+    ".cs",
+    ".scala",
+    ".ex", ".exs"
+  ],
+  "doc_extensions": [".md", ".mdx"],
+  "ignore_prefixes": [
+    "node_modules/", "vendor/", "dist/", "build/", "out/",
+    "target/", ".next/", ".nuxt/",
+    "__pycache__/", ".pytest_cache/", "venv/", ".venv/",
+    ".git/"
+  ],
+  "test_gap": {
+    "skip_ecosystems": ["go", "rust"],
+    "ecosystem_manifests": {
+      "go": ["go.mod"],
+      "rust": ["Cargo.toml"]
+    },
+    "source_prefixes": ["src/", "lib/", "app/", "pkg/"],
+    "test_indicators": {
+      "directory_prefixes": ["test/", "tests/", "__tests__/", "spec/", "src/test/"],
+      "file_suffixes": [
+        ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
+        ".spec.ts", ".spec.js", ".spec.tsx", ".spec.jsx",
+        "_test.py", "_spec.rb",
+        "Test.java", "Test.kt"
+      ]
+    }
+  }
+}

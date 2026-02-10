@@ -109,6 +109,10 @@ test('no changes, clean state — 0 findings, exit 0', () => {
 // ---------------------------------------------------------------------------
 test('code changed, no review — P0 gate-missing-code', () => {
   const dir = createTempRepo();
+  // Create a dirty .js file so hasChanges=true
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/foo.js', 'a');
+  writeFileSync(join(dir, 'src/foo.js'), 'b');
   writeReviewState(dir, {
     has_code_change: true,
     code_review: { executed: false, passed: false, last_run: '' },
@@ -265,16 +269,16 @@ test('state file missing — graceful fallback, no crash', () => {
 // ---------------------------------------------------------------------------
 // Test 10: Profile gating — no src/ dir, skip test-gap
 // ---------------------------------------------------------------------------
-test('profile gating — no src/ dir, test-gap not emitted', () => {
+test('profile gating — no source dir, test-gap not emitted', () => {
   const dir = createTempRepo();
-  // Create a file outside src/
-  addAndCommitFile(dir, 'lib/utils.js', 'a');
-  writeFileSync(join(dir, 'lib/utils.js'), 'a2');
+  // Create a file outside all source prefixes (src/, lib/, app/, pkg/)
+  addAndCommitFile(dir, 'scripts/utils.js', 'a');
+  writeFileSync(join(dir, 'scripts/utils.js'), 'a2');
   writeReviewState(dir);
 
   const { output } = runAnalyze(dir);
   const f = output.findings.find(f => f.id === 'test-gap');
-  assert.equal(f, undefined, 'test-gap should NOT fire without src/ directory');
+  assert.equal(f, undefined, 'test-gap should NOT fire without source directory');
 });
 
 // ---------------------------------------------------------------------------
@@ -320,7 +324,90 @@ test('untracked directory — files expanded into diff summary', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 13: Gate uses computed required — code files in diff trigger gate
+// Test 13: Stale code+doc state on clean worktree — suppresses gate-missing-code/doc
+// ---------------------------------------------------------------------------
+test('stale state on clean worktree — gate-missing-code and gate-missing-doc suppressed', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/stale'], { cwd: dir, stdio: 'ignore' });
+  // State says both code AND doc changed, but worktree is clean
+  writeReviewState(dir, {
+    has_code_change: true,
+    has_doc_change: true,
+    code_review: { executed: false, passed: false, last_run: '' },
+    doc_review: { executed: false, passed: false, last_run: '' },
+  });
+  // Commit the state file so it's not untracked
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output, exitCode } = runAnalyze(dir);
+  // Should have state-drift
+  const drift = output.findings.find(f => f.id === 'state-drift');
+  assert.ok(drift, 'state-drift should fire on clean worktree with stale state');
+  // gate-missing-code: antecedent true (has_code_change=true, passed=false) but suppressed
+  const gateCode = output.findings.find(f => f.id === 'gate-missing-code');
+  assert.equal(gateCode, undefined, 'gate-missing-code should NOT fire on clean worktree');
+  // gate-missing-doc: antecedent true (has_doc_change=true, passed=false) but suppressed
+  const gateDoc = output.findings.find(f => f.id === 'gate-missing-doc');
+  assert.equal(gateDoc, undefined, 'gate-missing-doc should NOT fire on clean worktree');
+  assert.equal(exitCode, 2, 'state-drift is P0, exit code should be 2');
+});
+
+// ---------------------------------------------------------------------------
+// Test 14: Stale precommit state on clean worktree — suppresses gate-missing-precommit
+// ---------------------------------------------------------------------------
+test('stale state on clean worktree — gate-missing-precommit suppressed', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/stale-pre'], { cwd: dir, stdio: 'ignore' });
+  // State says review passed but precommit pending — but worktree is clean
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: false, passed: false, last_run: '' },
+  });
+  // Commit the state file so it's not untracked
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output, exitCode } = runAnalyze(dir);
+  const drift = output.findings.find(f => f.id === 'state-drift');
+  assert.ok(drift, 'state-drift should fire');
+  // gate-missing-precommit: antecedent true (passed=true, precommit=false) but suppressed
+  const gatePre = output.findings.find(f => f.id === 'gate-missing-precommit');
+  assert.equal(gatePre, undefined, 'gate-missing-precommit should NOT fire on clean worktree');
+  assert.equal(exitCode, 2, 'state-drift is P0');
+});
+
+// ---------------------------------------------------------------------------
+// Test 15: Doc changed, no doc review — P0 gate-missing-doc
+// ---------------------------------------------------------------------------
+test('doc changed, no review — P0 gate-missing-doc', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'docs/update'], { cwd: dir, stdio: 'ignore' });
+  addAndCommitFile(dir, 'docs/guide.md', '# Guide');
+  writeFileSync(join(dir, 'docs/guide.md'), '# Updated Guide');
+  writeReviewState(dir, {
+    has_doc_change: true,
+    doc_review: { executed: false, passed: false, last_run: '' },
+  });
+
+  const { output, exitCode } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'gate-missing-doc');
+  assert.ok(f, 'gate-missing-doc should fire when docs changed and review not passed');
+  assert.equal(f.priority, 'P0');
+  assert.equal(exitCode, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Test 16: Gate uses computed required — code files in diff trigger gate
 // ---------------------------------------------------------------------------
 test('gate computed from diff — code files trigger code_review gate', () => {
   const dir = createTempRepo();
@@ -337,4 +424,114 @@ test('gate computed from diff — code files trigger code_review gate', () => {
   const f = output.findings.find(f => f.id === 'gate-missing-code');
   assert.ok(f, 'gate-missing-code should fire based on computed gates even when has_code_change is false');
   assert.equal(f.priority, 'P0');
+});
+
+// ---------------------------------------------------------------------------
+// Test 17: Python code triggers gate
+// ---------------------------------------------------------------------------
+test('Python .py file triggers code_review gate', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/app.py', 'print("hello")');
+  writeFileSync(join(dir, 'src/app.py'), 'print("world")');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: false, passed: false, last_run: '' },
+  });
+
+  const { output, exitCode } = runAnalyze(dir);
+  assert.equal(output.gates.code_review.required, true, '.py should trigger code gate');
+  const f = output.findings.find(f => f.id === 'gate-missing-code');
+  assert.ok(f, 'gate-missing-code should fire for Python files');
+  assert.equal(exitCode, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Test 18: Go project skips test-gap
+// ---------------------------------------------------------------------------
+test('Go project — test-gap skipped due to co-located tests', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/main.go', 'package main');
+  writeFileSync(join(dir, 'src/main.go'), 'package main\nfunc main() {}');
+  // Create go.mod to signal Go ecosystem
+  writeFileSync(join(dir, 'go.mod'), 'module example.com/test\n\ngo 1.21');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'test-gap');
+  assert.equal(f, undefined, 'test-gap should NOT fire in Go projects');
+});
+
+// ---------------------------------------------------------------------------
+// Test 19: Rust project skips test-gap
+// ---------------------------------------------------------------------------
+test('Rust project — test-gap skipped due to inline tests', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/lib.rs', 'fn main() {}');
+  writeFileSync(join(dir, 'src/lib.rs'), 'fn main() { println!("hello"); }');
+  // Create Cargo.toml to signal Rust ecosystem
+  writeFileSync(join(dir, 'Cargo.toml'), '[package]\nname = "test"');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'test-gap');
+  assert.equal(f, undefined, 'test-gap should NOT fire in Rust projects');
+});
+
+// ---------------------------------------------------------------------------
+// Test 20: Vendor dir files ignored for gate
+// ---------------------------------------------------------------------------
+test('vendor dir files ignored — gate not triggered even with has_code_change', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/vendor'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true });
+  addAndCommitFile(dir, 'node_modules/pkg/index.js', 'a');
+  writeFileSync(join(dir, 'node_modules/pkg/index.js'), 'b');
+  // Simulate hook behavior: has_code_change=true from hook (hook doesn't filter vendors)
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: false, passed: false, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  assert.equal(output.gates.code_review.required, false, 'vendor .js should NOT trigger code gate');
+  const f = output.findings.find(f => f.id === 'gate-missing-code');
+  assert.equal(f, undefined, 'gate-missing-code should NOT fire for vendor-only edits');
+});
+
+// ---------------------------------------------------------------------------
+// Test 21: Python test pattern recognized
+// ---------------------------------------------------------------------------
+test('Python test pattern — _test.py suppresses test-gap', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, 'tests'), { recursive: true });
+  addAndCommitFile(dir, 'src/service.py', 'class Service: pass');
+  addAndCommitFile(dir, 'tests/test_service.py', 'def test_service(): pass');
+  writeFileSync(join(dir, 'src/service.py'), 'class Service:\n  def run(self): pass');
+  writeFileSync(join(dir, 'tests/test_service.py'), 'def test_service():\n  assert True');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'test-gap');
+  assert.equal(f, undefined, 'test-gap should NOT fire when Python tests are in diff');
+});
+
+// ---------------------------------------------------------------------------
+// Test 22: Multi-language file types counted
+// ---------------------------------------------------------------------------
+test('multi-language file types — .py and .rs both counted', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/multi-lang'], { cwd: dir, stdio: 'ignore' });
+  addAndCommitFile(dir, 'app.py', 'a');
+  addAndCommitFile(dir, 'lib.rs', 'b');
+  writeFileSync(join(dir, 'app.py'), 'a2');
+  writeFileSync(join(dir, 'lib.rs'), 'b2');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.file_types['.py'] > 0, 'file_types should include .py');
+  assert.ok(output.file_types['.rs'] > 0, 'file_types should include .rs');
 });

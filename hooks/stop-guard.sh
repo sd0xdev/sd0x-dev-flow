@@ -69,7 +69,7 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   CONVERSATION=$(tail -500 "$TRANSCRIPT" 2>/dev/null || echo "")
 
   # Check change types
-  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx)"' | grep -E '"(Edit|Write)"' | head -1 || true)
+  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)"' | grep -E '"(Edit|Write)"' | head -1 || true)
   HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.md"' | grep -E '"(Edit|Write)"' | head -1 || true)
 
   # Check if required commands were executed

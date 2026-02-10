@@ -6,6 +6,23 @@ const path = require('path');
 const { runCapture, gitRepoRoot, gitShortHead } = require('../../../scripts/lib/utils');
 
 // ---------------------------------------------------------------------------
+// File classification config (language-agnostic)
+// ---------------------------------------------------------------------------
+function loadClassification() {
+  try {
+    const p = path.join(__dirname, '../../../scripts/config/file-classification.json');
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch {
+    return null; // fallback to legacy patterns
+  }
+}
+const CLASSIFICATION = loadClassification();
+
+const CODE_EXTS = CLASSIFICATION?.code_extensions ?? ['.ts', '.tsx', '.js', '.jsx'];
+const DOC_EXTS = CLASSIFICATION?.doc_extensions ?? ['.md', '.mdx'];
+const IGNORE_PREFIXES = CLASSIFICATION?.ignore_prefixes ?? [];
+
+// ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
 function argVal(flag) {
@@ -132,8 +149,11 @@ function fileTypeCounts(files) {
 // Gates
 // ---------------------------------------------------------------------------
 function evaluateGates(reviewState, files) {
-  const hasCode = files.some(f => /\.(ts|js|tsx|jsx)$/.test(f.file));
-  const hasDocs = files.some(f => /\.md$/.test(f.file));
+  const nonVendorFiles = files.filter(f =>
+    !IGNORE_PREFIXES.some(prefix => f.file.startsWith(prefix))
+  );
+  const hasCode = nonVendorFiles.some(f => CODE_EXTS.includes(path.extname(f.file)));
+  const hasDocs = nonVendorFiles.some(f => DOC_EXTS.includes(path.extname(f.file)));
 
   const gates = {
     code_review: { required: hasCode, passed: false },
@@ -172,9 +192,9 @@ function runHeuristics(inputs, files, gates, root) {
   }
 
   // 1. state-drift: review state flags inconsistent with git
+  const hasChanges = porcelainLines.length > 0 || files.length > 0;
   if (reviewState) {
-    const porcelainClean = porcelainLines.length === 0 && files.length === 0;
-    if (porcelainClean && (reviewState.has_code_change || reviewState.has_doc_change)) {
+    if (!hasChanges && (reviewState.has_code_change || reviewState.has_doc_change)) {
       findings.push({
         id: 'state-drift',
         priority: 'P0',
@@ -184,47 +204,80 @@ function runHeuristics(inputs, files, gates, root) {
     }
   }
 
-  // 2. gate-missing-code: code changed, review not passed
-  if (reviewState && (gates.code_review.required || reviewState.has_code_change) && !gates.code_review.passed) {
-    findings.push({
-      id: 'gate-missing-code',
-      priority: 'P0',
-      message: 'Code changed but code review has not passed',
-      suggestion: 'Run /codex-review-fast before proceeding',
-    });
-  }
-
-  // 3. gate-missing-doc: docs changed, doc review not passed
-  if (reviewState && (gates.doc_review.required || reviewState.has_doc_change) && !gates.doc_review.passed) {
-    findings.push({
-      id: 'gate-missing-doc',
-      priority: 'P0',
-      message: 'Documentation changed but doc review has not passed',
-      suggestion: 'Run /codex-review-doc before proceeding',
-    });
-  }
-
-  // 4. gate-missing-precommit: code review passed, precommit not passed
-  if (reviewState && gates.code_review.passed && !gates.precommit.passed) {
-    findings.push({
-      id: 'gate-missing-precommit',
-      priority: 'P0',
-      message: 'Code review passed but precommit has not passed',
-      suggestion: 'Run /precommit before committing',
-    });
-  }
-
-  // 5. test-gap: src/ changed, no matching test/ in diff (profile-gated)
-  if (dirExists('src')) {
-    const srcFiles = changedPaths.filter(p => p.startsWith('src/'));
-    const testFiles = changedPaths.filter(p => /^test\//.test(p) || /\.test\.(ts|js|tsx|jsx)$/.test(p));
-    if (srcFiles.length > 0 && testFiles.length === 0) {
+  // 2-4: gate-missing checks — only when there are actual changes.
+  // When worktree is clean, state-drift above covers stale state.
+  // Note: stop-guard.sh enforces independently via has_code_change;
+  // this script is advisory — "reset state" is correct when nothing to review.
+  // Gate checks use computed gates.*.required (vendor-filtered) as authoritative.
+  // Although post-edit-format.sh now also skips vendor paths, the computed gates
+  // remain the single source of truth for this advisory script.
+  if (hasChanges) {
+    // 2. gate-missing-code: non-vendor code changed, review not passed
+    if (reviewState && gates.code_review.required && !gates.code_review.passed) {
       findings.push({
-        id: 'test-gap',
-        priority: 'P1',
-        message: `${srcFiles.length} src/ file(s) changed but no test files in diff`,
-        suggestion: 'Write or update tests for changed source files',
+        id: 'gate-missing-code',
+        priority: 'P0',
+        message: 'Code changed but code review has not passed',
+        suggestion: 'Run /codex-review-fast before proceeding',
       });
+    }
+
+    // 3. gate-missing-doc: docs changed, doc review not passed
+    if (reviewState && gates.doc_review.required && !gates.doc_review.passed) {
+      findings.push({
+        id: 'gate-missing-doc',
+        priority: 'P0',
+        message: 'Documentation changed but doc review has not passed',
+        suggestion: 'Run /codex-review-doc before proceeding',
+      });
+    }
+
+    // 4. gate-missing-precommit: non-vendor code requires precommit, review passed but precommit not
+    if (reviewState && gates.precommit.required && gates.code_review.passed && !gates.precommit.passed) {
+      findings.push({
+        id: 'gate-missing-precommit',
+        priority: 'P0',
+        message: 'Code review passed but precommit has not passed',
+        suggestion: 'Run /precommit before committing',
+      });
+    }
+  }
+
+  // 5. test-gap: source changed, no matching test in diff (ecosystem-aware)
+  const srcPrefixes = CLASSIFICATION?.test_gap?.source_prefixes ?? ['src/'];
+  const hasSrcDir = srcPrefixes.some(p => dirExists(p.replace(/\/$/, '')));
+  if (hasSrcDir) {
+    // Skip for ecosystems with co-located tests (Go _test.go, Rust #[cfg(test)])
+    const skipEco = CLASSIFICATION?.test_gap?.skip_ecosystems ?? [];
+    const ecoManifests = CLASSIFICATION?.test_gap?.ecosystem_manifests ?? {};
+    const shouldSkip = skipEco.some(eco => {
+      const manifests = ecoManifests[eco] ?? [];
+      return manifests.some(m => {
+        try { return fs.statSync(path.join(root, m)).isFile(); } catch { return false; }
+      });
+    });
+
+    if (!shouldSkip) {
+      const srcFiles = changedPaths.filter(p =>
+        srcPrefixes.some(prefix => p.startsWith(prefix)) &&
+        !IGNORE_PREFIXES.some(prefix => p.startsWith(prefix))
+      );
+      const testIndicators = CLASSIFICATION?.test_gap?.test_indicators ?? {
+        directory_prefixes: ['test/'],
+        file_suffixes: ['.test.ts', '.test.js', '.test.tsx', '.test.jsx'],
+      };
+      const testFiles = changedPaths.filter(p =>
+        testIndicators.directory_prefixes.some(prefix => p.startsWith(prefix)) ||
+        testIndicators.file_suffixes.some(suffix => p.endsWith(suffix))
+      );
+      if (srcFiles.length > 0 && testFiles.length === 0) {
+        findings.push({
+          id: 'test-gap',
+          priority: 'P1',
+          message: `${srcFiles.length} source file(s) changed but no test files in diff`,
+          suggestion: 'Write or update tests for changed source files',
+        });
+      }
     }
   }
 

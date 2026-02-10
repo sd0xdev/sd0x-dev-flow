@@ -1,7 +1,7 @@
 ---
 description: Quick pre-commit checks — lint:fix -> test:unit
 argument-hint: [--skip-lint]
-allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*), Bash(git:*), Read, Grep, Glob
+allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*), Bash(python*:*), Bash(pytest:*), Bash(ruff:*), Bash(mypy:*), Bash(cargo:*), Bash(go:*), Bash(golangci-lint:*), Bash(./gradlew:*), Bash(mvn:*), Bash(bundle:*), Bash(rubocop:*), Bash(rspec:*), Bash(git:*), Read, Grep, Glob
 intent:
   goal: Run quick pre-commit quality checks (no build step)
   steps:
@@ -46,7 +46,10 @@ If `scripts/precommit-runner.js` does not exist, **skip Step 1 entirely** and de
 | `pyproject.toml` | Python | `ruff check --fix .` | `pytest tests/unit/` |
 | `Cargo.toml` | Rust | `cargo clippy --fix` | `cargo test` |
 | `go.mod` | Go | `golangci-lint run --fix` | `go test ./...` |
-| `build.gradle` | Java | `./gradlew spotlessApply` | `./gradlew test` |
+| `build.gradle` | Java (Gradle) | `./gradlew spotlessApply` | `./gradlew test` |
+| `build.gradle.kts` | Java (Gradle KTS) | `./gradlew spotlessApply` | `./gradlew test` |
+| `pom.xml` | Java (Maven) | `mvn spotless:apply` | `mvn test` |
+| `Gemfile` | Ruby | `bundle exec rubocop -a` | `bundle exec rspec` |
 
 For Node.js projects, auto-detect package manager from lockfile (`pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, else npm).
 

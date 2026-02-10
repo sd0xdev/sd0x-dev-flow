@@ -39,9 +39,23 @@ if [[ "$file_path" =~ [\;\&\|\`] ]] || [[ "$file_path" =~ \$\( ]]; then
   exit 0
 fi
 
+# === Skip vendor/generated paths (no formatting or change tracking) ===
+# Normalize to repo-relative path so we only match root-level vendor dirs
+# (avoids false positives like src/build/helpers.ts matching "build/")
+rel_path="$file_path"
+if [[ "$file_path" = /* ]]; then
+  local_prefix="${PWD%/}/"
+  if [[ "$file_path" = "$local_prefix"* ]]; then
+    rel_path="${file_path#"$local_prefix"}"
+  fi
+fi
+if echo "$rel_path" | grep -Eq '^(node_modules|vendor|dist|build|out|target|\.next|\.nuxt|__pycache__|\.pytest_cache|venv|\.venv|\.git)/'; then
+  exit 0
+fi
+
 # === Auto-format supported file types ===
 if [[ "${HOOK_NO_FORMAT:-}" != "1" ]]; then
-  if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|json|md|mdx)$'; then
+  if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php|json|md|mdx|yaml|yml)$'; then
     has_prettier=false
     # Only run if project has prettier configured
     if [[ -f "node_modules/.bin/prettier" ]] || \
@@ -91,8 +105,8 @@ update_change_flag() {
      "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
 }
 
-# Track code changes (.ts, .tsx, .js, .jsx)
-if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx)$'; then
+# Track code changes (all recognized code extensions)
+if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)$'; then
   update_change_flag "has_code_change"
   echo "[Edit Hook] Code change detected: $file_path" >&2
 fi

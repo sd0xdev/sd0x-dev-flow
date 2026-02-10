@@ -7,6 +7,7 @@ const {
   rmSync,
   readFileSync,
   existsSync,
+  realpathSync,
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
@@ -230,7 +231,7 @@ test('.json file does not update state', () => {
   assert.equal(readState(workDir), null);
 });
 
-test('.py file does not format or track', () => {
+test('.py file tracks as code change', () => {
   const workDir = makeTempDir('sd0x-format-py-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -239,7 +240,43 @@ test('.py file does not format or track', () => {
     filePath: '/project/script.py',
   });
   assert.equal(result.status, 0);
-  assert.equal(readState(workDir), null);
+  const state = readState(workDir);
+  assert.ok(state, 'State file should be created for .py');
+  assert.equal(state.has_code_change, true, '.py should set has_code_change');
+});
+
+// =============================================================================
+// Vendor path filtering
+// =============================================================================
+
+test('vendor path (node_modules) skips all tracking', () => {
+  const workDir = makeTempDir('sd0x-format-vendor-');
+  // Use realpathSync to match Bash $PWD (macOS: /var -> /private/var)
+  const physDir = realpathSync(workDir);
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: join(physDir, 'node_modules/pkg/index.js'),
+  });
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null, 'vendor files should not create state');
+});
+
+test('src/build/ is NOT treated as vendor (no false positive)', () => {
+  const workDir = makeTempDir('sd0x-format-srcbuild-');
+  const physDir = realpathSync(workDir);
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: join(physDir, 'src/build/helpers.ts'),
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'src/build/*.ts should still be tracked');
+  assert.equal(state.has_code_change, true);
 });
 
 // =============================================================================
