@@ -67,7 +67,7 @@ sequenceDiagram
 
 ```
 docs/features/{feature}/
-├── tech-spec.md      # Technical spec
+├── 2-tech-spec.md    # Technical spec (numbered per docs-numbering rule)
 ├── requests/         # Request documents
 └── README.md         # Feature description
 ```
@@ -80,6 +80,6 @@ Action: Requirement clarification -> Code research -> Solution design -> Output 
 ```
 
 ```
-Input: /review-spec docs/features/xxx/tech-spec.md
+Input: /review-spec docs/features/xxx/2-tech-spec.md
 Action: Read -> Research -> Review -> Output report + Gate
 ```

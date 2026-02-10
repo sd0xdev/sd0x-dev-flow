@@ -1,6 +1,6 @@
 ---
 name: feature-dev
-description: Feature development workflow. Covers implementation, verification, pre-commit checks, refactoring. Guides through design -> implement -> verify -> review -> commit flow.
+description: Feature development workflow. Covers implementation, verification, pre-commit checks, doc sync, refactoring. Guides through design -> implement -> verify -> review -> commit -> doc sync flow.
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -20,11 +20,11 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ## Workflow
 
 ```
-Requirements -> Design -> Implement -> Test -> Review -> Commit
-                │          │            │        │          │
-                ▼          ▼            ▼        ▼          ▼
-           /codex-     /codex-      /verify  /codex-    /precommit
-           architect   implement             review-fast
+Requirements -> Design -> Implement -> Test -> Review -> Commit -> Doc Sync
+                │          │            │        │          │          │
+                ▼          ▼            ▼        ▼          ▼          ▼
+           /codex-     /codex-      /verify  /codex-    /precommit  /update-docs
+           architect   implement             review-fast             /create-request --update
 ```
 
 ## Commands
@@ -36,6 +36,8 @@ Requirements -> Design -> Implement -> Test -> Review -> Commit
 | Verify    | `/verify`            | Run tests to verify     |
 | Review    | `/codex-review-fast` | Code review             |
 | Commit    | `/precommit`         | lint + typecheck + test |
+| Doc Sync  | `/update-docs`       | Sync docs with code     |
+| Doc Sync  | `/create-request --update` | Update request progress |
 | Refactor  | `/simplify`          | Final refactoring       |
 
 ## Verification
@@ -58,6 +60,21 @@ Requirements -> Design -> Implement -> Test -> Review -> Commit
 src/service/xxx.service.ts       -> test/unit/service/xxx.service.test.ts
 src/provider/evm/parser.ts       -> test/unit/provider/evm/parser.test.ts
 src/controller/xxx.controller.ts -> test/integration/controller/xxx.test.ts
+```
+
+## Doc Sync (after precommit Pass)
+
+**⚠️ Auto-triggered by @rules/auto-loop.md — behavior-layer rule, not hook-enforced.**
+
+Only when change maps to a feature under `docs/features/`. Target detection uses 3-level fallback — see `/update-docs` for algorithm details.
+
+```
+precommit Pass
+  → Locate feature docs (see /update-docs 3-level fallback)
+  → /update-docs docs/features/<feature>/2-tech-spec.md
+  → /create-request --update docs/features/<feature>/requests/<date>-<title>.md
+  → /codex-review-doc (per updated file)
+  → Safety valve: new code diff? → back to review loop (see /update-docs)
 ```
 
 ## Review Loop

@@ -16,6 +16,7 @@
 | ----------- | ------------------ | -------------------- |
 | `.ts/.js`   | Fix P0/P1/P2       | `/codex-review-fast` |
 | `.ts/.js`   | review Pass        | `/precommit`         |
+| `.ts/.js`   | precommit Pass     | Doc Sync (see Note)  |
 | `.ts/.js`   | precommit failure  | Fix -> re-run        |
 | `.md`       | Fix doc issues     | `/codex-review-doc`  |
 | `.md`       | review failure     | Fix -> re-run        |
@@ -26,6 +27,7 @@
   - Code changes: review + precommit all passed
   - Doc changes: doc review passed
 - ⛔ Need Human — Architecture changes, feature removal, user requests stop
+- ⚠️ Need Human — Feature docs not found (3-level fallback exhausted)
 - 🔄 3 rounds on same issue — Report blocker, request intervention
 
 ## Correct Behavior
@@ -131,9 +133,23 @@ Claude: [Edit tool complete]
 | `HOOK_DEBUG=1`       | Output debug information  | Troubleshooting |
 | `HOOK_BYPASS=1`      | Skip Stop Hook checks     | Emergency       |
 
-### Standard Sentinel
+### Standard Gate Sentinels
 
-Review commands must output standard markers for Hook parsing:
+Review commands must output standard markers. Hook-parsed sentinels are consumed by `stop-guard.sh`; behavior-layer sentinels are consumed by Claude's auto-loop logic only.
 
-- `## Gate: ✅` / `✅ All Pass` — Passed
-- `## Gate: ⛔` / `⛔ Block` — Failed
+| Sentinel | Meaning | Parsed by |
+|----------|---------|-----------|
+| `## Gate: ✅` / `✅ All Pass` | Passed | Hook |
+| `## Gate: ⛔` / `⛔ Block` | Failed | Hook |
+| `## Gate: ⚠️` / `⚠️ Need Human` | Needs human intervention | Behavior-layer only |
+
+### Doc Sync Note
+
+Doc Sync is a **behavior-layer rule** (not hook-enforced). After precommit Pass, only when the change maps to a feature under `docs/features/`, auto-trigger:
+
+1. `/update-docs <tech-spec-path>` — Incremental update of changed sections
+2. `/create-request --update <request-path>` — Update Progress / Status / AC (e.g. `docs/features/<feature>/requests/<date>-<title>.md`)
+
+**Target detection**: 3-level fallback (context → git diff → ⚠️ Need Human). See `/update-docs` for algorithm details.
+
+**Safety valve**: After doc sync, compare code diff against pre-sync baseline; if new code changes exist, return to review loop. See `/update-docs` Safety Valve section.

@@ -1,5 +1,5 @@
 ---
-description: Feature development workflow. Guides through design -> implement -> verify -> review -> commit flow.
+description: Feature development workflow. Guides through design -> implement -> verify -> review -> commit -> doc sync flow.
 argument-hint: "<feature description>" [--skip-design] [--skip-review]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
 ---
@@ -24,11 +24,11 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion, mcp_
 ## Workflow
 
 ```
-Requirements -> Design -> Implement -> Test -> Review -> Commit
-                │          │            │        │          │
-                ▼          ▼            ▼        ▼          ▼
-           /codex-     /codex-      /verify  /codex-    /precommit
-           architect   implement             review-fast
+Requirements -> Design -> Implement -> Test -> Review -> Commit -> Doc Sync
+                │          │            │        │          │          │
+                ▼          ▼            ▼        ▼          ▼          ▼
+           /codex-     /codex-      /verify  /codex-    /precommit  /update-docs
+           architect   implement             review-fast             /create-request --update
 ```
 
 ## Key Rules

@@ -35,6 +35,10 @@ The script detects the following pass markers:
 - `✅ Pass` / `✅ Ready` / `✅ All pass`
 - `Merge Gate.*✅`
 
+## Escalation Marker (behavior-layer, not hook-parsed)
+
+- `⚠️ Need Human` — Doc Sync target not found; requires human intervention. Not blocked by hooks but stops the auto-loop.
+
 ## Reference
 
 Follows @CLAUDE.md review loop rules: must re-review after fixes until ✅ PASS
