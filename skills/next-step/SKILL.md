@@ -1,6 +1,6 @@
 ---
 name: next-step
-description: "Context-aware next step advisor. Use when: user asks what to do next, workflow progression is unclear, session just started with dirty worktree. Not for: executing the suggested command (user decides), auto-loop decisions (hooks handle that). Output: 1-3 prioritized suggestions with reasoning."
+description: "Change-aware next step advisor. Use when: user asks what to do next, workflow progression is unclear, session just started with dirty worktree. Not for: executing the suggested command (user decides), auto-loop decisions (hooks handle that). Output: findings-based suggestions or session summary with commit seed."
 ---
 
 # Next Step Advisor
@@ -13,25 +13,41 @@ description: "Context-aware next step advisor. Use when: user asks what to do ne
 
 ## Procedure
 
-1. Collect context signals (stop when enough to decide)
-2. Determine work type from branch name or conversation
-3. Identify current phase from executed commands and state
-4. Output 1-3 prioritized suggestions
+1. Run `node skills/next-step/scripts/analyze.js --json` to collect deterministic findings
+2. Parse the JSON output — findings, gates, diff summary
+3. **If P0/P1 findings exist** → format top 3 as actionable suggestions (Findings Mode)
+4. **If mid-pipeline** (gates not all passed, no P0/P1) → use progression tables to suggest next step
+5. **If all gates pass and no P0/P1** → output session summary with commit seed (Summary Mode, P2/P3 shown as oversights)
 
-## Context Signals
+## Script Integration
 
-Collect in order, stop when enough to decide:
+The analyze script runs 12 deterministic heuristics against git state and review state:
 
-| # | Signal | How | Purpose |
-|---|--------|-----|---------|
-| 1 | Conversation history | Review current session | What commands ran, what passed/failed |
-| 2 | Git branch | `git branch --show-current` | Work type (feat/fix/docs/refactor) |
-| 3 | Git status | `git status -sb` | Uncommitted changes? |
-| 4 | Changed files | `git diff --name-only` | .ts/.js vs .md vs mixed |
-| 5 | Review state | `.claude_review_state.json` | Review/precommit progress |
-| 6 | Feature docs | `docs/features/<feature>/` | tech-spec/request completeness |
+| Priority | Heuristics | Meaning |
+|----------|-----------|---------|
+| P0 | Gate missing (code review, doc review, precommit), state drift | Required steps not completed |
+| P1 | Test gap, security hotspot, migration risk | Important oversights |
+| P2 | README missing, skill-lint needed, locale drift, mixed concerns | Quality improvements |
+| P3 | Main branch warning | Informational |
 
-## Decision Matrix
+The script exits with code 0 (no P0/P1), 1 (has P1), or 2 (has P0).
+
+### Script Failure Fallback
+
+If the script fails or is unavailable, fall back to manual signal collection:
+
+| # | Signal | How |
+|---|--------|-----|
+| 1 | Git branch | `git branch --show-current` |
+| 2 | Git status | `git status -sb` |
+| 3 | Changed files | `git diff --name-only HEAD` |
+| 4 | Review state | `.claude_review_state.json` |
+
+Then use the Progression Tables below.
+
+## Progression Tables (mid-pipeline fallback)
+
+Used when script shows P0 gate issues or when determining which workflow step comes next.
 
 ### Work Type Detection
 
@@ -53,13 +69,9 @@ Collect in order, stop when enough to decide:
 | Code written, no tests | Write tests, then `/verify` |
 | `/verify` pass | `/codex-review-fast` + `/codex-test-review` |
 | `/verify` fail | Fix failing tests, re-run `/verify` |
-| `/codex-review-fast` fail | Fix issues (auto-loop handles this) |
-| `/codex-test-review` fail | Fix test gaps, re-run `/codex-test-review` |
-| `/codex-review-fast` + `/codex-test-review` pass | `/precommit` |
-| `/precommit` pass | Doc Sync (confirm no new code edit first), then manual commit |
-| `/precommit` fail | Fix issues, re-run |
-| Doc Sync done | `git add && git commit`, then `/pr-review` |
-| All gates pass | Create PR via `gh pr create` |
+| `/codex-review-fast` pass | `/precommit` |
+| `/precommit` pass | Doc Sync, then manual commit |
+| All gates pass | Session summary (see output below) |
 
 ### Bug Fix Progression
 
@@ -69,9 +81,8 @@ Collect in order, stop when enough to decide:
 | Root cause identified | Fix code + write regression test |
 | Fix applied | `/verify` |
 | `/verify` pass | `/codex-review-fast` |
-| `/verify` fail | Fix tests, re-run `/verify` |
 | `/codex-review-fast` pass | `/precommit` |
-| `/precommit` pass | Manual commit (Doc Sync only if `docs/features/` mapping exists) |
+| `/precommit` pass | Manual commit |
 
 ### Documentation Work
 
@@ -80,7 +91,6 @@ Collect in order, stop when enough to decide:
 | (nothing yet) | `/tech-spec` or `/update-docs` |
 | Docs written/updated | `/codex-review-doc` |
 | `/codex-review-doc` pass | Manual commit |
-| `/codex-review-doc` fail | Fix, re-review |
 
 ### Refactoring
 
@@ -100,6 +110,42 @@ Collect in order, stop when enough to decide:
 | Need architecture advice | `/codex-architect` or `/codex-brainstorm` |
 | Evaluate feasibility | `/feasibility-study` |
 
+## Output Format — Findings Mode
+
+When the script detects actionable findings, format the top 3:
+
+```
+📍 [work type] | [branch] | [current phase]
+
+⚠️ Findings ([count]):
+1. **[P0/P1/P2] [finding id]** — [message] → [suggestion]
+2. **[P0/P1/P2] [finding id]** — [message] → [suggestion]
+3. **[P0/P1/P2] [finding id]** — [message] → [suggestion]
+[+N more if suppressed]
+
+➡️ Next: [primary action based on highest priority finding]
+```
+
+## Output Format — Session Summary (all gates pass, no P0/P1)
+
+When all gates pass and no actionable findings remain, summarize the session instead of suggesting "commit/push":
+
+```
+📍 [work type] | [branch] | all gates passed
+
+✅ Session Summary:
+- [what was accomplished, derived from diff summary and conversation]
+- [key changes: N files changed, types of changes]
+
+⚠️ Oversights (if any P2/P3 remain):
+- [P2/P3 findings as optional improvements]
+
+💬 Commit seed:
+  [type]: [concise description of all changes]
+```
+
+The commit seed is a suggestion — the user decides the final message.
+
 ## Document Completeness Check
 
 When a feature directory exists in `docs/features/`, cross-check document pairs:
@@ -109,12 +155,6 @@ When a feature directory exists in `docs/features/`, cross-check document pairs:
 | tech-spec exists, no request | `/create-request` |
 | request exists, no tech-spec | `/tech-spec` |
 | Both exist, code changed | `/update-docs` + `/create-request --update` |
-| Neither exists, requirements clear | `/tech-spec` first, then `/create-request` |
-| tech-spec just completed (this session) | `/create-request` immediately |
-
-Detection: scan `docs/features/<feature>/` for `*tech-spec*` and `requests/*.md`.
-
-**Scope**: Only check current feature (inferred from branch + changed files). Supports `<feature>/`, `<feature>/<subfeature>/`, and global `docs/features/requests/`. When no clear match, suggest "confirm doc structure" instead of forcing a command.
 
 ## Non-Command Suggestions
 
@@ -122,71 +162,15 @@ When the best next step is NOT a slash command:
 
 | Signal | Suggest |
 |--------|---------|
-| Requirements unclear or ambiguous | "Confirm requirements with PM/user before proceeding" |
-| Large scope, no issue/spec | "Open issue or write tech-spec to align scope" |
-| Affects other services/APIs | "Confirm upstream/downstream API contracts" |
+| Requirements unclear | "Confirm requirements with PM/user before proceeding" |
+| Affects other services | "Confirm upstream/downstream API contracts" |
 | Security-sensitive change | `/codex-security` before proceeding |
-| All gates pass, branch ready | "Manual git add && commit, prepare PR" |
-| PR ready | "Push to remote, open PR for review" |
 | No clear task | "Clarify what to do — don't start without clear requirements" |
 | Session just started, dirty worktree | "Handle uncommitted changes first" |
 
-## Output
-
-```
-📍 [work type] | [branch] | [current phase]
-
-➡️ Suggestions:
-1. **[command/action]** — [reason] (primary)
-2. **[command/action]** — [reason] (alternative)
-3. **[command/action]** — [reason] (optional, if applicable)
-
-⚠️ [preconditions or risks, if any]
-```
-
 ## Verification
 
-- [ ] Context signals collected (at least branch + status)
-- [ ] Work type correctly identified
-- [ ] Suggestions match the progression table for that work type
+- [ ] Script ran successfully (or fallback used)
+- [ ] Findings formatted with priority and actionable suggestions
+- [ ] Session summary includes commit seed when all clear
 - [ ] Non-command suggestions used when appropriate
-
-## Examples
-
-```
-📍 feature-dev | feat/user-auth | code written, no tests
-➡️ Suggestions:
-1. **Write unit tests** — new service must have corresponding tests
-2. **/verify** — run after tests are written
-```
-
-```
-📍 bug-fix | fix/PROJ-1234 | review passed
-➡️ Suggestions:
-1. **/precommit** — required after review pass
-```
-
-```
-📍 unknown | main | no changes, just started
-➡️ Suggestions:
-1. **Clarify task** — don't start without clear requirements
-2. **/code-explore** — if you want to understand existing code
-```
-
-```
-📍 feature-dev | feat/payments | precommit pass
-➡️ Suggestions:
-1. **Doc Sync** — update tech-spec + request after precommit pass
-2. **git add && commit** — after Doc Sync completes or N/A
-
-⚠️ Confirm no new code edits before proceeding to Doc Sync
-```
-
-```
-📍 feature-dev | feat/auth | tech-spec completed, no request
-➡️ Suggestions:
-1. **/create-request** — tech-spec exists, generate corresponding request doc (primary)
-2. **/codex-review-doc** — review after request doc is created
-
-⚠️ Detected docs/features/auth/ has tech-spec but no requests/*.md
-```

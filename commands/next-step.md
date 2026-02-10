@@ -1,6 +1,6 @@
 ---
-description: Context-aware next step advisor. Analyzes conversation, git state, and file changes to suggest optimal next action.
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(cat .claude_review_state.json*), Bash(ls:*)
+description: Change-aware next step advisor. Runs deterministic analysis on git state, then suggests actionable next steps or session summary.
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node skills/next-step/scripts/analyze.js*), Bash(cat .claude_review_state.json*), Bash(ls:*)
 ---
 
 ⚠️ **Must read and follow the skill below before executing this command:**
@@ -9,28 +9,28 @@ allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(cat .claude_review_state.json
 
 ## Context
 
+- Script analysis: !`node skills/next-step/scripts/analyze.js --json 2>/dev/null; true`
 - Git branch: !`git branch --show-current`
 - Git status: !`git status -sb`
-- Changed files: !`git diff --name-only HEAD 2>/dev/null | head -50`
 - Review state: !`cat .claude_review_state.json 2>/dev/null || echo "no state file"`
 
 ## Task
 
-Analyze current context and suggest the optimal next step(s).
+Run the analyze script, then format findings or session summary per SKILL.md.
 
 ### Workflow
 
-1. **Collect signals** — conversation history + injected context above
-2. **Determine work type** — from branch pattern or conversation
-3. **Identify current phase** — from executed commands + review state
-4. **Output suggestions** — 1-3 prioritized next steps
+1. **Parse script output** — JSON with findings, gates, diff summary
+2. **If script failed** — fall back to manual signal collection (branch + status + review state)
+3. **Format output** — Findings Mode (P0/P1 exist) or Session Summary (no P0/P1, all gates pass; P2/P3 as oversights)
+4. **Suggest, don't execute** — user decides what to run
 
 ### Key Rules
 
-- Suggest, don't execute — user decides what to run
+- Format top 3 findings as actionable suggestions
+- When all gates pass: output session summary with commit seed, NOT "commit/push"
 - Use non-command suggestions when appropriate (requirements unclear, need human decision)
 - Check document completeness for feature branches
-- Respect the progression tables in SKILL.md
 
 ## Examples
 
