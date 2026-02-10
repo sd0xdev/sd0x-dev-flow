@@ -1,6 +1,6 @@
 ---
 name: codex-brainstorm
-description: Adversarial brainstorming. Claude and Codex independently research then debate until Nash equilibrium. For solution exploration, feasibility analysis, exhaustive enumeration.
+description: "Adversarial brainstorming via Claude+Codex debate. Use when: exploring solutions, feasibility analysis, exhaustive enumeration. Not for: implementation (use feature-dev), architecture only (use codex-architect). Output: Nash equilibrium consensus + action items."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: portfolio
-description: Portfolio system knowledge base. Covers position queries, routing strategies, {PRIMARY_PROVIDER} integration, cache design.
+description: "Portfolio system knowledge base. Use when: position queries, routing strategy questions, provider integration. Not for: general code exploration (use code-explore), code review (use codex-code-review). Output: domain-specific analysis + recommendations."
 allowed-tools: Read, Grep, Glob
 context: fork
 agent: Explore
@@ -37,6 +37,11 @@ agent: Explore
 | `/positions` | POST   | Get portfolio positions |
 | `/chains`    | GET    | Supported chains list |
 | `/protocols` | GET    | Supported protocols list |
+
+## Output
+
+- Domain-specific query results with code references
+- Analysis and recommendations based on current architecture
 
 ## Verification
 

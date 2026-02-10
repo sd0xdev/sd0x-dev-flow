@@ -1,6 +1,6 @@
 ---
 name: git-investigate
-description: Code investigation knowledge base. Covers code history tracking, issue introduction analysis, root cause diagnosis.
+description: "Git history investigation. Use when: tracking code changes, finding where bugs were introduced, root cause analysis. Not for: code exploration (use code-explore), issue analysis (use issue-analyze). Output: history trace + root cause report."
 allowed-tools: Bash(git:*), Read, Grep, Glob
 ---
 
@@ -47,6 +47,16 @@ Locate code -> git blame -> find commit -> trace history -> analyze changes -> r
 | Condition simplified| If conditions reduced| Missed during refactoring    |
 | Rename             | Partially unchanged  | Incomplete search-and-replace |
 | Boundary ignored   | Only handles main flow| Edge cases not considered    |
+
+## Output
+
+```markdown
+## Git Investigation Report
+- **Target**: <file/feature>
+- **Timeline**: <commit range>
+- **Root cause**: <analysis>
+- **Introduced by**: <commit hash + author>
+```
 
 ## Verification
 

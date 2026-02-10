@@ -1,6 +1,6 @@
 ---
 name: repo-intake
-description: Project initialization inventory and cache generation (one-time intake). Use when first onboarding a project or after major structural changes.
+description: "Project initialization inventory (one-time). Use when: first onboarding a project, rebuilding cache after structural changes. Not for: day-to-day development (read cache directly), finding specific files (use code-explore). Output: project map with entrypoints + test map + next steps."
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*)
 context: fork
 agent: Explore
@@ -43,13 +43,7 @@ Cache stored at: `~/.claude/cache/repo-intake/<repoKey>/`
 | `latest.json` | Latest scan results (JSON) |
 | `LATEST.json` | Cache metadata          |
 
-## Verification
-
-- Output includes Overview, Entrypoints, Test Map, Next Steps
-- Entrypoints correctly identify `{CONFIG_FILE}`, `{BOOTSTRAP_FILE}`
-- Test Map covers Unit/Integration/E2E layers
-
-## Output Format
+## Output
 
 ```markdown
 ## Overview
@@ -73,6 +67,24 @@ Cache stored at: `~/.claude/cache/repo-intake/<repoKey>/`
 
 - <questions>
 ```
+
+## Verification
+
+- Output includes Overview, Entrypoints, Test Map, Next Steps
+- Entrypoints correctly identify `{CONFIG_FILE}`, `{BOOTSTRAP_FILE}`
+- Test Map covers Unit/Integration/E2E layers
+
+## References
+
+- `references/MIDWAY_HEURISTICS.md` — MidwayJS-specific detection heuristics (read when scanning MidwayJS projects)
+
+## Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `scripts/intake_cached.js` | Main intake with caching |
+| `scripts/scan_midway_repo.js` | Full MidwayJS repo scanner |
+| `scripts/scan_midway_delta.js` | Delta scan for changed files |
 
 ## Examples
 

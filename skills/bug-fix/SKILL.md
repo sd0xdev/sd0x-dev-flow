@@ -1,6 +1,6 @@
 ---
 name: bug-fix
-description: Bug/Issue fix workflow. Investigate → Locate → Fix → Test → Review.
+description: "Bug fix workflow. Use when: fixing bugs, resolving issues, regression fixes. Not for: new features (use feature-dev), understanding code (use code-explore). Output: fix + regression test + review gate."
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(git:*), Bash(yarn:*), Bash(gh:*)
 ---
 
@@ -74,6 +74,16 @@ Detailed guide: [testing-guide.md](./references/testing-guide.md)
 
 ```
 Fix → Review → Issues found → Fix again → ... → ✅ Pass
+```
+
+## Output
+
+```markdown
+## Bug Fix Report
+- **Root cause**: <analysis>
+- **Fix**: <description of changes>
+- **Regression test**: <test result>
+- **Gate**: ✅ Fixed / ⛔ Needs further investigation
 ```
 
 ## Verification

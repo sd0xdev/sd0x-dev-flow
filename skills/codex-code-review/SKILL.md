@@ -1,6 +1,6 @@
 ---
 name: codex-code-review
-description: Code review using Codex MCP. Supports fast (diff-only), full (lint+build), and branch review variants.
+description: "Code review using Codex MCP. Use when: PR review, code audit, second opinion on changes. Not for: doc review (use doc-review), security audit (use security-review). Output: severity-grouped findings + merge gate."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Read, Grep, Glob
 ---
 

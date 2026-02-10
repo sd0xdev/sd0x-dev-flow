@@ -1,6 +1,6 @@
 ---
 name: create-skill
-description: Create or refactor Claude Code skills. Guides skill design, file structure, and best practices.
+description: "Create or refactor Claude Code skills. Use when: building new skills, restructuring existing skills. Not for: skill quality audit (use skill-health-check), code review (use codex-code-review). Output: skill files (SKILL.md + command + references)."
 allowed-tools: Read, Grep, Glob, Write, Task
 ---
 
@@ -88,6 +88,12 @@ context: fork
 ## Workflow
 
 {Step-by-step flow, using ASCII or Mermaid}
+
+## Output
+
+- `skills/<name>/SKILL.md` — Skill definition with routing signature
+- `commands/<name>.md` — Command entry point
+- `skills/<name>/references/` — Reference docs (if needed)
 
 ## Verification
 

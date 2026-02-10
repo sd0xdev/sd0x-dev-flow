@@ -1,6 +1,6 @@
 ---
 name: security-review
-description: Security review knowledge base. OWASP Top 10 review using Codex MCP, dependency security audit.
+description: "Security review via Codex MCP. Use when: OWASP Top 10 audit, dependency vulnerability check, security-sensitive changes. Not for: code review (use codex-code-review), test review (use test-review). Output: security findings + audit report."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
 context: fork
 agent: Explore

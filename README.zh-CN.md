@@ -55,8 +55,8 @@
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| 技能 | 27 | project-setup, code-explore, codex-explain, feasibility-study |
+| 命令 | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| 技能 | 29 | project-setup, code-explore, next-step, skill-health-check |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | 规则 | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -124,6 +124,7 @@ sequenceDiagram
 | `/feature-dev` | 功能开发流程（设计 → 实现 → 验证 → 审查） |
 | `/feature-verify` | 系统诊断（只读验证，双视角确认） |
 | `/code-investigate` | 双视角代码调查（Claude + Codex 独立探索） |
+| `/next-step` | 情境感知的下一步建议 |
 
 ### 审查（Codex MCP）
 
@@ -171,6 +172,8 @@ sequenceDiagram
 | `/de-ai-flavor` | 去除 AI 痕迹 |
 | `/create-skill` | 创建新技能 |
 | `/pr-review` | PR 自查 |
+| `/skill-health-check` | 验证 Skill 质量与 routing |
+| `/claude-health` | Claude Code 配置健康检查 |
 | `/zh-tw` | 改写为繁体中文 |
 
 ## 规则

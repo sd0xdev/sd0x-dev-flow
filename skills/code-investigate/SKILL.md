@@ -1,6 +1,6 @@
 ---
 name: code-investigate
-description: Dual-perspective code investigation. Claude explores independently, then Codex explores independently (no feeding), finally integrate both conclusions.
+description: "Dual-perspective code investigation. Use when: deep code analysis needing both Claude and Codex perspectives. Not for: quick exploration (use code-explore), code review (use codex-code-review). Output: integrated findings from dual analysis."
 allowed-tools: Read, Grep, Glob, Bash, mcp__codex__codex
 context: fork
 ---
@@ -98,6 +98,16 @@ Please grep/read and explore on your own, then provide your analysis.`,
 | Feeding conclusion | Claude's findings leak to Codex   | `Claude found these files: ${findings}`     |
 | Leading question   | Presupposes answer                | `I think the problem is in cache, verify`   |
 | Scope restriction  | Prevents independent exploration  | `Only look at src/service/`                 |
+
+## Output
+
+```markdown
+## Investigation Report
+- **Claude findings**: <independent analysis>
+- **Codex findings**: <independent analysis>
+- **Integrated conclusion**: <merged findings>
+- **Confidence**: High / Medium / Low
+```
 
 ## Verification Checklist
 

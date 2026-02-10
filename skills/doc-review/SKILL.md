@@ -1,6 +1,6 @@
 ---
 name: doc-review
-description: Document review knowledge base. Covers tech spec review, document audit, document refactoring. Codex MCP integration for .md reviews.
+description: "Document review via Codex MCP. Use when: reviewing .md docs, tech spec audit, document quality check. Not for: code review (use codex-code-review), test review (use test-review). Output: 5-dimension rating table + gate."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
 context: fork
 agent: Explore

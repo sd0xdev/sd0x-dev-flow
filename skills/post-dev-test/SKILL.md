@@ -1,6 +1,6 @@
 ---
 name: post-dev-test
-description: Post-development test completion. Analyzes developed features from context, checks integration/e2e test coverage, writes missing tests. Use after feature-dev, before /precommit.
+description: "Post-development test completion. Use when: checking test coverage after feature-dev, writing missing integration/e2e tests. Not for: unit test generation (use codex-test-gen), test review (use test-review). Output: test files + coverage report."
 allowed-tools: Read, Grep, Glob, Write, Bash
 ---
 
@@ -128,6 +128,12 @@ describeIntegration('Feature Integration Tests', () => {
   });
 });
 ```
+
+## Output
+
+- Test files (integration/e2e) in correct directories
+- Coverage delta report
+- Gate: ✅ Coverage sufficient / ⛔ Gaps remaining
 
 ## Verification
 

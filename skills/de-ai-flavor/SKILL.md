@@ -1,6 +1,6 @@
 ---
 name: de-ai-flavor
-description: Remove AI-generated artifacts from documents, including tool names, boilerplate patterns, over-structuring.
+description: "Remove AI artifacts from documents. Use when: cleaning AI-generated text, removing tool names, fixing boilerplate patterns. Not for: doc review (use doc-review), doc refactoring (use doc-refactor). Output: cleaned document preserving original intent."
 allowed-tools: Read, Grep, Glob, Edit
 ---
 

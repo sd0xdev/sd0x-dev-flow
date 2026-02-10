@@ -1,6 +1,6 @@
 ---
 name: test-review
-description: Test review knowledge base. Covers test coverage review, test generation, coverage analysis. Codex MCP integration.
+description: "Test coverage review via Codex MCP. Use when: reviewing test sufficiency, identifying coverage gaps, test quality audit. Not for: generating tests (use codex-test-gen), code review (use codex-code-review). Output: coverage analysis + gap report."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob, Write
 context: fork
 agent: Explore
@@ -104,6 +104,17 @@ Read source → Derive test path → Codex generate → Save test file → Sugge
 ⛔ Needs additions → add tests → `/codex-test-review --continue <threadId>` → repeat until ✅ Sufficient.
 
 Max 3 rounds. Still failing → report blocker.
+
+## Output
+
+```markdown
+## Test Coverage Review
+| Dimension | Coverage | Rating |
+|-----------|----------|--------|
+| ...       | ...      | ⭐1-5  |
+
+### Gate: ✅ Tests sufficient / ⛔ Needs additions
+```
 
 ## Verification
 

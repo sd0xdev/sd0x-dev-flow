@@ -55,8 +55,8 @@ This will detect your framework, package manager, database, entrypoints, and scr
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| Skills | 27 | project-setup, code-explore, codex-explain, feasibility-study |
+| Commands | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| Skills | 29 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -124,6 +124,7 @@ sequenceDiagram
 | `/feature-dev` | Feature development workflow (design → implement → verify → review) |
 | `/feature-verify` | System diagnosis (read-only verification with dual-perspective) |
 | `/code-investigate` | Dual-perspective code investigation (Claude + Codex independent) |
+| `/next-step` | Context-aware next step advisor |
 
 ### Review (Codex MCP)
 
@@ -171,6 +172,8 @@ sequenceDiagram
 | `/de-ai-flavor` | Remove AI-generated artifacts from documents |
 | `/create-skill` | Create new skills |
 | `/pr-review` | PR self-review |
+| `/skill-health-check` | Validate skill quality and routing |
+| `/claude-health` | Claude Code config health check |
 | `/zh-tw` | Rewrite in Traditional Chinese |
 
 ## Rules

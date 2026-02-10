@@ -1,6 +1,6 @@
 ---
 name: create-request
-description: Create or update request documents. Auto-fills templates for new requests, updates progress based on implementation for existing ones.
+description: "Create or update request documents. Use when: planning features, tracking requests, updating progress. Not for: tech specs (use tech-spec), code implementation (use feature-dev). Output: request document with status tracking."
 allowed-tools: Read, Grep, Glob, Write, Bash
 ---
 
@@ -106,6 +106,12 @@ If confirmation needed, ask:
 **Format**: `YYYY-MM-DD-kebab-case-title.md`
 
 **Location**: `docs/features/{feature}/requests/`
+
+## Output
+
+- Request document at `docs/features/<feature>/requests/YYYY-MM-DD-<title>.md`
+- Sections: Background, Requirements, Acceptance Criteria, Priority
+- Status: New or Updated
 
 ## Verification
 

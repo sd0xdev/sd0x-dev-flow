@@ -1,7 +1,6 @@
 ---
 name: tech-spec
-description: Tech spec knowledge base. Full workflow from requirement analysis, code research to spec output. 
-Triggers: tech spec, feature design, requirement analysis.
+description: "Tech spec generation and review. Use when: designing features, writing specs, requirement analysis. Not for: implementation (use feature-dev), architecture advice (use codex-architect). Output: numbered tech spec document."
 allowed-tools: Read, Grep, Glob, Write, Bash(git:*)
 ---
 
@@ -51,6 +50,10 @@ sequenceDiagram
 5. Work breakdown
 6. Testing strategy
 7. Open questions
+
+## Output
+
+Numbered tech spec document with sections: Overview, Requirements, Architecture, Implementation plan, Work breakdown, Testing strategy, Open questions.
 
 ## Verification
 

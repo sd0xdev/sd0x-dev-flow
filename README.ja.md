@@ -55,8 +55,8 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| スキル | 27 | project-setup, code-explore, codex-explain, feasibility-study |
+| コマンド | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| スキル | 29 | project-setup, code-explore, next-step, skill-health-check |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -124,6 +124,7 @@ sequenceDiagram
 | `/feature-dev` | 機能開発ワークフロー（設計 → 実装 → 検証 → レビュー） |
 | `/feature-verify` | システム診断（読み取り専用の検証、デュアル視点確認） |
 | `/code-investigate` | デュアル視点コード調査（Claude + Codex 独立探索） |
+| `/next-step` | コンテキスト認識型の次ステップアドバイザー |
 
 ### レビュー（Codex MCP）
 
@@ -171,6 +172,8 @@ sequenceDiagram
 | `/de-ai-flavor` | AI 生成の痕跡を除去 |
 | `/create-skill` | 新しいスキルの作成 |
 | `/pr-review` | PR セルフレビュー |
+| `/skill-health-check` | スキル品質とルーティングの検証 |
+| `/claude-health` | Claude Code 設定のヘルスチェック |
 | `/zh-tw` | 繁体字中国語に書き換え |
 
 ## ルール

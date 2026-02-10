@@ -1,6 +1,6 @@
 ---
 name: project-setup
-description: Initialize project configuration. Auto-detect framework, package manager, database, and replace CLAUDE.md placeholders.
+description: "Project configuration initialization. Use when: first-time setup, auto-detecting framework, replacing CLAUDE.md placeholders. Not for: ongoing config checks (use claude-health), skill creation (use create-skill). Output: configured CLAUDE.md + project settings."
 allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
 # context: shared (default) — intentionally NOT fork because Phase 2 requires user confirmation
 ---
@@ -74,27 +74,11 @@ PM result affects the prefix for `{TEST_COMMAND}`, `{LINT_FIX_COMMAND}`, `{BUILD
 
 ### 1.3 Detect Framework
 
-Determine from `dependencies`:
-
-| Dependency | Framework |
-|------|-----------|
-| `@midwayjs/core` | MidwayJS 3.x |
-| `@nestjs/core` | NestJS |
-| `express` (no midway/nest) | Express |
-| `fastify` | Fastify |
-| `koa` | Koa |
+Determine from `dependencies`. See `references/detection-rules.md#framework` for full mapping.
 
 ### 1.4 Detect Database
 
-Determine from `dependencies`:
-
-| Dependency | Database |
-|------|----------|
-| `mongoose` / `mongodb` | MongoDB |
-| `pg` / `typeorm` + `pg` | PostgreSQL |
-| `mysql2` / `typeorm` + `mysql` | MySQL |
-| `prisma` | Read `prisma/schema.prisma` `provider` |
-| `redis` / `ioredis` | Redis (supplementary) |
+Determine from `dependencies`. See `references/detection-rules.md#database` for full mapping.
 
 ### 1.5 Detect Entrypoints
 
@@ -102,22 +86,11 @@ Determine from `dependencies`:
 Glob: src/configuration.ts, src/app.module.ts, src/main.ts, src/index.ts, bootstrap.js, bootstrap.ts
 ```
 
-| Framework | Config Candidates | Bootstrap Candidates |
-|-----------|------------------|---------------------|
-| MidwayJS | `src/configuration.ts` | `bootstrap.js` or `bootstrap.ts` |
-| NestJS | `src/app.module.ts` | `src/main.ts` |
-| Express | `src/app.ts` or `src/index.ts` | `src/index.ts` |
+See `references/detection-rules.md#entrypoints` for framework-specific candidate files.
 
 ### 1.6 Detect Scripts
 
-From `package.json` `scripts` field:
-
-| Placeholder | Preferred | Fallback | Format |
-|-------------|--------|----------|------|
-| `{TEST_COMMAND}` | `test:unit` | `test` | `{PM} test:unit` |
-| `{LINT_FIX_COMMAND}` | `lint:fix` | `lint` | `{PM} lint:fix` |
-| `{BUILD_COMMAND}` | `build` | `compile` | `{PM} build` |
-| `{TYPECHECK_COMMAND}` | `typecheck` | `type-check` | `{PM} typecheck` |
+From `package.json` `scripts` field. See `references/detection-rules.md#scripts` for full mapping.
 
 If script does not exist, set value to `# N/A (no script found)` for user to fill manually.
 
@@ -203,6 +176,13 @@ Remaining placeholders: 0 (or list unreplaced ones)
 
 Remaining placeholders: 0
 ```
+
+## Verification
+
+- [ ] All 9 placeholders detected or marked N/A
+- [ ] User confirmed detection results before writing
+- [ ] No remaining `{UPPER_CASE}` placeholders in CLAUDE.md after setup
+- [ ] Detection-rules.md referenced for detailed mapping
 
 ## Examples
 

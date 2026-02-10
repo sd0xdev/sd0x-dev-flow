@@ -1,6 +1,6 @@
 ---
 name: code-explore
-description: Pure Claude code investigation. Fast codebase exploration, trace execution paths, understand architecture, diagnose issues. No Codex dependency.
+description: "Pure Claude code investigation. Use when: tracing execution paths, understanding architecture, diagnosing issues. Not for: dual-perspective review (use code-investigate), code review (use codex-code-review). Output: analysis report with findings."
 allowed-tools: Read, Grep, Glob, Bash
 context: fork
 ---
@@ -109,6 +109,17 @@ context: fork
 
 - {Potential issue / edge case}
 ```
+
+## Verification
+
+- [ ] Entry points identified and listed
+- [ ] Execution flow traced end-to-end
+- [ ] Key files table includes all relevant files
+- [ ] Findings section has actionable insights
+
+## References
+
+- `references/search-patterns.md` — Common search patterns for codebase exploration (read when building search strategy)
 
 ## Examples
 

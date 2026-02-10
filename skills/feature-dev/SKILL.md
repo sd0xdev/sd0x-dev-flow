@@ -1,6 +1,6 @@
 ---
 name: feature-dev
-description: Feature development workflow. Covers implementation, verification, pre-commit checks, doc sync, refactoring. Guides through design -> implement -> verify -> review -> commit -> doc sync flow.
+description: "Feature development workflow. Use when: implementing features, writing code, running dev loop. Not for: understanding code (use code-explore), reviewing code (use codex-code-review). Output: implemented feature + tests + review gate."
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
@@ -39,6 +39,12 @@ Requirements -> Design -> Implement -> Test -> Review -> Commit -> Doc Sync
 | Doc Sync  | `/update-docs`       | Sync docs with code     |
 | Doc Sync  | `/create-request --update` | Update request progress |
 | Refactor  | `/simplify`          | Final refactoring       |
+
+## Output
+
+- Implemented feature code + tests
+- Review gate: ✅ Pass / ⛔ Issues found
+- Pre-commit results: lint + typecheck + test
 
 ## Verification
 

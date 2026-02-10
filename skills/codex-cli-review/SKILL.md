@@ -1,6 +1,6 @@
 ---
 name: codex-cli-review
-description: Use Codex CLI (not MCP) to review uncommitted changes. Codex explores the codebase independently with full disk read access.
+description: "Code review via Codex CLI with full disk access. Use when: deep review needing full codebase read, uncommitted change review. Not for: quick diff review (use codex-code-review), doc review (use doc-review). Output: severity-grouped findings + merge gate."
 allowed-tools: Bash(bash:*), Read, Grep, Glob
 context: fork
 ---
@@ -90,6 +90,17 @@ bash skills/codex-cli-review/scripts/review.sh [options]
 
 - Codex review report (stdout)
 - Exit code: 0 = success, non-0 = failure
+
+## Output
+
+```markdown
+## Codex CLI Review Report
+### Findings
+#### P0/P1/P2
+- [file:line] Issue → Fix recommendation
+### Merge Gate
+✅ Ready / ⛔ Blocked
+```
 
 ## Verification
 

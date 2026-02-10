@@ -1,6 +1,6 @@
 ---
 name: claude-health
-description: Claude Code configuration health check. Scans .claude/ directory structure, naming consistency, junk files, count sync.
+description: "Claude Code config health check. Use when: auditing .claude/ structure, checking naming, verifying hook setup. Not for: skill quality (use skill-health-check), code review (use codex-code-review). Output: health report + fix recommendations."
 allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*), Bash(wc:*), Bash(du:*)
 context: fork
 ---
@@ -155,6 +155,10 @@ du -sh .claude/cache/ 2>/dev/null
 - [ ] Each has clear ✅/⛔ status
 - [ ] P1 issues have specific fix commands
 - [ ] Counts verified with actual `ls | wc -l`
+
+## References
+
+- `references/best-practices.md` — Best practices for .claude/ directory structure (read when fixing P1/P2 issues)
 
 ## Examples
 

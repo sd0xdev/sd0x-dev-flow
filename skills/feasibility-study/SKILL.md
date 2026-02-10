@@ -1,6 +1,6 @@
 ---
 name: feasibility-study
-description: Feasibility analysis from first principles. Explore solutions, quantitatively assess, in-depth Codex discussion. Use before /tech-spec.
+description: "Feasibility analysis from first principles. Use when: evaluating solutions before tech-spec, comparing approaches, risk assessment. Not for: implementation (use feature-dev), architecture advice (use codex-architect). Output: quantitative comparison + recommendation."
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*), Write, mcp__codex__codex, mcp__codex__codex-reply
 ---
 
@@ -73,6 +73,18 @@ Side-by-side comparison → recommendation + backup + open questions.
 | Risk                  | Small scope | Some uncertainty | Many unknowns |
 | Extensibility         | Easy to extend | Needs refactoring | Hard to extend |
 | Maintenance Cost      | Clean, easy | Some complexity | Complex |
+
+## Output
+
+```markdown
+## Feasibility Study: <title>
+### Quantitative Comparison
+| Criterion | Option A | Option B | Option C |
+|-----------|----------|----------|----------|
+
+### Recommendation
+<selected option with rationale>
+```
 
 ## Verification
 

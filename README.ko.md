@@ -55,8 +55,8 @@
 
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
-| Commands | 43 | `/project-setup`, `/codex-review-fast`, `/verify`, `/feature-dev` |
-| Skills | 27 | project-setup, code-explore, codex-explain, feasibility-study |
+| Commands | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| Skills | 29 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -124,6 +124,7 @@ sequenceDiagram
 | `/feature-dev` | 기능 개발 워크플로 (설계 → 구현 → 검증 → 리뷰) |
 | `/feature-verify` | 시스템 진단 (읽기 전용 검증, 이중 관점 확인) |
 | `/code-investigate` | 이중 관점 코드 조사 (Claude + Codex 독립 탐색) |
+| `/next-step` | 컨텍스트 인식 다음 단계 어드바이저 |
 
 ### 리뷰 (Codex MCP)
 
@@ -171,6 +172,8 @@ sequenceDiagram
 | `/de-ai-flavor` | AI 생성 흔적 제거 |
 | `/create-skill` | 새 스킬 생성 |
 | `/pr-review` | PR 셀프 리뷰 |
+| `/skill-health-check` | 스킬 품질 및 라우팅 검증 |
+| `/claude-health` | Claude Code 설정 상태 점검 |
 | `/zh-tw` | 번체 중국어로 변환 |
 
 ## Rules

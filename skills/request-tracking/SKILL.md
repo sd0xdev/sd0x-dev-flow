@@ -1,6 +1,6 @@
 ---
 name: request-tracking
-description: Request tracking knowledge base. Covers request structure, status tracking, document references, progress management.
+description: "Request tracking knowledge base. Use when: querying request status, managing document references, tracking progress. Not for: creating requests (use create-request), tech specs (use tech-spec). Output: status report + progress tracking."
 allowed-tools: Read, Grep, Glob
 context: fork
 agent: Explore
@@ -58,6 +58,15 @@ docs/features/{feature}/
 | P0       | Immediate      |
 | P1       | This week      |
 | P2       | This iteration |
+
+## Output
+
+```markdown
+## Request Status
+| Request | Status | Priority | Updated |
+|---------|--------|----------|---------|
+| ...     | ...    | ...      | ...     |
+```
 
 ## Verification
 

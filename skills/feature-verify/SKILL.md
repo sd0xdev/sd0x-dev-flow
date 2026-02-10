@@ -1,6 +1,6 @@
 ---
 name: feature-verify
-description: System diagnosis skill (READ-ONLY). Verifies feature behavior through code analysis, data validation, and Codex deep confirmation. All operations are strictly read-only - NO data modification allowed.
+description: "Feature verification (READ-ONLY). Use when: verifying feature behavior, validating data integrity, confirming system state. Not for: modifying data (use feature-dev), code review (use codex-code-review). Output: verification report + confidence assessment."
 allowed-tools: Read, Grep, Glob, Bash, WebFetch, Task, Skill
 context: fork
 ---
@@ -47,6 +47,17 @@ Phase 6: Integrate  -> Synthesize dual perspectives, produce final report
 | PLAN-FIRST        | Present verification plan before executing queries |
 | CREDENTIAL-SAFETY | Do not expose full credentials in output         |
 | INDEPENDENT-FIRST | Claude forms conclusion first, then asks Codex to confirm |
+
+## Output
+
+```markdown
+## Verification Report
+| Check | Result | Confidence |
+|-------|--------|------------|
+| ...   | ✅/❌  | High/Med/Low |
+
+### Overall: ✅ Verified / ⛔ Issues found
+```
 
 ## Verification Checklist
 

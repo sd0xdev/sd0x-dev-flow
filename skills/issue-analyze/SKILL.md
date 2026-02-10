@@ -1,6 +1,6 @@
 ---
 name: issue-analyze
-description: GitHub Issue deep analysis. Read issue -> classify problem -> select investigation strategy -> integrate four investigation tools.
+description: "GitHub Issue deep analysis. Use when: analyzing issue root cause, classifying problems, investigation planning. Not for: fixing bugs (use bug-fix), code exploration (use code-explore). Output: classified analysis + investigation strategy."
 allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
 ---
 
@@ -89,6 +89,16 @@ Issue Symptoms
 | `/git-investigate`  | Track change history   | Medium  | Single     |
 | `/code-investigate` | Dual confirmation      | Slow    | Dual-view  |
 | `/codex-brainstorm` | Exhaust possibilities  | Slowest | Adversarial|
+
+## Output
+
+```markdown
+## Issue Analysis: <title>
+- **Classification**: <problem type>
+- **Root cause hypothesis**: <analysis>
+- **Investigation strategy**: <tools + plan>
+- **Priority**: P0 / P1 / P2
+```
 
 ## Verification
 

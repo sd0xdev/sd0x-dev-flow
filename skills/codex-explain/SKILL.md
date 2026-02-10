@@ -1,6 +1,6 @@
 ---
 name: codex-explain
-description: Explain complex code logic using Codex MCP. Supports brief/normal/deep depth levels.
+description: "Explain complex code via Codex MCP. Use when: understanding complex logic, tracing data flow, onboarding to unfamiliar code. Not for: code review (use codex-code-review), exploration (use code-explore). Output: structured explanation at chosen depth."
 allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
 ---
 
@@ -39,6 +39,16 @@ Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 | brief  | One-sentence summary                                 |
 | normal | Functional overview + execution flow + key concepts (default) |
 | deep   | + Design patterns + complexity + issues + dependencies |
+
+## Output
+
+```markdown
+## Code Explanation: <target>
+- **Depth**: brief / normal / deep
+- **Summary**: <functional overview>
+- **Execution flow**: <key paths>
+- **Key concepts**: <patterns, abstractions>
+```
 
 ## Verification
 
