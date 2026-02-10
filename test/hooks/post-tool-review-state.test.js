@@ -289,3 +289,54 @@ test('re-run flips code_review passed from false to true', () => {
   state = readState(workDir);
   assert.equal(state.code_review.passed, true);
 });
+
+test('/codex-review (without -fast) sets code_review', () => {
+  const workDir = makeTempDir('sd0x-post-tool-review-full-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review' },
+      tool_output: '## Gate: \u2705',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true);
+});
+
+test('/precommit-fast sets precommit passed', () => {
+  const workDir = makeTempDir('sd0x-post-tool-precommit-fast-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit-fast' },
+      tool_output: '## Overall: \u2705 PASS',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.precommit.passed, true);
+});
+
+test('/review-spec sets doc_review passed', () => {
+  const workDir = makeTempDir('sd0x-post-tool-review-spec-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/review-spec' },
+      tool_output: '\u2705 All Pass',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, true);
+});

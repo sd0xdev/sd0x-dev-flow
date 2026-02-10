@@ -1,0 +1,315 @@
+const { test, after } = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  mkdtempSync,
+  writeFileSync,
+  chmodSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+} = require('node:fs');
+const { join, resolve } = require('node:path');
+const { tmpdir } = require('node:os');
+const { spawnSync } = require('node:child_process');
+
+const hookPath = resolve(__dirname, '../../hooks/post-edit-format.sh');
+const tempDirs = [];
+
+function makeTempDir(prefix) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function writeExecutable(filePath, content) {
+  writeFileSync(filePath, content);
+  chmodSync(filePath, 0o755);
+}
+
+function setupStubBin() {
+  const binDir = makeTempDir('sd0x-post-edit-format-bin-');
+
+  // Stub jq that handles:
+  // 1. -r '.tool_input.file_path // empty' (from stdin)
+  // 2. --arg flag X --arg now Y '.[$flag] = ...' FILE (state file update)
+  const stubJq = `#!/usr/bin/env node
+const fs = require('fs');
+const args = process.argv.slice(2);
+let query;
+let file;
+const vars = {};
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  if (arg === '-r') continue;
+  if (arg === '--arg') {
+    vars[args[i + 1]] = args[i + 2];
+    i += 2;
+    continue;
+  }
+  if (!query) { query = arg; continue; }
+  if (!file) { file = arg; continue; }
+}
+let input = '';
+try {
+  input = file ? fs.readFileSync(file, 'utf8') : fs.readFileSync(0, 'utf8');
+} catch {}
+let data = {};
+try {
+  data = input ? JSON.parse(input) : {};
+} catch {}
+
+// Handle .tool_input.file_path
+if (query && query.includes('.tool_input.file_path')) {
+  const val = (data.tool_input && data.tool_input.file_path) || '';
+  process.stdout.write(val);
+  process.exit(0);
+}
+
+// Handle state file update: .[$flag] = true | .updated_at = $now
+if (query && query.includes('[$flag]') && vars.flag) {
+  data[vars.flag] = true;
+  data.updated_at = vars.now || '';
+  process.stdout.write(JSON.stringify(data));
+  process.exit(0);
+}
+
+process.stdout.write('');
+`;
+  writeExecutable(join(binDir, 'jq'), stubJq);
+
+  // Stub npx (simulates prettier without actually formatting)
+  writeExecutable(join(binDir, 'npx'), '#!/bin/sh\nexit 0\n');
+
+  return binDir;
+}
+
+function runHook({ cwd, binDir, filePath, env = {} }) {
+  const input = { tool_input: { file_path: filePath } };
+  return spawnSync('bash', [hookPath], {
+    cwd,
+    input: JSON.stringify(input),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      ...env,
+    },
+  });
+}
+
+function readState(cwd) {
+  const statePath = join(cwd, '.claude_review_state.json');
+  if (!existsSync(statePath)) return null;
+  return JSON.parse(readFileSync(statePath, 'utf8'));
+}
+
+after(() => {
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// =============================================================================
+// Basic exit paths
+// =============================================================================
+
+test('empty file_path exits 0 with no state', () => {
+  const workDir = makeTempDir('sd0x-format-empty-');
+  const binDir = setupStubBin();
+  const result = runHook({ cwd: workDir, binDir, filePath: '' });
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null);
+});
+
+test('suspicious path exits 0 with warning', () => {
+  const workDir = makeTempDir('sd0x-format-suspicious-');
+  const binDir = setupStubBin();
+  const result = runHook({ cwd: workDir, binDir, filePath: '/path/file;rm -rf /' });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /Rejected suspicious file path/);
+  assert.equal(readState(workDir), null);
+});
+
+// =============================================================================
+// State tracking: code changes
+// =============================================================================
+
+test('.ts file sets has_code_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-ts-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/app.ts',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'state file should exist');
+  assert.equal(state.has_code_change, true);
+});
+
+test('.tsx file sets has_code_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-tsx-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/Component.tsx',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_code_change, true);
+});
+
+test('.js file sets has_code_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-js-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/scripts/build.js',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_code_change, true);
+});
+
+// =============================================================================
+// State tracking: doc changes
+// =============================================================================
+
+test('.md file sets has_doc_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-md-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/docs/readme.md',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'state file should exist');
+  assert.equal(state.has_doc_change, true);
+});
+
+test('.mdx file sets has_doc_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-mdx-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/docs/page.mdx',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_doc_change, true);
+});
+
+// =============================================================================
+// Non-tracked extensions
+// =============================================================================
+
+test('.json file does not update state', () => {
+  const workDir = makeTempDir('sd0x-format-json-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/config.json',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null);
+});
+
+test('.py file does not format or track', () => {
+  const workDir = makeTempDir('sd0x-format-py-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/script.py',
+  });
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null);
+});
+
+// =============================================================================
+// Stderr messages
+// =============================================================================
+
+test('.ts file logs code change to stderr', () => {
+  const workDir = makeTempDir('sd0x-format-ts-log-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/app.ts',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.match(result.stderr, /Code change detected/);
+});
+
+test('.md file logs doc change to stderr', () => {
+  const workDir = makeTempDir('sd0x-format-md-log-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/docs/readme.md',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.match(result.stderr, /Doc change detected/);
+});
+
+// =============================================================================
+// HOOK_NO_FORMAT still tracks changes
+// =============================================================================
+
+test('HOOK_NO_FORMAT=1 still tracks code changes', () => {
+  const workDir = makeTempDir('sd0x-format-noformat-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/index.tsx',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_code_change, true);
+});
+
+// =============================================================================
+// State file initialization
+// =============================================================================
+
+test('state file initializes with correct structure', () => {
+  const workDir = makeTempDir('sd0x-format-init-');
+  const binDir = setupStubBin();
+  runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/app.ts',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  const state = readState(workDir);
+  assert.ok(state);
+  // Check initial structure is preserved
+  assert.equal(typeof state.session_id, 'string');
+  assert.equal(typeof state.updated_at, 'string');
+  assert.equal(state.has_code_change, true);
+  assert.equal(state.has_doc_change, false);
+  assert.ok(state.code_review);
+  assert.ok(state.doc_review);
+  assert.ok(state.precommit);
+});

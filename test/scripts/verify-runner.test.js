@@ -132,3 +132,42 @@ test('verify runner full mode runs typecheck with tsconfig', () => {
   assert.ok(typecheckStep, 'typecheck step missing');
   assert.equal(typecheckStep.code, 0);
 });
+
+test('verify fast mode skips lint when script missing', () => {
+  const pkg = {
+    name: 'temp',
+    version: '1.0.0',
+    scripts: {
+      'test:unit': './pass.sh',
+    },
+  };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+
+  const { summary } = runVerify(dir, ['--mode', 'fast']);
+  assert.equal(summary.overallPass, true);
+  const lintStep = summary.steps.find(step => step.name === 'lint');
+  assert.ok(lintStep, 'lint step should exist as skip');
+  assert.equal(lintStep.status, 'skip');
+  assert.equal(lintStep.reason, 'script missing');
+});
+
+test('verify full mode skips integration without --integration arg', () => {
+  const pkg = {
+    name: 'temp',
+    version: '1.0.0',
+    scripts: {
+      lint: './pass.sh',
+      'test:unit': './pass.sh',
+      'test:integration': './pass.sh',
+    },
+  };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+
+  const { summary } = runVerify(dir, ['--mode', 'full']);
+  const intStep = summary.steps.find(step => step.name === 'test_integration');
+  assert.ok(intStep, 'integration step should exist');
+  assert.equal(intStep.status, 'skip');
+  assert.match(intStep.reason, /file not specified/);
+});

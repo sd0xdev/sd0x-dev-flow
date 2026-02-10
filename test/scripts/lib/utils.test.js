@@ -1,6 +1,6 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtempSync, writeFileSync, rmSync } = require('node:fs');
+const { mkdtempSync, writeFileSync, rmSync, readFileSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 
@@ -14,6 +14,11 @@ const {
   stripAnsi,
   defaultStdoutFilter,
   testStdoutFilter,
+  runCapture,
+  readPackageJson,
+  ensureDir,
+  writeText,
+  appendLog,
 } = require('../../../scripts/lib/utils');
 
 const tempDirs = [];
@@ -192,4 +197,81 @@ test('testStdoutFilter - other output allowed', () => {
   // Partial matches that are NOT PASS/FAIL
   assert.equal(testStdoutFilter('PASSING through'), true);
   assert.equal(testStdoutFilter('FAILURE mode'), true);
+});
+
+// =============================================================================
+// runCapture
+// =============================================================================
+
+test('runCapture with successful command', async () => {
+  const result = await runCapture('node', ['-e', 'process.stdout.write("hello")']);
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, 'hello');
+  assert.equal(result.stderr, '');
+});
+
+test('runCapture with failing command', async () => {
+  const result = await runCapture('node', ['-e', 'process.exit(42)']);
+  assert.equal(result.code, 42);
+});
+
+test('runCapture with nonexistent command', async () => {
+  const result = await runCapture('nonexistent-cmd-xyz-12345', []);
+  assert.equal(result.code, 127);
+});
+
+test('runCapture captures stderr', async () => {
+  const result = await runCapture('node', ['-e', 'process.stderr.write("err")']);
+  assert.equal(result.code, 0);
+  assert.equal(result.stderr, 'err');
+});
+
+// =============================================================================
+// readPackageJson
+// =============================================================================
+
+test('readPackageJson with valid file', () => {
+  const dir = makeTempDir('sd0x-pkg-');
+  writeFileSync(join(dir, 'package.json'), '{"name":"test","version":"1.0.0"}');
+  const pkg = readPackageJson(dir);
+  assert.deepEqual(pkg, { name: 'test', version: '1.0.0' });
+});
+
+test('readPackageJson with missing file', () => {
+  const dir = makeTempDir('sd0x-pkg-missing-');
+  const pkg = readPackageJson(dir);
+  assert.equal(pkg, null);
+});
+
+test('readPackageJson with invalid JSON', () => {
+  const dir = makeTempDir('sd0x-pkg-invalid-');
+  writeFileSync(join(dir, 'package.json'), '{invalid json}');
+  const pkg = readPackageJson(dir);
+  assert.equal(pkg, null);
+});
+
+// =============================================================================
+// File utilities
+// =============================================================================
+
+test('ensureDir creates nested directories', () => {
+  const dir = makeTempDir('sd0x-ensure-');
+  const nested = join(dir, 'a', 'b', 'c');
+  ensureDir(nested);
+  assert.ok(existsSync(nested));
+});
+
+test('writeText creates file with content', () => {
+  const dir = makeTempDir('sd0x-write-');
+  const filePath = join(dir, 'sub', 'test.txt');
+  writeText(filePath, 'hello world');
+  assert.equal(readFileSync(filePath, 'utf8'), 'hello world');
+});
+
+test('appendLog appends to file', () => {
+  const dir = makeTempDir('sd0x-append-');
+  const filePath = join(dir, 'log.txt');
+  appendLog(filePath, 'line1\n');
+  appendLog(filePath, 'line2\n');
+  assert.equal(readFileSync(filePath, 'utf8'), 'line1\nline2\n');
 });

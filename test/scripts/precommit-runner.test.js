@@ -136,3 +136,26 @@ test('build failure makes overallPass false', () => {
   assert.ok(buildStep, 'build step missing');
   assert.equal(buildStep.code, 1);
 });
+
+test('fast mode skips build step', () => {
+  const pkg = {
+    name: 'temp',
+    version: '1.0.0',
+    scripts: {
+      'lint:fix': './pass.sh',
+      build: './pass.sh',
+      'test:unit': './pass.sh',
+    },
+  };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+
+  const { summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, true);
+  const buildStep = summary.steps.find(step => step.name === 'build');
+  assert.equal(buildStep, undefined, 'build step should not exist in fast mode');
+  assert.deepEqual(
+    summary.steps.map(step => step.name),
+    ['lint_fix', 'test_unit']
+  );
+});

@@ -358,3 +358,49 @@ test('transcript mode: blocked then pass allows stop', () => {
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, true);
 });
+
+test('transcript strict: review blocked without subsequent pass blocks', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-blocked-strict-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u26d4',
+    'user: /precommit',
+    '## Gate: \u26d4',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Review not passed/);
+});
+
+test('transcript warn: review blocked without subsequent pass allows', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-blocked-warn-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u26d4',
+    'user: /precommit',
+    '## Gate: \u26d4',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+  });
+  assert.equal(result.status, 0);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
