@@ -134,6 +134,67 @@ function countFiles(dir, filter) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared applicability helpers
+// ---------------------------------------------------------------------------
+
+function hasNonTestCodeFiles(root) {
+  const codeExts = CLASSIFICATION?.code_extensions ?? ['.ts', '.tsx', '.js', '.jsx'];
+  const testInd = CLASSIFICATION?.test_gap?.test_indicators ?? {
+    directory_prefixes: ['test/', 'tests/', '__tests__/', 'spec/', 'src/test/'],
+    file_suffixes: ['.test.ts', '.test.tsx', '.test.js', '.test.jsx', '.spec.ts', '.spec.js', '_test.py', '_spec.rb', 'Test.java', 'Test.kt', '_test.go'],
+  };
+  return countFiles(root, (name, rel) => {
+    const ext = path.extname(name);
+    if (!codeExts.includes(ext)) return false;
+    const posixRel = rel.split(path.sep).join('/');
+    if (testInd.directory_prefixes.some(p => posixRel.startsWith(p))) return false;
+    if (testInd.file_suffixes.some(s => name.endsWith(s))) return false;
+    return true;
+  }) > 0;
+}
+
+function isNodeZeroDeps(root) {
+  const pkg = readJsonSafe(root, 'package.json');
+  if (!pkg) return false;
+  if (pkg.workspaces) return false; // workspace roots have deps in child packages
+  const fields = ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies'];
+  return fields.every(f => !pkg[f] || Object.keys(pkg[f]).length === 0);
+}
+
+function hasRuntimeScripts(root) {
+  const pkg = readJsonSafe(root, 'package.json');
+  if (!pkg || !pkg.scripts) return false;
+  return ['start', 'dev', 'serve'].some(s => typeof pkg.scripts[s] === 'string');
+}
+
+function hasTsFiles(root) {
+  const tsExts = ['.ts', '.tsx', '.mts', '.cts'];
+  return countFiles(root, (name) => tsExts.includes(path.extname(name))) > 0;
+}
+
+function isDocsHeavy(root) {
+  const docExts = CLASSIFICATION?.doc_extensions ?? ['.md', '.mdx'];
+  const codeExts = CLASSIFICATION?.code_extensions ?? ['.ts', '.tsx', '.js', '.jsx'];
+  const docs = countFiles(root, (name) => docExts.includes(path.extname(name)));
+  const code = countFiles(root, (name) => codeExts.includes(path.extname(name)));
+  const total = docs + code;
+  if (total === 0) return false;
+  return (docs / total) >= 0.6 && docs >= 30;
+}
+
+function hasMarkdownLintConfig(root) {
+  const configs = ['.markdownlint.json', '.markdownlint.jsonc', '.markdownlint.yaml', '.markdownlint.yml', '.markdownlint-cli2.jsonc', '.markdownlint-cli2.yaml', '.markdownlint-cli2.yml'];
+  return configs.some(f => fileExists(root, f));
+}
+
+function hasMarkdownLintScript(root) {
+  const pkg = readJsonSafe(root, 'package.json');
+  if (!pkg || !pkg.scripts) return false;
+  const lintKeys = ['lint', 'lint:fix', 'lint:md', 'docs:lint'];
+  return lintKeys.some(k => typeof pkg.scripts[k] === 'string' && pkg.scripts[k].includes('markdownlint'));
+}
+
+// ---------------------------------------------------------------------------
 // 12 Checks
 // ---------------------------------------------------------------------------
 
@@ -217,6 +278,22 @@ function checkRobustnessLintTypecheck(root, ecosystems) {
     return { id: 'robustness-lint-typecheck', dimension: 'robustness', result: 'pass', score: 1, message: 'Static-typed language with built-in checks', suggestion: null, priority: null };
   }
 
+  // Docs-heavy profile — markdown lint is the appropriate lint tool.
+  // Design: per brainstorm Nash Equilibrium, docs-heavy projects (>=60% docs, >=30 files)
+  // use markdownlint as their primary lint tool. No markdownlint signals → fall through
+  // to existing Node/Python checks (non-exclusive, prevents regression).
+  if (isDocsHeavy(root)) {
+    const scriptSig = hasMarkdownLintScript(root);
+    const configSig = hasMarkdownLintConfig(root);
+    if (scriptSig && configSig) {
+      return { id: 'robustness-lint-typecheck', dimension: 'robustness', result: 'pass', score: 1, message: 'Docs-heavy project with markdown lint configured', suggestion: null, priority: null };
+    }
+    if (scriptSig || configSig) {
+      return { id: 'robustness-lint-typecheck', dimension: 'robustness', result: 'partial', score: 0.5, message: `Docs-heavy: script=${scriptSig}, config=${configSig}`, suggestion: 'Add both markdownlint config and script', priority: 'P2' };
+    }
+    // No markdownlint signals — fall through to existing checks
+  }
+
   const pkg = readJsonSafe(root, 'package.json');
   if (pkg && pkg.scripts) {
     const hasLint = !!(pkg.scripts.lint || pkg.scripts['lint:fix']);
@@ -283,11 +360,11 @@ function checkScopeDeclaredImpl(root) {
   if (!hasFeatureDocs) {
     return { id: 'scope-declared-impl', dimension: 'scope', result: 'n/a', score: null, message: 'No docs/features/ directory', suggestion: null, priority: null };
   }
-  const hasSrc = dirExists(root, 'src') || dirExists(root, 'lib') || dirExists(root, 'app');
-  if (!hasSrc) {
-    return { id: 'scope-declared-impl', dimension: 'scope', result: 'fail', score: 0, message: 'Feature docs exist but no source directory (src/lib/app)', suggestion: 'Create source directory and implement declared features', priority: 'P1' };
+  const hasCode = hasNonTestCodeFiles(root);
+  if (!hasCode) {
+    return { id: 'scope-declared-impl', dimension: 'scope', result: 'fail', score: 0, message: 'Feature docs exist but no source code found (excluding tests)', suggestion: 'Add implementation code for declared features', priority: 'P1' };
   }
-  return { id: 'scope-declared-impl', dimension: 'scope', result: 'pass', score: 1, message: 'Feature docs and source directory both exist', suggestion: null, priority: null };
+  return { id: 'scope-declared-impl', dimension: 'scope', result: 'pass', score: 1, message: 'Feature docs and source code both exist', suggestion: null, priority: null };
 }
 
 // SCOPE-2: AC completion rate
@@ -365,20 +442,41 @@ function checkRunnabilityScripts(root, ecosystems) {
   }
 
   const scripts = pkg.scripts || {};
-  const key_scripts = ['start', 'dev', 'build', 'test'];
-  const found = key_scripts.filter(s => typeof scripts[s] === 'string');
-  if (found.length >= 3) {
-    return { id: 'runnability-scripts', dimension: 'runnability', result: 'pass', score: 1, message: `Scripts: ${found.join(', ')}`, suggestion: null, priority: null };
+  const runtimeIndicators = ['start', 'dev', 'serve'];
+  const isRuntime = runtimeIndicators.some(s => typeof scripts[s] === 'string');
+
+  if (isRuntime) {
+    // Runtime project: require ≥3 of start/dev/build/test (serve is detection-only)
+    const key_scripts = ['start', 'dev', 'build', 'test'];
+    const found = key_scripts.filter(s => typeof scripts[s] === 'string');
+    if (found.length >= 3) {
+      return { id: 'runnability-scripts', dimension: 'runnability', result: 'pass', score: 1, message: `Runtime scripts: ${found.join(', ')}`, suggestion: null, priority: null };
+    }
+    if (found.length >= 1) {
+      const missing = key_scripts.filter(s => !found.includes(s));
+      return { id: 'runnability-scripts', dimension: 'runnability', result: 'partial', score: 0.5, message: `Scripts: ${found.join(', ')} (missing: ${missing.join(', ')})`, suggestion: `Add missing scripts: ${missing.join(', ')}`, priority: 'P2' };
+    }
+    // Runtime detected (via serve) but no standard scripts
+    return { id: 'runnability-scripts', dimension: 'runnability', result: 'partial', score: 0.5, message: 'Runtime detected (serve) but missing start/dev/build/test', suggestion: 'Add start, dev, build, test scripts', priority: 'P2' };
   }
-  if (found.length >= 1) {
-    const missing = key_scripts.filter(s => !found.includes(s));
-    return { id: 'runnability-scripts', dimension: 'runnability', result: 'partial', score: 0.5, message: `Scripts: ${found.join(', ')} (missing: ${missing.join(', ')})`, suggestion: `Add missing scripts: ${missing.join(', ')}`, priority: 'P2' };
+
+  // Non-runtime project: only require test
+  if (typeof scripts.test === 'string') {
+    return { id: 'runnability-scripts', dimension: 'runnability', result: 'pass', score: 1, message: 'Non-runtime project with test script', suggestion: null, priority: null };
   }
-  return { id: 'runnability-scripts', dimension: 'runnability', result: 'fail', score: 0, message: 'No standard scripts in package.json', suggestion: 'Add start, dev, build, test scripts', priority: 'P1' };
+  const availableScripts = ['build', 'test', 'lint'].filter(s => typeof scripts[s] === 'string');
+  if (availableScripts.length > 0) {
+    return { id: 'runnability-scripts', dimension: 'runnability', result: 'partial', score: 0.5, message: `Non-runtime scripts: ${availableScripts.join(', ')} (missing: test)`, suggestion: 'Add a test script', priority: 'P2' };
+  }
+  return { id: 'runnability-scripts', dimension: 'runnability', result: 'fail', score: 0, message: 'No scripts in package.json', suggestion: 'Add at least a test script', priority: 'P1' };
 }
 
 // RUNNABILITY-3: .env.example / docker-compose
-function checkRunnabilityEnvDocker(root) {
+function checkRunnabilityEnvDocker(root, ecosystems) {
+  // Node-only + zero deps + no runtime scripts → env/docker not applicable
+  if (ecosystems.includes('node') && ecosystems.length === 1 && isNodeZeroDeps(root) && !hasRuntimeScripts(root)) {
+    return { id: 'runnability-env-docker', dimension: 'runnability', result: 'n/a', score: null, message: 'No dependencies and no runtime scripts — env/docker not applicable', suggestion: null, priority: null };
+  }
   const hasEnv = fileExists(root, '.env.example') || fileExists(root, '.env.sample') || fileExists(root, '.env.template');
   const hasDocker = fileExists(root, 'docker-compose.yml') || fileExists(root, 'docker-compose.yaml') || fileExists(root, 'Dockerfile');
   if (hasEnv || hasDocker) {
@@ -389,6 +487,10 @@ function checkRunnabilityEnvDocker(root) {
 
 // STABILITY-1: Lock file + audit
 function checkStabilityLockAudit(root, ecosystems) {
+  // Node-only: zero deps → lock file not applicable
+  if (ecosystems.includes('node') && ecosystems.length === 1 && isNodeZeroDeps(root)) {
+    return { id: 'stability-lock-audit', dimension: 'stability', result: 'n/a', score: null, message: 'Node project with zero dependencies — lock file not applicable', suggestion: null, priority: null };
+  }
   // Per-ecosystem lock file mapping (avoids cross-contamination, e.g. go.mod + package-lock.json)
   const ecoLockMap = {
     node: ['package-lock.json', 'yarn.lock', 'pnpm-lock.yaml'],
@@ -427,7 +529,11 @@ function checkStabilityTypeConfig(root, ecosystems) {
   if (fileExists(root, 'jsconfig.json')) {
     return { id: 'stability-type-config', dimension: 'stability', result: 'partial', score: 0.5, message: 'jsconfig.json found (no full type checking)', suggestion: 'Consider migrating to TypeScript', priority: 'P2' };
   }
-  return { id: 'stability-type-config', dimension: 'stability', result: 'fail', score: 0, message: 'No type configuration', suggestion: 'Add tsconfig.json or equivalent type checking', priority: 'P2' };
+  // Pure JS project (no TS files) → partial instead of fail
+  if (!hasTsFiles(root)) {
+    return { id: 'stability-type-config', dimension: 'stability', result: 'partial', score: 0.5, message: 'Pure JavaScript project — no TypeScript files', suggestion: 'Consider adding jsconfig.json or migrating to TypeScript', priority: 'P2' };
+  }
+  return { id: 'stability-type-config', dimension: 'stability', result: 'fail', score: 0, message: 'TypeScript files found but no tsconfig.json', suggestion: 'Add tsconfig.json for type checking', priority: 'P2' };
 }
 
 // ---------------------------------------------------------------------------
@@ -533,7 +639,7 @@ function runAudit(root) {
     checkScopeAcCompletion(root),
     checkRunnabilityManifest(root),
     checkRunnabilityScripts(root, ecosystems),
-    checkRunnabilityEnvDocker(root),
+    checkRunnabilityEnvDocker(root, ecosystems),
     checkStabilityLockAudit(root, ecosystems),
     checkStabilityTypeConfig(root, ecosystems),
   ];

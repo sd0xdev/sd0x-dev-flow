@@ -448,6 +448,7 @@ test('stability-lock-audit — pass when lock + audit script exist', () => {
   writeFileSync(join(dir, 'package.json'), JSON.stringify({
     name: 'test',
     scripts: { audit: 'npm audit' },
+    dependencies: { lodash: '^4.0.0' },
   }));
   writeFileSync(join(dir, 'package-lock.json'), '{}');
   const { output } = runAudit(dir);
@@ -484,7 +485,7 @@ test('non-git repo without --dir exits 2', () => {
 // ---------------------------------------------------------------------------
 // Test 21: Go _test.go files counted as tests, not source
 // ---------------------------------------------------------------------------
-test('Go _test.go files excluded from source count, counted as tests', () => {
+test('Go_test.go files excluded from source count, counted as tests', () => {
   const dir = createTempRepo();
   writeFileSync(join(dir, 'go.mod'), 'module example.com/test\n\ngo 1.21');
   writeFileSync(join(dir, 'README.md'), '# Go\n');
@@ -505,7 +506,7 @@ test('Go _test.go files excluded from source count, counted as tests', () => {
 // ---------------------------------------------------------------------------
 // Test 22: Dotnet ecosystem detection via *.csproj glob
 // ---------------------------------------------------------------------------
-test('dotnet ecosystem detected via *.csproj glob', () => {
+test('dotnet ecosystem detected via*.csproj glob', () => {
   const dir = createTempRepo();
   writeFileSync(join(dir, 'MyApp.csproj'), '<Project></Project>');
   writeFileSync(join(dir, 'README.md'), '# Dotnet\n');
@@ -576,4 +577,271 @@ test('stability-lock-audit — cross-ecosystem lock gives partial (go.mod + pack
   const { output } = runAudit(dir);
   const lockAudit = output.checks.find(c => c.id === 'stability-lock-audit');
   assert.equal(lockAudit.result, 'partial', `Go with only package-lock.json (no go.sum) should be partial, got ${lockAudit.result}: ${lockAudit.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 27: scope-declared-impl — pass with code files outside src/ dir
+// ---------------------------------------------------------------------------
+test('scope-declared-impl — pass when code exists outside src/ (e.g. scripts/)', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'docs', 'features'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'README.md'), '# Feature\n');
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'scripts', 'audit.js'), 'const x = 1;\n');
+  writeFileSync(join(dir, 'README.md'), '# Test\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'scope-declared-impl');
+  assert.equal(check.result, 'pass', `Code in scripts/ should satisfy scope check, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 28: scope-declared-impl — fail with only test files
+// ---------------------------------------------------------------------------
+test('scope-declared-impl — fail when only test files exist (no source code)', () => {
+  const dir = createTempRepo();
+  mkdirSync(join(dir, 'docs', 'features'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'README.md'), '# Feature\n');
+  mkdirSync(join(dir, 'test'), { recursive: true });
+  writeFileSync(join(dir, 'test', 'foo.test.js'), 'const assert = require("assert");\n');
+  writeFileSync(join(dir, 'README.md'), '# Test\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'scope-declared-impl');
+  assert.equal(check.result, 'fail', `Only test files should not satisfy scope check, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 29: stability-lock-audit — n/a for Node project with zero dependencies
+// ---------------------------------------------------------------------------
+test('stability-lock-audit — n/a for Node zero-dependency project', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'zero-deps', scripts: { test: 'echo ok' } }));
+  writeFileSync(join(dir, 'README.md'), '# Zero\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'stability-lock-audit');
+  assert.equal(check.result, 'n/a', `Node project with zero deps should be n/a, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 30: stability-lock-audit — Go projects still checked (not n/a)
+// ---------------------------------------------------------------------------
+test('stability-lock-audit — Go project without go.sum still fails (no n/a bypass)', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'go.mod'), 'module example.com/test\n\ngo 1.21\n');
+  writeFileSync(join(dir, 'README.md'), '# Go\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'stability-lock-audit');
+  assert.notEqual(check.result, 'n/a', `Go project should not get n/a for lock-audit, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 31: runnability-env-docker — n/a for zero deps + no runtime scripts
+// ---------------------------------------------------------------------------
+test('runnability-env-docker — n/a when zero deps and no runtime scripts', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'tool', scripts: { test: 'node --test' } }));
+  writeFileSync(join(dir, 'README.md'), '# Tool\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'runnability-env-docker');
+  assert.equal(check.result, 'n/a', `Zero-dep non-runtime project should be n/a for env-docker, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 32: runnability-scripts — non-runtime with test only → pass
+// ---------------------------------------------------------------------------
+test('runnability-scripts — non-runtime project with test script passes', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'tool', scripts: { test: 'node --test' } }));
+  writeFileSync(join(dir, 'README.md'), '# Tool\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'runnability-scripts');
+  assert.equal(check.result, 'pass', `Non-runtime with test should pass, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 33: runnability-scripts — non-runtime with no scripts → fail
+// ---------------------------------------------------------------------------
+test('runnability-scripts — non-runtime project with no scripts fails', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'empty' }));
+  writeFileSync(join(dir, 'README.md'), '# Empty\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'runnability-scripts');
+  assert.equal(check.result, 'fail', `Non-runtime with no scripts should fail, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 34: stability-type-config — partial for pure JS project
+// ---------------------------------------------------------------------------
+test('stability-type-config — pure JS project gets partial (not fail)', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'js-only', scripts: { test: 'echo ok' } }));
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(join(dir, 'scripts', 'index.js'), 'module.exports = {};\n');
+  writeFileSync(join(dir, 'README.md'), '# JS\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'stability-type-config');
+  assert.equal(check.result, 'partial', `Pure JS project should be partial, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 35: isNodeZeroDeps — workspace root not treated as zero-deps
+// ---------------------------------------------------------------------------
+test('stability-lock-audit — workspace root with no root deps is not n/a', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'monorepo',
+    workspaces: ['packages/*'],
+    scripts: { test: 'echo ok' },
+  }));
+  writeFileSync(join(dir, 'README.md'), '# Monorepo\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'stability-lock-audit');
+  assert.notEqual(check.result, 'n/a', `Workspace root should not get n/a for lock-audit, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 36: runnability-env-docker — mixed node+go repo not n/a
+// ---------------------------------------------------------------------------
+test('runnability-env-docker — mixed node+go repo does not get n/a', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'mixed', scripts: { test: 'echo ok' } }));
+  writeFileSync(join(dir, 'go.mod'), 'module example.com/mixed\n\ngo 1.21\n');
+  writeFileSync(join(dir, 'README.md'), '# Mixed\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'runnability-env-docker');
+  assert.notEqual(check.result, 'n/a', `Mixed node+go repo should not bypass env-docker check, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 37: runnability-scripts — serve-only runtime gets partial (not pass)
+// ---------------------------------------------------------------------------
+test('runnability-scripts — serve-only runtime project gets partial', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'serve-only',
+    scripts: { serve: 'vite preview' },
+  }));
+  writeFileSync(join(dir, 'README.md'), '# Serve\n');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'runnability-scripts');
+  assert.equal(check.result, 'partial', `serve-only runtime should be partial (serve detected but missing build/test), got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Helper: bulk file creation for docs-heavy tests
+// ---------------------------------------------------------------------------
+function createManyFiles(dir, count, ext, subdir = '') {
+  const target = subdir ? join(dir, subdir) : dir;
+  if (subdir) mkdirSync(target, { recursive: true });
+  for (let i = 0; i < count; i++) {
+    writeFileSync(join(target, `file-${i}${ext}`), `# File ${i}\n`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Test 38: docs-heavy with markdownlint pass
+// ---------------------------------------------------------------------------
+test('docs-heavy + markdownlint script + config → lint-typecheck pass', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'docs-project',
+    scripts: { test: 'echo ok', 'lint:md': 'npx markdownlint-cli2 "**/*.md"' },
+  }));
+  writeFileSync(join(dir, '.markdownlint-cli2.jsonc'), '{ "config": { "default": true } }');
+  writeFileSync(join(dir, 'README.md'), '# Docs Project\n');
+  // 30 .md files + 5 .js files → doc_ratio = 30/35 ≈ 86% ≥ 60%, docs ≥ 30
+  createManyFiles(dir, 30, '.md', 'docs');
+  createManyFiles(dir, 5, '.js', 'scripts');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
+  assert.equal(check.result, 'pass', `Docs-heavy + both signals should pass, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 39: docs-heavy with config only → partial
+// ---------------------------------------------------------------------------
+test('docs-heavy + config only (no script) → lint-typecheck partial', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'docs-project',
+    scripts: { test: 'echo ok' },
+  }));
+  writeFileSync(join(dir, '.markdownlint-cli2.jsonc'), '{ "config": { "default": true } }');
+  writeFileSync(join(dir, 'README.md'), '# Docs\n');
+  createManyFiles(dir, 30, '.md', 'docs');
+  createManyFiles(dir, 5, '.js', 'scripts');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
+  assert.equal(check.result, 'partial', `Docs-heavy + config only should be partial, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 40: docs-heavy with no markdownlint signals → fallback to fail
+// ---------------------------------------------------------------------------
+test('docs-heavy + no markdownlint signals → lint-typecheck fail (fallback)', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'docs-project',
+    scripts: { test: 'echo ok' },
+  }));
+  writeFileSync(join(dir, 'README.md'), '# Docs\n');
+  createManyFiles(dir, 30, '.md', 'docs');
+  createManyFiles(dir, 5, '.js', 'scripts');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
+  assert.equal(check.result, 'fail', `Docs-heavy with no signals should fall through to fail, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 41: non-docs-heavy ignores markdown lint config
+// ---------------------------------------------------------------------------
+test('non-docs-heavy project ignores markdownlint config → lint-typecheck fail', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'code-project',
+    scripts: { test: 'echo ok' },
+  }));
+  writeFileSync(join(dir, '.markdownlint-cli2.jsonc'), '{ "config": { "default": true } }');
+  writeFileSync(join(dir, 'README.md'), '# Code\n');
+  // 5 .md + 20 .js → doc_ratio = 5/25 = 20% < 60% → not docs-heavy
+  createManyFiles(dir, 5, '.md', 'docs');
+  createManyFiles(dir, 20, '.js', 'src');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
+  assert.equal(check.result, 'fail', `Non-docs-heavy should ignore markdownlint config, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 42: docs-heavy threshold boundary — 29 docs not enough
+// ---------------------------------------------------------------------------
+test('docs-heavy boundary — 29 .md files does not qualify (need >= 30)', () => {
+  const dir = createTempRepo();
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({
+    name: 'almost-docs',
+    scripts: { test: 'echo ok', 'lint:md': 'npx markdownlint-cli2 "**/*.md"' },
+  }));
+  writeFileSync(join(dir, '.markdownlint-cli2.jsonc'), '{ "config": { "default": true } }');
+  writeFileSync(join(dir, 'README.md'), '# Almost\n');
+  // 28 in docs/ + 1 README.md = 29 total .md + 1 .js → doc_ratio = 29/30 ≈ 97% but docs = 29 < 30
+  createManyFiles(dir, 28, '.md', 'docs');
+  createManyFiles(dir, 1, '.js', 'scripts');
+
+  const { output } = runAudit(dir);
+  const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
+  assert.equal(check.result, 'fail', `29 docs should not qualify as docs-heavy, got ${check.result}: ${check.message}`);
 });

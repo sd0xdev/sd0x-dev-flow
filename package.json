@@ -8,7 +8,9 @@
     "test:unit": "node --test test/scripts/lib/*.test.js",
     "test:integration": "node --test test/scripts/*.test.js",
     "test:hooks": "node --test test/hooks/*.test.js",
-    "test:schema": "node --test test/commands/*.test.js"
+    "test:schema": "node --test test/commands/*.test.js",
+    "lint:md": "npx markdownlint-cli2 \"**/*.md\"",
+    "lint:fix": "npx markdownlint-cli2 --fix \"**/*.md\""
   },
   "engines": {
     "node": ">=18.0.0"

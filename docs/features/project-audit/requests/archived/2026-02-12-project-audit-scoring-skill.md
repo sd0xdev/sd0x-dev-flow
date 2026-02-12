@@ -2,6 +2,7 @@
 
 > **Created**: 2026-02-12
 > **Status**: Completed
+> **Archived**: 2026-02-12
 > **Priority**: P2
 > **Tech Spec**: (pending — run `/tech-spec` to generate)
 
