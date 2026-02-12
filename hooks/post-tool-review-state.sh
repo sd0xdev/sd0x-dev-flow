@@ -122,11 +122,11 @@ fi
 
 # === MCP sentinel routing (no command to parse) ===
 if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-reply" ]]; then
-  # Priority 1: doc-specific (exclude security reviews via gate qualifier: "Mergeable: No P0")
-  if echo "$TOOL_OUTPUT" | grep -qE '✅ Mergeable' && ! echo "$TOOL_OUTPUT" | grep -qE 'Mergeable: No P0'; then
+  # Priority 1: doc-specific (require ## Document Review section header to avoid collision with security reviews)
+  if echo "$TOOL_OUTPUT" | grep -qE '## Document Review' && echo "$TOOL_OUTPUT" | grep -qE '✅ Mergeable'; then
     update_state "doc_review" "true" "true"
     echo "[Review State] doc_review updated (MCP): passed=true" >&2
-  elif echo "$TOOL_OUTPUT" | grep -qE '⛔ Needs revision'; then
+  elif echo "$TOOL_OUTPUT" | grep -qE '## Document Review' && echo "$TOOL_OUTPUT" | grep -qE '⛔ Needs revision'; then
     update_state "doc_review" "true" "false"
     echo "[Review State] doc_review updated (MCP): passed=false" >&2
   # Priority 2: code-specific

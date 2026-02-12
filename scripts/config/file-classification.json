@@ -34,7 +34,8 @@
         ".test.ts", ".test.tsx", ".test.js", ".test.jsx",
         ".spec.ts", ".spec.js", ".spec.tsx", ".spec.jsx",
         "_test.py", "_spec.rb",
-        "Test.java", "Test.kt"
+        "Test.java", "Test.kt",
+        "_test.go"
       ]
     }
   }

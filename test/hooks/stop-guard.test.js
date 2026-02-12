@@ -406,6 +406,245 @@ test('transcript warn: review blocked without subsequent pass allows', () => {
 });
 
 // =============================================================================
+// Review sentinel recency (last verdict wins)
+// =============================================================================
+
+test('review sentinel: ⛔ Needs revision then ✅ Mergeable allows (last wins)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-rev-fail-pass-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '⛔ Needs revision',
+    'user: /codex-review-fast',
+    '✅ Mergeable',
+    'user: /precommit',
+    '## Overall: ✅ PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'should allow stop when last review verdict is pass');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('review sentinel: ✅ Ready then ⛔ Block blocks (last wins)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-rev-pass-fail-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '✅ Ready',
+    'user: /codex-review-fast',
+    '⛔ Block',
+    'user: /precommit',
+    '## Overall: ✅ PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'should block when last review verdict is fail');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Review not passed/);
+});
+
+// =============================================================================
+// D2: Precommit result check in transcript fallback
+// =============================================================================
+
+test('D2: transcript precommit FAIL blocks stop', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-d2-fail-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u2705',
+    'user: /precommit',
+    '## Overall: \u26d4 FAIL',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Precommit not passed/);
+});
+
+test('D2: transcript precommit PASS does not block', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-d2-pass-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u2705',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+// =============================================================================
+// N2: Transcript fallback sentinel variants
+// =============================================================================
+
+test('N2: transcript ⛔ Must fix detected as blocked', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-n2-must-fix-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '\u26d4 Must fix',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Review not passed/);
+});
+
+// =============================================================================
+// D2-extra: Mixed-order PASS then FAIL (last result wins)
+// =============================================================================
+
+test('D2: transcript precommit PASS then FAIL blocks (last result wins)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-d2-pass-fail-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u2705',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+    'user: /precommit',
+    '## Overall: \u26d4 FAIL',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Precommit not passed/);
+});
+
+test('D2: transcript precommit FAIL then PASS then FAIL blocks (last wins)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-d2-fpf-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: \u2705',
+    'user: /precommit',
+    '## Overall: \u26d4 FAIL',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+    'user: /precommit',
+    '## Overall: \u26d4 FAIL',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Precommit not passed/);
+});
+
+// =============================================================================
+// N3: .mdx detection in transcript fallback
+// =============================================================================
+
+test('N3: transcript .mdx edit detected as doc change', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-n3-mdx-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = '{"tool_name":"Edit","tool_input":{"path":"docs/guide.mdx"}}\n';
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'should block stop when .mdx edited without review');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.ok(payload.description.includes('/codex-review-doc'), 'should require doc review for .mdx');
+});
+
+test('N2: transcript ⛔ Needs revision detected as blocked', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-n2-needs-rev-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  // Include /precommit + PASS so MISSING path doesn't fire, isolating the BLOCKED_REASON path
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '\u26d4 Needs revision',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Review not passed/);
+});
+
+// =============================================================================
 // Stale-state git checks
 // =============================================================================
 
@@ -524,6 +763,38 @@ test('quoted filenames in porcelain are still detected (B2 fix)', () => {
   });
   // With B2 fix, quoted .ts file should still be detected, so has_code_change stays true → blocks
   assert.equal(result.status, 2, 'should block stop when quoted .ts file exists in git status');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('A3: git timeout fails open (trusts state file)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-a3-timeout-');
+  const binDir = setupStubBin();
+  // Stub git that sleeps longer than the 5s timeout — simulate via immediate failure
+  // (actual timeout testing requires real sleep; we test the fallback path by making
+  // git exit with code 124, which is what timeout returns on expiration)
+  writeExecutable(join(binDir, 'git'), '#!/bin/sh\nexit 124\n');
+  // Stub timeout to pass through to git (which will exit 124)
+  writeExecutable(join(binDir, 'timeout'), `#!/bin/sh\nshift; exec "$@"\n`);
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  // Should block (trusts state file since git timed out / failed → __GIT_UNAVAILABLE__)
+  assert.equal(result.status, 2, 'should block stop (trusts state file when git times out)');
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, false);
 });

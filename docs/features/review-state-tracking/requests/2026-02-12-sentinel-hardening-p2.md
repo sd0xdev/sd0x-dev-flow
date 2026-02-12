@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | **Pending** |
+| Status | **Completed** |
 | Priority | P2 |
 | Created | 2026-02-12 |
 | Updated | 2026-02-12 |
@@ -43,46 +43,46 @@
 
 ### D1: Security/Doc Sentinel 碰撞防護
 
-- [ ] MCP 路由對 `✅ Mergeable` 使用更精確的比對（例如搭配 section header `## Document Review`），而非僅靠 `Mergeable: No P0` 排除
-- [ ] 測試：security review 輸出（無 `No P0` 限定詞）不會誤觸 `doc_review.passed`
-- [ ] 測試：doc review 輸出仍正常路由
+- [x] MCP 路由對 `✅ Mergeable` 使用更精確的比對（例如搭配 section header `## Document Review`），而非僅靠 `Mergeable: No P0` 排除
+- [x] 測試：security review 輸出（無 `No P0` 限定詞）不會誤觸 `doc_review.passed`
+- [x] 測試：doc review 輸出仍正常路由
 
 ### N2: Transcript Fallback Sentinel 強化
 
-- [ ] `stop-guard.sh` transcript fallback 的 `REVIEW_BLOCKED` 正規表達式包含 `⛔ Needs revision` 和 `⛔ Must fix`
-- [ ] 測試：transcript 中出現 `⛔ Needs revision` 時被辨識為 blocked
+- [x] `stop-guard.sh` transcript fallback 的 `REVIEW_BLOCKED` 正規表達式包含 `⛔ Needs revision` 和 `⛔ Must fix`
+- [x] 測試：transcript 中出現 `⛔ Needs revision` 時被辨識為 blocked
 
 ### D2: Transcript Fallback Precommit 結果檢查
 
-- [ ] Transcript fallback 模式不僅檢查 `/precommit` 是否執行，也檢查其結果（pass/fail）
-- [ ] 匹配演算法：掃描 transcript 中最後一次出現的 `/precommit` 指令，接著在其後續輸出中搜尋 `## Overall: ✅ PASS` 或 `## Overall: ⛔ FAIL`（以最後一組配對為準）
-- [ ] 測試：transcript 中出現 `/precommit` + `## Overall: ⛔ FAIL` 時被辨識為 blocked
-- [ ] 測試：transcript 中出現 `/precommit` + `## Overall: ✅ PASS` 時不阻擋
+- [x] Transcript fallback 模式不僅檢查 `/precommit` 是否執行，也檢查其結果（pass/fail）
+- [x] 匹配演算法：掃描 transcript 中最後一次出現的 `/precommit` 指令，接著在其後續輸出中搜尋 `## Overall: ✅ PASS` 或 `## Overall: ⛔ FAIL`（以最後一組配對為準）
+- [x] 測試：transcript 中出現 `/precommit` + `## Overall: ⛔ FAIL` 時被辨識為 blocked
+- [x] 測試：transcript 中出現 `/precommit` + `## Overall: ✅ PASS` 時不阻擋
 
 ### A3: Git Status Timeout
 
-- [ ] `stop-guard.sh` 的 `git status --porcelain -uall` 加上 timeout 保護（跨平台：優先 `timeout 5`，macOS fallback 用 `gtimeout 5` 或 background + sleep 實作）
-- [ ] Timeout 時 fail-open（視為 git 不可用）
-- [ ] 測試：模擬 timeout 情境（stub git 延遲回應）
+- [x] `stop-guard.sh` 的 `git status --porcelain -uall` 加上 timeout 保護（跨平台：優先 `timeout 5`，macOS fallback 用 `gtimeout 5` 或 background + sleep 實作）
+- [x] Timeout 時 fail-open（視為 git 不可用）
+- [x] 測試：模擬 timeout 情境（stub git 延遲回應）
 
 ### N3: Transcript Fallback `.mdx` 偵測
 
-- [ ] Transcript fallback 的 doc 變更偵測正規表達式包含 `.mdx`
-- [ ] 測試：transcript 中編輯 `.mdx` 檔案時被偵測為 doc 變更
+- [x] Transcript fallback 的 doc 變更偵測正規表達式包含 `.mdx`
+- [x] 測試：transcript 中編輯 `.mdx` 檔案時被偵測為 doc 變更
 
 ### B1: 單向調和文件
 
-- [ ] `stop-guard.sh` 中加入註解說明為何 stale-state 檢查是單向的（僅 true→false）
-- [ ] 說明反向（false→true）會造成 false-positive 的理由
+- [x] `stop-guard.sh` 中加入註解說明為何 stale-state 檢查是單向的（僅 true→false）
+- [x] 說明反向（false→true）會造成 false-positive 的理由
 
 ## Progress
 
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | `/codex-brainstorm` Nash Equilibrium 確認為 P2 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | 全部 6 AC (D1/N2/D2/A3/N3/B1) 實作完成 |
+| Testing | Done | 25 stop-guard tests + 3 post-tool-review-state collision tests 全通過 |
+| Acceptance | Done | `/codex-review-fast` ✅ Ready + `/precommit` ✅ PASS (194 tests) |
 
 ## References
 

@@ -392,7 +392,7 @@ test('MCP doc review pass (\u2705 Mergeable) sets doc_review passed true', () =>
     input: {
       tool_name: 'mcp__codex__codex',
       tool_input: { prompt: 'review docs' },
-      tool_output: { content: '## Doc Review\n\u2705 Mergeable' },
+      tool_output: { content: '## Document Review\n\u2705 Mergeable' },
     },
   });
   assert.equal(result.status, 0);
@@ -428,7 +428,7 @@ test('MCP doc review block (\u26d4 Needs revision) via codex-reply sets doc_revi
     input: {
       tool_name: 'mcp__codex__codex-reply',
       tool_input: { prompt: 'continue review' },
-      tool_output: { content: '## Doc Review\n\u26d4 Needs revision\nMissing sections' },
+      tool_output: { content: '## Document Review\n\u26d4 Needs revision\nMissing sections' },
     },
   });
   assert.equal(result.status, 0);
@@ -562,6 +562,58 @@ test('MCP precommit PASS sets precommit passed true', () => {
   assert.equal(state.precommit.passed, true);
 });
 
+test('D1: security review with ✅ Mergeable but no ## Document Review does NOT set doc_review', () => {
+  const workDir = makeTempDir('sd0x-post-tool-d1-sec-collision-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: 'security review' },
+      tool_output: { content: '## Security Review Report\n### Gate\n\u2705 Mergeable\nNo critical issues' },
+    },
+  });
+  assert.equal(result.status, 0);
+  const statePath = join(workDir, '.claude_review_state.json');
+  assert.equal(existsSync(statePath), false, 'security review without ## Document Review header should not set doc_review');
+});
+
+test('D1: doc review with ## Document Review + ✅ Mergeable sets doc_review', () => {
+  const workDir = makeTempDir('sd0x-post-tool-d1-doc-ok-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: 'review docs' },
+      tool_output: { content: '## Document Review Report\nAll sections present\n\u2705 Mergeable' },
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'state file should exist');
+  assert.equal(state.doc_review.passed, true, 'doc review with correct header should set doc_review.passed');
+});
+
+test('D1: security review with ⛔ Needs revision but no ## Document Review does NOT set doc_review', () => {
+  const workDir = makeTempDir('sd0x-post-tool-d1-sec-needs-rev-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: 'security review' },
+      tool_output: { content: '## Security Review Report\n### Gate\n\u26d4 Needs revision\nCritical issues found' },
+    },
+  });
+  assert.equal(result.status, 0);
+  const statePath = join(workDir, '.claude_review_state.json');
+  assert.equal(existsSync(statePath), false, 'security review with ⛔ Needs revision but no ## Document Review header should not set doc_review');
+});
+
 test('MCP doc review mentioning OWASP still sets doc_review (regression)', () => {
   const workDir = makeTempDir('sd0x-post-tool-mcp-doc-owasp-');
   const binDir = setupStubBin();
@@ -571,7 +623,7 @@ test('MCP doc review mentioning OWASP still sets doc_review (regression)', () =>
     input: {
       tool_name: 'mcp__codex__codex',
       tool_input: { prompt: 'review docs' },
-      tool_output: { content: '## Doc Review\nThis doc covers OWASP guidelines\n### Gate\n\u2705 Mergeable: No \ud83d\udd34 items' },
+      tool_output: { content: '## Document Review\nThis doc covers OWASP guidelines\n### Gate\n\u2705 Mergeable: No \ud83d\udd34 items' },
     },
   });
   assert.equal(result.status, 0);

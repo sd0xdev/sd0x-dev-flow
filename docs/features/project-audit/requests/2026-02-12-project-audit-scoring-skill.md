@@ -1,7 +1,7 @@
 # Project Audit Scoring Skill
 
 > **Created**: 2026-02-12
-> **Status**: Pending
+> **Status**: Completed
 > **Priority**: P2
 > **Tech Spec**: (pending — run `/tech-spec` to generate)
 
@@ -74,33 +74,33 @@
 | `skills/project-audit/references/output-template.md` | New | 報告格式模板 |
 | `commands/project-audit.md` | New | Command 進入點 |
 | `test/scripts/project-audit.test.js` | New | 測試 (~250-400 行) |
-| `scripts/config/file-classification.json` | Reference | 語言偵測配置（不修改） |
+| `scripts/config/file-classification.json` | Modified | 新增 `_test.go` 至 test_indicators |
 | `scripts/lib/utils.js` | Reference | 共用工具（不修改） |
 
 ## Acceptance Criteria
 
-- [ ] `audit.js` 可獨立執行，產出 JSON 或 Markdown
-- [ ] 5 個維度各有對應 checks，total 12 checks
-- [ ] 每個 check 回傳 `pass/partial/fail/N/A`
-- [ ] N/A checks 不計入分母，confidence 正確反映覆蓋率
-- [ ] Status 判定正確：Blocked / Needs Work / Healthy
-- [ ] `next_actions[]` 包含可執行的命令建議
-- [ ] Exit codes 正確：0/1/2 對應 healthy/P1/P0
-- [ ] Gate sentinel 格式正確，可被 `stop-guard.sh` 解析
-- [ ] SKILL.md 通過 `/skill-health-check`
-- [ ] 測試覆蓋 happy path + edge cases（空 repo、monorepo、多語言）
-- [ ] 遵循 `next-step-analyze.test.js` 測試模式（temp git repo 隔離）
-- [ ] Pass `/codex-review-fast`
-- [ ] Pass `/precommit`
+- [x] `audit.js` 可獨立執行，產出 JSON 或 Markdown
+- [x] 5 個維度各有對應 checks，total 12 checks
+- [x] 每個 check 回傳 `pass/partial/fail/N/A`
+- [x] N/A checks 不計入分母，confidence 正確反映覆蓋率
+- [x] Status 判定正確：Blocked / Needs Work / Healthy
+- [x] `next_actions[]` 包含可執行的命令建議
+- [x] Exit codes 正確：0/1/2 對應 healthy/P1/P0
+- [x] Gate sentinel 格式正確，可被 `stop-guard.sh` 解析
+- [x] SKILL.md 通過 `/skill-health-check` (30/30 skills pass, 0 issues)
+- [x] 測試覆蓋 happy path + edge cases（空 repo、monorepo、多語言）— 26 test cases
+- [x] 遵循 `next-step-analyze.test.js` 測試模式（temp git repo 隔離）
+- [x] Pass `/codex-review-fast` (gate ✅ Ready)
+- [x] Pass `/precommit` (✅ PASS, 194 tests)
 
 ## Progress
 
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Codex Brainstorm 完成，Nash Equilibrium 達成 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | audit.js (~600 行) + SKILL.md + command + references 全部完成 |
+| Testing | Done | 26 test cases 全通過（含 Go/Rust/Dotnet 生態系、nested csproj、cross-ecosystem lock） |
+| Acceptance | Done | `/codex-review-fast` ✅ Ready + `/precommit` ✅ PASS + `/skill-health-check` 0 issues |
 
 ## References
 

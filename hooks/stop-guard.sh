@@ -62,12 +62,26 @@ if [[ -f "$STATE_FILE" ]]; then
     echo "[Debug] PRECOMMIT_PASSED=$PRECOMMIT_PASSED" >&2
   fi
 
-  # === Stale-state git check ===
-  GIT_PORCELAIN=$(git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  # === Stale-state git check (with cross-platform timeout) ===
+  if command -v timeout &>/dev/null; then
+    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  elif command -v gtimeout &>/dev/null; then
+    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  else
+    GIT_PORCELAIN=$(git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  fi
   if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
     # Strip porcelain quoting (git quotes filenames with spaces/unicode)
     GIT_PORCELAIN_CLEAN=$(echo "$GIT_PORCELAIN" | sed 's/^.. "//; s/"$//')
-    # Override stale has_code_change if no code files in worktree
+    # Stale-state reconciliation is ONE-WAY: only true→false.
+    # We can safely override has_*_change from true to false when git status
+    # shows no matching files — the state file was set in a prior edit that
+    # has since been reverted or committed.
+    # The reverse (false→true) is NOT done because it would cause false
+    # positives: a file might exist in the worktree but was never edited by
+    # the current session (e.g., pre-existing untracked files). The state
+    # file's false→true transition is handled by post-tool-review-state.sh
+    # at edit time, which has the correct session context.
     if [[ "$HAS_CODE_CHANGE" == "true" ]]; then
       if ! echo "$GIT_PORCELAIN_CLEAN" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)($|\s|")'; then
         HAS_CODE_CHANGE="false"
@@ -96,16 +110,16 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
 
   # Check change types
   HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)"' | grep -E '"(Edit|Write)"' | head -1 || true)
-  HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.md"' | grep -E '"(Edit|Write)"' | head -1 || true)
+  HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(md|mdx)"' | grep -E '"(Edit|Write)"' | head -1 || true)
 
   # Check if required commands were executed
   HAS_CODEX_REVIEW=$(echo "$CONVERSATION" | grep -oE '/codex-review(-fast|-doc|-branch)?' | tail -1 || true)
   HAS_PRECOMMIT=$(echo "$CONVERSATION" | grep -oE '/precommit(-fast)?' | tail -1 || true)
   HAS_REVIEW_DOC=$(echo "$CONVERSATION" | grep -oE '/codex-review-doc|/review-spec' | tail -1 || true)
 
-  # Check review results (standard sentinel)
-  REVIEW_PASSED=$(echo "$CONVERSATION" | grep -E '## Gate: ✅|✅ All Pass|Gate.*PASS' | tail -1 || true)
-  REVIEW_BLOCKED=$(echo "$CONVERSATION" | grep -E '## Gate: ⛔|⛔.*Block|Gate.*FAIL' | tail -1 || true)
+  # Check review results (standard sentinel — includes doc review sentinels ✅ Mergeable / ✅ Ready)
+  REVIEW_PASSED=$(echo "$CONVERSATION" | grep -E '## Gate: ✅|✅ All Pass|✅ Mergeable|✅ Ready|Gate.*PASS' | tail -1 || true)
+  REVIEW_BLOCKED=$(echo "$CONVERSATION" | grep -E '## Gate: ⛔|⛔.*Block|⛔ Needs revision|⛔ Must fix|Gate.*FAIL' | tail -1 || true)
 
   if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
     echo "[Debug] Using transcript parsing mode" >&2
@@ -146,10 +160,21 @@ else
     MISSING="$MISSING /codex-review-doc"
   fi
 
-  # Check if review passed
+  # Check if review passed — use last verdict for recency-correct detection
+  # (handles fail→pass→fail re-runs: the LAST verdict wins)
   if [[ -n "$HAS_CODEX_REVIEW" || -n "$HAS_REVIEW_DOC" ]]; then
-    if [[ -n "$REVIEW_BLOCKED" && -z "$REVIEW_PASSED" ]]; then
+    LAST_REVIEW=$(echo "$CONVERSATION" | grep -E '## Gate: (✅|⛔)|✅ (All Pass|Mergeable|Ready)|⛔.*(Block|Needs revision|Must fix)|Gate.*(PASS|FAIL)' | tail -1 || true)
+    if [[ -n "$LAST_REVIEW" ]] && echo "$LAST_REVIEW" | grep -qE '⛔|FAIL'; then
       BLOCKED_REASON="Review not passed (Blocked)"
+    fi
+  fi
+
+  # D2: Check precommit result (not just execution) — scan for last ## Overall sentinel
+  # Use the LAST ## Overall line to determine pass/fail (handles PASS→FAIL re-runs correctly)
+  if [[ -n "$HAS_PRECOMMIT" && -z "$BLOCKED_REASON" ]]; then
+    LAST_PRECOMMIT=$(echo "$CONVERSATION" | grep -E '## Overall: (✅ PASS|⛔ FAIL|❌ FAIL)' | tail -1 || true)
+    if [[ -n "$LAST_PRECOMMIT" ]] && echo "$LAST_PRECOMMIT" | grep -qE '(⛔|❌) FAIL'; then
+      BLOCKED_REASON="Precommit not passed (FAIL)"
     fi
   fi
 fi
