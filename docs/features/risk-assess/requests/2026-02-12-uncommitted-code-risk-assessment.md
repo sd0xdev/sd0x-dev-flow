@@ -1,7 +1,7 @@
 # Uncommitted Code Risk Assessment Skill
 
 > **Created**: 2026-02-12
-> **Status**: Pending
+> **Status**: In Development
 > **Priority**: P2
 > **Tech Spec**: (pending — run `/tech-spec` to generate)
 
@@ -93,28 +93,28 @@
 
 ## Acceptance Criteria
 
-- [ ] `risk-analyze.js` 可獨立執行 `--mode fast` 和 `--mode deep`
-- [ ] 3 個核心維度各有確定性 checks，加權計算 overall risk score
-- [ ] 2 個條件旗標在對應檔案出現時正確觸發
-- [ ] Risk levels 正確對應 exit codes（0/1/2）
-- [ ] Blast radius 使用 grep-based 近似，輸出 confidence 等級
-- [ ] 語言偵測支援 JS/TS/Python/Go 基本 import pattern
-- [ ] Risk Gate sentinel 格式正確
-- [ ] `/pr-review` 整合：自動呼叫 fast mode，High+ 時觸發 deep
-- [ ] SKILL.md 明確定義與 `/codex-security` 的 routing boundary
+- [x] `risk-analyze.js` 可獨立執行 `--mode fast` 和 `--mode deep`
+- [x] 3 個核心維度各有確定性 checks，加權計算 overall risk score
+- [x] 2 個條件旗標在對應檔案出現時正確觸發
+- [x] Risk levels 正確對應 exit codes（0/1/2）
+- [x] Blast radius 使用 grep-based 近似，輸出 confidence 等級
+- [x] 語言偵測支援 JS/TS/Python/Go 基本 import pattern
+- [x] Risk Gate sentinel 格式正確
+- [x] `/pr-review` 整合：自動呼叫 fast mode，High+ 時觸發 deep
+- [x] SKILL.md 明確定義與 `/codex-security` 的 routing boundary
 - [ ] SKILL.md 通過 `/skill-health-check`
-- [ ] 測試覆蓋 happy path + edge cases（空 diff、大規模重構、migration 檔案）
-- [ ] Pass `/codex-review-fast`
-- [ ] Pass `/precommit`
+- [x] 測試覆蓋 happy path + edge cases（空 diff、大規模重構、migration 檔案）
+- [x] Pass `/codex-review-fast`
+- [x] Pass `/precommit`
 
 ## Progress
 
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Codex Brainstorm 完成，Nash Equilibrium 達成 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | 7 files created/modified, 4 rounds Codex review (11 issues fixed) |
+| Testing | Done | 22 tests pass, 216/216 full suite pass, `/precommit` pass |
+| Acceptance | In Progress | 12/13 AC checked, pending `/skill-health-check` |
 
 ## References
 

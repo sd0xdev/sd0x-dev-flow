@@ -12,6 +12,7 @@ allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 
 ## Task
 
+0. Run `/risk-assess --mode fast` — if High+, auto-escalate to deep mode
 1. Review: correctness, security, perf
 2. PR checklist: tests, rollout, compat
 3. Discover new rules -> update CLAUDE.md or .claude/rules/
@@ -25,6 +26,7 @@ allowed-tools: Bash(git:*), Read, Grep, Glob, Edit
 
 ## PR Checklist
 
+- [ ] Risk assessment: Low/Medium (or High+ reviewed and acknowledged)
 - [ ] Tests pass
 - [ ] No breaking changes
 - [ ] Docs updated
