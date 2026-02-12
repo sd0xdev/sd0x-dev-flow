@@ -195,10 +195,10 @@ sequenceDiagram
 
 | Hook | 觸發時機 | 用途 |
 |------|----------|------|
-| `post-edit-format` | Edit/Write 之後 | 自動 prettier（僅限專案已安裝 prettier） |
-| `post-tool-review-state` | Bash 之後 | 追蹤 review 狀態 |
+| `post-edit-format` | Edit/Write 之後 | 自動 prettier + 編輯後重設 review 狀態 |
+| `post-tool-review-state` | Bash / MCP 工具之後 | 追蹤 review 狀態（sentinel routing） |
 | `pre-edit-guard` | Edit/Write 之前 | 防止編輯 .env/.git |
-| `stop-guard` | 停止之前 | 未完成 review 時警告（預設：warn） |
+| `stop-guard` | 停止之前 | 未完成 review 時警告 + stale-state git 檢查（預設：warn） |
 
 ### Hook 設定
 

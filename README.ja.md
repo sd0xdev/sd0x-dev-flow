@@ -195,10 +195,10 @@ sequenceDiagram
 
 | フック | トリガー | 用途 |
 |--------|----------|------|
-| `post-edit-format` | Edit/Write 後 | 自動 prettier（prettier 導入済みプロジェクトのみ） |
-| `post-tool-review-state` | Bash 後 | レビュー状態の追跡 |
+| `post-edit-format` | Edit/Write 後 | 自動 prettier + 編集時にレビュー状態をリセット |
+| `post-tool-review-state` | Bash / MCP ツール後 | レビュー状態の追跡（sentinel ルーティング） |
 | `pre-edit-guard` | Edit/Write 前 | .env/.git の編集を防止 |
-| `stop-guard` | 停止前 | 未完了レビュー時に警告（デフォルト：warn） |
+| `stop-guard` | 停止前 | 未完了レビュー時に警告 + stale-state git チェック（デフォルト：warn） |
 
 ### フック設定
 

@@ -70,7 +70,7 @@ Read all `.sh` files from the discovered hooks directory. The available hooks ar
 |------|-------|---------|---------|
 | `pre-edit-guard.sh` | PreToolUse | Edit, Write | Block editing sensitive files (.env, .git/) |
 | `post-edit-format.sh` | PostToolUse | Edit, Write | Auto-format + track code/doc changes |
-| `post-tool-review-state.sh` | PostToolUse | Bash | Parse review results, update state file |
+| `post-tool-review-state.sh` | PostToolUse | Bash, mcp__codex__codex, mcp__codex__codex-reply | Parse review results, update state file |
 | `stop-guard.sh` | Stop | — | Check review + precommit completed before stop |
 
 If `--list` is specified, output this table and **stop**.
@@ -116,7 +116,7 @@ Hook definition mapping (use relative paths from repo root):
     ],
     "PostToolUse": [
       {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": ".claude/hooks/post-edit-format.sh"}]},
-      {"matcher": "Bash", "hooks": [{"type": "command", "command": ".claude/hooks/post-tool-review-state.sh"}]}
+      {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": ".claude/hooks/post-tool-review-state.sh"}]}
     ],
     "Stop": [
       {"matcher": "", "hooks": [{"type": "command", "command": ".claude/hooks/stop-guard.sh"}]}

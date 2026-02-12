@@ -22,7 +22,7 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply",
         "hooks": [
           {
             "type": "command",

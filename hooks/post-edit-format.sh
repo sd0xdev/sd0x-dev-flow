@@ -89,6 +89,19 @@ EOF
   fi
 }
 
+# Invalidate a review's passed flag (preserves executed + last_run)
+invalidate_review() {
+  local key="$1"
+  if [[ ! -f "$STATE_FILE" ]]; then
+    return
+  fi
+  local tmp
+  tmp=$(mktemp)
+  jq --arg key "$key" \
+     '.[$key].passed = false' \
+     "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE"
+}
+
 # Update state file for change tracking
 update_change_flag() {
   local flag="$1"
@@ -108,13 +121,18 @@ update_change_flag() {
 # Track code changes (all recognized code extensions)
 if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)$'; then
   update_change_flag "has_code_change"
+  invalidate_review "code_review"
+  invalidate_review "precommit"
   echo "[Edit Hook] Code change detected: $file_path" >&2
+  echo "[Edit Hook] Invalidated code_review + precommit passed" >&2
 fi
 
 # Track doc changes (.md, .mdx)
 if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
   update_change_flag "has_doc_change"
+  invalidate_review "doc_review"
   echo "[Edit Hook] Doc change detected: $file_path" >&2
+  echo "[Edit Hook] Invalidated doc_review passed" >&2
 fi
 
 exit 0

@@ -195,10 +195,10 @@ sequenceDiagram
 
 | 钩子 | 触发时机 | 用途 |
 |------|----------|------|
-| `post-edit-format` | 编辑/写入之后 | 自动格式化（仅限项目已装 prettier） |
-| `post-tool-review-state` | 命令之后 | 追踪审查状态 |
+| `post-edit-format` | 编辑/写入之后 | 自动格式化 + 编辑后重置审查状态 |
+| `post-tool-review-state` | Bash / MCP 工具之后 | 追踪审查状态（sentinel 路由） |
 | `pre-edit-guard` | 编辑/写入之前 | 禁止编辑 .env/.git |
-| `stop-guard` | 停止之前 | 未完成审查时告警（默认：warn） |
+| `stop-guard` | 停止之前 | 未完成审查时告警 + stale-state git 检查（默认：warn） |
 
 ### 钩子配置
 

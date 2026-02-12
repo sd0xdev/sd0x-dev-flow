@@ -61,6 +61,32 @@ if [[ -f "$STATE_FILE" ]]; then
     echo "[Debug] CODE_REVIEW_PASSED=$CODE_REVIEW_PASSED" >&2
     echo "[Debug] PRECOMMIT_PASSED=$PRECOMMIT_PASSED" >&2
   fi
+
+  # === Stale-state git check ===
+  GIT_PORCELAIN=$(git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
+    # Strip porcelain quoting (git quotes filenames with spaces/unicode)
+    GIT_PORCELAIN_CLEAN=$(echo "$GIT_PORCELAIN" | sed 's/^.. "//; s/"$//')
+    # Override stale has_code_change if no code files in worktree
+    if [[ "$HAS_CODE_CHANGE" == "true" ]]; then
+      if ! echo "$GIT_PORCELAIN_CLEAN" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)($|\s|")'; then
+        HAS_CODE_CHANGE="false"
+        if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
+          echo "[Debug] Stale has_code_change overridden to false (no code in git status)" >&2
+        fi
+      fi
+    fi
+    # Override stale has_doc_change if no doc files in worktree
+    if [[ "$HAS_DOC_CHANGE" == "true" ]]; then
+      if ! echo "$GIT_PORCELAIN_CLEAN" | grep -qE '\.(md|mdx)($|\s|")'; then
+        HAS_DOC_CHANGE="false"
+        if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
+          echo "[Debug] Stale has_doc_change overridden to false (no docs in git status)" >&2
+        fi
+      fi
+    fi
+  fi
+  # If git unavailable → fail-open, trust state file
 fi
 
 # === Fallback: Read transcript content (limited scan range) ===

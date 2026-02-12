@@ -258,7 +258,7 @@ test('state file missing — graceful fallback, no crash', () => {
 
   const { output, exitCode } = runAnalyze(dir);
   assert.ok(output, 'Should produce valid output without state file');
-  assert.equal(output.version, 1);
+  assert.equal(output.version, 2);
   // Only main-branch finding (no state-related findings)
   const stateFindings = output.findings.filter(f =>
     f.id.startsWith('gate-') || f.id === 'state-drift'
@@ -534,4 +534,389 @@ test('multi-language file types — .py and .rs both counted', () => {
   const { output } = runAnalyze(dir);
   assert.ok(output.file_types['.py'] > 0, 'file_types should include .py');
   assert.ok(output.file_types['.rs'] > 0, 'file_types should include .rs');
+});
+
+// ---------------------------------------------------------------------------
+// Test 23: Feature context — branch feat/my-feature
+// ---------------------------------------------------------------------------
+test('feature context — branch feat/my-feature resolves key', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/my-feature'], { cwd: dir, stdio: 'ignore' });
+  writeReviewState(dir);
+  // Commit state so worktree is clean
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.feature_context, 'feature_context should exist');
+  assert.equal(output.feature_context.key, 'my-feature');
+  assert.equal(output.feature_context.source, 'branch');
+  assert.equal(output.feature_context.confidence, 'high');
+});
+
+// ---------------------------------------------------------------------------
+// Test 24: doc-sync-needed fires
+// ---------------------------------------------------------------------------
+test('doc-sync-needed — P1 when precommit passed + feature docs exist + code changed', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/sync-test'], { cwd: dir, stdio: 'ignore' });
+  // Create feature docs structure
+  mkdirSync(join(dir, 'docs', 'features', 'sync-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'sync-test', '2-tech-spec.md'), '# Tech Spec');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/foo.ts', 'export const x = 1;');
+  // Now modify code file to create a diff
+  writeFileSync(join(dir, 'src/foo.ts'), 'export const x = 2;');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output, exitCode } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'doc-sync-needed');
+  assert.ok(f, 'doc-sync-needed should fire when precommit passed + feature docs + code changed');
+  assert.equal(f.priority, 'P1');
+  assert.ok(f.suggestion.includes('/update-docs'), 'suggestion should include /update-docs');
+});
+
+// ---------------------------------------------------------------------------
+// Test 25: request-stale fires
+// ---------------------------------------------------------------------------
+test('request-stale — P1 when request status Pending but precommit passed', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/stale-req'], { cwd: dir, stdio: 'ignore' });
+  // Create feature + request with Pending status
+  mkdirSync(join(dir, 'docs', 'features', 'stale-req', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'stale-req', '2-tech-spec.md'), '# Tech Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'stale-req', 'requests', '2026-01-01-test.md'),
+    '| Status | **Pending** |\n\n## Acceptance Criteria\n\n- [ ] Item 1\n- [x] Item 2'
+  );
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/bar.ts', 'a');
+  writeFileSync(join(dir, 'src/bar.ts'), 'b');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(f, 'request-stale should fire when request is Pending and precommit passed');
+  assert.equal(f.priority, 'P1');
+});
+
+// ---------------------------------------------------------------------------
+// Test 26: ac-incomplete fires
+// ---------------------------------------------------------------------------
+test('ac-incomplete — P2 with correct N/M count', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/ac-check'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'ac-check', 'requests'), { recursive: true });
+  writeFileSync(
+    join(dir, 'docs', 'features', 'ac-check', 'requests', '2026-01-01-test.md'),
+    '## AC\n\n- [ ] Item 1\n- [ ] Item 2\n- [x] Item 3\n- [x] Item 4\n- [ ] Item 5'
+  );
+  writeReviewState(dir);
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add docs'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'ac-incomplete');
+  assert.ok(f, 'ac-incomplete should fire when unchecked items exist');
+  assert.equal(f.priority, 'P2');
+  assert.ok(f.message.includes('3/5'), `Expected 3/5 in message, got: ${f.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 27: feature-complete fires
+// ---------------------------------------------------------------------------
+test('feature-complete — P3 when all gates pass + no sync issues', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/complete-test'], { cwd: dir, stdio: 'ignore' });
+  // Feature docs with no stale request
+  mkdirSync(join(dir, 'docs', 'features', 'complete-test', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'complete-test', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'complete-test', 'requests', '2026-01-01-test.md'),
+    '| Status | **Complete** |\n\n- [x] Done'
+  );
+  // Clean worktree (all changes committed) + all gates passed
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  // Commit review state too so worktree stays clean
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'feature-complete');
+  assert.ok(f, 'feature-complete should fire when all gates pass and no sync issues');
+  assert.equal(f.priority, 'P3');
+});
+
+// ---------------------------------------------------------------------------
+// Test 28: Phase post_precommit
+// ---------------------------------------------------------------------------
+test('phase post_precommit — detected when precommit passed + no P0/P1', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/phase-test'], { cwd: dir, stdio: 'ignore' });
+  // No feature docs → no doc-sync-needed or request-stale
+  // Both src and test changed → no test-gap P1
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, 'test'), { recursive: true });
+  addAndCommitFile(dir, 'src/x.ts', 'a');
+  addAndCommitFile(dir, 'test/x.test.ts', 'test a');
+  writeFileSync(join(dir, 'src/x.ts'), 'b');
+  writeFileSync(join(dir, 'test/x.test.ts'), 'test b');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  assert.equal(output.phase, 'post_precommit', `Expected post_precommit, got: ${output.phase}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 29: next_actions ordering — sorted by confidence descending
+// ---------------------------------------------------------------------------
+test('next_actions — sorted by confidence descending', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/actions-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/a.ts', 'a');
+  writeFileSync(join(dir, 'src/a.ts'), 'b');
+  // Code changed, review not passed → P0 gate-missing-code
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: false, passed: false, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.next_actions.length > 0, 'next_actions should have entries');
+  for (let i = 1; i < output.next_actions.length; i++) {
+    assert.ok(
+      output.next_actions[i - 1].confidence >= output.next_actions[i].confidence,
+      `next_actions[${i - 1}].confidence >= next_actions[${i}].confidence`
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Test 30: Backlog context — lists incomplete features when feature_complete
+// ---------------------------------------------------------------------------
+test('backlog context — lists incomplete features when feature_complete', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/backlog-test'], { cwd: dir, stdio: 'ignore' });
+  // Current feature: complete
+  mkdirSync(join(dir, 'docs', 'features', 'backlog-test', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'backlog-test', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'backlog-test', 'requests', '2026-01-01-done.md'),
+    '| Status | **Complete** |\n\n- [x] Done'
+  );
+  // Another feature: incomplete
+  mkdirSync(join(dir, 'docs', 'features', 'other-feature', 'requests'), { recursive: true });
+  writeFileSync(
+    join(dir, 'docs', 'features', 'other-feature', 'requests', '2026-01-01-pending.md'),
+    '| Status | **Pending** |\n\n- [ ] Todo 1\n- [ ] Todo 2'
+  );
+  // Clean worktree (all committed) + all gates passed
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  // feature-complete should fire for backlog-test
+  const fc = output.findings.find(f => f.id === 'feature-complete');
+  assert.ok(fc, 'feature-complete should fire');
+  // backlog should list the incomplete feature
+  assert.ok(output.backlog, 'backlog should exist when feature_complete');
+  assert.equal(output.backlog.total_features, 2);
+  const incomplete = output.backlog.incomplete_features.find(f => f.key === 'other-feature');
+  assert.ok(incomplete, 'other-feature should be listed as incomplete');
+  assert.equal(incomplete.unchecked_ac, 2);
+});
+
+// ---------------------------------------------------------------------------
+// Test 31: --feature CLI override
+// ---------------------------------------------------------------------------
+test('--feature CLI override — overrides branch pattern detection', () => {
+  const dir = createTempRepo();
+  // On main branch (no feat/ pattern)
+  mkdirSync(join(dir, 'docs', 'features', 'override-feature', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'override-feature', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'override-feature', 'requests', '2026-01-01-test.md'),
+    '| Status | **Pending** |\n\n- [ ] Item'
+  );
+  writeReviewState(dir);
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add docs'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir, ['--feature', 'override-feature']);
+  assert.ok(output.feature_context, 'feature_context should exist');
+  assert.equal(output.feature_context.key, 'override-feature');
+  assert.equal(output.feature_context.source, 'cli');
+  assert.equal(output.feature_context.confidence, 'high');
+  // AC incomplete should fire via feature context
+  const ac = output.findings.find(f => f.id === 'ac-incomplete');
+  assert.ok(ac, 'ac-incomplete should fire via --feature override');
+});
+
+// ---------------------------------------------------------------------------
+// Test 32: Blockquote status format — parseRequestStatus via request-stale
+// ---------------------------------------------------------------------------
+test('request-stale — parses blockquote status format (> **Status**: Pending)', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/bq-status'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'bq-status', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'bq-status', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'bq-status', 'requests', '2026-01-01-test.md'),
+    '> **Created**: 2026-01-01\n> **Status**: Pending\n> **Priority**: P1\n\n## AC\n\n- [ ] Item 1'
+  );
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/bq.ts', 'a');
+  writeFileSync(join(dir, 'src/bq.ts'), 'b');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(f, 'request-stale should fire for blockquote status format');
+  assert.equal(f.priority, 'P1');
+});
+
+// ---------------------------------------------------------------------------
+// Test 33: ac-incomplete blocks feature-complete
+// ---------------------------------------------------------------------------
+test('feature-complete blocked by ac-incomplete — no feature-complete when unchecked AC', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/ac-block'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'ac-block', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'ac-block', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'ac-block', 'requests', '2026-01-01-test.md'),
+    '| Status | **Complete** |\n\n- [x] Done\n- [ ] Not done yet'
+  );
+  // Clean worktree + all gates passed
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  const ac = output.findings.find(f => f.id === 'ac-incomplete');
+  assert.ok(ac, 'ac-incomplete should fire for unchecked items');
+  const fc = output.findings.find(f => f.id === 'feature-complete');
+  assert.ok(!fc, 'feature-complete should NOT fire when ac-incomplete exists');
+});
+
+// ---------------------------------------------------------------------------
+// Test 34: docs-only diff — no post_precommit phase
+// ---------------------------------------------------------------------------
+test('docs-only diff — phase is not post_precommit even with precommit passed in state', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'docs/update'], { cwd: dir, stdio: 'ignore' });
+  // Only .md files changed — precommit not required
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  addAndCommitFile(dir, 'docs/readme.md', '# Hello');
+  writeFileSync(join(dir, 'docs/readme.md'), '# Updated');
+  writeReviewState(dir, {
+    has_doc_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  // precommit.required should be false (no code files)
+  assert.equal(output.gates.precommit.required, false, 'precommit should not be required for docs-only');
+  assert.notEqual(output.phase, 'post_precommit', 'phase should not be post_precommit for docs-only diff');
+});
+
+// ---------------------------------------------------------------------------
+// Test 35: Nearly Complete status — request-stale fires, feature-complete blocked
+// ---------------------------------------------------------------------------
+test('Nearly Complete status — request-stale fires, no feature-complete', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/nearly'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'nearly', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'nearly', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'nearly', 'requests', '2026-01-01-test.md'),
+    '| Status | **Nearly Complete** |\n\n- [x] Done 1\n- [x] Done 2'
+  );
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/n.ts', 'a');
+  writeFileSync(join(dir, 'src/n.ts'), 'b');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  const rs = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(rs, 'request-stale should fire for "Nearly Complete" status');
+  const fc = output.findings.find(f => f.id === 'feature-complete');
+  assert.ok(!fc, 'feature-complete should NOT fire when request-stale exists');
 });

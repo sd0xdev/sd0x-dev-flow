@@ -195,10 +195,10 @@ sequenceDiagram
 
 | Hook | 트리거 | 용도 |
 |------|--------|------|
-| `post-edit-format` | Edit/Write 후 | 자동 prettier (프로젝트에 prettier가 있을 때만) |
-| `post-tool-review-state` | Bash 후 | 리뷰 상태 트래킹 |
+| `post-edit-format` | Edit/Write 후 | 자동 prettier + 편집 시 리뷰 상태 리셋 |
+| `post-tool-review-state` | Bash / MCP 도구 후 | 리뷰 상태 트래킹 (sentinel 라우팅) |
 | `pre-edit-guard` | Edit/Write 전 | .env/.git 편집 방지 |
-| `stop-guard` | 중지 전 | 리뷰 미완료 시 경고 (기본값: warn) |
+| `stop-guard` | 중지 전 | 리뷰 미완료 시 경고 + stale-state git 체크 (기본값: warn) |
 
 ### Hook 설정
 

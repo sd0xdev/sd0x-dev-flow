@@ -14,23 +14,34 @@ description: "Change-aware next step advisor. Use when: user asks what to do nex
 ## Procedure
 
 1. Run `node skills/next-step/scripts/analyze.js --json` to collect deterministic findings
-2. Parse the JSON output — findings, gates, diff summary
+2. Parse the JSON output — findings, gates, diff summary, phase, feature_context, next_actions, backlog
 3. **If P0/P1 findings exist** → format top 3 as actionable suggestions (Findings Mode)
 4. **If mid-pipeline** (gates not all passed, no P0/P1) → use progression tables to suggest next step
-5. **If all gates pass and no P0/P1** → output session summary with commit seed (Summary Mode, P2/P3 shown as oversights)
+5. **If phase = post_precommit** → suggest doc sync + request update (use next_actions)
+6. **If phase = feature_complete** → output feature complete summary with backlog
+7. **If all gates pass and no P0/P1** → output session summary with commit seed (Summary Mode, P2/P3 shown as oversights)
 
 ## Script Integration
 
-The analyze script runs 12 deterministic heuristics against git state and review state:
+The analyze script runs 16 deterministic heuristics against git state, review state, and feature context:
 
 | Priority | Heuristics | Meaning |
 |----------|-----------|---------|
 | P0 | Gate missing (code review, doc review, precommit), state drift | Required steps not completed |
-| P1 | Test gap, security hotspot, migration risk | Important oversights |
-| P2 | README missing, skill-lint needed, locale drift, mixed concerns | Quality improvements |
-| P3 | Main branch warning | Informational |
+| P1 | Test gap, security hotspot, migration risk, doc-sync-needed, request-stale | Important oversights |
+| P2 | README missing, skill-lint needed, locale drift, mixed concerns, ac-incomplete | Quality improvements |
+| P3 | Main branch warning, feature-complete | Informational |
 
 The script exits with code 0 (no P0/P1), 1 (has P1), or 2 (has P0).
+
+### Output Fields (v2)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| phase | string | `mid_development` / `post_precommit` / `ready_to_commit` / `feature_complete` / `clean` |
+| feature_context | object | `{ key, source, confidence, docs_path, has_tech_spec, has_requests }` |
+| next_actions | array | `[{ id, command, args, reason, confidence }]` sorted by confidence desc |
+| backlog | object/null | `{ total_features, incomplete_features }` — only when phase = feature_complete |
 
 ### Script Failure Fallback
 
@@ -44,6 +55,17 @@ If the script fails or is unavailable, fall back to manual signal collection:
 | 4 | Review state | `.claude_review_state.json` |
 
 Then use the Progression Tables below.
+
+## Dispatch Mode (--go flag)
+
+When `--go` is provided, auto-execute the top `next_action` IF:
+- `next_actions[0]` exists AND `confidence >= 0.8`
+- No P0 findings
+- Command is not null
+
+Output: "Auto-dispatching: [command] [args]" then invoke the Skill tool and report the result.
+
+Safety: NEVER dispatch on P0. Fall back to advisory mode if confidence < 0.8.
 
 ## Progression Tables (mid-pipeline fallback)
 
@@ -70,7 +92,8 @@ Used when script shows P0 gate issues or when determining which workflow step co
 | `/verify` pass | `/codex-review-fast` + `/codex-test-review` |
 | `/verify` fail | Fix failing tests, re-run `/verify` |
 | `/codex-review-fast` pass | `/precommit` |
-| `/precommit` pass | Doc Sync, then manual commit |
+| `/precommit` pass | **Doc Sync** → `/update-docs` + `/create-request --update` |
+| Doc sync complete | Manual commit + `/pr-review` |
 | All gates pass | Session summary (see output below) |
 
 ### Bug Fix Progression
@@ -145,6 +168,21 @@ When all gates pass and no actionable findings remain, summarize the session ins
 ```
 
 The commit seed is a suggestion — the user decides the final message.
+
+## Output Format — Feature Complete (phase = feature_complete, backlog exists)
+
+```
+📍 [work type] | [branch] | feature complete
+
+✅ Feature [key] Complete
+- All gates passed, no sync issues remaining
+
+📋 Backlog ([N] incomplete):
+- [feature-key] — status: [status], unchecked AC: [count]
+- ...
+
+➡️ Next: Pick a feature from the backlog or start new work
+```
 
 ## Document Completeness Check
 

@@ -404,3 +404,153 @@ test('transcript warn: review blocked without subsequent pass allows', () => {
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, true);
 });
+
+// =============================================================================
+// Stale-state git checks
+// =============================================================================
+
+function setupStubGit(binDir, porcelainOutput) {
+  writeExecutable(join(binDir, 'git'), `#!/bin/sh
+if echo "$*" | grep -q "status --porcelain"; then
+  printf '%s' '${porcelainOutput}'
+  exit 0
+fi
+exit 1
+`);
+}
+
+test('clean worktree overrides stale has_code_change (allows stop)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-stale-code-');
+  const binDir = setupStubBin();
+  // Stub git returns empty porcelain (clean worktree)
+  setupStubGit(binDir, '');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'should allow stop when git shows no code files');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('clean worktree overrides stale has_doc_change (allows stop)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-stale-doc-');
+  const binDir = setupStubBin();
+  // Stub git returns empty porcelain (clean worktree)
+  setupStubGit(binDir, '');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: true,
+      doc_review: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'should allow stop when git shows no doc files');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('renamed code file in porcelain is still detected', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-rename-');
+  const binDir = setupStubBin();
+  // Git porcelain rename entry: old.ts -> new.txt
+  setupStubGit(binDir, 'R  src/old.ts -> src/new.txt');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  // The .ts in "old.ts -> new.txt" should still be detected via \s boundary
+  assert.equal(result.status, 2, 'should block stop when renamed .ts file exists');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('quoted filenames in porcelain are still detected (B2 fix)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-quoted-');
+  const binDir = setupStubBin();
+  // Git porcelain output with quoted filename (spaces/unicode)
+  setupStubGit(binDir, ' M "src/my file.ts"');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  // With B2 fix, quoted .ts file should still be detected, so has_code_change stays true → blocks
+  assert.equal(result.status, 2, 'should block stop when quoted .ts file exists in git status');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('git unavailable fails open (trusts state file)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-no-git-');
+  const binDir = setupStubBin();
+  // Stub git that always fails (simulates git not available / not a repo)
+  writeExecutable(join(binDir, 'git'), '#!/bin/sh\nexit 128\n');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'should block stop (trusts state file when git unavailable)');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});

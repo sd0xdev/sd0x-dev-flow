@@ -195,10 +195,10 @@ sequenceDiagram
 
 | Hook | Trigger | Propósito |
 |------|---------|-----------|
-| `post-edit-format` | Después de Edit/Write | Auto prettier (solo si el proyecto tiene prettier) |
-| `post-tool-review-state` | Después de Bash | Tracking de estado de review |
+| `post-edit-format` | Después de Edit/Write | Auto prettier + invalidar estado de review al editar |
+| `post-tool-review-state` | Después de Bash / herramientas MCP | Tracking de estado de review (sentinel routing) |
 | `pre-edit-guard` | Antes de Edit/Write | Prevenir edición de .env/.git |
-| `stop-guard` | Antes de detener | Advertir si hay reviews incompletos (default: warn) |
+| `stop-guard` | Antes de detener | Advertir si hay reviews incompletos + verificación stale-state git (default: warn) |
 
 ### Configuración de hooks
 
