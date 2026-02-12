@@ -55,8 +55,8 @@
 
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
-| Commands | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| Skills | 29 | project-setup, code-explore, next-step, skill-health-check |
+| Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -64,45 +64,112 @@
 
 ## 워크플로
 
+### Auto-Loop: Edit → Review → Gate
+
+핵심 실행 엔진입니다. 코드 편집 후, Claude가 **자동으로** 같은 응답 내에서 리뷰를 트리거합니다. 수동 작업이 필요 없습니다. 모든 Gate를 통과할 때까지 Hook이 중지를 차단합니다.
+
 ```mermaid
 sequenceDiagram
     participant D as 개발자
     participant C as Claude
     participant X as Codex MCP
-    participant V as Verify
+    participant H as Hooks
 
-    D->>C: /project-setup
-    C-->>D: CLAUDE.md 설정 완료
-
-    D->>C: /repo-intake
-    C-->>D: 프로젝트 맵
-
-    D->>D: 코드 + 테스트 작성
-
-    D->>V: /verify
-    V-->>D: Pass/Fail + 수정 제안
-
-    D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + Gate + threadId
+    D->>C: 코드 편집
+    H->>H: 파일 변경 추적
+    C->>X: /codex-review-fast (자동)
+    X-->>C: P0/P1 발견
 
     alt 이슈 발견
-        D->>D: P0/P1 수정
-        D->>X: /codex-review-fast --continue <threadId>
-        Note over X: Context 유지
-        X-->>D: 수정 확인 + Gate 업데이트
+        C->>C: 모든 이슈 수정
+        C->>X: --continue threadId
+        X-->>C: 재검증
     end
 
-    D->>X: /codex-test-review
-    X-->>D: Coverage + 제안
+    X-->>C: ✅ Ready
+    C->>C: /precommit (자동)
+    C-->>D: ✅ 모든 Gate 통과
 
-    D->>C: /precommit
-    C-->>D: Gate + 커밋 준비 완료
+    Note over H: stop-guard가 review +<br/>precommit 통과 전까지 중지 차단
+```
 
-    opt PR 준비
-        D->>C: /pr-review
-        C-->>D: 체크리스트
+### 기획 체인
+
+대립형 브레인스토밍으로 Claude + Codex가 독립적으로 조사하고 다중 라운드 토론을 거쳐 내시 균형에 도달한 후, 구조화된 기획으로 이어집니다.
+
+```mermaid
+flowchart LR
+    A["/codex-brainstorm<br/>내시 균형"] --> B["/feasibility-study"]
+    B --> C["/tech-spec"]
+    C --> D["/codex-architect"]
+    D --> E["구현 준비 완료"]
+```
+
+### 작업 유형별 트랙
+
+```mermaid
+flowchart TD
+    subgraph feat ["기능 개발"]
+        F1["/feature-dev"] --> F2["코드 + 테스트"]
+        F2 --> F3["/verify"]
+        F3 --> F4["/codex-review-fast"]
+        F4 --> F5["/precommit"]
+        F5 --> F6["/update-docs"]
+    end
+
+    subgraph fix ["버그 수정"]
+        B1["/issue-analyze"] --> B2["/bug-fix"]
+        B2 --> B3["수정 + 회귀 테스트"]
+        B3 --> B4["/verify"]
+        B4 --> B5["/codex-review-fast"]
+        B5 --> B6["/precommit"]
+    end
+
+    subgraph docs ["문서만"]
+        D1[".md 편집"] --> D2["/codex-review-doc"]
+        D2 --> D3["완료"]
     end
 ```
+
+### 운영 거버넌스
+
+```mermaid
+flowchart TD
+    S["/project-setup"] --> R["/repo-intake"]
+    R --> DEV["개발"]
+    DEV --> A["/project-audit<br/>헬스 점수"]
+    DEV --> RA["/risk-assess<br/>브레이킹 체인지"]
+    A --> N["/next-step"]
+    RA --> N
+    N --> |"--go"|AUTO["자동 디스패치"]
+```
+
+### 한눈에 보기
+
+```mermaid
+flowchart LR
+    P["기획"] --> B["구축"]
+    B --> G["게이트"]
+    G --> S["배포"]
+
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/pr-review<br/>/update-docs"]
+```
+
+### 워크플로 카탈로그
+
+| 워크플로 | 트리거 | 주요 명령어 | Gate | 실행 레이어 |
+|----------|--------|------------|------|------------|
+| 기능 개발 | 수동 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 동작 레이어 |
+| 버그 수정 | 수동 | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 동작 레이어 |
+| Auto-Loop 리뷰 | 코드 편집 | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| 문서 리뷰 | `.md` 편집 | `/codex-review-doc` | ✅/⛔ | Hook |
+| 문서 동기화 | Precommit 통과 | `/update-docs` → `/create-request --update` | ✅/⚠️ | 동작 레이어 |
+| 기획 | 수동 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| 리스크 평가 | 수동 | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
+| 온보딩 | 최초 사용 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
 ## 명령어 레퍼런스
 
@@ -148,6 +215,8 @@ sequenceDiagram
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 디펜던시 보안 감사 |
+| `/project-audit` | 프로젝트 헬스 감사 (결정론적 스코어링) |
+| `/risk-assess` | 미커밋 코드 리스크 평가 |
 
 ### 기획
 

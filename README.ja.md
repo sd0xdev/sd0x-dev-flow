@@ -55,8 +55,8 @@
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| スキル | 29 | project-setup, code-explore, next-step, skill-health-check |
+| コマンド | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| スキル | 31 | project-setup, code-explore, next-step, skill-health-check |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -64,45 +64,112 @@
 
 ## ワークフロー
 
+### Auto-Loop：Edit → Review → Gate
+
+コアの実行エンジンです。コード編集後、Claude は**自動的に**同じ返答内でレビューを開始します。手動操作は不要です。すべての Gate を通過するまで、Hook が停止をブロックします。
+
 ```mermaid
 sequenceDiagram
     participant D as 開発者
     participant C as Claude
     participant X as Codex MCP
-    participant V as Verify
+    participant H as Hooks
 
-    D->>C: /project-setup
-    C-->>D: CLAUDE.md 設定完了
-
-    D->>C: /repo-intake
-    C-->>D: プロジェクトマップ
-
-    D->>D: コード + テスト作成
-
-    D->>V: /verify
-    V-->>D: Pass/Fail + 修正案
-
-    D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + Gate + threadId
+    D->>C: コード編集
+    H->>H: ファイル変更を追跡
+    C->>X: /codex-review-fast（自動）
+    X-->>C: P0/P1 検出
 
     alt 問題あり
-        D->>D: P0/P1 を修正
-        D->>X: /codex-review-fast --continue <threadId>
-        Note over X: コンテキスト保持
-        X-->>D: 修正確認 + Gate 更新
+        C->>C: すべての問題を修正
+        C->>X: --continue threadId
+        X-->>C: 再検証
     end
 
-    D->>X: /codex-test-review
-    X-->>D: カバレッジ + 提案
+    X-->>C: ✅ Ready
+    C->>C: /precommit（自動）
+    C-->>D: ✅ すべての Gate 通過
 
-    D->>C: /precommit
-    C-->>D: Gate + コミット準備完了
+    Note over H: stop-guard が review +<br/>precommit 通過まで停止をブロック
+```
 
-    opt PR 準備
-        D->>C: /pr-review
-        C-->>D: チェックリスト
+### プランニングチェーン
+
+対立型ブレインストーミングで Claude + Codex が独立調査と複数ラウンドの議論を経てナッシュ均衡に到達し、構造化された計画フェーズへ移行します。
+
+```mermaid
+flowchart LR
+    A["/codex-brainstorm<br/>ナッシュ均衡"] --> B["/feasibility-study"]
+    B --> C["/tech-spec"]
+    C --> D["/codex-architect"]
+    D --> E["実装準備完了"]
+```
+
+### ワークタイプ別トラック
+
+```mermaid
+flowchart TD
+    subgraph feat ["機能開発"]
+        F1["/feature-dev"] --> F2["コード + テスト"]
+        F2 --> F3["/verify"]
+        F3 --> F4["/codex-review-fast"]
+        F4 --> F5["/precommit"]
+        F5 --> F6["/update-docs"]
+    end
+
+    subgraph fix ["バグ修正"]
+        B1["/issue-analyze"] --> B2["/bug-fix"]
+        B2 --> B3["修正 + 回帰テスト"]
+        B3 --> B4["/verify"]
+        B4 --> B5["/codex-review-fast"]
+        B5 --> B6["/precommit"]
+    end
+
+    subgraph docs ["ドキュメントのみ"]
+        D1[".md を編集"] --> D2["/codex-review-doc"]
+        D2 --> D3["完了"]
     end
 ```
+
+### 運用ガバナンス
+
+```mermaid
+flowchart TD
+    S["/project-setup"] --> R["/repo-intake"]
+    R --> DEV["開発"]
+    DEV --> A["/project-audit<br/>ヘルススコア"]
+    DEV --> RA["/risk-assess<br/>破壊的変更"]
+    A --> N["/next-step"]
+    RA --> N
+    N --> |"--go"|AUTO["自動ディスパッチ"]
+```
+
+### 全体像
+
+```mermaid
+flowchart LR
+    P["計画"] --> B["構築"]
+    B --> G["ゲート"]
+    G --> S["出荷"]
+
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/pr-review<br/>/update-docs"]
+```
+
+### ワークフロー一覧
+
+| ワークフロー | トリガー | 主要コマンド | Gate | 実行レイヤー |
+|-------------|----------|-------------|------|-------------|
+| 機能開発 | 手動 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
+| バグ修正 | 手動 | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
+| Auto-Loop レビュー | コード編集 | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| ドキュメントレビュー | `.md` 編集 | `/codex-review-doc` | ✅/⛔ | Hook |
+| ドキュメント同期 | Precommit 通過 | `/update-docs` → `/create-request --update` | ✅/⚠️ | 動作レイヤー |
+| プランニング | 手動 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| リスク評価 | 手動 | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
+| オンボーディング | 初回利用 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
 ## コマンドリファレンス
 
@@ -148,6 +215,8 @@ sequenceDiagram
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依存パッケージのセキュリティ監査 |
+| `/project-audit` | プロジェクトヘルス監査（決定論的スコアリング） |
+| `/risk-assess` | 未コミットコードのリスク評価 |
 
 ### プランニング
 

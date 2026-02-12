@@ -55,8 +55,8 @@
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| Skills | 29 | project-setup, code-explore, next-step, skill-health-check |
+| Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -64,45 +64,112 @@
 
 ## Workflow
 
+### Auto-Loop：Edit → Review → Gate
+
+核心執行引擎。任何 code 編輯後，Claude **自動**在同一回覆中觸發 review——不需手動操作。Hooks 在所有 gate 通過前阻止停止。
+
 ```mermaid
 sequenceDiagram
     participant D as 開發者
     participant C as Claude
     participant X as Codex MCP
-    participant V as Verify
+    participant H as Hooks
 
-    D->>C: /project-setup
-    C-->>D: CLAUDE.md 已設定
-
-    D->>C: /repo-intake
-    C-->>D: 專案地圖
-
-    D->>D: 寫 code + 測試
-
-    D->>V: /verify
-    V-->>D: Pass/Fail + 修正建議
-
-    D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + Gate + threadId
+    D->>C: 編輯程式碼
+    H->>H: 追蹤檔案變更
+    C->>X: /codex-review-fast（自動）
+    X-->>C: P0/P1 發現
 
     alt 發現問題
-        D->>D: 修正 P0/P1
-        D->>X: /codex-review-fast --continue <threadId>
-        Note over X: Context 保留
-        X-->>D: 驗證修正 + 更新 Gate
+        C->>C: 修正所有問題
+        C->>X: --continue threadId
+        X-->>C: 重新驗證
     end
 
-    D->>X: /codex-test-review
-    X-->>D: Coverage + 建議
+    X-->>C: ✅ Ready
+    C->>C: /precommit（自動）
+    C-->>D: ✅ 所有 gate 通過
 
-    D->>C: /precommit
-    C-->>D: Gate + 準備 commit
+    Note over H: stop-guard 在 review +<br/>precommit 通過前阻止停止
+```
 
-    opt PR 準備
-        D->>C: /pr-review
-        C-->>D: Checklist
+### 規劃鏈
+
+對抗式 brainstorming 透過 Claude + Codex 獨立研究與多輪辯論達成 Nash Equilibrium，接著進入結構化規劃。
+
+```mermaid
+flowchart LR
+    A["/codex-brainstorm<br/>Nash Equilibrium"] --> B["/feasibility-study"]
+    B --> C["/tech-spec"]
+    C --> D["/codex-architect"]
+    D --> E["準備實作"]
+```
+
+### 工作類型路徑
+
+```mermaid
+flowchart TD
+    subgraph feat ["功能開發"]
+        F1["/feature-dev"] --> F2["寫 Code + 測試"]
+        F2 --> F3["/verify"]
+        F3 --> F4["/codex-review-fast"]
+        F4 --> F5["/precommit"]
+        F5 --> F6["/update-docs"]
+    end
+
+    subgraph fix ["Bug 修正"]
+        B1["/issue-analyze"] --> B2["/bug-fix"]
+        B2 --> B3["修正 + 迴歸測試"]
+        B3 --> B4["/verify"]
+        B4 --> B5["/codex-review-fast"]
+        B5 --> B6["/precommit"]
+    end
+
+    subgraph docs ["純文件"]
+        D1["編輯 .md"] --> D2["/codex-review-doc"]
+        D2 --> D3["完成"]
     end
 ```
+
+### 營運治理
+
+```mermaid
+flowchart TD
+    S["/project-setup"] --> R["/repo-intake"]
+    R --> DEV["開發"]
+    DEV --> A["/project-audit<br/>健康分數"]
+    DEV --> RA["/risk-assess<br/>破壞性變更"]
+    A --> N["/next-step"]
+    RA --> N
+    N --> |"--go"|AUTO["自動派發"]
+```
+
+### 一覽
+
+```mermaid
+flowchart LR
+    P["規劃"] --> B["建造"]
+    B --> G["閘門"]
+    G --> S["交付"]
+
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/pr-review<br/>/update-docs"]
+```
+
+### Workflow 目錄
+
+| Workflow | 觸發方式 | 主要指令 | Gate | 執行層 |
+|----------|----------|----------|------|--------|
+| 功能開發 | 手動 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 行為層 |
+| Bug 修正 | 手動 | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 行為層 |
+| Auto-Loop Review | Code 編輯 | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| 文件 Review | `.md` 編輯 | `/codex-review-doc` | ✅/⛔ | Hook |
+| 文件同步 | Precommit 通過 | `/update-docs` → `/create-request --update` | ✅/⚠️ | 行為層 |
+| 規劃 | 手動 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| 風險評估 | 手動 | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
+| 上手流程 | 首次使用 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
 ## 指令參考
 
@@ -148,6 +215,8 @@ sequenceDiagram
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依賴套件安全稽核 |
+| `/project-audit` | 專案健康審計（確定性評分） |
+| `/risk-assess` | 未提交程式碼風險評估 |
 
 ### 規劃
 

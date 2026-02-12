@@ -55,8 +55,8 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Commands | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| Skills | 29 | project-setup, code-explore, next-step, skill-health-check |
+| Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -64,45 +64,112 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 
 ## Workflow
 
+### Auto-Loop: Edit → Review → Gate
+
+El motor de ejecución central. Tras cualquier edición de código, Claude **automáticamente** dispara la revisión en la misma respuesta — sin pasos manuales. Los Hooks bloquean la detención hasta que todas las puertas pasen.
+
 ```mermaid
 sequenceDiagram
     participant D as Desarrollador
     participant C as Claude
     participant X as Codex MCP
-    participant V as Verify
+    participant H as Hooks
 
-    D->>C: /project-setup
-    C-->>D: CLAUDE.md configurado
-
-    D->>C: /repo-intake
-    C-->>D: Mapa del proyecto
-
-    D->>D: Escribir código + tests
-
-    D->>V: /verify
-    V-->>D: Pass/Fail + sugerencias
-
-    D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + Gate + threadId
+    D->>C: Editar código
+    H->>H: Rastrear cambio de archivo
+    C->>X: /codex-review-fast (auto)
+    X-->>C: P0/P1 hallazgos
 
     alt Issues encontrados
-        D->>D: Corregir P0/P1
-        D->>X: /codex-review-fast --continue <threadId>
-        Note over X: Contexto preservado
-        X-->>D: Verificar fix + actualizar Gate
+        C->>C: Corregir todos los issues
+        C->>X: --continue threadId
+        X-->>C: Re-verificar
     end
 
-    D->>X: /codex-test-review
-    X-->>D: Coverage + sugerencias
+    X-->>C: ✅ Ready
+    C->>C: /precommit (auto)
+    C-->>D: ✅ Todas las puertas pasaron
 
-    D->>C: /precommit
-    C-->>D: Gate + listo para commit
+    Note over H: stop-guard bloquea hasta que<br/>review + precommit pasen
+```
 
-    opt Preparación PR
-        D->>C: /pr-review
-        C-->>D: Checklist
+### Cadena de Planificación
+
+El brainstorming adversarial alcanza el Equilibrio de Nash mediante investigación independiente de Claude + Codex y debate en múltiples rondas, luego fluye hacia la planificación estructurada.
+
+```mermaid
+flowchart LR
+    A["/codex-brainstorm<br/>Equilibrio de Nash"] --> B["/feasibility-study"]
+    B --> C["/tech-spec"]
+    C --> D["/codex-architect"]
+    D --> E["Listo para implementar"]
+```
+
+### Tracks por tipo de trabajo
+
+```mermaid
+flowchart TD
+    subgraph feat ["Desarrollo de funcionalidad"]
+        F1["/feature-dev"] --> F2["Código + Tests"]
+        F2 --> F3["/verify"]
+        F3 --> F4["/codex-review-fast"]
+        F4 --> F5["/precommit"]
+        F5 --> F6["/update-docs"]
+    end
+
+    subgraph fix ["Corrección de bugs"]
+        B1["/issue-analyze"] --> B2["/bug-fix"]
+        B2 --> B3["Fix + Test de regresión"]
+        B3 --> B4["/verify"]
+        B4 --> B5["/codex-review-fast"]
+        B5 --> B6["/precommit"]
+    end
+
+    subgraph docs ["Solo documentación"]
+        D1["Editar .md"] --> D2["/codex-review-doc"]
+        D2 --> D3["Listo"]
     end
 ```
+
+### Gobernanza operativa
+
+```mermaid
+flowchart TD
+    S["/project-setup"] --> R["/repo-intake"]
+    R --> DEV["Desarrollar"]
+    DEV --> A["/project-audit<br/>Puntuación de salud"]
+    DEV --> RA["/risk-assess<br/>Cambios destructivos"]
+    A --> N["/next-step"]
+    RA --> N
+    N --> |"--go"|AUTO["Auto-despacho"]
+```
+
+### Vista general
+
+```mermaid
+flowchart LR
+    P["Planificar"] --> B["Construir"]
+    B --> G["Puerta"]
+    G --> S["Entregar"]
+
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/pr-review<br/>/update-docs"]
+```
+
+### Catálogo de workflows
+
+| Workflow | Disparador | Comandos principales | Gate | Capa de ejecución |
+|----------|-----------|---------------------|------|-------------------|
+| Desarrollo de funcionalidad | Manual | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Comportamiento |
+| Corrección de bugs | Manual | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Comportamiento |
+| Auto-Loop Review | Edición de código | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| Revisión de docs | Edición `.md` | `/codex-review-doc` | ✅/⛔ | Hook |
+| Sincronización de docs | Precommit aprobado | `/update-docs` → `/create-request --update` | ✅/⚠️ | Comportamiento |
+| Planificación | Manual | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| Evaluación de riesgos | Manual | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
+| Onboarding | Primer uso | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
 ## Referencia de comandos
 
@@ -148,6 +215,8 @@ sequenceDiagram
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | Auditoría de seguridad de dependencias |
+| `/project-audit` | Auditoría de salud del proyecto (puntuación determinista) |
+| `/risk-assess` | Evaluación de riesgos de código no commiteado |
 
 ### Planificación
 

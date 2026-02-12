@@ -55,8 +55,8 @@
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 45 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| 技能 | 29 | project-setup, code-explore, next-step, skill-health-check |
+| 命令 | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
+| 技能 | 31 | project-setup, code-explore, next-step, skill-health-check |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
 | 规则 | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
@@ -64,45 +64,112 @@
 
 ## 工作流
 
+### Auto-Loop：Edit → Review → Gate
+
+核心执行引擎。任何代码编辑后，Claude **自动**在同一回复中触发 review——无需手动操作。Hooks 在所有 gate 通过前阻止停止。
+
 ```mermaid
 sequenceDiagram
     participant D as 开发者
     participant C as Claude
     participant X as Codex MCP
-    participant V as Verify
+    participant H as Hooks
 
-    D->>C: /project-setup
-    C-->>D: CLAUDE.md 已配置
-
-    D->>C: /repo-intake
-    C-->>D: 项目全景图
-
-    D->>D: 编写代码 + 测试
-
-    D->>V: /verify
-    V-->>D: 通过/失败 + 修复建议
-
-    D->>X: /codex-review-fast
-    X-->>D: P0/P1/P2 + Gate + threadId
+    D->>C: 编辑代码
+    H->>H: 跟踪文件变更
+    C->>X: /codex-review-fast（自动）
+    X-->>C: P0/P1 发现
 
     alt 发现问题
-        D->>D: 修复 P0/P1
-        D->>X: /codex-review-fast --continue <threadId>
-        Note over X: 上下文保留
-        X-->>D: 验证修复 + 更新 Gate
+        C->>C: 修复所有问题
+        C->>X: --continue threadId
+        X-->>C: 重新验证
     end
 
-    D->>X: /codex-test-review
-    X-->>D: 覆盖率 + 建议
+    X-->>C: ✅ Ready
+    C->>C: /precommit（自动）
+    C-->>D: ✅ 所有 gate 通过
 
-    D->>C: /precommit
-    C-->>D: Gate + 准备提交
+    Note over H: stop-guard 在 review +<br/>precommit 通过前阻止停止
+```
 
-    opt PR 准备
-        D->>C: /pr-review
-        C-->>D: 检查清单
+### 规划链
+
+对抗式头脑风暴通过 Claude + Codex 独立研究与多轮辩论达成纳什均衡，随后进入结构化规划。
+
+```mermaid
+flowchart LR
+    A["/codex-brainstorm<br/>纳什均衡"] --> B["/feasibility-study"]
+    B --> C["/tech-spec"]
+    C --> D["/codex-architect"]
+    D --> E["准备实现"]
+```
+
+### 工作类型路径
+
+```mermaid
+flowchart TD
+    subgraph feat ["功能开发"]
+        F1["/feature-dev"] --> F2["编写代码 + 测试"]
+        F2 --> F3["/verify"]
+        F3 --> F4["/codex-review-fast"]
+        F4 --> F5["/precommit"]
+        F5 --> F6["/update-docs"]
+    end
+
+    subgraph fix ["缺陷修复"]
+        B1["/issue-analyze"] --> B2["/bug-fix"]
+        B2 --> B3["修复 + 回归测试"]
+        B3 --> B4["/verify"]
+        B4 --> B5["/codex-review-fast"]
+        B5 --> B6["/precommit"]
+    end
+
+    subgraph docs ["纯文档"]
+        D1["编辑 .md"] --> D2["/codex-review-doc"]
+        D2 --> D3["完成"]
     end
 ```
+
+### 运维治理
+
+```mermaid
+flowchart TD
+    S["/project-setup"] --> R["/repo-intake"]
+    R --> DEV["开发"]
+    DEV --> A["/project-audit<br/>健康评分"]
+    DEV --> RA["/risk-assess<br/>破坏性变更"]
+    A --> N["/next-step"]
+    RA --> N
+    N --> |"--go"|AUTO["自动分派"]
+```
+
+### 全局一览
+
+```mermaid
+flowchart LR
+    P["规划"] --> B["构建"]
+    B --> G["关卡"]
+    G --> S["交付"]
+
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/pr-review<br/>/update-docs"]
+```
+
+### 工作流目录
+
+| 工作流 | 触发方式 | 主要命令 | Gate | 执行层 |
+|--------|----------|----------|------|--------|
+| 功能开发 | 手动 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 行为层 |
+| 缺陷修复 | 手动 | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 行为层 |
+| Auto-Loop 审查 | 代码编辑 | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| 文档审查 | `.md` 编辑 | `/codex-review-doc` | ✅/⛔ | Hook |
+| 文档同步 | Precommit 通过 | `/update-docs` → `/create-request --update` | ✅/⚠️ | 行为层 |
+| 规划 | 手动 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| 风险评估 | 手动 | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
+| 入门引导 | 首次使用 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
 ## 命令参考
 
@@ -148,6 +215,8 @@ sequenceDiagram
 | `/precommit` | lint:fix -> build -> test:unit |
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依赖安全审计 |
+| `/project-audit` | 项目健康审计（确定性评分） |
+| `/risk-assess` | 未提交代码风险评估 |
 
 ### 规划
 
