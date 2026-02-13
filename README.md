@@ -58,9 +58,9 @@ This will detect your framework, package manager, database, entrypoints, and scr
 | Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| Scripts | 3 | precommit runner, verify runner, dep audit |
+| Scripts | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## Workflow
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | Hook | Trigger | Purpose |
 |------|---------|---------|
+| `namespace-hint` | SessionStart | Inject plugin command namespace guidance into Claude context |
 | `post-edit-format` | After Edit/Write | Auto prettier + invalidate review state on edit |
-| `post-tool-review-state` | After Bash / MCP tools | Track review state (sentinel routing) |
+| `post-tool-review-state` | After Bash / MCP tools | Track review state (sentinel routing, supports namespaced commands) |
 | `pre-edit-guard` | Before Edit/Write | Prevent editing .env/.git |
 | `stop-guard` | Before stop | Warn on incomplete reviews + stale-state git check (default: warn) |
 

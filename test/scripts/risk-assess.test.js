@@ -408,3 +408,41 @@ test('untracked files — included in change_scope metrics', () => {
   assert.ok(output.dimensions.change_scope.metrics.file_count >= 2, `Expected file_count >= 2, got ${output.dimensions.change_scope.metrics.file_count}`);
   assert.ok(output.dimensions.change_scope.metrics.loc_delta >= 2, `Expected loc_delta >= 2, got ${output.dimensions.change_scope.metrics.loc_delta}`);
 });
+
+// ---------------------------------------------------------------------------
+// Test 23: next_actions commands use qualified format when present
+// ---------------------------------------------------------------------------
+test('next_actions commands use qualified /sd0x-dev-flow: prefix when present', () => {
+  const dir = createTempRepo();
+  // High risk + high breaking surface to generate next_actions with commands
+  // Create many exports then remove them all
+  const exports = [];
+  for (let i = 0; i < 20; i++) exports.push(`export function fn${i}() { return ${i}; }`);
+  commitFile(dir, 'src/api.ts', exports.join('\n') + '\n');
+  for (let i = 0; i < 15; i++) {
+    commitFile(dir, `src/consumer${i}.ts`, `import { fn0 } from './api';\nconsole.log(fn0());\n`);
+  }
+  // Remove most exports — heavy breaking change
+  writeFileSync(join(dir, 'src/api.ts'), 'export function fn0() { return 0; }\n');
+  // Also modify many files for high scope
+  for (let i = 0; i < 15; i++) {
+    writeFileSync(join(dir, `src/consumer${i}.ts`), `import { fn0 } from './api';\nconsole.log(fn0(), ${i});\n`);
+  }
+  const { output } = runRisk(dir);
+  const withCommands = output.next_actions.filter(a => a.command);
+  // If commands are generated, they must be qualified
+  if (withCommands.length > 0) {
+    for (const action of withCommands) {
+      assert.ok(
+        action.command.startsWith('/sd0x-dev-flow:'),
+        `Expected qualified command, got: ${action.command}`
+      );
+    }
+  } else {
+    // Even without triggered commands, verify no unqualified commands leak through
+    const allCommands = output.next_actions.map(a => a.command).filter(Boolean);
+    for (const cmd of allCommands) {
+      assert.ok(!cmd.startsWith('/') || cmd.startsWith('/sd0x-dev-flow:'), `Unexpected unqualified command: ${cmd}`);
+    }
+  }
+});

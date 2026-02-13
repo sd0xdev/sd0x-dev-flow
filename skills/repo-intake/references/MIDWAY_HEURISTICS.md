@@ -26,7 +26,7 @@
 3. bootstrap.js/ts
 4. midway.config.ts/js
 5. package.json scripts (dev/build/test)
-6. test/ (_.test.ts / _.spec.ts)
+6. test/ (_.test.ts /_.spec.ts)
 
 ## Monorepo notes
 

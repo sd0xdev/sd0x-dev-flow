@@ -26,12 +26,14 @@
 Codex **must** perform its own research, not rely only on provided diff/context:
 
 ### Git Exploration (Priority)
+
 1. Check change status: `git status`
 2. Check changed files: `git diff --name-only HEAD`
 3. Check full changes for specific file: `git diff HEAD -- <file-path>`
 4. Check full content of changed files: `cat <changed file> | head -200`
 
 ### Project Research
+
 - Search called functions: `grep -r "functionName" src/ -l | head -10`
 - Read related files: `cat <file-path> | head -100`
 - Understand class definitions: `grep -A 20 "class ClassName" src/`

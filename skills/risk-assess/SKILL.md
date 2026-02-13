@@ -54,6 +54,7 @@ The script analyzes 3 dimensions + 2 conditional flags:
 ### Script Failure Fallback
 
 If the script fails, report the error and suggest running manually:
+
 ```bash
 node skills/risk-assess/scripts/risk-analyze.js --json
 ```

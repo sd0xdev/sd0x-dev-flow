@@ -100,21 +100,21 @@ check_passed() {
 # === Process different commands ===
 
 # /codex-review-fast or /codex-review
-if echo "$COMMAND" | grep -qE '/codex-review(-fast)?($|\s)'; then
+if echo "$COMMAND" | grep -qE '/(sd0x-dev-flow:)?codex-review(-fast)?($|\s)'; then
   passed=$(check_passed "$TOOL_OUTPUT")
   update_state "code_review" "true" "$passed"
   echo "[Review State] code_review updated: passed=$passed" >&2
 fi
 
 # /codex-review-doc or /review-spec
-if echo "$COMMAND" | grep -qE '/codex-review-doc|/review-spec'; then
+if echo "$COMMAND" | grep -qE '/(sd0x-dev-flow:)?codex-review-doc($|[[:space:]])|/(sd0x-dev-flow:)?review-spec($|[[:space:]])'; then
   passed=$(check_passed "$TOOL_OUTPUT")
   update_state "doc_review" "true" "$passed"
   echo "[Review State] doc_review updated: passed=$passed" >&2
 fi
 
 # /precommit or /precommit-fast
-if echo "$COMMAND" | grep -qE '/precommit(-fast)?($|\s)'; then
+if echo "$COMMAND" | grep -qE '/(sd0x-dev-flow:)?precommit(-fast)?($|\s)'; then
   passed=$(check_passed "$TOOL_OUTPUT")
   update_state "precommit" "true" "$passed"
   echo "[Review State] precommit updated: passed=$passed" >&2

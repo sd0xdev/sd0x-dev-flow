@@ -50,6 +50,7 @@ The audit script runs 12 deterministic checks across 5 dimensions:
 ### Script Failure Fallback
 
 If the script fails, report the error and suggest running manually:
+
 ```bash
 node skills/project-audit/scripts/audit.js --json
 ```

@@ -58,9 +58,9 @@
 | コマンド | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | スキル | 31 | project-setup, code-explore, next-step, skill-health-check |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
-| フック | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| スクリプト | 3 | precommit runner, verify runner, dep audit |
+| スクリプト | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## ワークフロー
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | フック | トリガー | 用途 |
 |--------|----------|------|
+| `namespace-hint` | SessionStart | プラグインコマンドの名前空間ガイダンスを Claude context に注入 |
 | `post-edit-format` | Edit/Write 後 | 自動 prettier + 編集時にレビュー状態をリセット |
-| `post-tool-review-state` | Bash / MCP ツール後 | レビュー状態の追跡（sentinel ルーティング） |
+| `post-tool-review-state` | Bash / MCP ツール後 | レビュー状態の追跡（sentinel ルーティング、名前空間コマンド対応） |
 | `pre-edit-guard` | Edit/Write 前 | .env/.git の編集を防止 |
 | `stop-guard` | 停止前 | 未完了レビュー時に警告 + stale-state git チェック（デフォルト：warn） |
 

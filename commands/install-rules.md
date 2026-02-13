@@ -13,6 +13,8 @@ allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash
 
 Install sd0x-dev-flow plugin rules into the current project's `.claude/rules/` directory so they persist even without the plugin loaded.
 
+> **Note**: Installed rules are behavioral guidance for Claude. They reference commands in short form (`/codex-review-fast`). When the sd0x-dev-flow plugin is loaded, commands are auto-namespaced as `/sd0x-dev-flow:codex-review-fast`. For full command execution support, install the plugin or use `/install-hooks` to set up the SessionStart hook that provides namespace mapping.
+
 ### Workflow
 
 ```mermaid
@@ -52,10 +54,12 @@ $ARGUMENTS
 Find the plugin's `rules/` directory using this priority:
 
 1. **Glob search** — search known Claude plugin locations in order, short-circuit on first match:
+
    ```
    Glob: ~/.claude/plugins/**/sd0x-dev-flow/rules/auto-loop.md
    Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/rules/auto-loop.md
    ```
+
 2. **Plugin-relative fallback** — since this command is loaded from the plugin, try reading `@rules/auto-loop.md` to confirm the plugin's rules are accessible. If readable, derive the rules directory by resolving the path returned (parent of `auto-loop.md`).
 3. **Error** — if no rules directory found, report error and stop.
 
@@ -91,6 +95,7 @@ If `--list` is specified, output this table and **stop**.
 Use the repo root from Context (Phase 0) to build absolute paths. All paths below use `REPO_ROOT` from `git rev-parse --show-toplevel`.
 
 1. Ensure target directory exists:
+
    ```bash
    mkdir -p ${REPO_ROOT}/.claude/rules
    ```

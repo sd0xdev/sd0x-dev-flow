@@ -614,6 +614,78 @@ test('D1: security review with ⛔ Needs revision but no ## Document Review does
   assert.equal(existsSync(statePath), false, 'security review with ⛔ Needs revision but no ## Document Review header should not set doc_review');
 });
 
+// =============================================================================
+// Qualified (namespaced) command tests — /sd0x-dev-flow:command
+// =============================================================================
+
+test('/sd0x-dev-flow:codex-review-fast pass sets code_review passed true', () => {
+  const workDir = makeTempDir('sd0x-post-tool-qual-code-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/sd0x-dev-flow:codex-review-fast' },
+      tool_output: '## Gate: \u2705',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true, 'qualified codex-review-fast should set code_review');
+});
+
+test('/sd0x-dev-flow:codex-review-doc pass sets doc_review passed true', () => {
+  const workDir = makeTempDir('sd0x-post-tool-qual-doc-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/sd0x-dev-flow:codex-review-doc' },
+      tool_output: '\u2705 All Pass',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, true, 'qualified codex-review-doc should set doc_review');
+});
+
+test('/sd0x-dev-flow:precommit pass sets precommit passed true', () => {
+  const workDir = makeTempDir('sd0x-post-tool-qual-pre-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/sd0x-dev-flow:precommit' },
+      tool_output: '## Overall: \u2705 PASS',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.precommit.passed, true, 'qualified precommit should set precommit');
+});
+
+test('/sd0x-dev-flow:review-spec pass sets doc_review passed true', () => {
+  const workDir = makeTempDir('sd0x-post-tool-qual-review-spec-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/sd0x-dev-flow:review-spec' },
+      tool_output: '\u2705 All Pass',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, true, 'qualified review-spec should set doc_review');
+});
+
 test('MCP doc review mentioning OWASP still sets doc_review (regression)', () => {
   const workDir = makeTempDir('sd0x-post-tool-mcp-doc-owasp-');
   const binDir = setupStubBin();

@@ -318,7 +318,7 @@ test('next_actions — /create-request suggested when >= 3 P0+P1', () => {
   assert.ok(p0p1Count >= 3, `Expected >= 3 P0+P1, got ${p0p1Count}`);
   const createReq = output.next_actions.find(a => a.id === 'create-request');
   assert.ok(createReq, 'next_actions should include create-request');
-  assert.equal(createReq.command, '/create-request');
+  assert.equal(createReq.command, '/sd0x-dev-flow:create-request');
 });
 
 // ---------------------------------------------------------------------------
@@ -844,4 +844,21 @@ test('docs-heavy boundary — 29 .md files does not qualify (need >= 30)', () =>
   const { output } = runAudit(dir);
   const check = output.checks.find(c => c.id === 'robustness-lint-typecheck');
   assert.equal(check.result, 'fail', `29 docs should not qualify as docs-heavy, got ${check.result}: ${check.message}`);
+});
+
+// ---------------------------------------------------------------------------
+// Test 43: next_actions commands use qualified format
+// ---------------------------------------------------------------------------
+test('next_actions commands use qualified /sd0x-dev-flow: prefix', () => {
+  const dir = createTempRepo();
+  // Empty repo generates many findings → next_actions with commands
+  const { output } = runAudit(dir);
+  const withCommands = output.next_actions.filter(a => a.command);
+  assert.ok(withCommands.length > 0, 'Should have next_actions with commands');
+  for (const action of withCommands) {
+    assert.ok(
+      action.command.startsWith('/sd0x-dev-flow:'),
+      `Expected qualified command, got: ${action.command}`
+    );
+  }
 });

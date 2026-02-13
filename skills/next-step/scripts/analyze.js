@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runCapture, gitRepoRoot, gitShortHead } = require('../../../scripts/lib/utils');
+const { runCapture, gitRepoRoot, gitShortHead, qualifyCommand } = require('../../../scripts/lib/utils');
 
 // ---------------------------------------------------------------------------
 // File classification config (language-agnostic)
@@ -288,7 +288,7 @@ function buildNextActions(findings, phase, featureCtx) {
       const argTokens = afterCmd.split(/\s+/).filter(t => t.startsWith('--') || t.includes('/') || t.includes('.'));
       actions.push({
         id: f.id,
-        command: cmd,
+        command: qualifyCommand(cmd),
         args: argTokens.length > 0 ? argTokens.join(' ') : null,
         reason: f.message,
         confidence: f.priority === 'P0' ? 1.0 : 0.8,
@@ -301,7 +301,7 @@ function buildNextActions(findings, phase, featureCtx) {
     if (featureCtx.has_tech_spec) {
       actions.push({
         id: 'doc-sync',
-        command: '/update-docs',
+        command: qualifyCommand('/update-docs'),
         args: `${featureCtx.docs_path}/2-tech-spec.md`,
         reason: 'Precommit passed — sync docs with code changes',
         confidence: 0.9,
@@ -310,7 +310,7 @@ function buildNextActions(findings, phase, featureCtx) {
     if (featureCtx.has_requests) {
       actions.push({
         id: 'request-update',
-        command: '/create-request',
+        command: qualifyCommand('/create-request'),
         args: '--update',
         reason: 'Precommit passed — update request status',
         confidence: 0.8,

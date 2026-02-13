@@ -58,9 +58,9 @@
 | 命令 | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | 技能 | 31 | project-setup, code-explore, next-step, skill-health-check |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
-| 钩子 | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| 钩子 | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | 规则 | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| 脚本 | 3 | precommit runner, verify runner, dep audit |
+| 脚本 | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## 工作流
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | 钩子 | 触发时机 | 用途 |
 |------|----------|------|
+| `namespace-hint` | SessionStart | 在 Claude context 中注入插件命令命名空间指引 |
 | `post-edit-format` | 编辑/写入之后 | 自动格式化 + 编辑后重置审查状态 |
-| `post-tool-review-state` | Bash / MCP 工具之后 | 追踪审查状态（sentinel 路由） |
+| `post-tool-review-state` | Bash / MCP 工具之后 | 追踪审查状态（sentinel 路由，支持命名空间命令） |
 | `pre-edit-guard` | 编辑/写入之前 | 禁止编辑 .env/.git |
 | `stop-guard` | 停止之前 | 未完成审查时告警 + stale-state git 检查（默认：warn） |
 

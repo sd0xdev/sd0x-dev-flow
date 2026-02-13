@@ -58,9 +58,9 @@
 | Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| Scripts | 3 | precommit runner, verify runner, dep audit |
+| Scripts | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## 워크플로
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | Hook | 트리거 | 용도 |
 |------|--------|------|
+| `namespace-hint` | SessionStart | Claude context에 플러그인 명령어 네임스페이스 안내를 주입 |
 | `post-edit-format` | Edit/Write 후 | 자동 prettier + 편집 시 리뷰 상태 리셋 |
-| `post-tool-review-state` | Bash / MCP 도구 후 | 리뷰 상태 트래킹 (sentinel 라우팅) |
+| `post-tool-review-state` | Bash / MCP 도구 후 | 리뷰 상태 트래킹 (sentinel 라우팅, 네임스페이스 명령어 지원) |
 | `pre-edit-guard` | Edit/Write 전 | .env/.git 편집 방지 |
 | `stop-guard` | 중지 전 | 리뷰 미완료 시 경고 + stale-state git 체크 (기본값: warn) |
 

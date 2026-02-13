@@ -58,9 +58,9 @@
 | Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| Scripts | 3 | precommit runner, verify runner, dep audit |
+| Scripts | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## Workflow
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | Hook | 觸發時機 | 用途 |
 |------|----------|------|
+| `namespace-hint` | SessionStart | 在 Claude context 中注入外掛指令命名空間指引 |
 | `post-edit-format` | Edit/Write 之後 | 自動 prettier + 編輯後重設 review 狀態 |
-| `post-tool-review-state` | Bash / MCP 工具之後 | 追蹤 review 狀態（sentinel routing） |
+| `post-tool-review-state` | Bash / MCP 工具之後 | 追蹤 review 狀態（sentinel routing，支援命名空間指令） |
 | `pre-edit-guard` | Edit/Write 之前 | 防止編輯 .env/.git |
 | `stop-guard` | 停止之前 | 未完成 review 時警告 + stale-state git 檢查（預設：warn） |
 

@@ -920,3 +920,28 @@ test('Nearly Complete status — request-stale fires, no feature-complete', () =
   const fc = output.findings.find(f => f.id === 'feature-complete');
   assert.ok(!fc, 'feature-complete should NOT fire when request-stale exists');
 });
+
+// ---------------------------------------------------------------------------
+// Test 36: next_actions commands use qualified format
+// ---------------------------------------------------------------------------
+test('next_actions commands use qualified /sd0x-dev-flow: prefix', () => {
+  const dir = createTempRepo();
+  // Code changed, no review → P0 findings → next_actions with commands
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  addAndCommitFile(dir, 'src/foo.js', 'a');
+  writeFileSync(join(dir, 'src/foo.js'), 'b');
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: false, passed: false, last_run: '' },
+  });
+
+  const { output } = runAnalyze(dir);
+  const withCommands = output.next_actions.filter(a => a.command);
+  assert.ok(withCommands.length > 0, 'Should have next_actions with commands');
+  for (const action of withCommands) {
+    assert.ok(
+      action.command.startsWith('/sd0x-dev-flow:'),
+      `Expected qualified command, got: ${action.command}`
+    );
+  }
+});

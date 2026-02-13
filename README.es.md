@@ -58,9 +58,9 @@ Detecta framework, package manager, base de datos, entry points y scripts, y act
 | Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
 | Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 4 | pre-edit-guard, auto-format, review state tracking, stop guard |
+| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| Scripts | 3 | precommit runner, verify runner, dep audit |
+| Scripts | 4 | precommit runner, verify runner, dep audit, namespace hint |
 
 ## Workflow
 
@@ -264,8 +264,9 @@ flowchart LR
 
 | Hook | Trigger | Propósito |
 |------|---------|-----------|
+| `namespace-hint` | SessionStart | Inyectar guía de namespace de comandos del plugin en el contexto de Claude |
 | `post-edit-format` | Después de Edit/Write | Auto prettier + invalidar estado de review al editar |
-| `post-tool-review-state` | Después de Bash / herramientas MCP | Tracking de estado de review (sentinel routing) |
+| `post-tool-review-state` | Después de Bash / herramientas MCP | Tracking de estado de review (sentinel routing, soporte de comandos con namespace) |
 | `pre-edit-guard` | Antes de Edit/Write | Prevenir edición de .env/.git |
 | `stop-guard` | Antes de detener | Advertir si hay reviews incompletos + verificación stale-state git (default: warn) |
 

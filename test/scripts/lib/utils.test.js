@@ -19,6 +19,8 @@ const {
   ensureDir,
   writeText,
   appendLog,
+  getPluginName,
+  qualifyCommand,
 } = require('../../../scripts/lib/utils');
 
 const tempDirs = [];
@@ -274,4 +276,32 @@ test('appendLog appends to file', () => {
   appendLog(filePath, 'line1\n');
   appendLog(filePath, 'line2\n');
   assert.equal(readFileSync(filePath, 'utf8'), 'line1\nline2\n');
+});
+
+// =============================================================================
+// getPluginName / qualifyCommand
+// =============================================================================
+
+test('getPluginName returns sd0x-dev-flow from plugin.json', () => {
+  const name = getPluginName();
+  assert.equal(name, 'sd0x-dev-flow');
+});
+
+test('qualifyCommand prefixes short-form commands', () => {
+  assert.equal(qualifyCommand('/codex-review-fast'), '/sd0x-dev-flow:codex-review-fast');
+  assert.equal(qualifyCommand('/precommit'), '/sd0x-dev-flow:precommit');
+  assert.equal(qualifyCommand('/update-docs'), '/sd0x-dev-flow:update-docs');
+});
+
+test('qualifyCommand returns already-qualified commands unchanged', () => {
+  assert.equal(
+    qualifyCommand('/sd0x-dev-flow:codex-review-fast'),
+    '/sd0x-dev-flow:codex-review-fast'
+  );
+});
+
+test('qualifyCommand returns non-slash inputs unchanged', () => {
+  assert.equal(qualifyCommand('foo'), 'foo');
+  assert.equal(qualifyCommand(''), '');
+  assert.equal(qualifyCommand(null), null);
 });

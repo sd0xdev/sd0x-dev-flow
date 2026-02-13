@@ -406,6 +406,106 @@ test('transcript warn: review blocked without subsequent pass allows', () => {
 });
 
 // =============================================================================
+// Qualified (namespaced) command tests — /sd0x-dev-flow:command in transcript
+// =============================================================================
+
+test('transcript: qualified /sd0x-dev-flow:codex-review-fast detected', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-qual-review-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /sd0x-dev-flow:codex-review-fast',
+    '## Gate: \u2705',
+    'user: /sd0x-dev-flow:precommit',
+    '## Overall: \u2705 PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'qualified commands should be detected in transcript');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('transcript: qualified /sd0x-dev-flow:codex-review-doc detected for doc change', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-qual-doc-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"docs/guide.md"}}',
+    'user: /sd0x-dev-flow:codex-review-doc',
+    '\u2705 Mergeable',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'qualified doc review should be detected');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('transcript: qualified /sd0x-dev-flow:precommit FAIL blocks', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-qual-pre-fail-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /sd0x-dev-flow:codex-review-fast',
+    '## Gate: \u2705',
+    'user: /sd0x-dev-flow:precommit',
+    '## Overall: \u26d4 FAIL',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'qualified precommit FAIL should block');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.reason, /Precommit not passed/);
+});
+
+// =============================================================================
+// Regression: code change + only doc review must still block
+// =============================================================================
+
+test('transcript: code change with only /codex-review-doc still requires code review', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-doc-review-code-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-doc',
+    '\u2705 Mergeable',
+    'user: /precommit',
+    '## Overall: \u2705 PASS',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'code change with only doc review should block');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.match(payload.description, /codex-review-fast/, 'should specifically require code review');
+});
+
+// =============================================================================
 // Review sentinel recency (last verdict wins)
 // =============================================================================
 

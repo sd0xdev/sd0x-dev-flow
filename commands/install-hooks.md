@@ -55,10 +55,12 @@ $ARGUMENTS
 Find the plugin's `hooks/` directory using this priority (short-circuit on first match):
 
 1. **Glob search** — search known Claude plugin locations:
+
    ```
    Glob: ~/.claude/plugins/**/sd0x-dev-flow/hooks/pre-edit-guard.sh
    Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/hooks/pre-edit-guard.sh
    ```
+
 2. **Plugin-relative fallback** — since this command is loaded from the plugin, try reading `@hooks/pre-edit-guard.sh` to confirm accessibility. If readable, derive the hooks directory by resolving the path returned (parent of `pre-edit-guard.sh`).
 3. **Error** — if no hooks directory found, report error and stop.
 
@@ -88,6 +90,7 @@ Use `REPO_ROOT` from `git rev-parse --show-toplevel` for all absolute paths.
 #### Phase 4a: Copy Scripts
 
 1. Ensure target directory exists:
+
    ```bash
    mkdir -p ${REPO_ROOT}/.claude/hooks
    ```
@@ -136,7 +139,7 @@ Merge strategy:
 - `--force` semantics: **Replace** the existing entry at the same matcher (not append a duplicate). Remove the old entry, then add the new one.
 - Write updated settings back
 
-4. If `--dry-run`, output the plan table and **stop** (do not write any files).
+1. If `--dry-run`, output the plan table and **stop** (do not write any files).
 
 ### Phase 5: Output Report
 

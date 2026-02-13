@@ -134,7 +134,7 @@ Edit CLAUDE.md:
 
 Replace all 9 placeholders in order.
 
-3. If CLAUDE.md does not yet exist, copy from the plugin's CLAUDE.md template to the project root.
+1. If CLAUDE.md does not yet exist, copy from the plugin's CLAUDE.md template to the project root.
 
 ## Phase 4: Verify
 
@@ -145,7 +145,7 @@ Replace all 9 placeholders in order.
 Grep: \{[A-Z_]+\} in CLAUDE.md
 ```
 
-3. Output results:
+1. Output results:
 
 ```markdown
 ## Setup Complete

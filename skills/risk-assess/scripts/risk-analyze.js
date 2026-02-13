@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runCapture, gitRepoRoot, gitShortHead } = require('../../../scripts/lib/utils');
+const { runCapture, gitRepoRoot, gitShortHead, qualifyCommand } = require('../../../scripts/lib/utils');
 
 // ---------------------------------------------------------------------------
 // File classification config (language-agnostic)
@@ -547,7 +547,7 @@ function buildNextActions(level, breakingSurface, blastRadius, migrationSafety) 
   if (level === 'High' || level === 'Critical') {
     actions.push({
       action: 'Run deep mode for full analysis',
-      command: '/risk-assess --mode deep',
+      command: qualifyCommand('/risk-assess') + ' --mode deep',
       reason: `Risk level is ${level} — deep analysis recommended`,
     });
   }
@@ -555,7 +555,7 @@ function buildNextActions(level, breakingSurface, blastRadius, migrationSafety) 
   if (breakingSurface.score >= 50) {
     actions.push({
       action: 'Review breaking changes',
-      command: '/codex-review-fast',
+      command: qualifyCommand('/codex-review-fast'),
       reason: `${breakingSurface.signals.length} breaking change signals detected`,
     });
   }

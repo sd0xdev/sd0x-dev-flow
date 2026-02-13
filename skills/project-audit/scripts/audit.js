@@ -3,7 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runCapture, gitRepoRoot } = require('../../../scripts/lib/utils');
+const { runCapture, gitRepoRoot, qualifyCommand } = require('../../../scripts/lib/utils');
 
 // ---------------------------------------------------------------------------
 // File classification config (language-agnostic)
@@ -601,9 +601,9 @@ function buildNextActions(checks) {
   for (const c of failed.slice(0, 5)) {
     const action = { id: c.id, command: null, reason: c.suggestion || c.message, confidence: 0 };
     // Map specific checks to commands
-    if (c.id === 'oss-readme') { action.command = '/update-docs'; action.confidence = 0.8; }
+    if (c.id === 'oss-readme') { action.command = qualifyCommand('/update-docs'); action.confidence = 0.8; }
     else if (c.id === 'robustness-ci') { action.confidence = 0.6; }
-    else if (c.id === 'robustness-test-ratio') { action.command = '/codex-test-gen'; action.confidence = 0.7; }
+    else if (c.id === 'robustness-test-ratio') { action.command = qualifyCommand('/codex-test-gen'); action.confidence = 0.7; }
     else if (c.id === 'runnability-manifest') { action.confidence = 0.9; }
     else { action.confidence = 0.5; }
     actions.push(action);
@@ -614,7 +614,7 @@ function buildNextActions(checks) {
   if (p0p1Count >= 3) {
     actions.push({
       id: 'create-request',
-      command: '/create-request',
+      command: qualifyCommand('/create-request'),
       reason: `${p0p1Count} critical findings — create a request to track remediation`,
       confidence: 0.7,
     });
