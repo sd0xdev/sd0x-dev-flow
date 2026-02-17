@@ -46,17 +46,16 @@ intent:
 
 ### Step 1: Check for runner script
 
-First, check if `scripts/verify-runner.js` exists in the project root. If the file exists, run it:
+Use Glob to check if `.claude/scripts/verify-runner.js` exists in the project root.
 
-```bash
-node scripts/verify-runner.js $ARGUMENTS
-```
-
-If it succeeds, use its output and skip to the Output section.
+- **Found** → run: `node .claude/scripts/verify-runner.js $ARGUMENTS`
+  - If runner succeeds, use its output and skip to the Output section.
+  - If runner **fails**, treat as a real verification failure (do not silently fallback).
+- **NOT found** → skip to Step 2 (do NOT attempt to run the runner).
 
 ### Step 2: Fallback (no runner script)
 
-If `scripts/verify-runner.js` does not exist, **skip Step 1 entirely** and detect the project ecosystem to run steps manually.
+If the runner was not found in Step 1, detect the project ecosystem to run steps manually.
 
 **Ecosystem detection** (check project root for manifest files):
 

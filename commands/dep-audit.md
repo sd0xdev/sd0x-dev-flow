@@ -28,17 +28,16 @@ $ARGUMENTS = optional parameters
 
 ### Step 1: Check for audit script
 
-First, check if `scripts/dep-audit.sh` exists in the project root. If the file exists, run it:
+Use Glob to check if `.claude/scripts/dep-audit.sh` exists in the project root.
 
-```bash
-bash scripts/dep-audit.sh $ARGUMENTS
-```
-
-If it succeeds, use its output and skip to the Output section.
+- **Found** → run: `bash .claude/scripts/dep-audit.sh $ARGUMENTS`
+  - If script succeeds, use its output and skip to the Output section.
+  - If script **fails**, treat as a real audit failure (do not silently fallback).
+- **NOT found** → skip to Step 2 (do NOT attempt to run the script).
 
 ### Step 2: Fallback (no audit script)
 
-If the script does not exist, detect the project ecosystem and run the audit manually.
+If the script was not found in Step 1, detect the project ecosystem and run the audit manually.
 
 **Ecosystem detection** (check project root for manifest files):
 
