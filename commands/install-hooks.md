@@ -9,6 +9,7 @@ allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash
 - Repo root: !`git rev-parse --show-toplevel`
 - Existing local hooks: !`ls .claude/hooks/ 2>/dev/null || echo "(none)"`
 - Settings file: !`ls .claude/settings.json 2>/dev/null || echo "(none)"`
+- Local settings file: !`ls .claude/settings.local.json 2>/dev/null || echo "(none)"`
 
 ## Task
 
@@ -75,6 +76,8 @@ Read all `.sh` files from the discovered hooks directory. The available hooks ar
 | `post-tool-review-state.sh` | PostToolUse | Bash, mcp__codex__codex, mcp__codex__codex-reply | Parse review results, update state file |
 | `stop-guard.sh` | Stop | — | Check review + precommit completed before stop |
 
+> **Note**: The plugin's `SessionStart` hook (`namespace-hint.sh`) is intentionally excluded — it emits plugin-namespaced command guidance (`/sd0x-dev-flow:...`) which is incorrect for local installations where commands are accessed without namespace prefix.
+
 If `--list` is specified, output this table and **stop**.
 
 ### Phase 3: Determine Installation Set
@@ -86,6 +89,8 @@ If `--list` is specified, output this table and **stop**.
 ### Phase 4: Check Conflicts and Install
 
 Use `REPO_ROOT` from `git rev-parse --show-toplevel` for all absolute paths.
+
+If `--dry-run`, compute the install plan (conflict detection, merge preview) without writing any files, output the plan table, and **stop**.
 
 #### Phase 4a: Copy Scripts
 
@@ -109,20 +114,20 @@ Use `REPO_ROOT` from `git rev-parse --show-toplevel` for all absolute paths.
 
 Target file: `${REPO_ROOT}/.claude/settings.json` (or `settings.local.json` with `--local`).
 
-Hook definition mapping (use relative paths from repo root):
+Hook definition mapping (use `$CLAUDE_PROJECT_DIR` for CWD-independent paths — [official pattern](https://code.claude.com/docs/en/hooks)):
 
 ```json
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": ".claude/hooks/pre-edit-guard.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-edit-guard.sh"}]}
     ],
     "PostToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": ".claude/hooks/post-edit-format.sh"}]},
-      {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": ".claude/hooks/post-tool-review-state.sh"}]}
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-format.sh"}]},
+      {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-tool-review-state.sh"}]}
     ],
     "Stop": [
-      {"matcher": "", "hooks": [{"type": "command", "command": ".claude/hooks/stop-guard.sh"}]}
+      {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
     ]
   }
 }
@@ -130,6 +135,7 @@ Hook definition mapping (use relative paths from repo root):
 
 Merge strategy:
 - Read existing settings file (create `{}` if not exists)
+- **Legacy migration** (always, before merge): scan the target settings file for bare relative paths `.claude/hooks/<name>.sh` in hook commands and upgrade to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/<name>.sh`. Also scan the **other** settings file (e.g., if writing to `settings.json`, also check `settings.local.json` and vice versa) — **warn** if legacy entries are found there, but do not auto-write the non-target file.
 - For each event (PreToolUse/PostToolUse/Stop):
   - If no existing entries for this event → add all
   - If existing entries: check each hook's `command` path
@@ -138,8 +144,6 @@ Merge strategy:
     - No matching entry → **Append**
 - `--force` semantics: **Replace** the existing entry at the same matcher (not append a duplicate). Remove the old entry, then add the new one.
 - Write updated settings back
-
-1. If `--dry-run`, output the plan table and **stop** (do not write any files).
 
 ### Phase 5: Output Report
 
@@ -150,7 +154,7 @@ Merge strategy:
 
 **Source**: <plugin-hooks-path>
 **Scripts**: <repo-root>/.claude/hooks/
-**Settings**: <repo-root>/.claude/settings.json
+**Settings**: <actual-target-settings-path>
 
 | Hook | Script | Settings | Status |
 |------|--------|----------|--------|
@@ -164,7 +168,7 @@ Merge strategy:
 ### Next Steps
 
 - Review any skipped conflicts manually
-- Hooks in `.claude/settings.json` are auto-loaded by Claude Code for this project
+- Hooks in the target settings file are auto-loaded by Claude Code for this project
 - Use `HOOK_BYPASS=1` as emergency escape hatch
 - Set `STOP_GUARD_MODE=strict` to enable blocking mode (default: warn)
 ```

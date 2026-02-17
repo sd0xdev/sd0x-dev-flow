@@ -1,7 +1,7 @@
 {
   "name": "sd0x-dev-flow",
   "description": "Development workflow plugin with 90+ tools for code review, testing, investigation, and DevOps automation.",
-  "version": "1.0.23",
+  "version": "1.0.24",
   "author": { "name": "sd0xdev" },
   "license": "MIT",
   "keywords": [

@@ -13,7 +13,7 @@ allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash
 
 Install sd0x-dev-flow plugin rules into the current project's `.claude/rules/` directory so they persist even without the plugin loaded.
 
-> **Note**: Installed rules are behavioral guidance for Claude. They reference commands in short form (`/codex-review-fast`). When the sd0x-dev-flow plugin is loaded, commands are auto-namespaced as `/sd0x-dev-flow:codex-review-fast`. For full command execution support, install the plugin or use `/install-hooks` to set up the SessionStart hook that provides namespace mapping.
+> **Note**: Installed rules are behavioral guidance for Claude. They reference commands in short form (`/codex-review-fast`). When the sd0x-dev-flow plugin is loaded, commands are auto-namespaced as `/sd0x-dev-flow:codex-review-fast`. For full command execution support without the plugin, also run `/install-hooks` to set up the hook scripts locally.
 
 ### Workflow
 
