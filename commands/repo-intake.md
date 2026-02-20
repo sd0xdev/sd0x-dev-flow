@@ -33,7 +33,7 @@ if [ -f "$CACHE_DIR"/*/LATEST.json ]; then
 fi
 
 # Step 2: Run scan
-node skills/repo-intake/scripts/intake_cached.js --mode auto --top 10
+bash scripts/run-skill.sh repo-intake intake_cached.js --mode auto --top 10
 
 # Step 3: If save parameter provided, write to docs
 # Output to docs/ai/intake/$(date +%F)-intake.md

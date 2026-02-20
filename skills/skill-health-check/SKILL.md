@@ -31,7 +31,7 @@ Run automated lint → Review manual dimensions → Produce integrated report �
 ### Step 1: Automated Lint
 
 ```bash
-node skills/skill-health-check/scripts/skill-lint.js --fix-hint
+bash scripts/run-skill.sh skill-health-check skill-lint.js --fix-hint
 ```
 
 **Script I/O contract:**

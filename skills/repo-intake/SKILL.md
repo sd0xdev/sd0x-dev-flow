@@ -30,7 +30,7 @@ Docs -> Entrypoints -> Tests Map -> Next Steps
 ## Usage
 
 ```bash
-node skills/repo-intake/scripts/intake_cached.js --mode auto --top 10
+bash scripts/run-skill.sh repo-intake intake_cached.js --mode auto --top 10
 ```
 
 ## Cache Location

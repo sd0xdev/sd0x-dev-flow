@@ -49,7 +49,7 @@
 /project-setup
 ```
 
-這會偵測你的 framework、package manager、資料庫、entry point 和 script 指令，然後相應更新 `CLAUDE.md`。
+這會偵測你的 framework、package manager、資料庫、entry point 和 script 指令，然後相應更新 `.claude/CLAUDE.md`。
 
 ## 包含內容
 
@@ -286,7 +286,7 @@ Hook 預設是安全的。使用環境變數自訂行為：
 
 ## 自訂設定
 
-執行 `/project-setup` 自動偵測並設定所有 placeholder，或手動編輯 `CLAUDE.md`：
+執行 `/project-setup` 自動偵測並設定所有 placeholder，或手動編輯 `.claude/CLAUDE.md`：
 
 | Placeholder | 說明 | 範例 |
 |-------------|------|------|

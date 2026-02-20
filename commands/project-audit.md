@@ -1,6 +1,6 @@
 ---
 description: Project health audit with deterministic multi-dimension scoring. Evaluates OSS readiness, robustness, scope, runnability, and stability.
-allowed-tools: Read, Grep, Glob, Bash(node skills/project-audit/scripts/audit.js*), Bash(git:*), Bash(ls:*)
+allowed-tools: Read, Grep, Glob, Bash(bash scripts/run-skill.sh*), Bash(git:*), Bash(ls:*)
 argument-hint: "[--dir <path>]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[--dir <path>]"
 
 ## Context
 
-- Audit result: !`node skills/project-audit/scripts/audit.js --json 2>/dev/null; true`
+- Audit result: !`bash scripts/run-skill.sh project-audit audit.js --json 2>/dev/null; true`
 
 ## Task
 

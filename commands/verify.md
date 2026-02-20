@@ -1,7 +1,7 @@
 ---
 description: Verification loop — lint -> typecheck -> unit -> integration -> e2e
 argument-hint: [fast|full]
-allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*), Bash(git:*), Read, Grep, Glob
+allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*), Bash(git:*), Bash(python*:*), Bash(pytest:*), Bash(ruff:*), Bash(mypy:*), Bash(cargo:*), Bash(go:*), Bash(golangci-lint:*), Bash(./gradlew:*), Bash(mvn:*), Bash(bundle:*), Read, Grep, Glob
 intent:
   goal: Run full verification loop for code quality
   steps:

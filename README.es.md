@@ -49,7 +49,7 @@ Tras instalar, ejecuta `/project-setup` para autodetectar el entorno del proyect
 /project-setup
 ```
 
-Detecta framework, package manager, base de datos, entry points y scripts, y actualiza `CLAUDE.md` automáticamente.
+Detecta framework, package manager, base de datos, entry points y scripts, y actualiza `.claude/CLAUDE.md` automáticamente.
 
 ## Contenido
 
@@ -286,7 +286,7 @@ Los hooks son seguros por defecto. Variables de entorno para personalizar:
 
 ## Personalización
 
-Ejecuta `/project-setup` para autodetectar y configurar todos los placeholders, o edita `CLAUDE.md` manualmente:
+Ejecuta `/project-setup` para autodetectar y configurar todos los placeholders, o edita `.claude/CLAUDE.md` manualmente:
 
 | Placeholder | Descripción | Ejemplo |
 |-------------|-------------|---------|

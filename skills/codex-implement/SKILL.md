@@ -51,7 +51,7 @@ Proceed?
 
 Claude researches the codebase before calling Codex:
 
-1. Read `CLAUDE.md` — tech stack, conventions, test commands
+1. Read `.claude/CLAUDE.md` (fallback `CLAUDE.md`) — tech stack, conventions, test commands
 2. Read target file (if exists) and context files
 3. Search similar implementations
 4. Read 2-3 similar files for patterns

@@ -1,6 +1,6 @@
 ---
 description: Change-aware next step advisor. Runs deterministic analysis on git state, then suggests actionable next steps or session summary.
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node skills/next-step/scripts/analyze.js*), Bash(cat .claude_review_state.json*), Bash(ls:*), Skill
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(bash scripts/run-skill.sh*), Bash(cat .claude_review_state.json*), Bash(ls:*), Skill
 argument-hint: "[--go] [--feature <key>]"
 ---
 
@@ -10,7 +10,7 @@ argument-hint: "[--go] [--feature <key>]"
 
 ## Context
 
-- Script analysis: !`node skills/next-step/scripts/analyze.js --json 2>/dev/null; true`
+- Script analysis: !`bash scripts/run-skill.sh next-step analyze.js --json 2>/dev/null; true`
 - Git branch: !`git branch --show-current`
 - Git status: !`git status -sb`
 - Review state: !`cat .claude_review_state.json 2>/dev/null || echo "no state file"`

@@ -34,7 +34,7 @@ $ARGUMENTS
 Run skill-lint.js → [Optional: manual review] → Report + Gate
 ```
 
-1. **Run automated lint**: `node skills/skill-health-check/scripts/skill-lint.js --fix-hint` (append `--json` if `$ARGUMENTS` contains `--json`)
+1. **Run automated lint**: `bash scripts/run-skill.sh skill-health-check skill-lint.js --fix-hint` (append `--json` if `$ARGUMENTS` contains `--json`)
 2. **If `--deep`** (from `$ARGUMENTS`): Read flagged skills and evaluate Why>What, scope, progressive loading, routing precision
 3. **Output**: Health report + Gate sentinel
 

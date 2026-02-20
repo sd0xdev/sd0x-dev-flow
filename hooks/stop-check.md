@@ -16,7 +16,7 @@ The script `stop-guard.sh` will:
 
 | Change Type       | Must Execute                        | Additional Check |
 | ----------------- | ----------------------------------- | ---------------- |
-| `.ts/.js` code    | `/codex-review-fast` + `/precommit` | Review must ✅   |
+| code files        | `/codex-review-fast` + `/precommit` | Review must ✅   |
 | `.md` docs        | `/codex-review-doc`                 | Review must ✅   |
 | Comments only/none | -                                  | -                |
 

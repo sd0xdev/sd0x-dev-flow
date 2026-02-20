@@ -1,5 +1,144 @@
 # Detection Rules
 
+## Ecosystem Detection
+
+| Priority | Manifest | Ecosystem |
+|----------|----------|-----------|
+| 1 | `package.json` | Node.js |
+| 2 | `pyproject.toml` | Python |
+| 3 | `Cargo.toml` | Rust |
+| 4 | `go.mod` | Go |
+| 5 | `build.gradle` / `build.gradle.kts` | Java (Gradle) |
+| 6 | `pom.xml` | Java (Maven) |
+| 7 | `Gemfile` | Ruby |
+
+Detection method: Glob for these manifest files in project root. If multiple found, use priority order above. Primary ecosystem determines template block selection.
+
+### Per-Ecosystem Detection
+
+#### Python (`pyproject.toml`)
+
+**Framework**: Read `[project.dependencies]` or `[tool.poetry.dependencies]`
+
+| Dependency | Framework |
+|------------|-----------|
+| `django` | Django |
+| `fastapi` | FastAPI |
+| `flask` | Flask |
+| `starlette` | Starlette |
+| fallback | (ask user) |
+
+**Database**: Read dependencies for `sqlalchemy`, `psycopg2`/`asyncpg` (PostgreSQL), `pymongo` (MongoDB), `django.db` (check settings.py)
+
+**Entrypoints**: `manage.py` (Django), `main.py` / `app.py` (FastAPI/Flask), `pyproject.toml` `[tool.poetry.scripts]`
+
+**Scripts**:
+
+| Placeholder | Detection |
+|-------------|-----------|
+| `{TEST_COMMAND}` | `pytest` (if pytest in deps) or `python -m unittest` |
+| `{LINT_FIX_COMMAND}` | `ruff check --fix .` (if ruff) or `flake8` |
+| `{BUILD_COMMAND}` | `python -m build` or `poetry build` |
+| `{TYPECHECK_COMMAND}` | `mypy .` (if mypy in deps) or `# N/A` |
+
+#### Go (`go.mod`)
+
+**Framework**: Read `require` block
+
+| Dependency | Framework |
+|------------|-----------|
+| `github.com/gin-gonic/gin` | Gin |
+| `github.com/gofiber/fiber` | Fiber |
+| `github.com/labstack/echo` | Echo |
+| `github.com/gorilla/mux` | Gorilla Mux |
+| fallback | stdlib `net/http` |
+
+**Database**: Check imports for `database/sql`, `gorm.io/gorm`, `go.mongodb.org/mongo-driver`
+
+**Entrypoints**: `cmd/*/main.go` or `main.go`
+
+**Scripts**:
+
+| Placeholder | Detection |
+|-------------|-----------|
+| `{TEST_COMMAND}` | `go test ./...` |
+| `{LINT_FIX_COMMAND}` | `golangci-lint run --fix` (if `.golangci.yml` exists) or `go vet ./...` |
+| `{BUILD_COMMAND}` | `go build ./...` |
+| `{TYPECHECK_COMMAND}` | `# N/A (implicit)` |
+
+#### Rust (`Cargo.toml`)
+
+**Framework**: Read `[dependencies]`
+
+| Dependency | Framework |
+|------------|-----------|
+| `actix-web` | Actix Web |
+| `axum` | Axum |
+| `rocket` | Rocket |
+| `warp` | Warp |
+| fallback | (ask user) |
+
+**Database**: Check `[dependencies]` for `diesel` (PostgreSQL/MySQL/SQLite), `sqlx` (PostgreSQL/MySQL/SQLite), `sea-orm` (PostgreSQL/MySQL/SQLite), `mongodb` (MongoDB)
+
+**Entrypoints**: `src/main.rs` (binary) or `src/lib.rs` (library)
+
+**Scripts**:
+
+| Placeholder | Detection |
+|-------------|-----------|
+| `{TEST_COMMAND}` | `cargo test` |
+| `{LINT_FIX_COMMAND}` | `cargo clippy --fix` |
+| `{BUILD_COMMAND}` | `cargo build` |
+| `{TYPECHECK_COMMAND}` | `# N/A (implicit)` |
+
+#### Ruby (`Gemfile`)
+
+**Framework**: Read Gemfile
+
+| Dependency | Framework |
+|------------|-----------|
+| `rails` | Rails |
+| `sinatra` | Sinatra |
+| `hanami` | Hanami |
+| fallback | (ask user) |
+
+**Database**: Check Gemfile for `pg` (PostgreSQL), `mysql2` (MySQL), `sqlite3` (SQLite), `mongoid` (MongoDB)
+
+**Entrypoints**: `config/application.rb` (Rails), `app.rb` (Sinatra)
+
+**Scripts**:
+
+| Placeholder | Detection |
+|-------------|-----------|
+| `{TEST_COMMAND}` | `bundle exec rspec` (if rspec) or `bundle exec rake test` |
+| `{LINT_FIX_COMMAND}` | `bundle exec rubocop -a` (if rubocop) |
+| `{BUILD_COMMAND}` | `# N/A` |
+| `{TYPECHECK_COMMAND}` | `bundle exec srb tc` (if sorbet) or `# N/A` |
+
+#### Java (`pom.xml` / `build.gradle`)
+
+**Framework**: Read dependencies
+
+| Dependency | Framework |
+|------------|-----------|
+| `spring-boot-starter` | Spring Boot |
+| `io.quarkus` | Quarkus |
+| `io.micronaut` | Micronaut |
+| fallback | (ask user) |
+
+**Database**: Check dependencies for `spring-boot-starter-data-jpa` / `spring-data-jpa` (JPA), `r2dbc` (reactive DB), `mysql-connector-java` (MySQL), `postgresql` (PostgreSQL), `mongodb-driver` / `spring-data-mongodb` (MongoDB)
+
+**Entrypoints**: `src/main/java/**/Application.java` or class with `@SpringBootApplication`
+
+**Scripts**:
+
+| Placeholder | Detection |
+|-------------|-----------|
+| `{TEST_COMMAND}` | `./gradlew test` or `mvn test` |
+| `{LINT_FIX_COMMAND}` | `./gradlew spotlessApply` or `mvn spotless:apply` |
+| `{BUILD_COMMAND}` | `./gradlew build` or `mvn package` |
+| `{TYPECHECK_COMMAND}` | `# N/A (implicit)` |
+
 ## Package Manager
 
 | Priority | File | Result |

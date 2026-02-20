@@ -14,10 +14,10 @@
 
 | Change Type | Event              | Execute Immediately  |
 | ----------- | ------------------ | -------------------- |
-| `.ts/.js`   | Fix P0/P1/P2       | `/codex-review-fast` |
-| `.ts/.js`   | review Pass        | `/precommit`         |
-| `.ts/.js`   | precommit Pass     | Doc Sync (see Note)  |
-| `.ts/.js`   | precommit failure  | Fix -> re-run        |
+| code files  | Fix P0/P1/P2       | `/codex-review-fast` |
+| code files  | review Pass        | `/precommit`         |
+| code files  | precommit Pass     | Doc Sync (see Note)  |
+| code files  | precommit failure  | Fix -> re-run        |
 | `.md`       | Fix doc issues     | `/codex-review-doc`  |
 | `.md`       | review failure     | Fix -> re-run        |
 

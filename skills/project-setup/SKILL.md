@@ -14,7 +14,7 @@ allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
 ## When NOT to Use
 
 - CLAUDE.md placeholders are already fully replaced (no `{...}` remaining)
-- Non Node.js/TypeScript project (detection logic targets JS/TS ecosystem)
+- Non Node.js/TypeScript project without a recognized manifest file -- run with `--detect-only` to see what can be auto-detected. Manual configuration may be needed for: {FRAMEWORK}, {CONFIG_FILE}, {BOOTSTRAP_FILE}. Script commands ({TEST_COMMAND}, etc.) can often be detected from manifest files
 - Only want to modify a single placeholder -- just Edit CLAUDE.md directly
 
 ## Workflow
@@ -32,20 +32,39 @@ Phase 2: Confirm detection results
     ├─ Present detection results table
     └─ Wait for user confirmation or corrections
     │
-Phase 3: Write to CLAUDE.md (unless --detect-only)
+Phase 3: Write to .claude/CLAUDE.md (unless --detect-only)
     │
-    ├─ Use Edit tool to replace placeholders one by one
-    └─ One Edit per placeholder
+    ├─ Read CLAUDE.template.md, filter ecosystem blocks
+    └─ Replace placeholders, write to .claude/CLAUDE.md
     │
 Phase 4: Verify
     │
-    ├─ Read CLAUDE.md to confirm no remaining placeholders
+    ├─ Read .claude/CLAUDE.md to confirm no remaining placeholders
     └─ Output final summary
 ```
 
 ## Phase 1: Detect Project Environment
 
 Execute the following detections in order; see `references/detection-rules.md` for detailed rules:
+
+### 1.0 Detect Ecosystem
+
+Glob for manifest files in project root:
+
+| Manifest | Ecosystem |
+|----------|-----------|
+| `package.json` | Node.js |
+| `pyproject.toml` | Python |
+| `Cargo.toml` | Rust |
+| `go.mod` | Go |
+| `build.gradle` / `build.gradle.kts` | Java (Gradle) |
+| `pom.xml` | Java (Maven) |
+| `Gemfile` | Ruby |
+
+If multiple found, use priority order from `references/detection-rules.md`.
+Detected ecosystem determines which template blocks to keep (Phase 2.5) and which detection rules to follow.
+
+For non-Node.js ecosystems, skip Node-specific detection steps (1.1 Read package.json, 1.2 Detect Package Manager) and use ecosystem-specific detection from `references/detection-rules.md`.
 
 ### 1.1 Read package.json
 
@@ -118,31 +137,38 @@ Are these correct? Please let me know if any corrections are needed.
 
 Wait for user confirmation before proceeding to Phase 3.
 
-## Phase 3: Write to CLAUDE.md
+## Phase 2.5: Select Ecosystem Blocks
+
+Based on detected manifest (from Phase 1.0):
+
+| Manifest | Ecosystem tag |
+|----------|--------------|
+| `package.json` | `node-ts` |
+| `pyproject.toml` | `python` |
+| `go.mod` | `go` |
+| `Cargo.toml` | `rust` |
+| `Gemfile` | `ruby` |
+| `pom.xml` / `build.gradle` | `java` |
+
+## Phase 3: Write to .claude/CLAUDE.md
 
 **Prerequisite**: User has confirmed, and not in `--detect-only` mode.
 
-1. Read CLAUDE.md
-2. Execute `Edit` for each placeholder (using `replace_all: true`):
+1. Read `CLAUDE.template.md` (if not found, fallback to `CLAUDE.md`)
+2. Remove `<!-- block:X -->...<!-- /block -->` sections NOT matching detected ecosystem
+3. Remove remaining block markers (`<!-- block:... -->`, `<!-- /block -->`)
+4. Execute `Edit` for each placeholder (using `replace_all: true`)
+5. Write to `.claude/CLAUDE.md` (create directory if needed)
 
-```
-Edit CLAUDE.md:
-  old_string: "{PROJECT_NAME}"
-  new_string: "my-app"
-  replace_all: true
-```
-
-Replace all 9 placeholders in order.
-
-1. If CLAUDE.md does not yet exist, copy from the plugin's CLAUDE.md template to the project root.
+If `.claude/CLAUDE.md` does not exist, create it from the rendered template.
 
 ## Phase 4: Verify
 
-1. Read the modified CLAUDE.md
+1. Read the modified `.claude/CLAUDE.md`
 2. Search for remaining `{` + uppercase letter pattern:
 
 ```
-Grep: \{[A-Z_]+\} in CLAUDE.md
+Grep: \{[A-Z_]+\} in .claude/CLAUDE.md
 ```
 
 1. Output results:
@@ -181,7 +207,7 @@ Remaining placeholders: 0
 
 - [ ] All 9 placeholders detected or marked N/A
 - [ ] User confirmed detection results before writing
-- [ ] No remaining `{UPPER_CASE}` placeholders in CLAUDE.md after setup
+- [ ] No remaining `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup
 - [ ] Detection-rules.md referenced for detailed mapping
 
 ## Examples
@@ -204,7 +230,7 @@ Detection Results:
 Are these correct?
 
 User: Correct
-Claude: [Edits CLAUDE.md, replaces all placeholders]
+Claude: [Writes .claude/CLAUDE.md, replaces all placeholders]
 Setup Complete. Remaining placeholders: 0
 ```
 
@@ -221,7 +247,7 @@ Detection Results:
 
 User: DB should be PostgreSQL, we have two DBs
 Claude: [Corrects DATABASE to PostgreSQL + MongoDB]
-[Edits CLAUDE.md]
+[Writes .claude/CLAUDE.md]
 ```
 
 ### Example 3: Detect only

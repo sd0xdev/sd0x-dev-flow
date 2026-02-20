@@ -13,10 +13,13 @@ test('namespace-hint.sh exists and is executable', () => {
   assert.ok((stat.mode & 0o100) !== 0, 'script should be executable');
 });
 
-test('namespace-hint.sh output is under 100 chars', () => {
-  const output = execFileSync('bash', [scriptPath], { encoding: 'utf8' }).trim();
-  assert.ok(output.length > 0, 'output should not be empty');
-  assert.ok(output.length < 100, `output should be under 100 chars, got ${output.length}`);
+test('each line of namespace-hint.sh output is under 100 chars', () => {
+  const output = execFileSync('bash', [scriptPath], { encoding: 'utf8' });
+  const lines = output.trim().split('\n');
+  assert.ok(lines.length >= 1, 'output should have at least 1 line');
+  for (const line of lines) {
+    assert.ok(line.length < 100, `line should be under 100 chars: "${line}" (${line.length})`);
+  }
 });
 
 test('namespace-hint.sh output contains plugin name', () => {

@@ -1,6 +1,6 @@
 ---
 description: Uncommitted code risk assessment — breaking changes, blast radius, scope analysis.
-allowed-tools: Read, Grep, Glob, Bash(node skills/risk-assess/scripts/risk-analyze.js*), Bash(git:*)
+allowed-tools: Read, Grep, Glob, Bash(bash scripts/run-skill.sh*), Bash(git:*)
 argument-hint: "[--mode fast|deep] [--base <ref>]"
 ---
 
@@ -8,7 +8,7 @@ argument-hint: "[--mode fast|deep] [--base <ref>]"
 
 ## Context
 
-- Risk result: !`node skills/risk-assess/scripts/risk-analyze.js --json 2>/dev/null; true`
+- Risk result: !`bash scripts/run-skill.sh risk-assess risk-analyze.js --json 2>/dev/null; true`
 
 ## Task
 

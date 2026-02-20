@@ -10,4 +10,13 @@ OWASP Checklist: IDOR | Injection (SQL/NoSQL/Cmd) | Encryption | Rate Limit | Co
 | fetch(req.query.url)      | Validate URL, block internal network |
 | Unverified resource ownership | Must check user.id matches    |
 
-Verification commands: `/codex-security` | `/dep-audit` | `npm/yarn/pnpm audit`
+Verification commands: `/codex-security` | `/dep-audit` | ecosystem audit
+
+| Ecosystem | Audit Command |
+|-----------|--------------|
+| Node.js | `npm audit` / `yarn audit` / `pnpm audit` |
+| Python | `pip-audit` / `safety check` |
+| Rust | `cargo audit` |
+| Go | `govulncheck ./...` |
+| Java | `./gradlew dependencyCheckAnalyze` / `mvn dependency-check:check` |
+| Ruby | `bundle audit` |

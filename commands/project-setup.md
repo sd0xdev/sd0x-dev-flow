@@ -14,7 +14,7 @@ allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
 
 ## Task
 
-Initialize CLAUDE.md settings for the current project.
+Initialize .claude/CLAUDE.md settings for the current project.
 
 ### Arguments
 
@@ -22,7 +22,7 @@ Initialize CLAUDE.md settings for the current project.
 $ARGUMENTS
 ```
 
-- `--detect-only`: Only detect and display results, do not write to CLAUDE.md
+- `--detect-only`: Only detect and display results, do not write to .claude/CLAUDE.md
 
 ## Examples
 

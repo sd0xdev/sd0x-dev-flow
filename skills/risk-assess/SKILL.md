@@ -13,7 +13,7 @@ description: "Uncommitted code risk assessment with breaking change detection, b
 
 ## Procedure
 
-1. Run `node skills/risk-assess/scripts/risk-analyze.js --json` to collect deterministic scores
+1. Run `bash scripts/run-skill.sh risk-assess risk-analyze.js --json` to collect deterministic scores
 2. Parse the JSON output — overall_score, risk_level, dimensions, flags, gate, next_actions
 3. **If risk_level = Critical** (score 75-100) — highlight all breaking signals, recommend splitting PRs
 4. **If risk_level = High** (score 50-74) — auto-escalate to `--mode deep`, detail blast radius
@@ -56,7 +56,7 @@ The script analyzes 3 dimensions + 2 conditional flags:
 If the script fails, report the error and suggest running manually:
 
 ```bash
-node skills/risk-assess/scripts/risk-analyze.js --json
+bash scripts/run-skill.sh risk-assess risk-analyze.js --json
 ```
 
 ## Output Format

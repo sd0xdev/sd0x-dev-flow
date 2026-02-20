@@ -49,7 +49,7 @@ After installing, run `/project-setup` to auto-detect your project environment a
 /project-setup
 ```
 
-This will detect your framework, package manager, database, entrypoints, and script commands, then update `CLAUDE.md` accordingly.
+This will detect your framework, package manager, database, entrypoints, and script commands, then update `.claude/CLAUDE.md` accordingly.
 
 ## What's Included
 
@@ -286,7 +286,7 @@ Hooks are safe by default. Use environment variables to customize behavior:
 
 ## Customization
 
-Run `/project-setup` to auto-detect and configure all placeholders, or manually edit `CLAUDE.md`:
+Run `/project-setup` to auto-detect and configure all placeholders, or manually edit `.claude/CLAUDE.md`:
 
 | Placeholder | Description | Example |
 |-------------|-------------|---------|
