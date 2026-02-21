@@ -13,7 +13,7 @@ description: "Change-aware next step advisor. Use when: user asks what to do nex
 
 ## Procedure
 
-1. Run `bash scripts/run-skill.sh next-step analyze.js --json` to collect deterministic findings
+1. Run `bash scripts/run-skill.sh next-step analyze.js` to collect deterministic findings
 2. Parse the JSON output — findings, gates, diff summary, phase, feature_context, next_actions, backlog
 3. **If P0/P1 findings exist** → format top 3 as actionable suggestions (Findings Mode)
 4. **If mid-pipeline** (gates not all passed, no P0/P1) → use progression tables to suggest next step
@@ -51,7 +51,7 @@ If the script fails or is unavailable, fall back to manual signal collection:
 |---|--------|-----|
 | 1 | Git branch | `git branch --show-current` |
 | 2 | Git status | `git status -sb` |
-| 3 | Changed files | `git diff --name-only HEAD` |
+| 3 | Changed files | `git diff --name-only HEAD` + `git status --porcelain` (for untracked) |
 | 4 | Review state | `.claude_review_state.json` |
 
 Then use the Progression Tables below.
@@ -65,11 +65,14 @@ When `--go` is provided, auto-execute the top `next_action` IF:
 
 Output: "Auto-dispatching: [command] [args]" then invoke the Skill tool and report the result.
 
-Safety: NEVER dispatch on P0. Fall back to advisory mode if confidence < 0.8.
+Safety constraints:
+- NEVER dispatch on P0. Fall back to advisory mode if confidence < 0.8.
+- Only skill slash-commands from `next_actions` are dispatched (via Skill tool). No arbitrary shell execution.
+- Arguments are limited to file paths and flags extracted by `buildNextActions` — no user-supplied strings.
 
 ## Progression Tables (mid-pipeline fallback)
 
-See [references/progression-tables.md](./references/progression-tables.md) for full work-type detection and step-by-step progression tables (Feature Dev, Bug Fix, Docs, Refactoring, Investigation).
+See `references/progression-tables.md` for full work-type detection and step-by-step progression tables (Feature Dev, Bug Fix, Docs, Refactoring, Investigation).
 
 ## Output Format — Findings Mode
 
