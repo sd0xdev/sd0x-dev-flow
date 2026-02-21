@@ -1,5 +1,7 @@
 # Codex Prompt: Test Coverage Review
 
+<!-- Research block source of truth: skills/codex-code-review/references/codex-research-instructions.md (Variant: Test Review) -->
+
 ## First Review Prompt
 
 Used with `mcp__codex__codex`:

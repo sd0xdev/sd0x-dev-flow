@@ -322,6 +322,27 @@ Verification commands (`/precommit`, `/verify`, `/dep-audit`) use a **Try → Fa
 
 The fallback works out of the box with no setup required. Runner scripts are bundled in this plugin repo but cannot be auto-resolved from plugin commands due to a [Claude Code limitation](https://github.com/anthropics/claude-code/issues/9354) (`${CLAUDE_PLUGIN_ROOT}` is unavailable in command markdown). This will be updated when the upstream issue is resolved.
 
+## Agentic Control Stack
+
+This plugin implements a complete agentic control loop architecture. Each layer maps to specific plugin components:
+
+| Layer | sd0x-dev-flow Implementation | Key Files |
+|-------|------------------------------|-----------|
+| **Feedforward Gate** | `/precommit` hooks, `pre-edit-guard.sh`, lint:fix | `hooks/pre-edit-guard.sh`, `commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → fix → re-review | `rules/auto-loop.md` |
+| **Hierarchical Loops** | Inner (hooks 30s) → Mid (review+precommit 10min) → Outer (PR review + rules) | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`, `analyze.js`, `risk-analyze.js`, `skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Edit/Write tools, allowed-tools whitelist, diff budget | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = Knowledge curation, `⚠️ Need Human` sentinel = circuit breaker | `rules/auto-loop.md` |
+
+### Control Loop Pathology & Mitigation
+
+| Failure Mode | Symptom | Mitigation in sd0x-dev-flow |
+|--------------|---------|----------------------------|
+| **Oscillation** | Fix test1 breaks test2, revert loops | 3-round limit on same issue → report blocker, request human |
+| **Local Minimum** | Tests pass via hacks (deleted assertions) | Independent Codex review (never feed conclusions) as second sensor |
+| **Divergence** | Diff grows unbounded, unrelated changes | `allowed-tools` whitelist limits effectors, git rules forbid direct push to main |
+
 ## Contributing
 
 PRs welcome. Please:

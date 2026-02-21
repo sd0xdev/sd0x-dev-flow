@@ -322,6 +322,27 @@ flowchart LR
 
 Fallback はセットアップ不要でそのまま使えます。ランナースクリプトは本プラグインに同梱されていますが、[Claude Code の既知の制限](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` がコマンド markdown で利用不可）により、プラグインコマンドからスクリプトパスを自動解決できません。上流の問題が解決され次第更新予定です。
 
+## Agentic Control Stack
+
+本プラグインは完全な agentic 制御ループアーキテクチャを実装しています。各レイヤーは特定のプラグインコンポーネントに対応します：
+
+| レイヤー | sd0x-dev-flow での実装 | 主要ファイル |
+|---------|----------------------|------------|
+| **Feedforward Gate** | `/precommit` フック、`pre-edit-guard.sh`、lint:fix | `hooks/pre-edit-guard.sh`、`commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → 修正 → 再レビュー | `rules/auto-loop.md` |
+| **Hierarchical Loops** | 内側（フック 30秒）→ 中間（レビュー+precommit 10分）→ 外側（PRレビュー + ルール） | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`、`analyze.js`、`risk-analyze.js`、`skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Edit/Write ツール、allowed-tools ホワイトリスト、diff 予算 | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = ナレッジキュレーション、`⚠️ Need Human` センチネル = サーキットブレーカー | `rules/auto-loop.md` |
+
+### 制御ループの病理と緩和策
+
+| 障害モード | 症状 | sd0x-dev-flow での緩和策 |
+|-----------|------|------------------------|
+| **Oscillation（振動）** | test1 の修正で test2 が壊れ、繰り返しループ | 同一問題 3 ラウンド上限 → ブロッカーとして報告、人間に介入を要請 |
+| **Local Minimum（局所最小値）** | ハック（アサーション削除など）でテストを通す | 独立した Codex レビュー（結論の注入禁止）を第 2 センサーとして活用 |
+| **Divergence（発散）** | diff が際限なく膨張、無関係な変更が混入 | `allowed-tools` ホワイトリストで effectors を制限、git ルールで main への直接プッシュを禁止 |
+
 ## コントリビュート
 
 PR 歓迎です。お願い事項：

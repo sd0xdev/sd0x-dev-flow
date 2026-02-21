@@ -64,11 +64,11 @@ if [[ -f "$STATE_FILE" ]]; then
 
   # === Stale-state git check (with cross-platform timeout) ===
   if command -v timeout &>/dev/null; then
-    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
   elif command -v gtimeout &>/dev/null; then
-    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
   else
-    GIT_PORCELAIN=$(git status --porcelain -uall 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    GIT_PORCELAIN=$(git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
   fi
   if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
     # Strip porcelain quoting (git quotes filenames with spaces/unicode)

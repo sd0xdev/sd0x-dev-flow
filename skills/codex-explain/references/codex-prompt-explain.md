@@ -1,5 +1,7 @@
 # Codex Prompt: Code Explanation
 
+<!-- Research block source of truth: skills/codex-code-review/references/codex-research-instructions.md (Variant: Code Explanation) -->
+
 Used with `mcp__codex__codex`:
 
 ```typescript

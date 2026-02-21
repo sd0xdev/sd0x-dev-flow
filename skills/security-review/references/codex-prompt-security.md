@@ -1,5 +1,7 @@
 # Codex Prompt: OWASP Security Review
 
+<!-- Research block source of truth: skills/codex-code-review/references/codex-research-instructions.md (Variant: Security Review) -->
+
 ## First Review Prompt
 
 Used with `mcp__codex__codex`:

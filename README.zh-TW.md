@@ -322,6 +322,27 @@ Command（入口）-> Skill（能力）-> Agent（環境）
 
 Fallback 無需任何設定即可使用。Runner 腳本雖包含在本外掛中，但由於 [Claude Code 的已知限制](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` 在指令 markdown 中無法使用），目前無法從外掛指令中自動解析腳本路徑。待上游問題修復後將同步更新。
 
+## Agentic Control Stack
+
+本 Plugin 實作了完整的 agentic 控制迴圈架構。每一層對應特定的 Plugin 元件：
+
+| 層級 | sd0x-dev-flow 實作 | 關鍵檔案 |
+|------|-------------------|---------|
+| **Feedforward Gate** | `/precommit` hooks、`pre-edit-guard.sh`、lint:fix | `hooks/pre-edit-guard.sh`、`commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → 修正 → 重新 review | `rules/auto-loop.md` |
+| **Hierarchical Loops** | 內層（hooks 30s）→ 中層（review+precommit 10min）→ 外層（PR review + rules） | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`、`analyze.js`、`risk-analyze.js`、`skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Edit/Write 工具、allowed-tools 白名單、diff 預算 | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = 知識策展、`⚠️ Need Human` sentinel = 斷路器 | `rules/auto-loop.md` |
+
+### 控制迴圈病理與緩解
+
+| 失敗模式 | 症狀 | sd0x-dev-flow 中的緩解措施 |
+|---------|------|--------------------------|
+| **Oscillation（振盪）** | 修正 test1 導致 test2 失敗，反覆循環 | 同一問題 3 輪上限 → 回報 blocker，請求人工介入 |
+| **Local Minimum（局部最小值）** | 透過 hack 讓測試通過（刪除 assertion） | 獨立 Codex review（禁止餵結論）作為第二感測器 |
+| **Divergence（發散）** | Diff 無限膨脹，出現無關變更 | `allowed-tools` 白名單限制 effectors，git 規則禁止直接 push 到 main |
+
 ## 貢獻
 
 歡迎 PR。請：

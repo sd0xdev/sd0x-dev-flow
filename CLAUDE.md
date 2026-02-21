@@ -139,7 +139,6 @@ Replace these placeholders with your project values:
 - @rules/framework.md
 - @rules/security.md
 - @rules/docs-writing.md
-- @.claude/rules/docs-writing.md -- Locale-aware writing (local override)
 - @rules/docs-numbering.md
 - @rules/git-workflow.md
 - @rules/logging.md

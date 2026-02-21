@@ -322,6 +322,27 @@ Los comandos de verificación (`/precommit`, `/verify`, `/dep-audit`) usan un pa
 
 El fallback funciona sin ninguna configuración previa. Los scripts de ejecución están incluidos en este plugin, pero debido a una [limitación conocida de Claude Code](https://github.com/anthropics/claude-code/issues/9354) (`${CLAUDE_PLUGIN_ROOT}` no está disponible en el markdown de comandos), actualmente no se pueden resolver automáticamente las rutas de scripts desde comandos del plugin. Se actualizará cuando se resuelva el problema en upstream.
 
+## Agentic Control Stack
+
+Este plugin implementa una arquitectura completa de bucle de control agentic. Cada capa se mapea a componentes específicos del plugin:
+
+| Capa | Implementación en sd0x-dev-flow | Archivos clave |
+|------|--------------------------------|----------------|
+| **Feedforward Gate** | Hooks de `/precommit`, `pre-edit-guard.sh`, lint:fix | `hooks/pre-edit-guard.sh`, `commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → corrección → re-revisión | `rules/auto-loop.md` |
+| **Hierarchical Loops** | Interno (hooks 30s) → Medio (review+precommit 10min) → Externo (PR review + rules) | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`, `analyze.js`, `risk-analyze.js`, `skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Herramientas Edit/Write, whitelist de allowed-tools, presupuesto de diff | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = Curación de conocimiento, sentinel `⚠️ Need Human` = circuit breaker | `rules/auto-loop.md` |
+
+### Patología del bucle de control y mitigación
+
+| Modo de fallo | Síntoma | Mitigación en sd0x-dev-flow |
+|---------------|---------|----------------------------|
+| **Oscillation (Oscilación)** | Corregir test1 rompe test2, bucles de reversión | Límite de 3 rondas por issue → reportar bloqueante, solicitar intervención humana |
+| **Local Minimum (Mínimo local)** | Tests pasan con hacks (assertions eliminadas) | Revisión independiente de Codex (nunca alimentar conclusiones) como segundo sensor |
+| **Divergence (Divergencia)** | El diff crece sin límite, cambios no relacionados | Whitelist `allowed-tools` limita effectors, reglas git prohíben push directo a main |
+
 ## Contribuir
 
 PRs bienvenidos. Por favor:

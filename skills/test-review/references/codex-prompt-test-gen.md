@@ -1,5 +1,7 @@
 # Codex Prompt: Test Generation
 
+<!-- Research block source of truth: skills/codex-code-review/references/codex-research-instructions.md (Variant: Test Review) -->
+
 Used with `mcp__codex__codex`:
 
 ```typescript

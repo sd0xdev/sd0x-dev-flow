@@ -322,6 +322,27 @@ flowchart LR
 
 Fallback 开箱即用，无需任何配置。Runner 脚本虽然包含在本插件中，但由于 [Claude Code 的已知限制](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` 在命令 markdown 中不可用），目前无法从插件命令中自动解析脚本路径。上游问题修复后将同步更新。
 
+## Agentic Control Stack
+
+本插件实现了完整的 agentic 控制回路架构。每一层映射到特定的插件组件：
+
+| 层级 | sd0x-dev-flow 实现 | 关键文件 |
+|------|-------------------|---------|
+| **Feedforward Gate** | `/precommit` 钩子、`pre-edit-guard.sh`、lint:fix | `hooks/pre-edit-guard.sh`、`commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → 修复 → 重新审查 | `rules/auto-loop.md` |
+| **Hierarchical Loops** | 内层（钩子 30s）→ 中层（审查+precommit 10min）→ 外层（PR 审查 + 规则） | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`、`analyze.js`、`risk-analyze.js`、`skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Edit/Write 工具、allowed-tools 白名单、diff 预算 | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = 知识策展、`⚠️ Need Human` 哨兵 = 断路器 | `rules/auto-loop.md` |
+
+### 控制回路病理与缓解
+
+| 失败模式 | 症状 | sd0x-dev-flow 中的缓解措施 |
+|---------|------|--------------------------|
+| **Oscillation（振荡）** | 修复 test1 导致 test2 失败，反复循环 | 同一问题 3 轮上限 → 报告阻塞，请求人工介入 |
+| **Local Minimum（局部最小值）** | 通过 hack 让测试通过（删除断言） | 独立 Codex 审查（禁止喂结论）作为第二传感器 |
+| **Divergence（发散）** | Diff 无限膨胀，出现无关变更 | `allowed-tools` 白名单限制 effectors，git 规则禁止直接推送到 main |
+
 ## 贡献
 
 欢迎 PR。请：

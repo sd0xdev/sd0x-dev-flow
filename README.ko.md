@@ -322,6 +322,27 @@ Command (진입점) -> Skill (기능) -> Agent (실행 환경)
 
 Fallback은 별도 설정 없이 바로 사용 가능합니다. 러너 스크립트는 본 플러그인에 포함되어 있지만, [Claude Code의 알려진 제한](https://github.com/anthropics/claude-code/issues/9354)(`${CLAUDE_PLUGIN_ROOT}`가 커맨드 마크다운에서 사용 불가)으로 인해 현재 플러그인 명령어에서 스크립트 경로를 자동 해석할 수 없습니다. 업스트림 이슈가 해결되면 업데이트 예정입니다.
 
+## Agentic Control Stack
+
+본 플러그인은 완전한 agentic 제어 루프 아키텍처를 구현합니다. 각 레이어는 특정 플러그인 구성 요소에 매핑됩니다:
+
+| 레이어 | sd0x-dev-flow 구현 | 핵심 파일 |
+|--------|-------------------|----------|
+| **Feedforward Gate** | `/precommit` 훅, `pre-edit-guard.sh`, lint:fix | `hooks/pre-edit-guard.sh`, `commands/precommit.md` |
+| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → 수정 → 재리뷰 | `rules/auto-loop.md` |
+| **Hierarchical Loops** | 내부(훅 30초) → 중간(리뷰+precommit 10분) → 외부(PR 리뷰 + 규칙) | `hooks/` → `commands/` → `rules/` |
+| **Sensors** | `audit.js`, `analyze.js`, `risk-analyze.js`, `skill-lint.js` | `skills/*/scripts/*.js` |
+| **Effectors** | Edit/Write 도구, allowed-tools 화이트리스트, diff 예산 | `commands/*.md` frontmatter |
+| **Human Governance** | `rules/` = 지식 큐레이션, `⚠️ Need Human` 센티널 = 서킷 브레이커 | `rules/auto-loop.md` |
+
+### 제어 루프 병리 및 완화
+
+| 장애 모드 | 증상 | sd0x-dev-flow의 완화 방안 |
+|-----------|------|-------------------------|
+| **Oscillation (진동)** | test1 수정 시 test2가 깨지고 루프 반복 | 동일 이슈 3라운드 제한 → 블로커 보고, 사람 개입 요청 |
+| **Local Minimum (국소 최솟값)** | 해킹으로 테스트 통과 (assertion 삭제) | 독립적 Codex 리뷰 (결론 주입 금지)를 제2 센서로 활용 |
+| **Divergence (발산)** | diff가 무한히 커지고, 관련 없는 변경 발생 | `allowed-tools` 화이트리스트로 effectors 제한, git 규칙으로 main 직접 push 금지 |
+
 ## 기여
 
 PR 환영합니다. 다음 사항을 지켜주세요:

@@ -1,5 +1,7 @@
 # Codex Prompt: Branch Review
 
+<!-- Research block source of truth: @codex-research-instructions.md (Standard Research Block) -->
+
 Used with `mcp__codex__codex`:
 
 ```typescript
