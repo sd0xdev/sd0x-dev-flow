@@ -243,6 +243,7 @@ flowchart LR
 | `/pr-review` | Self-review de PR |
 | `/skill-health-check` | Validar calidad y routing de skills |
 | `/claude-health` | Verificación de configuración de Claude Code |
+| `/op-session` | Inicializar sesión de 1Password CLI (evita solicitudes biométricas repetidas) |
 | `/zh-tw` | Reescribir en chino tradicional |
 
 ## Rules

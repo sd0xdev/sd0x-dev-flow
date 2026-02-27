@@ -243,6 +243,7 @@ flowchart LR
 | `/pr-review` | PR self-review |
 | `/skill-health-check` | 驗證 Skill 品質與 routing |
 | `/claude-health` | Claude Code 設定健康檢查 |
+| `/op-session` | 初始化 1Password CLI session（避免重複生物辨識提示） |
 | `/zh-tw` | 以繁體中文改寫 |
 
 ## Rules

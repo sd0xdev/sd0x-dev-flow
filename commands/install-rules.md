@@ -81,6 +81,7 @@ Read all `.md` files from the discovered rules directory. The expected rules are
 | `logging.md` | Structured logging standards |
 | `docs-writing.md` | Documentation writing conventions |
 | `docs-numbering.md` | Document numbering scheme |
+| `self-improvement.md` | Self-improvement loop (corrected → record → prevent) |
 
 If `--list` is specified, output this table and **stop**.
 

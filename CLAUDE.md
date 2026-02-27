@@ -142,3 +142,4 @@ Replace these placeholders with your project values:
 - @rules/docs-numbering.md
 - @rules/git-workflow.md
 - @rules/logging.md
+- @rules/self-improvement.md -- Corrected → record → prevent recurrence

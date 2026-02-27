@@ -243,6 +243,7 @@ flowchart LR
 | `/pr-review` | PR 셀프 리뷰 |
 | `/skill-health-check` | 스킬 품질 및 라우팅 검증 |
 | `/claude-health` | Claude Code 설정 상태 점검 |
+| `/op-session` | 1Password CLI 세션 초기화 (반복 생체 인증 방지) |
 | `/zh-tw` | 번체 중국어로 변환 |
 
 ## Rules

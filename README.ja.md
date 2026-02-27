@@ -243,6 +243,7 @@ flowchart LR
 | `/pr-review` | PR セルフレビュー |
 | `/skill-health-check` | スキル品質とルーティングの検証 |
 | `/claude-health` | Claude Code 設定のヘルスチェック |
+| `/op-session` | 1Password CLI セッションの初期化（繰り返しの生体認証を回避） |
 | `/zh-tw` | 繁体字中国語に書き換え |
 
 ## ルール
