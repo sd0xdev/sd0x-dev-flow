@@ -6,8 +6,8 @@ allowed-tools: Bash(bash:*)
 
 ## Context
 
-- Session file: !`ls -la ~/.op-claude-session 2>/dev/null || echo "No session file"`
-- op CLI: !`command -v op 2>/dev/null && op --version 2>/dev/null || echo "op CLI not found"`
+- Session file: !`bash -c 'test -f "$HOME/.op-claude-session" && echo "exists" || echo "No session file"' 2>/dev/null || echo "unknown (sandbox)"`
+- op CLI: !`bash -c 'command -v op >/dev/null 2>&1 && op --version 2>/dev/null || echo "op CLI not found"' 2>/dev/null || echo "unknown (sandbox)"`
 
 ## Task
 
@@ -25,16 +25,23 @@ $ARGUMENTS
 
 | Argument | Description |
 |----------|-------------|
-| `--account <name>` | 1Password account shorthand (optional, uses default) |
+| `--account <name>` | 1Password account identifier — shorthand or UUID (optional, uses default) |
 | `--list` | List available 1Password accounts |
 | `--check` | Check current session status |
 | `--clear` | Remove session file |
 
 ### Workflow
 
-1. Run `bash skills/op-session/scripts/op-session-init.sh` with provided arguments
-2. On success, confirm session is active
-3. Remind: all subsequent `op` calls must use `bash skills/op-session/scripts/op-with-session.sh <subcommand> [args]`
+| Mode | Command | Success Confirmation |
+|------|---------|---------------------|
+| Init (default) | `bash skills/op-session/scripts/op-session-init.sh` | Verify `STATUS=active`, remind wrapper usage |
+| `--account <id>` | `bash skills/op-session/scripts/op-session-init.sh --account <id>` | Verify `STATUS=active` for specified account |
+| `--check` | `bash skills/op-session/scripts/op-session-init.sh --check` | Report returned status (`active`/`expired`/`no_session`/`invalid`) |
+| `--list` | `bash skills/op-session/scripts/op-session-init.sh --list` | Display account list only |
+| `--clear` | `bash skills/op-session/scripts/op-session-init.sh --clear` | Confirm session file removed |
+
+After successful init, all subsequent `op` calls must use:
+`bash skills/op-session/scripts/op-with-session.sh <subcommand> [args]`
 
 ## Examples
 

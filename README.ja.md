@@ -2,34 +2,52 @@
 
 **言語**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | 日本語 | [한국어](README.ko.md) | [Español](README.es.md)
 
-[Claude Code](https://claude.com/claude-code) 向け開発ワークフロープラグイン。Codex MCP 連携はオプションです。
+**[Claude Code](https://claude.com/claude-code) 向け自律型開発ワークフローエンジン。**
 
-90以上のツールでコードレビュー、テスト、調査、セキュリティ監査、DevOps 自動化をカバー。
+コード編集 → 自動レビュー → 自動修正 → ゲート通過 → 出荷。手動操作は不要です。
 
-## 極小の Context 使用量
+55 commands | 38 skills | 14 agents | ~4% context footprint
 
-本プラグインは Claude の 200k Context Window のわずか **~4%** で 90 以上のツールを提供します。これは重要なアーキテクチャ上の優位性です。
+## 仕組み
 
-| コンポーネント | トークン数 | 200k に対する割合 |
-|---------------|-----------|-----------------|
-| ルール（常時読み込み） | 5.1k | 2.6% |
-| スキル（オンデマンド） | 1.9k | 1.0% |
-| エージェント | 791 | 0.4% |
-| **合計** | **~8k** | **~4%** |
+```mermaid
+flowchart LR
+    P["🎯 Plan"] --> B["🔨 Build"]
+    B --> G["🛡️ Gate"]
+    G --> S["🚀 Ship"]
 
-なぜこれが重要か：
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+```
 
-| メリット | 説明 |
-|---------|------|
-| コードに多くの余裕 | 96% の Context をプロジェクトファイル、diff、会話に使えます |
-| パフォーマンスへの影響なし | プラグインのオーバーヘッドは極めて小さく、応答速度に影響しません |
-| スキルはオンデマンド読み込み | 実行したスキルのみ読み込まれ、未使用スキルはトークンを消費しません |
-| 複雑なシナリオに対応 | 1 セッションで複数ツールを使用しても Context 上限に到達しにくい |
+**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、Claude は同じ返答内でレビューを開始し、すべてのゲートを通過するまで Hook が停止をブロックします。
 
-## 必要環境
+```mermaid
+sequenceDiagram
+    participant D as Developer
+    participant C as Claude
+    participant X as Codex MCP
+    participant H as Hooks
 
-- Claude Code 2.1+
-- [Codex MCP](https://github.com/openai/codex) 設定済み（`/codex-*` コマンド用）
+    D->>C: Edit code
+    H->>H: Track file change
+    C->>X: /codex-review-fast (auto)
+    X-->>C: P0/P1 findings
+
+    alt Issues found
+        C->>C: Fix all issues
+        C->>X: --continue threadId
+        X-->>C: Re-verify
+    end
+
+    X-->>C: ✅ Ready
+    C->>C: /precommit (auto)
+    C-->>D: ✅ All gates passed
+
+    Note over H: stop-guard blocks until<br/>review + precommit pass
+```
 
 ## インストール
 
@@ -41,135 +59,90 @@
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 ```
 
-## クイックスタート
+**必要環境**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（オプション、`/codex-*` コマンド用）
 
-インストール後、`/project-setup` を実行してプロジェクト環境を自動検出し、プレースホルダーを設定します：
+## クイックスタート
 
 ```bash
 /project-setup
 ```
 
-フレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトコマンドを検出し、`.claude/CLAUDE.md` を更新します。
+フレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトコマンドを自動検出し、`.claude/CLAUDE.md` を更新します。
 
-## 同梱内容
-
-| カテゴリ | 数 | 例 |
-|----------|-----|-----|
-| コマンド | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| スキル | 31 | project-setup, code-explore, next-step, skill-health-check |
-| エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
-| フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
-| ルール | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| スクリプト | 4 | precommit runner, verify runner, dep audit, namespace hint |
-
-## ワークフロー
-
-### Auto-Loop：Edit → Review → Gate
-
-コアの実行エンジンです。コード編集後、Claude は**自動的に**同じ返答内でレビューを開始します。手動操作は不要です。すべての Gate を通過するまで、Hook が停止をブロックします。
-
-```mermaid
-sequenceDiagram
-    participant D as 開発者
-    participant C as Claude
-    participant X as Codex MCP
-    participant H as Hooks
-
-    D->>C: コード編集
-    H->>H: ファイル変更を追跡
-    C->>X: /codex-review-fast（自動）
-    X-->>C: P0/P1 検出
-
-    alt 問題あり
-        C->>C: すべての問題を修正
-        C->>X: --continue threadId
-        X-->>C: 再検証
-    end
-
-    X-->>C: ✅ Ready
-    C->>C: /precommit（自動）
-    C-->>D: ✅ すべての Gate 通過
-
-    Note over H: stop-guard が review +<br/>precommit 通過まで停止をブロック
-```
-
-### プランニングチェーン
-
-対立型ブレインストーミングで Claude + Codex が独立調査と複数ラウンドの議論を経てナッシュ均衡に到達し、構造化された計画フェーズへ移行します。
-
-```mermaid
-flowchart LR
-    A["/codex-brainstorm<br/>ナッシュ均衡"] --> B["/feasibility-study"]
-    B --> C["/tech-spec"]
-    C --> D["/codex-architect"]
-    D --> E["実装準備完了"]
-```
-
-### ワークタイプ別トラック
+## ワークフロートラック
 
 ```mermaid
 flowchart TD
-    subgraph feat ["機能開発"]
-        F1["/feature-dev"] --> F2["コード + テスト"]
+    subgraph feat ["🔨 Feature Development"]
+        F1["/feature-dev"] --> F2["Code + Tests"]
         F2 --> F3["/verify"]
         F3 --> F4["/codex-review-fast"]
         F4 --> F5["/precommit"]
         F5 --> F6["/update-docs"]
     end
 
-    subgraph fix ["バグ修正"]
+    subgraph fix ["🐛 Bug Fix"]
         B1["/issue-analyze"] --> B2["/bug-fix"]
-        B2 --> B3["修正 + 回帰テスト"]
+        B2 --> B3["Fix + Regression test"]
         B3 --> B4["/verify"]
         B4 --> B5["/codex-review-fast"]
         B5 --> B6["/precommit"]
     end
 
-    subgraph docs ["ドキュメントのみ"]
-        D1[".md を編集"] --> D2["/codex-review-doc"]
-        D2 --> D3["完了"]
+    subgraph docs ["📝 Docs Only"]
+        D1["Edit .md"] --> D2["/codex-review-doc"]
+        D2 --> D3["Done"]
+    end
+
+    subgraph plan ["🎯 Planning"]
+        P1["/codex-brainstorm"] --> P2["/feasibility-study"]
+        P2 --> P3["/tech-spec"]
+        P3 --> P4["/codex-architect"]
+        P4 --> P5["Implementation ready"]
+    end
+
+    subgraph ops ["⚙️ Operations"]
+        O1["/project-setup"] --> O2["/repo-intake"]
+        O2 --> O3["Develop"]
+        O3 --> O4["/project-audit"]
+        O3 --> O5["/risk-assess"]
+        O4 --> O6["/next-step --go"]
+        O5 --> O6
     end
 ```
 
-### 運用ガバナンス
+| ワークフロー | コマンド | ゲート | 実行レイヤー |
+|-------------|----------|------|-------------|
+| 機能開発 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
+| バグ修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
+| Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | Hook |
+| プランニング | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| オンボーディング | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
-```mermaid
-flowchart TD
-    S["/project-setup"] --> R["/repo-intake"]
-    R --> DEV["開発"]
-    DEV --> A["/project-audit<br/>ヘルススコア"]
-    DEV --> RA["/risk-assess<br/>破壊的変更"]
-    A --> N["/next-step"]
-    RA --> N
-    N --> |"--go"|AUTO["自動ディスパッチ"]
-```
+## 同梱内容
 
-### 全体像
+| カテゴリ | 数 | 例 |
+|----------|-----|-----|
+| コマンド | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| スキル | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
+| フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
+| ルール | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
+| スクリプト | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
 
-```mermaid
-flowchart LR
-    P["計画"] --> B["構築"]
-    B --> G["ゲート"]
-    G --> S["出荷"]
+### 極小の Context 使用量
 
-    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
-    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
-    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/pr-review<br/>/update-docs"]
-```
+Claude の 200k context window のわずか ~4% — 96% はコードに使えます。
 
-### ワークフロー一覧
+| コンポーネント | トークン数 | 200k に対する割合 |
+|---------------|-----------|-----------------|
+| ルール（常時読み込み） | 5.1k | 2.6% |
+| スキル（オンデマンド） | 1.9k | 1.0% |
+| エージェント | 791 | 0.4% |
+| **合計** | **~8k** | **~4%** |
 
-| ワークフロー | トリガー | 主要コマンド | Gate | 実行レイヤー |
-|-------------|----------|-------------|------|-------------|
-| 機能開発 | 手動 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
-| バグ修正 | 手動 | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
-| Auto-Loop レビュー | コード編集 | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| ドキュメントレビュー | `.md` 編集 | `/codex-review-doc` | ✅/⛔ | Hook |
-| ドキュメント同期 | Precommit 通過 | `/update-docs` → `/create-request --update` | ✅/⚠️ | 動作レイヤー |
-| プランニング | 手動 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| リスク評価 | 手動 | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
-| オンボーディング | 初回利用 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+スキルはオンデマンドで読み込まれます。未使用のスキルはトークンを消費しません。
 
 ## コマンドリファレンス
 
@@ -181,6 +154,7 @@ flowchart LR
 | `/repo-intake` | プロジェクト初回スキャン（1回のみ） |
 | `/install-rules` | プラグインルールを `.claude/rules/` にインストール |
 | `/install-hooks` | プラグイン hooks を `.claude/` にインストール |
+| `/install-scripts` | プラグインランナースクリプトをインストール |
 | `/bug-fix` | バグ/Issue 修正ワークフロー |
 | `/codex-implement` | Codex がコードを書く |
 | `/codex-architect` | アーキテクチャ相談（第三の頭脳） |
@@ -192,6 +166,10 @@ flowchart LR
 | `/feature-verify` | システム診断（読み取り専用の検証、デュアル視点確認） |
 | `/code-investigate` | デュアル視点コード調査（Claude + Codex 独立探索） |
 | `/next-step` | コンテキスト認識型の次ステップアドバイザー |
+| `/smart-commit` | スマートバッチコミット（グループ化 + メッセージ + コマンド） |
+| `/create-pr` | ブランチから GitHub PR を作成 |
+| `/git-worktree` | git worktree の管理 |
+| `/merge-prep` | マージ前の分析と準備 |
 
 ### レビュー（Codex MCP）
 
@@ -241,6 +219,8 @@ flowchart LR
 | `/de-ai-flavor` | AI 生成の痕跡を除去 |
 | `/create-skill` | 新しいスキルの作成 |
 | `/pr-review` | PR セルフレビュー |
+| `/pr-summary` | PR ステータスサマリー（チケット別グループ） |
+| `/contract-decode` | EVM コントラクトエラー/calldata デコーダー |
 | `/skill-health-check` | スキル品質とルーティングの検証 |
 | `/claude-health` | Claude Code 設定のヘルスチェック |
 | `/op-session` | 1Password CLI セッションの初期化（繰り返しの生体認証を回避） |
@@ -253,6 +233,7 @@ flowchart LR
 | `auto-loop` | 修正 -> 再レビュー -> 修正 -> ... -> Pass（自動サイクル） |
 | `codex-invocation` | Codex は独立調査必須、結論の注入禁止 |
 | `fix-all-issues` | ゼロトレランス：見つけた問題はすべて修正 |
+| `self-improvement` | 修正された → 教訓を記録 → 再発防止 |
 | `framework` | フレームワーク固有の規約（カスタマイズ可） |
 | `testing` | Unit/Integration/E2E の分離 |
 | `security` | OWASP Top 10 チェックリスト |
@@ -271,9 +252,7 @@ flowchart LR
 | `pre-edit-guard` | Edit/Write 前 | .env/.git の編集を防止 |
 | `stop-guard` | 停止前 | 未完了レビュー時に警告 + stale-state git チェック（デフォルト：warn） |
 
-### フック設定
-
-フックはデフォルトで安全です。環境変数で挙動をカスタマイズ：
+フックはデフォルトで安全です。環境変数で挙動をカスタマイズできます：
 
 | 変数 | デフォルト | 説明 |
 |------|------------|------|
@@ -283,11 +262,11 @@ flowchart LR
 | `HOOK_DEBUG` | （未設定） | `1` でデバッグ情報を出力 |
 | `GUARD_EXTRA_PATTERNS` | （未設定） | 追加で保護するパスの正規表現（例：`src/locales/.*\.json$`） |
 
-**依存関係**：フックには `jq` が必要です。自動フォーマットにはプロジェクトに `prettier` が必要です。未導入の場合は自動的にスキップされます。
+**依存関係**：フックには `jq` が必要です。自動フォーマットには `prettier` が必要です。未導入の場合は自動的にスキップされます。
 
 ## カスタマイズ
 
-`/project-setup` ですべてのプレースホルダーを自動検出・設定するか、`.claude/CLAUDE.md` を直接編集：
+`/project-setup` ですべてのプレースホルダーを自動検出・設定するか、`.claude/CLAUDE.md` を直接編集してください：
 
 | プレースホルダー | 説明 | 例 |
 |------------------|------|----|
@@ -304,7 +283,7 @@ flowchart LR
 ## アーキテクチャ
 
 ```
-コマンド（入口）-> スキル（機能）-> エージェント（実行環境）
+Command (entry) → Skill (capability) → Agent (environment)
 ```
 
 - **コマンド**：ユーザーが `/...` で起動
@@ -312,41 +291,12 @@ flowchart LR
 - **エージェント**：専用ツールを持つ隔離されたサブエージェント
 - **フック**：自動ガードレール（フォーマット、レビュー状態、ストップガード）
 - **ルール**：常時有効な規約（自動読み込み）
-- **スクリプト**：検証コマンド用のオプション高速化スクリプト（下記参照）
 
-### スクリプトフォールバック
-
-検証コマンド（`/precommit`、`/verify`、`/dep-audit`）は **Try → Fallback** パターンを採用しています：
-
-1. **Try**：プロジェクトルートにランナースクリプト（`scripts/precommit-runner.js` など）が存在する場合、それを実行して高速かつ再現性のある結果を得ます。
-2. **Fallback**：スクリプトが存在しない場合、Claude がプロジェクトのエコシステム（Node.js、Python、Rust、Go、Java）を自動検出し、適切なコマンドを直接実行します。
-
-Fallback はセットアップ不要でそのまま使えます。ランナースクリプトは本プラグインに同梱されていますが、[Claude Code の既知の制限](https://github.com/anthropics/claude-code/issues/9354)（`${CLAUDE_PLUGIN_ROOT}` がコマンド markdown で利用不可）により、プラグインコマンドからスクリプトパスを自動解決できません。上流の問題が解決され次第更新予定です。
-
-## Agentic Control Stack
-
-本プラグインは完全な agentic 制御ループアーキテクチャを実装しています。各レイヤーは特定のプラグインコンポーネントに対応します：
-
-| レイヤー | sd0x-dev-flow での実装 | 主要ファイル |
-|---------|----------------------|------------|
-| **Feedforward Gate** | `/precommit` フック、`pre-edit-guard.sh`、lint:fix | `hooks/pre-edit-guard.sh`、`commands/precommit.md` |
-| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → 修正 → 再レビュー | `rules/auto-loop.md` |
-| **Hierarchical Loops** | 内側（フック 30秒）→ 中間（レビュー+precommit 10分）→ 外側（PRレビュー + ルール） | `hooks/` → `commands/` → `rules/` |
-| **Sensors** | `audit.js`、`analyze.js`、`risk-analyze.js`、`skill-lint.js` | `skills/*/scripts/*.js` |
-| **Effectors** | Edit/Write ツール、allowed-tools ホワイトリスト、diff 予算 | `commands/*.md` frontmatter |
-| **Human Governance** | `rules/` = ナレッジキュレーション、`⚠️ Need Human` センチネル = サーキットブレーカー | `rules/auto-loop.md` |
-
-### 制御ループの病理と緩和策
-
-| 障害モード | 症状 | sd0x-dev-flow での緩和策 |
-|-----------|------|------------------------|
-| **Oscillation（振動）** | test1 の修正で test2 が壊れ、繰り返しループ | 同一問題 3 ラウンド上限 → ブロッカーとして報告、人間に介入を要請 |
-| **Local Minimum（局所最小値）** | ハック（アサーション削除など）でテストを通す | 独立した Codex レビュー（結論の注入禁止）を第 2 センサーとして活用 |
-| **Divergence（発散）** | diff が際限なく膨張、無関係な変更が混入 | `allowed-tools` ホワイトリストで effectors を制限、git ルールで main への直接プッシュを禁止 |
+高度なアーキテクチャの詳細（agentic control stack、制御ループ理論、サンドボックスルール）については [docs/architecture.md](docs/architecture.md) を参照してください。
 
 ## コントリビュート
 
-PR 歓迎です。お願い事項：
+PR を歓迎します。お願い事項：
 
 1. 既存の命名規約に従う（kebab-case）
 2. スキルに `When to Use` / `When NOT to Use` を含める
@@ -356,3 +306,7 @@ PR 歓迎です。お願い事項：
 ## ライセンス
 
 MIT
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left)](https://www.star-history.com/#sd0xdev/sd0x-dev-flow&type=date&legend=top-left)

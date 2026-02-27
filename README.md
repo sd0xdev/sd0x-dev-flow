@@ -2,71 +2,27 @@
 
 **Language**: English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
-Development workflow plugin for [Claude Code](https://claude.com/claude-code) with optional Codex MCP integration.
+**The autonomous development workflow engine for [Claude Code](https://claude.com/claude-code).**
 
-90+ tools covering code review, testing, investigation, security audit, and DevOps automation.
+Edit code → auto-review → auto-fix → gate-pass → ship. No manual steps.
 
-## Minimal Context Footprint
+55 commands | 38 skills | 14 agents | ~4% context footprint
 
-This plugin occupies only **~4% of Claude's 200k context window** while delivering 90+ tools — a key architectural advantage.
+## How It Works
 
-| Component | Tokens | % of 200k |
-|-----------|--------|-----------|
-| Rules (always loaded) | 5.1k | 2.6% |
-| Skills (on-demand) | 1.9k | 1.0% |
-| Agents | 791 | 0.4% |
-| **Total** | **~8k** | **~4%** |
+```mermaid
+flowchart LR
+    P["🎯 Plan"] --> B["🔨 Build"]
+    B --> G["🛡️ Gate"]
+    G --> S["🚀 Ship"]
 
-Why this matters:
-
-| Advantage | Description |
-|-----------|-------------|
-| More room for your code | 96% of context remains for your project files, diffs, and conversation |
-| No performance degradation | Plugin overhead is negligible — Claude responds just as fast |
-| Skills load on-demand | Only the skill you invoke gets loaded; idle skills cost zero tokens |
-| Scales with complexity | You can use multiple tools in one session without hitting context limits |
-
-## Requirements
-
-- Claude Code 2.1+
-- [Codex MCP](https://github.com/openai/codex) configured (for `/codex-*` commands)
-
-## Install
-
-```bash
-# Add marketplace
-/plugin marketplace add sd0xdev/sd0x-dev-flow
-
-# Install plugin
-/plugin install sd0x-dev-flow@sd0xdev-marketplace
+    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
+    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
+    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
+    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
 ```
 
-## Quick Start
-
-After installing, run `/project-setup` to auto-detect your project environment and configure all placeholders:
-
-```bash
-/project-setup
-```
-
-This will detect your framework, package manager, database, entrypoints, and script commands, then update `.claude/CLAUDE.md` accordingly.
-
-## What's Included
-
-| Category | Count | Examples |
-|----------|-------|---------|
-| Commands | 47 | `/project-setup`, `/codex-review-fast`, `/verify`, `/next-step` |
-| Skills | 31 | project-setup, code-explore, next-step, skill-health-check |
-| Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
-| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
-| Rules | 10 | auto-loop, codex-invocation, security, testing, git-workflow |
-| Scripts | 4 | precommit runner, verify runner, dep audit, namespace hint |
-
-## Workflow
-
-### Auto-Loop: Edit → Review → Gate
-
-The core enforcement engine. After any code edit, Claude **automatically** triggers review in the same reply — no manual steps. Hooks block stopping until all gates pass.
+The **auto-loop engine** enforces quality gates automatically — after any code edit, Claude triggers review in the same reply. Hooks block stopping until all gates pass.
 
 ```mermaid
 sequenceDiagram
@@ -93,23 +49,31 @@ sequenceDiagram
     Note over H: stop-guard blocks until<br/>review + precommit pass
 ```
 
-### Planning Chain
+## Install
 
-Adversarial brainstorming reaches Nash Equilibrium through independent Claude + Codex research and multi-round debate, then flows into structured planning.
+```bash
+# Add marketplace
+/plugin marketplace add sd0xdev/sd0x-dev-flow
 
-```mermaid
-flowchart LR
-    A["/codex-brainstorm<br/>Nash Equilibrium"] --> B["/feasibility-study"]
-    B --> C["/tech-spec"]
-    C --> D["/codex-architect"]
-    D --> E["Implementation ready"]
+# Install plugin
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
 ```
 
-### Work-Type Tracks
+**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional, for `/codex-*` commands)
+
+## Quick Start
+
+```bash
+/project-setup
+```
+
+Auto-detects your framework, package manager, database, entrypoints, and script commands. Configures `.claude/CLAUDE.md` accordingly.
+
+## Workflow Tracks
 
 ```mermaid
 flowchart TD
-    subgraph feat ["Feature Development"]
+    subgraph feat ["🔨 Feature Development"]
         F1["/feature-dev"] --> F2["Code + Tests"]
         F2 --> F3["/verify"]
         F3 --> F4["/codex-review-fast"]
@@ -117,7 +81,7 @@ flowchart TD
         F5 --> F6["/update-docs"]
     end
 
-    subgraph fix ["Bug Fix"]
+    subgraph fix ["🐛 Bug Fix"]
         B1["/issue-analyze"] --> B2["/bug-fix"]
         B2 --> B3["Fix + Regression test"]
         B3 --> B4["/verify"]
@@ -125,51 +89,60 @@ flowchart TD
         B5 --> B6["/precommit"]
     end
 
-    subgraph docs ["Docs Only"]
+    subgraph docs ["📝 Docs Only"]
         D1["Edit .md"] --> D2["/codex-review-doc"]
         D2 --> D3["Done"]
     end
+
+    subgraph plan ["🎯 Planning"]
+        P1["/codex-brainstorm"] --> P2["/feasibility-study"]
+        P2 --> P3["/tech-spec"]
+        P3 --> P4["/codex-architect"]
+        P4 --> P5["Implementation ready"]
+    end
+
+    subgraph ops ["⚙️ Operations"]
+        O1["/project-setup"] --> O2["/repo-intake"]
+        O2 --> O3["Develop"]
+        O3 --> O4["/project-audit"]
+        O3 --> O5["/risk-assess"]
+        O4 --> O6["/next-step --go"]
+        O5 --> O6
+    end
 ```
 
-### Operational Governance
+| Workflow | Commands | Gate | Enforced By |
+|----------|----------|------|-------------|
+| Feature | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Behavior |
+| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + Behavior |
+| Auto-Loop | Code edit → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
+| Doc Review | `.md` edit → `/codex-review-doc` | ✅/⛔ | Hook |
+| Planning | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
+| Onboarding | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
 
-```mermaid
-flowchart TD
-    S["/project-setup"] --> R["/repo-intake"]
-    R --> DEV["Develop"]
-    DEV --> A["/project-audit<br/>Health score"]
-    DEV --> RA["/risk-assess<br/>Breaking changes"]
-    A --> N["/next-step"]
-    RA --> N
-    N --> |"--go"|AUTO["Auto-dispatch"]
-```
+## What's Included
 
-### At a Glance
+| Category | Count | Examples |
+|----------|-------|---------|
+| Commands | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
+| Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
+| Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
+| Scripts | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
 
-```mermaid
-flowchart LR
-    P["Plan"] --> B["Build"]
-    B --> G["Gate"]
-    G --> S["Ship"]
+### Minimal Context Footprint
 
-    P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
-    B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
-    G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/pr-review<br/>/update-docs"]
-```
+~4% of Claude's 200k context window — 96% remains for your code.
 
-### Workflow Catalog
+| Component | Tokens | % of 200k |
+|-----------|--------|-----------|
+| Rules (always loaded) | 5.1k | 2.6% |
+| Skills (on-demand) | 1.9k | 1.0% |
+| Agents | 791 | 0.4% |
+| **Total** | **~8k** | **~4%** |
 
-| Workflow | Trigger | Primary Commands | Gate | Enforced By |
-|----------|---------|------------------|------|-------------|
-| Feature Development | Manual | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Behavior |
-| Bug Fix | Manual | `/issue-analyze` → `/bug-fix` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Behavior |
-| Auto-Loop Review | Code edit | `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| Doc Review | `.md` edit | `/codex-review-doc` | ✅/⛔ | Hook |
-| Doc Sync | Precommit pass | `/update-docs` → `/create-request --update` | ✅/⚠️ | Behavior |
-| Planning | Manual | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| Risk Assessment | Manual | `/project-audit` → `/risk-assess` | ✅/⛔ | — |
-| Onboarding | First use | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+Skills load on-demand. Idle skills cost zero tokens.
 
 ## Commands Reference
 
@@ -181,6 +154,7 @@ flowchart LR
 | `/repo-intake` | One-time project intake scan |
 | `/install-rules` | Install plugin rules to `.claude/rules/` |
 | `/install-hooks` | Install plugin hooks to `.claude/` |
+| `/install-scripts` | Install plugin runner scripts |
 | `/bug-fix` | Bug/Issue fix workflow |
 | `/codex-implement` | Codex writes code |
 | `/codex-architect` | Architecture advice (third brain) |
@@ -192,6 +166,10 @@ flowchart LR
 | `/feature-verify` | System diagnosis (read-only verification with dual-perspective) |
 | `/code-investigate` | Dual-perspective code investigation (Claude + Codex independent) |
 | `/next-step` | Context-aware next step advisor |
+| `/smart-commit` | Smart batch commit (group + message + commands) |
+| `/create-pr` | Create GitHub PR from branch |
+| `/git-worktree` | Manage git worktrees |
+| `/merge-prep` | Pre-merge analysis and preparation |
 
 ### Review (Codex MCP)
 
@@ -241,6 +219,8 @@ flowchart LR
 | `/de-ai-flavor` | Remove AI-generated artifacts from documents |
 | `/create-skill` | Create new skills |
 | `/pr-review` | PR self-review |
+| `/pr-summary` | PR status summary (grouped by ticket) |
+| `/contract-decode` | EVM contract error/calldata decoder |
 | `/skill-health-check` | Validate skill quality and routing |
 | `/claude-health` | Claude Code config health check |
 | `/op-session` | Initialize 1Password CLI session (avoids repeated biometric prompts) |
@@ -253,6 +233,7 @@ flowchart LR
 | `auto-loop` | Fix -> re-review -> fix -> ... -> Pass (auto cycle) |
 | `codex-invocation` | Codex must independently research, never feed conclusions |
 | `fix-all-issues` | Zero tolerance: fix every issue found |
+| `self-improvement` | Corrected → record lesson → prevent recurrence |
 | `framework` | Framework-specific conventions (customizable) |
 | `testing` | Unit/Integration/E2E isolation |
 | `security` | OWASP Top 10 checklist |
@@ -271,9 +252,7 @@ flowchart LR
 | `pre-edit-guard` | Before Edit/Write | Prevent editing .env/.git |
 | `stop-guard` | Before stop | Warn on incomplete reviews + stale-state git check (default: warn) |
 
-### Hook Configuration
-
-Hooks are safe by default. Use environment variables to customize behavior:
+Hooks are safe by default. Use environment variables to customize:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -283,7 +262,7 @@ Hooks are safe by default. Use environment variables to customize behavior:
 | `HOOK_DEBUG` | (unset) | Set `1` to output debug info |
 | `GUARD_EXTRA_PATTERNS` | (unset) | Regex patterns for extra protected paths (e.g. `src/locales/.*\.json$`) |
 
-**Dependencies**: Hooks require `jq`. Auto-format requires `prettier` installed in the project. Missing dependencies are handled gracefully (hooks skip silently).
+**Dependencies**: Hooks require `jq`. Auto-format requires `prettier`. Missing dependencies are handled gracefully.
 
 ## Customization
 
@@ -304,7 +283,7 @@ Run `/project-setup` to auto-detect and configure all placeholders, or manually 
 ## Architecture
 
 ```
-Command (entry) -> Skill (capability) -> Agent (environment)
+Command (entry) → Skill (capability) → Agent (environment)
 ```
 
 - **Commands**: User-triggered via `/...`
@@ -312,37 +291,8 @@ Command (entry) -> Skill (capability) -> Agent (environment)
 - **Agents**: Isolated subagents with specific tools
 - **Hooks**: Automated guardrails (format, review state, stop guard)
 - **Rules**: Always-on conventions (auto-loaded)
-- **Scripts**: Optional accelerators for verification commands (see below)
 
-### Script Fallback
-
-Verification commands (`/precommit`, `/verify`, `/dep-audit`) use a **Try → Fallback** pattern:
-
-1. **Try**: If a runner script exists in the project root (`scripts/precommit-runner.js`, etc.), use it for fast, deterministic execution.
-2. **Fallback**: If no script is found, Claude detects the project ecosystem (Node.js, Python, Rust, Go, Java) and runs the appropriate commands directly.
-
-The fallback works out of the box with no setup required. Runner scripts are bundled in this plugin repo but cannot be auto-resolved from plugin commands due to a [Claude Code limitation](https://github.com/anthropics/claude-code/issues/9354) (`${CLAUDE_PLUGIN_ROOT}` is unavailable in command markdown). This will be updated when the upstream issue is resolved.
-
-## Agentic Control Stack
-
-This plugin implements a complete agentic control loop architecture. Each layer maps to specific plugin components:
-
-| Layer | sd0x-dev-flow Implementation | Key Files |
-|-------|------------------------------|-----------|
-| **Feedforward Gate** | `/precommit` hooks, `pre-edit-guard.sh`, lint:fix | `hooks/pre-edit-guard.sh`, `commands/precommit.md` |
-| **Feedback Loop (MAPE)** | `/verify` → `/codex-review-fast` → fix → re-review | `rules/auto-loop.md` |
-| **Hierarchical Loops** | Inner (hooks 30s) → Mid (review+precommit 10min) → Outer (PR review + rules) | `hooks/` → `commands/` → `rules/` |
-| **Sensors** | `audit.js`, `analyze.js`, `risk-analyze.js`, `skill-lint.js` | `skills/*/scripts/*.js` |
-| **Effectors** | Edit/Write tools, allowed-tools whitelist, diff budget | `commands/*.md` frontmatter |
-| **Human Governance** | `rules/` = Knowledge curation, `⚠️ Need Human` sentinel = circuit breaker | `rules/auto-loop.md` |
-
-### Control Loop Pathology & Mitigation
-
-| Failure Mode | Symptom | Mitigation in sd0x-dev-flow |
-|--------------|---------|----------------------------|
-| **Oscillation** | Fix test1 breaks test2, revert loops | 3-round limit on same issue → report blocker, request human |
-| **Local Minimum** | Tests pass via hacks (deleted assertions) | Independent Codex review (never feed conclusions) as second sensor |
-| **Divergence** | Diff grows unbounded, unrelated changes | `allowed-tools` whitelist limits effectors, git rules forbid direct push to main |
+For advanced architecture details (agentic control stack, control loop theory, sandbox rules), see [docs/architecture.md](docs/architecture.md).
 
 ## Contributing
 

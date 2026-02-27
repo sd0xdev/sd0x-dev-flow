@@ -87,12 +87,18 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/install-hooks` | Install plugin hooks to .claude/ | Onboarding |
 | `/project-setup` | Auto-detect and configure project | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
+| `/smart-commit` | Smart batch commit (group + message + commands) | Git |
+| `/create-pr` | Create GitHub PR from branch | Git |
+| `/git-worktree` | Manage git worktrees | Git |
+| `/pr-summary` | PR status summary (grouped by ticket) | Git |
+| `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
+| `/merge-prep` | Pre-merge analysis and preparation | Git |
 
 ## Development Rules
 
 1. **Reference existing code** -- find similar files first, keep style consistent
 2. **Test command** -- `{TEST_COMMAND}`
-3. **Author attribution** -- use developer's GitHub username, never AI names
+3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`)
 4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push`
 
 ## Tech Stack
@@ -113,6 +119,9 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | Circular dependency | Lazy loading getter |
 | Provider Scope | `@Scope(Prototype)` |
 | TEST_ENV | Must set `unit`/`integration`/`e2e` |
+| `!` context check: `ls`/`find` on home-dir paths blocked | Use `bash -c 'test -f "$HOME/..." && echo ok \|\| echo missing' 2>/dev/null \|\| echo "unknown (sandbox)"` |
+| `!` context check: `allowed-tools` must match | If `allowed-tools: Bash(bash:*)`, wrap all `!` checks in `bash -c '...'` |
+| `${CLAUDE_PLUGIN_ROOT}` unavailable in command `.md` | Cannot narrow `allowed-tools` to specific script paths; use `Bash(bash:*)` until [#9354](https://github.com/anthropics/claude-code/issues/9354) resolved |
 
 ## Customization
 
@@ -129,6 +138,9 @@ Replace these placeholders with your project values:
 | `{LINT_FIX_COMMAND}` | yarn lint:fix |
 | `{BUILD_COMMAND}` | yarn build |
 | `{TYPECHECK_COMMAND}` | yarn typecheck |
+| `{TICKET_PATTERN}` | Ticket ID regex (e.g. `[A-Z]+-\d+`) |
+| `{ISSUE_TRACKER_URL}` | Issue tracker URL |
+| `{TARGET_BRANCH}` | Default target branch (e.g. `main`) |
 
 ## Rules
 

@@ -87,11 +87,19 @@ The helper:
 
 | Aspect | Detail |
 |--------|--------|
-| Token storage | `~/.op-claude-session` with mode `600` (owner read/write only) |
+| Token storage | `~/.op-claude-session` created with `umask 077` (owner-only); existing file mode not corrected |
 | Token parsing | Strict `grep`+`sed` extraction, never `source` |
 | Token scope | Same as your 1Password account — all vaults you can access |
 | Risk | Any process running as your user can read the file |
 | Mitigation | Short-lived token (30min idle), `--clear` when done |
+
+## Known Limitations
+
+| Limitation | Cause | Workaround |
+|-----------|-------|------------|
+| `ls` on home-dir paths blocked in `!` context checks | Claude Code sandbox may restrict `ls`/`find` to working directory in command template expansion | Use `test -f` via `bash -c` wrapper; see `commands/op-session.md` |
+| `allowed-tools` cannot be narrowed to specific script paths | `${CLAUDE_PLUGIN_ROOT}` unavailable in command markdown ([#9354](https://github.com/anthropics/claude-code/issues/9354)) | Keep `Bash(bash:*)` until upstream fix |
+| Context check is best-effort UI | Sandbox policy may tighten | Authoritative status always via `op-session-init.sh --check` |
 
 ## Prerequisites
 

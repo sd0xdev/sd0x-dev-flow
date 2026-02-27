@@ -10,8 +10,8 @@ allowed-tools: Bash(bash:*)
 
 ## Context
 
-- Git status: !`git status -sb`
-- Changed files: !`git diff --name-only HEAD 2>/dev/null | head -10`
+- Git status: !`bash -c 'git status -sb'`
+- Changed files: !`bash -c 'git diff --name-only HEAD 2>/dev/null | head -10'`
 
 ## Task
 
