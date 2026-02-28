@@ -1,6 +1,6 @@
 ---
 description: Install plugin runner scripts into project .claude/scripts/ for persistent use without plugin loaded
-argument-hint: [--all] [--list] [--dry-run] [--force] [script-names...]
+argument-hint: [--all] [--list] [--dry-run] [--force] [--skill <name>] [--skill-all] [--skill-list] [script-names...]
 allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(cp:*)
 ---
 
@@ -40,10 +40,13 @@ $ARGUMENTS
 
 | Argument | Description |
 |----------|-------------|
-| `--all` | Install all available scripts |
-| `--list` | List available scripts without installing |
+| `--all` | Install all available core scripts |
+| `--list` | List available core scripts without installing |
 | `--dry-run` | Show what would be installed, no changes |
 | `--force` | Overwrite existing scripts with different content |
+| `--skill <name>` | Install all scripts from the specified skill |
+| `--skill-all` | Install scripts from all skills |
+| `--skill-list` | List all available skill scripts without installing |
 | `script-names...` | Space-separated script names (without extension) |
 
 ### Phase 1: Locate Plugin Scripts Directory
@@ -73,11 +76,35 @@ The available scripts and their dependencies are:
 
 If `--list` is specified, output this table and **stop**.
 
+#### Skill Scripts
+
+Dynamically enumerate scripts under `skills/*/scripts/*`. Known skill scripts:
+
+| Script | Skill | Type | Dependencies |
+|--------|-------|------|--------------|
+| `op-session-init.sh` | op-session | Bash | None |
+| `op-with-session.sh` | op-session | Bash | None |
+| `pr-summary.sh` | pr-summary | Bash | `jq` |
+| `pre-merge-check.sh` | merge-prep | Bash | None |
+| `review.sh` | codex-cli-review | Bash | None |
+| `skill-lint.js` | skill-health-check | Node.js | None |
+| `audit.js` | project-audit | Node.js | None |
+| `analyze.js` | next-step | Node.js | None |
+| `risk-analyze.js` | risk-assess | Node.js | None |
+| `scan_midway_delta.js` | repo-intake | Node.js | None |
+| `intake_cached.js` | repo-intake | Node.js | None |
+| `scan_midway_repo.js` | repo-intake | Node.js | None |
+
+If `--skill-list` is specified, output this skill scripts table and **stop**.
+
 ### Phase 3: Determine Installation Set
 
-- `--all`: install all scripts + dependencies
+- `--all`: install all core scripts + dependencies
+- `--skill <name>`: install all scripts under the specified skill
+- `--skill-all`: install all skill scripts from every skill
 - Specific `script-names`: install those + required dependencies (auto-include `lib/utils.js` when any `.js` runner is selected). Validate names exist in Phase 2 table; error on unknown names.
 - Neither: present the list and use AskUserQuestion to let the user select
+- Combinations: `--all --skill op-session` installs core scripts + the specified skill scripts
 
 ### Phase 4: Copy Scripts
 
@@ -88,8 +115,13 @@ If `--dry-run`, compute the install plan without writing any files, output the p
 1. Ensure target directories exist:
 
    ```bash
+   # For core scripts
    mkdir -p ${REPO_ROOT}/.claude/scripts/lib
+   # For skill scripts (when --skill or --skill-all)
+   mkdir -p ${REPO_ROOT}/.claude/scripts/skills/<skill-name>
    ```
+
+   > **Note**: Installed skill scripts serve as local copies for direct invocation (e.g. `bash .claude/scripts/skills/op-session/op-session-init.sh`). They are not consumed by `run-skill.sh`, which resolves from the plugin's own `skills/` directory.
 
 2. For each script to install:
 
@@ -99,7 +131,7 @@ If `--dry-run`, compute the install plan without writing any files, output the p
    | File exists, content identical | **Skip** (already installed) | **Skip** |
    | File exists, content differs | **Skip** + warn as conflict | **Overwrite** |
 
-3. After copying bash scripts: `chmod +x ${REPO_ROOT}/.claude/scripts/dep-audit.sh`
+3. After copying bash scripts (core and skill): `chmod +x` all `.sh` files
 
 ### Phase 5: Output Report
 
@@ -130,14 +162,26 @@ If `--dry-run`, compute the install plan without writing any files, output the p
 ## Examples
 
 ```bash
-# List available scripts
+# List available core scripts
 /install-scripts --list
 
-# Install all scripts
+# List available skill scripts
+/install-scripts --skill-list
+
+# Install all core scripts
 /install-scripts --all
 
 # Install specific scripts only
 /install-scripts precommit-runner verify-runner
+
+# Install a specific skill's scripts
+/install-scripts --skill op-session
+
+# Install all skill scripts
+/install-scripts --skill-all
+
+# Mix: core + specific skill
+/install-scripts --all --skill op-session
 
 # Preview what would happen
 /install-scripts --all --dry-run

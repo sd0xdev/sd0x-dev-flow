@@ -1,6 +1,6 @@
 ---
 name: op-session
-description: "Initialize 1Password CLI session for Claude Code. Use when: starting a session that needs 1Password secrets, op CLI keeps prompting biometric auth, setting up OP_SESSION token. Solves: Claude Code's no-TTY subprocess model triggers 1Password biometric auth on every op call. After running once, all subsequent op commands use the cached session token."
+description: "Initialize 1Password CLI session for Claude Code. Use when: starting a session that needs 1Password secrets, op CLI keeps prompting biometric auth, setting up OP_SESSION token. Solves: Claude Code's no-TTY subprocess model triggers 1Password biometric auth on every op call. Supports both token-based and App Integration auth modes — auto-detects which mode to use."
 allowed-tools: Bash(bash:*)
 ---
 
@@ -12,7 +12,12 @@ Claude Code executes each Bash tool call in a new subprocess without TTY. 1Passw
 
 ## Solution
 
-Use `op signin --raw` to get a session token once, store it in `~/.op-claude-session`. Use the secure helper script `op-with-session.sh` for all subsequent `op` calls.
+Auto-detect the auth mode and configure accordingly:
+
+| Mode | Condition | Behavior |
+|------|-----------|----------|
+| **Token** | `op signin --raw` returns a token | Cache token in `~/.op-claude-session`; wrapper passes `--session` flag |
+| **App Integration** | `op signin --raw` returns empty + `op whoami` succeeds | Record mode in session file; wrapper calls `op` directly (IPC with desktop app) |
 
 ## Workflow
 
@@ -20,13 +25,15 @@ Use `op signin --raw` to get a session token once, store it in `~/.op-claude-ses
 /op-session [--account <name>]
      │
      ▼
- op signin --raw  ← ONE biometric prompt
+ op signin --raw
      │
-     ▼
- ~/.op-claude-session  ← token + account (mode 600)
+     ├─ token non-empty ──► Token mode
+     │                       Verify → write session file → done
      │
-     ▼
- bash scripts/op-with-session.sh read "op://vault/item/field"
+     └─ token empty ──► op whoami succeeds?
+                          ├─ YES → App Integration mode
+                          │        Write session file (no token) → done
+                          └─ NO  → ERROR: signin failed
 ```
 
 ## Usage
@@ -34,64 +41,82 @@ Use `op signin --raw` to get a session token once, store it in `~/.op-claude-ses
 ### Initialize Session
 
 ```bash
-bash scripts/op-session-init.sh
+bash skills/op-session/scripts/op-session-init.sh
 # or with specific account
-bash scripts/op-session-init.sh --account my-team
+bash skills/op-session/scripts/op-session-init.sh --account my-team
 ```
 
 ### List Available Accounts
 
 ```bash
-bash scripts/op-session-init.sh --list
+bash skills/op-session/scripts/op-session-init.sh --list
 ```
 
 ### Check Session Status
 
 ```bash
-bash scripts/op-session-init.sh --check
+bash skills/op-session/scripts/op-session-init.sh --check
 ```
 
 ### Clear Session
 
 ```bash
-bash scripts/op-session-init.sh --clear
+bash skills/op-session/scripts/op-session-init.sh --clear
 ```
 
 ### Subsequent `op` Calls (Recommended)
 
-Use the secure helper script — it handles token loading, validation, and expiry detection:
+Use the secure helper script — it handles mode detection, token loading, validation, and expiry:
 
 ```bash
-bash scripts/op-with-session.sh read "op://vault/item/field"
-bash scripts/op-with-session.sh item list --vault Production
-bash scripts/op-with-session.sh whoami
+bash skills/op-session/scripts/op-with-session.sh read "op://vault/item/field"
+bash skills/op-session/scripts/op-with-session.sh item list --vault Production
+bash skills/op-session/scripts/op-with-session.sh whoami
 ```
 
 The helper:
-- Extracts token via strict parsing (no `source` — prevents shell injection)
+- Auto-detects auth mode from session file (`OP_AUTH_MODE`)
+- Token mode: passes `--session` and `--account` flags
+- App mode: passes only `--account` flag (auth via desktop app IPC)
 - Validates session before each call
-- Passes `--session` and `--account` flags automatically
-- Returns clear error if session is missing or expired
+- Returns clear error if session is missing, expired, or app is locked
 
-## Token Lifecycle
+## Session Lifecycle
 
-| Event | Behavior |
-|-------|----------|
-| Idle > 30 min | Token expires, re-run `/op-session` |
-| Each `op` call | Resets idle timer |
-| Hard limit 12hr | Token expires regardless |
-| 1Password app locks | Does NOT revoke OP_SESSION tokens |
-| `/op-session --clear` | Removes session file |
+| Event | Token Mode | App Integration Mode |
+|-------|-----------|---------------------|
+| Idle timeout | 30 min → expires | 10 min → expires (auto-refresh on use) |
+| Each `op` call | Resets idle timer | Resets idle timer |
+| Hard limit | 12hr | 12hr |
+| 1Password app locks | Does NOT revoke token | Next `op` call fails until unlocked |
+| `/op-session --clear` | Removes session file | Removes session file |
+
+## Session File Format
+
+```bash
+# Token mode
+export OP_AUTH_MODE='token'
+export OP_SESSION='<session-token>'
+export OP_ACCOUNT='<account-id>'
+
+# App Integration mode
+export OP_AUTH_MODE='app'
+export OP_SESSION=''
+export OP_ACCOUNT='<account-id>'
+```
+
+Legacy session files (without `OP_AUTH_MODE`) are auto-detected as token mode if `OP_SESSION` is non-empty.
 
 ## Security
 
-| Aspect | Detail |
-|--------|--------|
-| Token storage | `~/.op-claude-session` created with `umask 077` (owner-only); existing file mode not corrected |
-| Token parsing | Strict `grep`+`sed` extraction, never `source` |
-| Token scope | Same as your 1Password account — all vaults you can access |
-| Risk | Any process running as your user can read the file |
-| Mitigation | Short-lived token (30min idle), `--clear` when done |
+| Aspect | Token Mode | App Integration Mode |
+|--------|-----------|---------------------|
+| Token at rest | `~/.op-claude-session` (owner-only via `umask 077`) | No token stored |
+| Process args | `--session $TOKEN` visible to same-user processes | No `--session` flag |
+| Auth control | Token possession = access | Desktop app biometric |
+| Scope | All vaults you can access | All vaults you can access |
+| Risk level | Moderate (token on disk) | Lower (no token on disk) |
+| Mitigation | Short-lived token, `--clear` when done | App auto-manages session |
 
 ## Known Limitations
 
@@ -99,7 +124,8 @@ The helper:
 |-----------|-------|------------|
 | `ls` on home-dir paths blocked in `!` context checks | Claude Code sandbox may restrict `ls`/`find` to working directory in command template expansion | Use `test -f` via `bash -c` wrapper; see `commands/op-session.md` |
 | `allowed-tools` cannot be narrowed to specific script paths | `${CLAUDE_PLUGIN_ROOT}` unavailable in command markdown ([#9354](https://github.com/anthropics/claude-code/issues/9354)) | Keep `Bash(bash:*)` until upstream fix |
-| Context check is best-effort UI | Sandbox policy may tighten | Authoritative status always via `op-session-init.sh --check` |
+| Context check is best-effort UI | Sandbox policy may tighten | Authoritative status via `bash skills/op-session/scripts/op-session-init.sh --check` |
+| App mode fails when desktop app is locked | CLI cannot IPC with locked app | Unlock 1Password app, or run `/op-session` to reinitialize |
 
 ## Prerequisites
 

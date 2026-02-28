@@ -34,9 +34,9 @@ $ARGUMENTS
 
 | Mode | Command | Success Confirmation |
 |------|---------|---------------------|
-| Init (default) | `bash skills/op-session/scripts/op-session-init.sh` | Verify `STATUS=active`, remind wrapper usage |
+| Init (default) | `bash skills/op-session/scripts/op-session-init.sh` | Verify `STATUS=active` + report `MODE=token\|app`, remind wrapper usage |
 | `--account <id>` | `bash skills/op-session/scripts/op-session-init.sh --account <id>` | Verify `STATUS=active` for specified account |
-| `--check` | `bash skills/op-session/scripts/op-session-init.sh --check` | Report returned status (`active`/`expired`/`no_session`/`invalid`) |
+| `--check` | `bash skills/op-session/scripts/op-session-init.sh --check` | Report status (`active`/`expired`/`locked`/`no_session`/`invalid`) + `MODE` |
 | `--list` | `bash skills/op-session/scripts/op-session-init.sh --list` | Display account list only |
 | `--clear` | `bash skills/op-session/scripts/op-session-init.sh --clear` | Confirm session file removed |
 
