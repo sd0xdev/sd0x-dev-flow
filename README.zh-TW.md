@@ -6,7 +6,7 @@
 
 編輯程式碼 → 自動 review → 自動修正 → gate 通過 → 交付。無需手動步驟。
 
-55 commands | 38 skills | 14 agents | ~4% context 佔用
+56 commands | 39 skills | 14 agents | ~4% context 佔用
 
 ## 運作方式
 
@@ -124,8 +124,8 @@ flowchart TD
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 39 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -224,6 +224,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `/skill-health-check` | 驗證 Skill 品質與 routing |
 | `/claude-health` | Claude Code 設定健康檢查 |
 | `/op-session` | 初始化 1Password CLI session（避免重複生物辨識提示） |
+| `/obsidian-cli` | Obsidian vault 整合（透過官方 CLI） |
 | `/zh-tw` | 以繁體中文改寫 |
 
 ## Rules

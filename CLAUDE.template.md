@@ -140,6 +140,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/pr-summary` | PR status summary (grouped by ticket) | Git |
 | `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
 | `/merge-prep` | Pre-merge analysis and preparation | Git |
+| `/obsidian-cli` | Obsidian vault integration via CLI | Tooling |
 
 ## Development Rules
 

@@ -6,7 +6,7 @@
 
 Edit code → auto-review → auto-fix → gate-pass → ship. No manual steps.
 
-55 commands | 38 skills | 14 agents | ~4% context footprint
+56 commands | 39 skills | 14 agents | ~4% context footprint
 
 ## How It Works
 
@@ -124,8 +124,8 @@ flowchart TD
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 39 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -224,6 +224,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/skill-health-check` | Validate skill quality and routing |
 | `/claude-health` | Claude Code config health check |
 | `/op-session` | Initialize 1Password CLI session (avoids repeated biometric prompts) |
+| `/obsidian-cli` | Obsidian vault integration via official CLI |
 | `/zh-tw` | Rewrite in Traditional Chinese |
 
 ## Rules

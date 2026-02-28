@@ -6,7 +6,7 @@
 
 编辑代码 → 自动审查 → 自动修复 → 质量关卡通过 → 交付。无需手动步骤。
 
-55 commands | 38 skills | 14 agents | ~4% context 占用
+56 commands | 39 skills | 14 agents | ~4% context 占用
 
 ## 工作原理
 
@@ -124,8 +124,8 @@ flowchart TD
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| 技能 | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| 命令 | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| 技能 | 39 | project-setup, code-explore, smart-commit, contract-decode |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | 规则 | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -224,6 +224,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/skill-health-check` | 验证 Skill 质量与 routing |
 | `/claude-health` | Claude Code 配置健康检查 |
 | `/op-session` | 初始化 1Password CLI session（避免重复生物识别提示） |
+| `/obsidian-cli` | Obsidian vault 集成（通过官方 CLI） |
 | `/zh-tw` | 改写为繁体中文 |
 
 ## 规则

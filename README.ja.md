@@ -6,7 +6,7 @@
 
 コード編集 → 自動レビュー → 自動修正 → ゲート通過 → 出荷。手動操作は不要です。
 
-55 commands | 38 skills | 14 agents | ~4% context footprint
+56 commands | 39 skills | 14 agents | ~4% context footprint
 
 ## 仕組み
 
@@ -124,8 +124,8 @@ flowchart TD
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 55 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| スキル | 38 | project-setup, code-explore, smart-commit, contract-decode |
+| コマンド | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| スキル | 39 | project-setup, code-explore, smart-commit, contract-decode |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | ルール | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -224,6 +224,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `/skill-health-check` | スキル品質とルーティングの検証 |
 | `/claude-health` | Claude Code 設定のヘルスチェック |
 | `/op-session` | 1Password CLI セッションの初期化（繰り返しの生体認証を回避） |
+| `/obsidian-cli` | Obsidian vault 連携（公式 CLI 経由） |
 | `/zh-tw` | 繁体字中国語に書き換え |
 
 ## ルール
