@@ -104,7 +104,7 @@ print(f'Implementation: {r[\"Implementation\"]}')
 
 ### API Key
 
-If no key available, remind user to register at https://etherscan.io/myapikey.
+If no key available, remind user to register at <https://etherscan.io/myapikey>.
 For diagnostic scenarios, `YourApiKeyToken` may work for low-frequency queries.
 
 ---

@@ -149,6 +149,7 @@ git merge --squash <source>
 git commit -m "merge: Merge <source> into <target>"
 git push origin <target>
 ```
+
 ```
 
 ### Step 5: Summary
