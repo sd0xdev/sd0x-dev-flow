@@ -104,10 +104,14 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/codex-implement` | Codex writes code | Development |
 | `/bug-fix` | Bug fix workflow | Bug fixing |
 | `/feature-dev` | Feature development | Development |
+| `/feature-verify` | Feature verification (READ-ONLY) | Development |
 | `/code-explore` | Code exploration | Understanding |
+| `/code-investigate` | Dual-perspective code investigation | Understanding |
 | `/git-investigate` | Track code history | Finding source |
 | `/issue-analyze` | Issue deep analysis | Root cause |
 | `/repo-intake` | One-time project scan | Onboarding |
+| `/next-step` | Change-aware next step advisor | Development |
+| `/risk-assess` | Uncommitted code risk assessment | Development |
 | `/verify` | Run tests | Development |
 | `/codex-review-fast` | Quick review (diff) | **Required** |
 | `/codex-review` | Full review (lint+build) | Important PR |
@@ -122,6 +126,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/codex-test-review` | Review test coverage | **Required** |
 | `/post-dev-test` | Post-dev test completion | After feature |
 | `/check-coverage` | Test coverage analysis | Quality |
+| `/project-audit` | Project health audit with scoring | Quality |
 | `/dep-audit` | Dependency vulnerability audit | Periodic / PR |
 | `/update-docs` | Sync docs with code | Doc changes |
 | `/doc-refactor` | Simplify documents | Doc changes |
@@ -132,7 +137,9 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/zh-tw` | Rewrite in Traditional Chinese | i18n |
 | `/install-rules` | Install plugin rules to .claude/rules/ | Onboarding |
 | `/install-hooks` | Install plugin hooks to .claude/ | Onboarding |
+| `/install-scripts` | Install plugin scripts to .claude/scripts/ | Onboarding |
 | `/project-setup` | Auto-detect and configure project | Onboarding |
+| `/claude-health` | Claude Code config health check | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
 | `/smart-commit` | Smart batch commit (group + message + commands) | Git |
 | `/create-pr` | Create GitHub PR from branch | Git |
@@ -141,6 +148,8 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
 | `/merge-prep` | Pre-merge analysis and preparation | Git |
 | `/obsidian-cli` | Obsidian vault integration via CLI | Tooling |
+| `/op-session` | Initialize 1Password CLI session | Tooling |
+| `/skill-health-check` | Validate skill quality | Tooling |
 
 ## Development Rules
 

@@ -1,4 +1,4 @@
-# {PROJECT_NAME}
+# sd0x-dev-flow
 
 ## Required Checks (Stop Hook enforced)
 
@@ -36,10 +36,9 @@ Full spec: @rules/auto-loop.md
 
 | Change Type | Required Tests | File Mapping |
 |-------------|---------------|--------------|
-| New Service/Provider | `test/unit/` required | `src/service/xxx.ts` -> `test/unit/service/xxx.test.ts` |
-| Modify existing logic | Existing pass + new logic | `src/provider/*.ts` -> `test/unit/provider/*.test.ts` |
+| New script/skill | `test/` required | `scripts/xxx.sh` -> `test/scripts/xxx.test.js` |
+| Modify existing logic | Existing pass + new logic | `commands/*.md` -> `test/commands/*.test.js` |
 | Bug fix | Regression test | - |
-| New API endpoint | Unit + Integration | `src/controller/*.ts` -> `test/integration/controller/*.test.ts` |
 
 Coverage: happy path + error handling + edge cases (null, empty, extremes)
 
@@ -57,10 +56,14 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/codex-implement` | Codex writes code | Development |
 | `/bug-fix` | Bug fix workflow | Bug fixing |
 | `/feature-dev` | Feature development | Development |
+| `/feature-verify` | Feature verification (READ-ONLY) | Development |
 | `/code-explore` | Code exploration | Understanding |
+| `/code-investigate` | Dual-perspective code investigation | Understanding |
 | `/git-investigate` | Track code history | Finding source |
 | `/issue-analyze` | Issue deep analysis | Root cause |
 | `/repo-intake` | One-time project scan | Onboarding |
+| `/next-step` | Change-aware next step advisor | Development |
+| `/risk-assess` | Uncommitted code risk assessment | Development |
 | `/verify` | Run tests | Development |
 | `/codex-review-fast` | Quick review (diff) | **Required** |
 | `/codex-review` | Full review (lint+build) | Important PR |
@@ -75,6 +78,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/codex-test-review` | Review test coverage | **Required** |
 | `/post-dev-test` | Post-dev test completion | After feature |
 | `/check-coverage` | Test coverage analysis | Quality |
+| `/project-audit` | Project health audit with scoring | Quality |
 | `/dep-audit` | Dependency vulnerability audit | Periodic / PR |
 | `/update-docs` | Sync docs with code | Doc changes |
 | `/doc-refactor` | Simplify documents | Doc changes |
@@ -85,7 +89,9 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/zh-tw` | Rewrite in Traditional Chinese | i18n |
 | `/install-rules` | Install plugin rules to .claude/rules/ | Onboarding |
 | `/install-hooks` | Install plugin hooks to .claude/ | Onboarding |
+| `/install-scripts` | Install plugin scripts to .claude/scripts/ | Onboarding |
 | `/project-setup` | Auto-detect and configure project | Onboarding |
+| `/claude-health` | Claude Code config health check | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
 | `/smart-commit` | Smart batch commit (group + message + commands) | Git |
 | `/create-pr` | Create GitHub PR from branch | Git |
@@ -94,54 +100,34 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
 | `/merge-prep` | Pre-merge analysis and preparation | Git |
 | `/obsidian-cli` | Obsidian vault integration via CLI | Tooling |
+| `/op-session` | Initialize 1Password CLI session | Tooling |
+| `/skill-health-check` | Validate skill quality | Tooling |
 
 ## Development Rules
 
 1. **Reference existing code** -- find similar files first, keep style consistent
-2. **Test command** -- `{TEST_COMMAND}`
+2. **Test command** -- `node --test test/**/*.test.js`
 3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`)
 4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push`
 
 ## Tech Stack
 
-{FRAMEWORK} . TypeScript . {DATABASE} . Redis . Jest
+Node.js . JavaScript . node:test
 
 ## Key Entrypoints
 
 | File | Purpose |
 |------|---------|
-| `{CONFIG_FILE}` | DI config |
-| `{BOOTSTRAP_FILE}` | Bootstrap entry |
+| `scripts/run-skill.sh` | Skill script runner |
+| `package.json` | Project config |
 
 ## Footguns
 
 | Problem | Solution |
 |---------|----------|
-| Circular dependency | Lazy loading getter |
-| Provider Scope | `@Scope(Prototype)` |
-| TEST_ENV | Must set `unit`/`integration`/`e2e` |
 | `!` context check: `ls`/`find` on home-dir paths blocked | Use `bash -c 'test -f "$HOME/..." && echo ok \|\| echo missing' 2>/dev/null \|\| echo "unknown (sandbox)"` |
 | `!` context check: `allowed-tools` must match | If `allowed-tools: Bash(bash:*)`, wrap all `!` checks in `bash -c '...'` |
 | `${CLAUDE_PLUGIN_ROOT}` unavailable in command `.md` | Cannot narrow `allowed-tools` to specific script paths; use `Bash(bash:*)` until [#9354](https://github.com/anthropics/claude-code/issues/9354) resolved |
-
-## Customization
-
-Replace these placeholders with your project values:
-
-| Placeholder | Your Value |
-|-------------|------------|
-| `{PROJECT_NAME}` | Your project name |
-| `{FRAMEWORK}` | MidwayJS 3.x / NestJS / Express |
-| `{CONFIG_FILE}` | src/configuration.ts |
-| `{BOOTSTRAP_FILE}` | bootstrap.js |
-| `{DATABASE}` | MongoDB / PostgreSQL |
-| `{TEST_COMMAND}` | yarn test:unit |
-| `{LINT_FIX_COMMAND}` | yarn lint:fix |
-| `{BUILD_COMMAND}` | yarn build |
-| `{TYPECHECK_COMMAND}` | yarn typecheck |
-| `{TICKET_PATTERN}` | Ticket ID regex (e.g. `[A-Z]+-\d+`) |
-| `{ISSUE_TRACKER_URL}` | Issue tracker URL |
-| `{TARGET_BRANCH}` | Default target branch (e.g. `main`) |
 
 ## Rules
 
