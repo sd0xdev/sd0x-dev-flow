@@ -67,7 +67,14 @@ sequenceDiagram
 /project-setup
 ```
 
-自动检测框架、包管理器、数据库、入口文件和脚本命令，然后更新 `.claude/CLAUDE.md` 配置。
+一个命令完成所有配置：
+
+- 检测框架、包管理器、数据库、入口文件和脚本命令
+- 配置 `.claude/CLAUDE.md` 的项目参数
+- 安装 11 条 rules 到 `.claude/rules/`（auto-loop、security、testing 等）
+- 安装 4 个 hooks 到 `.claude/hooks/` 并 merge 至 `settings.json`
+
+使用 `--lite` 仅配置 CLAUDE.md（跳过 rules/hooks）。
 
 ## 工作流路径
 
@@ -118,7 +125,7 @@ flowchart TD
 | Auto-Loop | 代码编辑 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
 | 文档审查 | `.md` 编辑 → `/codex-review-doc` | ✅/⛔ | Hook |
 | 规划 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| 入门引导 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+| 入门引导 | `/project-setup` → `/repo-intake` | — | — |
 
 ## 包含内容
 

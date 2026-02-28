@@ -67,7 +67,14 @@ sequenceDiagram
 /project-setup
 ```
 
-自動偵測你的 framework、package manager、資料庫、entry point 和 script 指令，然後相應設定 `.claude/CLAUDE.md`。
+一個指令完成所有設定：
+
+- 偵測 framework、package manager、資料庫、entry point 和 script 指令
+- 設定 `.claude/CLAUDE.md` 的專案參數
+- 安裝 11 條 rules 到 `.claude/rules/`（auto-loop、security、testing 等）
+- 安裝 4 個 hooks 到 `.claude/hooks/` 並 merge 至 `settings.json`
+
+使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
 
 ## Workflow Tracks
 
@@ -118,7 +125,7 @@ flowchart TD
 | Auto-Loop | Code 編輯 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
 | 文件 Review | `.md` 編輯 → `/codex-review-doc` | ✅/⛔ | Hook |
 | 規劃 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| 上手流程 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+| 上手流程 | `/project-setup` → `/repo-intake` | — | — |
 
 ## 包含內容
 

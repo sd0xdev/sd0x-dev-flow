@@ -67,7 +67,14 @@ sequenceDiagram
 /project-setup
 ```
 
-Auto-detects your framework, package manager, database, entrypoints, and script commands. Configures `.claude/CLAUDE.md` accordingly.
+One command does it all:
+
+- Detects framework, package manager, database, entrypoints, and scripts
+- Configures `.claude/CLAUDE.md` with your project settings
+- Installs 11 rules to `.claude/rules/` (auto-loop, security, testing, etc.)
+- Installs 4 hooks to `.claude/hooks/` + merges into `settings.json`
+
+Use `--lite` to only configure CLAUDE.md (skip rules/hooks).
 
 ## Workflow Tracks
 
@@ -118,7 +125,7 @@ flowchart TD
 | Auto-Loop | Code edit → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
 | Doc Review | `.md` edit → `/codex-review-doc` | ✅/⛔ | Hook |
 | Planning | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| Onboarding | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+| Onboarding | `/project-setup` → `/repo-intake` | — | — |
 
 ## What's Included
 

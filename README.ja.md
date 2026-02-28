@@ -67,7 +67,14 @@ sequenceDiagram
 /project-setup
 ```
 
-フレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトコマンドを自動検出し、`.claude/CLAUDE.md` を更新します。
+1つのコマンドですべて完了：
+
+- フレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを検出
+- `.claude/CLAUDE.md` をプロジェクト設定で構成
+- 11個のルールを `.claude/rules/` にインストール（auto-loop、security、testing など）
+- 4個のフックを `.claude/hooks/` にインストールし、`settings.json` にマージ
+
+`--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
 
 ## ワークフロートラック
 
@@ -118,7 +125,7 @@ flowchart TD
 | Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
 | ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | Hook |
 | プランニング | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| オンボーディング | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+| オンボーディング | `/project-setup` → `/repo-intake` | — | — |
 
 ## 同梱内容
 

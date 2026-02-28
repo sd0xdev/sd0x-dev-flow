@@ -67,7 +67,14 @@ sequenceDiagram
 /project-setup
 ```
 
-프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트 명령어를 자동 감지하여 `.claude/CLAUDE.md`를 설정합니다.
+하나의 명령어로 모든 설정 완료:
+
+- 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트 감지
+- `.claude/CLAUDE.md`에 프로젝트 설정 구성
+- 11개 Rules를 `.claude/rules/`에 설치 (auto-loop, security, testing 등)
+- 4개 Hooks를 `.claude/hooks/`에 설치 및 `settings.json`에 병합
+
+`--lite`로 CLAUDE.md만 설정 (Rules/Hooks 스킵).
 
 ## 워크플로 트랙
 
@@ -118,7 +125,7 @@ flowchart TD
 | Auto-Loop | 코드 편집 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
 | 문서 리뷰 | `.md` 편집 → `/codex-review-doc` | ✅/⛔ | Hook |
 | 기획 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
-| 온보딩 | `/project-setup` → `/repo-intake` → `/install-rules` | — | — |
+| 온보딩 | `/project-setup` → `/repo-intake` | — | — |
 
 ## 포함 내용
 
