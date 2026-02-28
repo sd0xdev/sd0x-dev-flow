@@ -73,11 +73,11 @@ safe_exec() {
   vault=$(resolve_vault)
 
   # Build command as array (no eval, prevents injection)
-  local cmd=("$OBSIDIAN_BIN")
+  # Obsidian CLI uses key=value syntax: obsidian <command> vault="name" ...
+  local cmd=("$OBSIDIAN_BIN" "$@")
   if [ -n "$vault" ]; then
-    cmd+=(--vault "$vault")
+    cmd+=(vault="$vault")
   fi
-  cmd+=("$@")
 
   local rc=0
   run_with_timeout "$TIMEOUT_SEC" "${cmd[@]}" 2>&1 || rc=$?
@@ -115,11 +115,32 @@ intent_capture() {
   [ -n "$text" ] || die "capture: --text is required"
 
   # Check if file exists — append or create
-  if safe_exec files:read path="$file" >/dev/null 2>&1; then
-    safe_exec files:append path="$file" content="$text"
-  else
-    safe_exec files:create path="$file" content="$text"
+  # Note: Obsidian CLI returns exit 0 even on errors, so check output content.
+  # Only the specific single-line "not found" diagnostic means file is missing;
+  # all other read output is treated as file content (avoids false positives on
+  # notes whose content starts with "Error:").
+  # Mutating command (create/append) output is validated separately to catch
+  # real CLI errors (vault/IPC/permission) that also exit 0.
+  local read_out read_rc=0
+  read_out=$(safe_exec read path="$file") || read_rc=$?
+  if [ $read_rc -ne 0 ]; then
+    die "Failed to check file existence (exit $read_rc)"
   fi
+
+  local line_count action_out action_rc=0
+  line_count=$(echo "$read_out" | wc -l | tr -d ' ')
+  if [ "$line_count" -le 1 ] && echo "$read_out" | grep -q '^Error: File .* not found\.$'; then
+    action_out=$(safe_exec create path="$file" content="$text") || action_rc=$?
+  else
+    action_out=$(safe_exec append path="$file" content="$text") || action_rc=$?
+  fi
+  if [ $action_rc -ne 0 ]; then
+    die "capture: command failed (exit $action_rc)"
+  fi
+  if echo "$action_out" | grep -q '^Error: '; then
+    die "capture: $action_out"
+  fi
+  echo "$action_out"
 }
 
 # ---------- intent: daily ----------

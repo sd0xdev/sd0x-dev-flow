@@ -36,14 +36,19 @@ $ARGUMENTS
 ### Workflow
 
 1. **First use**: Run preflight to verify setup
+
    ```bash
    bash scripts/run-skill.sh obsidian-cli obsidian-preflight.sh --check
    ```
+
 2. **Set vault** (if needed):
+
    ```bash
    bash scripts/run-skill.sh obsidian-cli obsidian-preflight.sh --vault "My Vault"
    ```
+
 3. **Execute intent**:
+
    ```bash
    bash scripts/run-skill.sh obsidian-cli obsidian-exec.sh <intent> [args]
    ```

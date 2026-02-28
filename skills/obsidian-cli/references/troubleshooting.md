@@ -37,6 +37,16 @@ Obsidian CLI v1.12 has a known issue: `search` commands hang when piped to `head
 | Vault moved/renamed | Update config: `/obsidian-cli --vault "New Name"` |
 | Config stale | Delete `~/.sd0x/obsidian-cli.env` and reconfigure |
 
+## CLI Exit Code Unreliable
+
+Obsidian CLI v1.12 returns exit code 0 even on errors (e.g., `read` on a non-existent file prints `Error: File "..." not found.` but exits 0). The exec script checks output content instead of relying on exit codes:
+
+- **File not found**: Single-line `read` output matching `^Error: File .* not found\.$` → triggers `create`
+- **All other `read` output**: Treated as file content (including single-line notes starting with `Error:`) → triggers `append`
+- **Mutating command validation**: After `create` or `append`, output is checked for `^Error:` to catch real CLI errors (vault/IPC/permission)
+
+Additionally, `create` on an existing file does not fail — it creates a duplicate with `1` suffix (e.g., `note 1.md`). The exec script uses `read` output check to determine file existence before choosing `create` vs `append`.
+
 ## Early Access Limitations
 
 - CLI is Early Access (Catalyst License as of Feb 2026)

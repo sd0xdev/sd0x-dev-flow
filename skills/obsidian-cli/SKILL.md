@@ -64,6 +64,7 @@ bash scripts/run-skill.sh obsidian-cli obsidian-preflight.sh --print-env
 ```
 
 Output lines:
+
 ```
 STATUS=ok|error
 VAULT=<resolved-vault-name>
@@ -75,10 +76,10 @@ ERROR=<message if STATUS=error>
 
 | Intent | Args | CLI Commands Used |
 |--------|------|-------------------|
-| `context` | `--query <q> [--limit N]` | `obsidian search` |
-| `capture` | `--file <path> --text <content>` | `obsidian files:create`, `obsidian files:append` |
-| `daily` | `--text <content>` | `obsidian daily:append` |
-| `task` | `--add <text>` or `--list` | `obsidian tasks` |
+| `context` | `--query <q> [--limit N]` | `obsidian search query= limit=` |
+| `capture` | `--file <path> --text <content>` | `obsidian read path=`, `obsidian create path= content=`, `obsidian append path= content=` |
+| `daily` | `--text <content>` | `obsidian daily:append content=` |
+| `task` | `--add <text>` or `--list` | `obsidian daily:append content=`, `obsidian tasks daily` |
 
 ```bash
 # Search vault for context

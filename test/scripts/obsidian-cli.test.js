@@ -64,25 +64,25 @@ function setupStubBin(options = {}) {
   const binDir = makeTempDir('bin');
 
   // Stub obsidian binary — logs all args to OBSIDIAN_TRACE_FILE if set
+  // Obsidian CLI uses key=value syntax: obsidian <command> vault="name" key=value
   if (includeObsidian) {
     const stubObsidian = `#!/bin/sh
 # Trace args for test verification
 if [ -n "\${OBSIDIAN_TRACE_FILE:-}" ]; then
   echo "$*" >> "\$OBSIDIAN_TRACE_FILE"
 fi
-# Skip --vault <name> if present
-VAULT_ARG=""
-if [ "$1" = "--vault" ]; then VAULT_ARG="$2"; shift 2; fi
-case "$1" in
+# Extract command (first arg) — vault=<name> is a key=value option, not a flag
+CMD="$1"; shift
+case "\$CMD" in
   version) echo "${obsidianVersion}"; exit ${obsidianExitCode} ;;
   vault)   echo "${obsidianVault}"; exit 0 ;;
   search)  echo "Search results for: $*"; exit 0 ;;
-  files:read)   exit \${STUB_FILES_READ_EXIT:-0} ;;
-  files:append) echo "Appended"; exit 0 ;;
-  files:create) echo "Created"; exit 0 ;;
+  read)    if [ "\${STUB_READ_NOT_FOUND:-}" = "1" ]; then echo 'Error: File "test.md" not found.'; elif [ -n "\${STUB_READ_ERROR:-}" ]; then echo "Error: \${STUB_READ_ERROR}"; elif [ -n "\${STUB_READ_CONTENT:-}" ]; then echo "\${STUB_READ_CONTENT}"; fi; exit 0 ;;
+  append)  if [ -n "\${STUB_APPEND_ERROR:-}" ]; then echo "Error: \${STUB_APPEND_ERROR}"; else echo "Appended"; fi; exit 0 ;;
+  create)  if [ -n "\${STUB_CREATE_ERROR:-}" ]; then echo "Error: \${STUB_CREATE_ERROR}"; else echo "Created"; fi; exit 0 ;;
   daily:append) echo "Daily appended"; exit 0 ;;
   tasks)        echo "- [ ] Task 1"; exit 0 ;;
-  *)            echo "Unknown command: $1"; exit 1 ;;
+  *)            echo "Unknown command: \$CMD"; exit 1 ;;
 esac
 `;
     writeExecutable(join(binDir, 'obsidian'), stubObsidian);
@@ -245,7 +245,7 @@ test('exec: task --list succeeds', () => {
   assert.match(result.stdout, /Task 1/);
 });
 
-test('exec: resolves vault from OBSIDIAN_VAULT env and passes --vault flag', () => {
+test('exec: resolves vault from OBSIDIAN_VAULT env and passes vault= option', () => {
   const binDir = setupStubBin();
   const home = makeTempDir('home');
   const traceFile = join(home, 'trace.log');
@@ -261,12 +261,12 @@ test('exec: resolves vault from OBSIDIAN_VAULT env and passes --vault flag', () 
     timeout: 10000,
   });
   assert.equal(result.status, 0);
-  // Verify --vault EnvVault was passed to the obsidian binary
+  // Verify vault=EnvVault was passed (key=value syntax, not --vault flag)
   const trace = readFileSync(traceFile, 'utf8');
-  assert.match(trace, /--vault EnvVault/);
+  assert.match(trace, /vault=EnvVault/);
 });
 
-test('exec: resolves vault from config file and passes --vault flag', () => {
+test('exec: resolves vault from config file and passes vault= option', () => {
   const binDir = setupStubBin();
   const home = makeTempDir('home');
   const configDir = join(home, '.sd0x');
@@ -284,9 +284,9 @@ test('exec: resolves vault from config file and passes --vault flag', () => {
     timeout: 10000,
   });
   assert.equal(result.status, 0);
-  // Verify --vault ConfigVault was passed
+  // Verify vault=ConfigVault was passed (key=value syntax)
   const trace = readFileSync(traceFile, 'utf8');
-  assert.match(trace, /--vault ConfigVault/);
+  assert.match(trace, /vault=ConfigVault/);
 });
 
 // ============================================================
@@ -510,7 +510,7 @@ test('exec: uses perl fallback when no timeout/gtimeout in PATH', () => {
   }
 });
 
-test('exec: capture uses files:create when files:read fails', () => {
+test('exec: capture uses create when read returns error (file does not exist)', () => {
   const binDir = setupStubBin();
   const home = makeTempDir('home');
   const traceFile = join(home, 'trace.log');
@@ -520,28 +520,96 @@ test('exec: capture uses files:create when files:read fails', () => {
     env: {
       PATH: `${binDir}:/usr/bin:/bin`,
       HOME: home,
-      STUB_FILES_READ_EXIT: '1',
+      STUB_READ_NOT_FOUND: '1',
       OBSIDIAN_TRACE_FILE: traceFile,
     },
     timeout: 10000,
   });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Created/);
+  // Verify exact command sequence: read then create (not append)
+  const traceLines = readFileSync(traceFile, 'utf8').trim().split('\n');
+  assert.equal(traceLines.length, 2, 'expect exactly 2 CLI calls');
+  assert.match(traceLines[0], /^read /);
+  assert.match(traceLines[1], /^create /);
 });
 
-test('exec: capture uses files:append when files:read succeeds', () => {
+test('exec: capture uses append when read succeeds (file exists)', () => {
   const binDir = setupStubBin();
   const home = makeTempDir('home');
+  const traceFile = join(home, 'trace.log');
 
   const result = spawnSync('bash', [execScript, 'capture', '--file', 'existing.md', '--text', 'more'], {
     encoding: 'utf8',
     env: {
       PATH: `${binDir}:/usr/bin:/bin`,
       HOME: home,
-      STUB_FILES_READ_EXIT: '0',
+      OBSIDIAN_TRACE_FILE: traceFile,
+      // STUB_READ_NOT_FOUND not set — read returns success (no Error: in output)
     },
     timeout: 10000,
   });
   assert.equal(result.status, 0);
   assert.match(result.stdout, /Appended/);
+  // Verify exact command sequence: read then append (not create)
+  const traceLines = readFileSync(traceFile, 'utf8').trim().split('\n');
+  assert.equal(traceLines.length, 2, 'expect exactly 2 CLI calls');
+  assert.match(traceLines[0], /^read /);
+  assert.match(traceLines[1], /^append /);
+});
+
+test('exec: capture uses append when multi-line content contains Error: (not a CLI error)', () => {
+  const binDir = setupStubBin();
+  const home = makeTempDir('home');
+
+  const result = spawnSync('bash', [execScript, 'capture', '--file', 'errors.md', '--text', 'more'], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${binDir}:/usr/bin:/bin`,
+      HOME: home,
+      // Multi-line file content — CLI diagnostics are single-line, so multi-line = file content
+      STUB_READ_CONTENT: 'Error: something went wrong in production\nSecond line of the note',
+    },
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0);
+  // Should append (multi-line = file exists), not create
+  assert.match(result.stdout, /Appended/);
+});
+
+test('exec: capture fails fast when append returns CLI error', () => {
+  const binDir = setupStubBin();
+  const home = makeTempDir('home');
+
+  const result = spawnSync('bash', [execScript, 'capture', '--file', 'test.md', '--text', 'content'], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${binDir}:/usr/bin:/bin`,
+      HOME: home,
+      // File exists (read returns empty), but append fails with CLI error
+      STUB_APPEND_ERROR: 'Vault not found',
+    },
+    timeout: 10000,
+  });
+  // Should fail (die) — not silently succeed
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /capture:/);
+});
+
+test('exec: capture fails fast when create returns CLI error', () => {
+  const binDir = setupStubBin();
+  const home = makeTempDir('home');
+
+  const result = spawnSync('bash', [execScript, 'capture', '--file', 'new.md', '--text', 'content'], {
+    encoding: 'utf8',
+    env: {
+      PATH: `${binDir}:/usr/bin:/bin`,
+      HOME: home,
+      STUB_READ_NOT_FOUND: '1',
+      STUB_CREATE_ERROR: 'Permission denied',
+    },
+    timeout: 10000,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /capture:/);
 });
