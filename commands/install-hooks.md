@@ -1,7 +1,7 @@
 ---
 description: Install plugin hooks into project .claude/ for persistent use without plugin loaded
 argument-hint: [--all] [--list] [--dry-run] [--force] [--local] [hook-names...]
-allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(jq:*)
+allowed-tools: Read, Grep, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(jq:*)
 ---
 
 ## Context
@@ -144,6 +144,15 @@ Merge strategy:
     - No matching entry → **Append**
 - `--force` semantics: **Replace** the existing entry at the same matcher (not append a duplicate). Remove the old entry, then add the new one.
 - Write updated settings back
+
+### Phase 4.5: Backfill CLAUDE.md (Closed-Loop Guarantee)
+
+Ensure `.claude/CLAUDE.md` contains the behavior-layer text so the auto-loop engine can activate. This guarantees a closed loop even when `/install-hooks` is run standalone (without `/project-setup`).
+
+1. Grep `.claude/CLAUDE.md` for `Required Checks`
+2. **Found** → skip (already configured)
+3. **Not found but file exists** → append the Required Checks + Auto-Loop Rule block at end of file (content from `CLAUDE.template.md` L1-33)
+4. **File does not exist** → extract from plugin's `CLAUDE.template.md`: L1-33 (Required Checks + Auto-Loop Rule) → create minimal `.claude/CLAUDE.md`. Remove ecosystem block markers.
 
 ### Phase 5: Output Report
 

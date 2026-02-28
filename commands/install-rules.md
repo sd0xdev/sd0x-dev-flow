@@ -1,7 +1,7 @@
 ---
 description: Install plugin rules into project .claude/rules/ for persistent use without plugin loaded
 argument-hint: [--all] [--list] [--dry-run] [--force] [rule-names...]
-allowed-tools: Read, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*)
+allowed-tools: Read, Grep, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*)
 ---
 
 ## Context
@@ -112,6 +112,32 @@ Use the repo root from Context (Phase 0) to build absolute paths. All paths belo
 3. If `--dry-run`, output the plan table and **stop** (do not write any files).
 
 4. For each file to install: Read the source rule content, then Write to `${REPO_ROOT}/.claude/rules/<name>.md`.
+
+### Phase 4.5: Backfill CLAUDE.md (Closed-Loop Guarantee)
+
+Ensure `.claude/CLAUDE.md` contains `@rules/` references so the auto-loop engine can activate. This guarantees a closed loop even when `/install-rules` is run standalone (without `/project-setup`).
+
+1. Grep `.claude/CLAUDE.md` for `@rules/auto-loop.md`
+2. **Found** → skip (already configured)
+3. **Not found but file exists** → append the following `## Rules` block at end of file:
+
+   ```markdown
+   ## Rules
+
+   - @rules/auto-loop.md -- Auto review loop (highest priority)
+   - @rules/codex-invocation.md -- Codex must independently research (critical)
+   - @rules/fix-all-issues.md -- Zero tolerance
+   - @rules/testing.md
+   - @rules/framework.md
+   - @rules/security.md
+   - @rules/docs-writing.md
+   - @rules/docs-numbering.md
+   - @rules/git-workflow.md
+   - @rules/logging.md
+   - @rules/self-improvement.md -- Corrected → record → prevent recurrence
+   ```
+
+4. **File does not exist** → extract from plugin's `CLAUDE.template.md`: L1-33 (Required Checks + Auto-Loop Rule) + L288-300 (Rules references) → create minimal `.claude/CLAUDE.md`. Remove ecosystem block markers and leave unresolved placeholders as `{PLACEHOLDER}`.
 
 ### Phase 5: Output Report
 

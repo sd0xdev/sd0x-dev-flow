@@ -1,7 +1,7 @@
 ---
 name: project-setup
-description: "Project configuration initialization. Use when: first-time setup, auto-detecting framework, replacing CLAUDE.md placeholders. Not for: ongoing config checks (use claude-health), skill creation (use create-skill). Output: configured CLAUDE.md + project settings."
-allowed-tools: Read, Grep, Glob, Edit, Bash(node:*), Bash(git:*), Bash(ls:*)
+description: "Project configuration initialization. Use when: first-time setup, auto-detecting framework, replacing CLAUDE.md placeholders. Not for: ongoing config checks (use claude-health), skill creation (use create-skill). Output: configured CLAUDE.md + project settings + rules + hooks."
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash(node:*), Bash(git:*), Bash(ls:*), Bash(mkdir:*), Bash(diff:*), Bash(chmod:*), Bash(jq:*), Bash(bash:*)
 # context: shared (default) — intentionally NOT fork because Phase 2 requires user confirmation
 ---
 
@@ -37,11 +37,41 @@ Phase 3: Write to .claude/CLAUDE.md (unless --detect-only)
     ├─ Read CLAUDE.template.md, filter ecosystem blocks
     └─ Replace placeholders, write to .claude/CLAUDE.md
     │
-Phase 4: Verify
+Phase 4: Verify CLAUDE.md
     │
     ├─ Read .claude/CLAUDE.md to confirm no remaining placeholders
-    └─ Output final summary
+    └─ Output placeholder summary
+    │
+Phase 5: Install Rules + Backfill CLAUDE.md (unless --no-rules or --lite)
+    │
+    ├─ Locate plugin rules dir (3-level fallback)
+    ├─ mkdir -p .claude/rules/ → copy 11 rules
+    ├─ Backfill: ensure .claude/CLAUDE.md has @rules/ references
+    └─ Output rules install report
+    │
+Phase 6: Install Hooks (unless --no-hooks or --lite)
+    │
+    ├─ Locate plugin hooks dir (3-level fallback)
+    ├─ mkdir -p .claude/hooks/ → copy 4 hooks + chmod +x
+    ├─ Merge hook definitions into .claude/settings.json
+    └─ Output hooks install report
+    │
+Phase 7: Final Verification Report
+    │
+    ├─ Summarize all phases
+    ├─ Closed-loop check (CLAUDE.md + rules + hooks)
+    └─ Output next steps
 ```
+
+### Flag Short-Circuit Semantics
+
+| Flag | Phase 1-2 | Phase 3-4 | Phase 5-6 | Phase 7 |
+|------|-----------|-----------|-----------|---------|
+| (none) | Execute | Execute | Execute | Full report |
+| `--detect-only` | Execute | Skip | Skip | Detection results only |
+| `--lite` | Execute | Execute | Skip | CLAUDE.md only |
+| `--no-rules` | Execute | Execute | Skip rules | Report |
+| `--no-hooks` | Execute | Execute | Skip hooks | Report |
 
 ## Phase 1: Detect Project Environment
 
@@ -89,17 +119,205 @@ Based on detected manifest (from Phase 1.0):
 
 If `.claude/CLAUDE.md` does not exist, create it from the rendered template.
 
-## Phase 4: Verify
+## Phase 4: Verify CLAUDE.md
 
 1. Read `.claude/CLAUDE.md`
 2. `Grep: \{[A-Z_]+\}` — confirm no remaining placeholders
 3. Output summary table with all placeholder values and remaining count
+
+If `--detect-only` or `--lite`, skip to Phase 7.
+
+## Phase 5: Install Rules + Backfill CLAUDE.md
+
+**Skip if**: `--no-rules` or `--lite` or `--detect-only`.
+
+### 5.1 Locate Plugin Rules Directory
+
+Find the plugin's `rules/` directory using this priority (short-circuit on first match):
+
+1. **Glob search** — search known Claude plugin locations:
+
+   ```
+   Glob: ~/.claude/plugins/**/sd0x-dev-flow/rules/auto-loop.md
+   Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/rules/auto-loop.md
+   ```
+
+2. **Plugin-relative fallback** — try reading `@rules/auto-loop.md` to confirm accessibility. If readable, derive the rules directory.
+3. **Not found** — warn and skip Phase 5 (do not block).
+
+### 5.2 Copy Rules
+
+1. `mkdir -p ${REPO_ROOT}/.claude/rules/`
+2. Copy all 11 rules:
+
+   | Rule | Purpose |
+   |------|---------|
+   | `auto-loop.md` | Auto review loop enforcement |
+   | `codex-invocation.md` | Codex independent research requirement |
+   | `fix-all-issues.md` | Zero tolerance for unfixed issues |
+   | `framework.md` | Framework conventions |
+   | `testing.md` | Test structure and requirements |
+   | `security.md` | OWASP security checklist |
+   | `git-workflow.md` | Git branch and commit conventions |
+   | `logging.md` | Structured logging standards |
+   | `docs-writing.md` | Documentation writing conventions |
+   | `docs-numbering.md` | Document numbering scheme |
+   | `self-improvement.md` | Self-improvement loop |
+
+3. Conflict strategy:
+
+   | Scenario | Action |
+   |----------|--------|
+   | File does not exist | **Install** |
+   | File exists, content identical | **Skip** |
+   | File exists, content differs | **Skip** + warn as conflict |
+
+### 5.3 Backfill CLAUDE.md (Closed-Loop Guarantee)
+
+Ensure `.claude/CLAUDE.md` contains `@rules/` references so the auto-loop engine can activate:
+
+1. Grep `.claude/CLAUDE.md` for `@rules/auto-loop.md`
+2. **Found** → skip (already configured)
+3. **Not found but file exists** → append `## Rules` block at end of file (11 `@rules/` references, content from `CLAUDE.template.md` L288-300)
+4. **File does not exist** (edge case: Phase 3 was skipped) → extract from `CLAUDE.template.md`: L1-33 (Required Checks + Auto-Loop Rule) + L288-300 (Rules references) → create minimal `.claude/CLAUDE.md`
+
+When extracting from template, remove ecosystem block markers and leave unresolved placeholders as `{PLACEHOLDER}`.
+
+### 5.4 Output Rules Report
+
+```markdown
+## Rules Install Report
+
+**Source**: <plugin-rules-path>
+**Target**: <repo-root>/.claude/rules/
+
+| Rule | Status |
+|------|--------|
+| auto-loop.md | ✅ Installed |
+| ... | ... |
+
+**Installed**: N / **Skipped**: M / **Conflicts**: K
+**CLAUDE.md backfill**: ✅ @rules/ references present
+```
+
+## Phase 6: Install Hooks
+
+**Skip if**: `--no-hooks` or `--lite` or `--detect-only`.
+
+### 6.1 Locate Plugin Hooks Directory
+
+Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
+
+1. `Glob: ~/.claude/plugins/**/sd0x-dev-flow/hooks/pre-edit-guard.sh`
+2. `Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/hooks/pre-edit-guard.sh`
+3. Plugin-relative fallback: `@hooks/pre-edit-guard.sh`
+4. **Not found** → warn and skip Phase 6.
+
+### 6.2 Copy Hook Scripts
+
+1. `mkdir -p ${REPO_ROOT}/.claude/hooks/`
+2. Copy 4 hooks (exclude `namespace-hint.sh` — plugin-only):
+
+   | Hook | Event | Purpose |
+   |------|-------|---------|
+   | `pre-edit-guard.sh` | PreToolUse | Block editing .env/.git |
+   | `post-edit-format.sh` | PostToolUse | Auto-format + track changes |
+   | `post-tool-review-state.sh` | PostToolUse | Parse review results |
+   | `stop-guard.sh` | Stop | Check review + precommit completed |
+
+3. `chmod +x` each installed script.
+4. Conflict strategy: same as Phase 5.2.
+
+### 6.3 Merge Hook Definitions into Settings
+
+Target: `${REPO_ROOT}/.claude/settings.json`
+
+Hook definition mapping (uses `$CLAUDE_PROJECT_DIR` for portability):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-edit-guard.sh"}]}
+    ],
+    "PostToolUse": [
+      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-format.sh"}]},
+      {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-tool-review-state.sh"}]}
+    ],
+    "Stop": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
+    ]
+  }
+}
+```
+
+Merge strategy:
+- Read existing settings file (create `{}` if not exists)
+- **Legacy migration**: scan for bare `.claude/hooks/<name>.sh` paths → upgrade to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/<name>.sh`
+- For each event: append-only merge (skip if same command path exists)
+- Write updated settings back
+
+### 6.4 Output Hooks Report
+
+```markdown
+## Hooks Install Report
+
+**Source**: <plugin-hooks-path>
+**Scripts**: <repo-root>/.claude/hooks/
+**Settings**: <repo-root>/.claude/settings.json
+
+| Hook | Script | Settings | Status |
+|------|--------|----------|--------|
+| pre-edit-guard.sh | ✅ Copied | ✅ Added | Installed |
+| ... | ... | ... | ... |
+
+**Installed**: N / **Skipped**: M / **Conflicts**: K
+```
+
+## Phase 7: Final Verification Report
+
+Summarize all phases and perform closed-loop check:
+
+### Closed-Loop Check
+
+| Condition | Check | Required |
+|-----------|-------|----------|
+| CLAUDE.md behavior text | `Required Checks` section exists | ✅ |
+| `@rules/` references | `@rules/auto-loop.md` in `.claude/CLAUDE.md` | ✅ |
+| Rule files | `.claude/rules/auto-loop.md` exists | ✅ |
+| Hook enforcement | `stop-guard` in `.claude/settings.json` | ✅ |
+
+### Output
+
+```markdown
+## Project Setup Complete
+
+| Phase | Status |
+|-------|--------|
+| Detection | ✅ Framework: X, PM: Y, DB: Z |
+| CLAUDE.md | ✅ Configured (0 remaining placeholders) |
+| Rules | ✅ 11/11 installed |
+| Hooks | ✅ 4/4 installed + settings merged |
+
+### Closed-Loop Status
+✅ Auto-loop engine fully configured
+(or ⚠️ Partial — missing: <list>)
+
+### Next Steps
+- Run `/repo-intake` for a full project scan
+- Use `HOOK_BYPASS=1` as emergency escape hatch
+- Use `/install-rules --force` to upgrade rules later
+```
 
 ## Verification
 
 - [ ] All 9 placeholders detected or marked N/A
 - [ ] User confirmed detection results before writing
 - [ ] No remaining `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup
+- [ ] `.claude/rules/` contains 11 `.md` files (unless `--no-rules` or `--lite`)
+- [ ] `.claude/hooks/` contains 4 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
+- [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
+- [ ] `.claude/CLAUDE.md` contains `@rules/auto-loop.md` reference (unless `--lite`)
 
 ## References
 
