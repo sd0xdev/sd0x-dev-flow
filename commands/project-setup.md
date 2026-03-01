@@ -1,6 +1,6 @@
 ---
 description: "One-stop project onboarding. Auto-detect framework, configure CLAUDE.md, install rules and hooks for the full review-loop experience."
-argument-hint: [--detect-only] [--lite] [--no-rules] [--no-hooks]
+argument-hint: [--detect-only] [--lite] [--no-rules] [--no-hooks] [--guard-mode warn|strict]
 allowed-tools: Read, Grep, Glob, Edit, Write, Bash(node:*), Bash(git:*), Bash(ls:*), Bash(mkdir:*), Bash(diff:*), Bash(chmod:*), Bash(jq:*), Bash(bash:*)
 ---
 
@@ -31,6 +31,7 @@ $ARGUMENTS
 | `--lite` | Only configure CLAUDE.md (skip rules and hooks) |
 | `--no-rules` | Skip rules installation (Phase 5) |
 | `--no-hooks` | Skip hooks installation (Phase 6) |
+| `--guard-mode warn\|strict` | Set stop-guard mode (default: strict). `strict` blocks stop before review; `warn` only warns |
 
 ## Examples
 
@@ -49,4 +50,7 @@ $ARGUMENTS
 
 # CLAUDE.md + hooks, no rules
 /project-setup --no-rules
+
+# Full onboarding with warn-only guard (no blocking)
+/project-setup --guard-mode warn
 ```

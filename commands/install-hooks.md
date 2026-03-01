@@ -1,6 +1,6 @@
 ---
 description: Install plugin hooks into project .claude/ for persistent use without plugin loaded
-argument-hint: [--all] [--list] [--dry-run] [--force] [--local] [hook-names...]
+argument-hint: [--all] [--list] [--dry-run] [--force] [--local] [--guard-mode warn|strict] [hook-names...]
 allowed-tools: Read, Grep, Glob, Write, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(jq:*)
 ---
 
@@ -49,6 +49,7 @@ $ARGUMENTS
 | `--dry-run` | Show what would be installed, no changes |
 | `--force` | Overwrite existing hooks with different content |
 | `--local` | Write to `settings.local.json` instead of `settings.json` |
+| `--guard-mode warn\|strict` | Set stop-guard mode (default: strict). `strict` blocks stop before review; `warn` only warns |
 | `hook-names...` | Space-separated hook names (without .sh extension) |
 
 ### Phase 1: Locate Plugin Hooks Directory
@@ -63,7 +64,14 @@ Find the plugin's `hooks/` directory using this priority (short-circuit on first
    ```
 
 2. **Plugin-relative fallback** — since this command is loaded from the plugin, try reading `@hooks/pre-edit-guard.sh` to confirm accessibility. If readable, derive the hooks directory by resolving the path returned (parent of `pre-edit-guard.sh`).
-3. **Error** — if no hooks directory found, report error and stop.
+3. **Not found** → **hard error** (do not silently skip). Output explicit failure with remediation steps, then stop (unlike `/project-setup` which continues to Phase 7, `/install-hooks` is standalone and has no subsequent phases):
+   ```
+   ⛔ Hook source not found. Auto-loop enforcement layer cannot be installed.
+
+   Remediation (choose one):
+   1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
+   2. Copy hooks manually from a machine that has the plugin installed
+   ```
 
 ### Phase 2: Enumerate Available Hooks
 
@@ -76,7 +84,7 @@ Read all `.sh` files from the discovered hooks directory. The available hooks ar
 | `post-tool-review-state.sh` | PostToolUse | Bash, mcp__codex__codex, mcp__codex__codex-reply | Parse review results, update state file |
 | `stop-guard.sh` | Stop | — | Check review + precommit completed before stop |
 
-> **Note**: The plugin's `SessionStart` hook (`namespace-hint.sh`) is intentionally excluded — it emits plugin-namespaced command guidance (`/sd0x-dev-flow:...`) which is incorrect for local installations where commands are accessed without namespace prefix.
+> **Note**: The plugin's `SessionStart` namespace hook (`scripts/namespace-hint.sh`, defined in `hooks.json`) is intentionally excluded from local install — it emits plugin-namespaced command guidance (`/sd0x-dev-flow:...`) which is incorrect for local installations where commands are accessed without namespace prefix.
 
 If `--list` is specified, output this table and **stop**.
 
@@ -127,11 +135,15 @@ Hook definition mapping (use `$CLAUDE_PROJECT_DIR` for CWD-independent paths —
       {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-tool-review-state.sh"}]}
     ],
     "Stop": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
+      {"matcher": "", "hooks": [{"type": "command", "command": "STOP_GUARD_MODE=<MODE> \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
     ]
   }
 }
 ```
+
+Where `<MODE>` = `strict` (default) or `warn` (when `--guard-mode warn` is specified).
+
+> **Default strict mode**: stop-guard is installed in `strict` mode by default. Use `--guard-mode warn` to install in warn-only mode.
 
 Merge strategy:
 - Read existing settings file (create `{}` if not exists)
@@ -142,6 +154,7 @@ Merge strategy:
     - Same command path exists → **Skip**
     - Different command at same matcher → **Skip** + warn (unless `--force`)
     - No matching entry → **Append**
+- **Stop hook mode merge**: when an existing Stop entry references `stop-guard.sh`, compare the full command string (including `STOP_GUARD_MODE=...` prefix). If mode differs and `--force` is set, replace the entry. If mode differs without `--force`, warn and skip.
 - `--force` semantics: **Replace** the existing entry at the same matcher (not append a duplicate). Remove the old entry, then add the new one.
 - Write updated settings back
 
@@ -179,7 +192,7 @@ Ensure `.claude/CLAUDE.md` contains the behavior-layer text so the auto-loop eng
 - Review any skipped conflicts manually
 - Hooks in the target settings file are auto-loaded by Claude Code for this project
 - Use `HOOK_BYPASS=1` as emergency escape hatch
-- Set `STOP_GUARD_MODE=strict` to enable blocking mode (default: warn)
+- Stop-guard is installed in `strict` mode by default (use `--guard-mode warn` to change)
 ```
 
 ## Examples

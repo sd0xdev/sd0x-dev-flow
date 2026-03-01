@@ -23,7 +23,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash(node:*), Bash(git:*), Bash(ls
 Phase 1: Detect project environment
     │
     ├─ Read package.json (dependencies, devDependencies, scripts)
-    ├─ Detect lockfile (yarn.lock / pnpm-lock.yaml / package-lock.json)
+    ├─ Detect lockfile (pnpm-lock.yaml / yarn.lock / package-lock.json)
     ├─ Detect entrypoints (glob src/)
     └─ Compile results
     │
@@ -72,6 +72,7 @@ Phase 7: Final Verification Report
 | `--lite` | Execute | Execute | Skip | CLAUDE.md only |
 | `--no-rules` | Execute | Execute | Skip rules | Report |
 | `--no-hooks` | Execute | Execute | Skip hooks | Report |
+| `--guard-mode warn` | Execute | Execute | Execute (stop-guard uses warn) | Report |
 
 ## Phase 1: Detect Project Environment
 
@@ -81,7 +82,7 @@ Execute the following detections in order; see `references/detection-rules.md` f
 
 1. **Detect Ecosystem** — Glob for manifest files (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `build.gradle`, `pom.xml`, `Gemfile`). Priority order in `references/detection-rules.md`.
 2. **Read manifest** — Extract project name, dependencies, scripts (Node.js: `package.json`; others: ecosystem manifest)
-3. **Detect Package Manager** — Lockfile detection (Node.js only): `yarn.lock` → yarn, `pnpm-lock.yaml` → pnpm, else npm
+3. **Detect Package Manager** — Lockfile detection (Node.js only): `pnpm-lock.yaml` → pnpm, `yarn.lock` → yarn, else npm (priority order per `references/detection-rules.md`)
 4. **Detect Framework** — From dependencies. See `references/detection-rules.md#framework`
 5. **Detect Database** — From dependencies. See `references/detection-rules.md#database`
 6. **Detect Entrypoints** — Glob framework-specific candidates. See `references/detection-rules.md#entrypoints`
@@ -91,7 +92,7 @@ For non-Node.js ecosystems, skip Node-specific steps and use ecosystem-specific 
 
 ## Phase 2: Confirm Detection Results
 
-Present a table of all 9 placeholders with `| Placeholder | Detected Value | Source |` columns.
+Present a table of all 9 auto-detected placeholders with `| Placeholder | Detected Value | Source |` columns. Additional manual placeholders (`{TICKET_PATTERN}`, `{ISSUE_TRACKER_URL}`, `{TARGET_BRANCH}`) may remain if not auto-detectable — these are acceptable and should be noted as "manual" in Phase 4 verification.
 Wait for user confirmation before proceeding to Phase 3.
 
 ## Phase 2.5: Select Ecosystem Blocks
@@ -122,7 +123,7 @@ If `.claude/CLAUDE.md` does not exist, create it from the rendered template.
 ## Phase 4: Verify CLAUDE.md
 
 1. Read `.claude/CLAUDE.md`
-2. `Grep: \{[A-Z_]+\}` — confirm no remaining placeholders
+2. `Grep: \{[A-Z_]+\}` — confirm no remaining auto-detected placeholders. Exclude `${...}` shell variable matches (e.g., `${CLAUDE_PLUGIN_ROOT}`) from the count — these are intentional env var references, not unfilled placeholders.
 3. Output summary table with all placeholder values and remaining count
 
 If `--detect-only` or `--lite`, skip to Phase 7.
@@ -143,7 +144,16 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
    ```
 
 2. **Plugin-relative fallback** — try reading `@rules/auto-loop.md` to confirm accessibility. If readable, derive the rules directory.
-3. **Not found** — warn and skip Phase 5 (do not block).
+3. **Not found** → **hard error for this phase** (do not silently skip). Output explicit failure with remediation steps:
+   ```
+   ⛔ Rule source not found. Auto-loop rules cannot be installed.
+
+   Remediation (choose one):
+   1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
+   2. Copy rules manually from a machine that has the plugin installed
+   3. Re-run with --no-rules to skip (rules layer will be missing)
+   ```
+   Then skip Phase 5 and continue to Phase 6. Phase 7 will report this as `⚠️ Partial`.
 
 ### 5.2 Copy Rules
 
@@ -211,7 +221,16 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
 1. `Glob: ~/.claude/plugins/**/sd0x-dev-flow/hooks/pre-edit-guard.sh`
 2. `Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/hooks/pre-edit-guard.sh`
 3. Plugin-relative fallback: `@hooks/pre-edit-guard.sh`
-4. **Not found** → warn and skip Phase 6.
+4. **Not found** → **hard error for this phase** (do not silently skip). Output explicit failure with remediation steps:
+   ```
+   ⛔ Hook source not found. Auto-loop enforcement layer cannot be installed.
+
+   Remediation (choose one):
+   1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
+   2. Copy hooks manually from a machine that has the plugin installed
+   3. Re-run with --no-hooks to skip (enforcement layer will be missing)
+   ```
+   Then skip Phase 6 and continue to Phase 7. Phase 7 will report this as `⚠️ Partial`.
 
 ### 6.2 Copy Hook Scripts
 
@@ -245,16 +264,21 @@ Hook definition mapping (uses `$CLAUDE_PROJECT_DIR` for portability):
       {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-tool-review-state.sh"}]}
     ],
     "Stop": [
-      {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
+      {"matcher": "", "hooks": [{"type": "command", "command": "STOP_GUARD_MODE=<MODE> \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
     ]
   }
 }
 ```
 
+Where `<MODE>` = `strict` (default) or `warn` (when `--guard-mode warn` is specified).
+
+> **Default strict mode**: `/project-setup` installs stop-guard in `strict` mode (blocks stop before review completes). Use `--guard-mode warn` to install in warn-only mode. The script itself defaults to `warn` when invoked without the environment variable.
+
 Merge strategy:
 - Read existing settings file (create `{}` if not exists)
 - **Legacy migration**: scan for bare `.claude/hooks/<name>.sh` paths → upgrade to `"$CLAUDE_PROJECT_DIR"/.claude/hooks/<name>.sh`
 - For each event: append-only merge (skip if same command path exists)
+- **Stop hook mode merge**: when an existing Stop entry references `stop-guard.sh` but has a different `STOP_GUARD_MODE`, `/project-setup` **always replaces** the entry to match the requested mode (deterministic — no `--force` needed since `/project-setup` is an opinionated setup tool)
 - Write updated settings back
 
 ### 6.4 Output Hooks Report
@@ -286,6 +310,7 @@ Summarize all phases and perform closed-loop check:
 | `@rules/` references | `@rules/auto-loop.md` in `.claude/CLAUDE.md` | ✅ |
 | Rule files | `.claude/rules/auto-loop.md` exists | ✅ |
 | Hook enforcement | `stop-guard` in `.claude/settings.json` | ✅ |
+| Guard mode | Stop hook command contains `STOP_GUARD_MODE=strict` | ✅ (unless `--guard-mode warn`) |
 
 ### Output
 
@@ -300,8 +325,10 @@ Summarize all phases and perform closed-loop check:
 | Hooks | ✅ 4/4 installed + settings merged |
 
 ### Closed-Loop Status
-✅ Auto-loop engine fully configured
-(or ⚠️ Partial — missing: <list>)
+✅ Auto-loop engine fully configured (strict mode)
+(or ⚠️ Auto-loop engine configured (warn mode — stop-guard will not block))
+(or ⚠️ Partial — missing: hooks (enforcement layer inactive))
+(or ⚠️ Partial — missing: rules)
 
 ### Next Steps
 - Run `/repo-intake` for a full project scan
@@ -311,9 +338,9 @@ Summarize all phases and perform closed-loop check:
 
 ## Verification
 
-- [ ] All 9 placeholders detected or marked N/A
+- [ ] All 9 auto-detected placeholders detected or marked N/A
 - [ ] User confirmed detection results before writing
-- [ ] No remaining `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup
+- [ ] No remaining auto-detected `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup (manual placeholders like `{TICKET_PATTERN}` are acceptable)
 - [ ] `.claude/rules/` contains 11 `.md` files (unless `--no-rules` or `--lite`)
 - [ ] `.claude/hooks/` contains 4 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
