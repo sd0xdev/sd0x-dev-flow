@@ -96,6 +96,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/smart-commit` | Smart batch commit (group + message + commands) | Git |
 | `/create-pr` | Create GitHub PR from branch | Git |
 | `/git-worktree` | Manage git worktrees | Git |
+| `/smart-rebase` | Smart partial rebase (squash-merge repos) | Git |
 | `/pr-summary` | PR status summary (grouped by ticket) | Git |
 | `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
 | `/merge-prep` | Pre-merge analysis and preparation | Git |
