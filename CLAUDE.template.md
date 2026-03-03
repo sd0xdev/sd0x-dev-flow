@@ -153,6 +153,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/obsidian-cli` | Obsidian vault integration via CLI | Tooling |
 | `/op-session` | Initialize 1Password CLI session | Tooling |
 | `/skill-health-check` | Validate skill quality | Tooling |
+| `/statusline-config` | Customize statusline segments and themes | Tooling |
 
 ## Development Rules
 
