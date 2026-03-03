@@ -294,6 +294,23 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `{BUILD_COMMAND}` | ビルドコマンド | yarn build |
 | `{TYPECHECK_COMMAND}` | 型チェック | yarn typecheck |
 
+## ショーケース：StatusLine Config
+
+Claude Code の statusline をカスタマイズ — セグメント、テーマ、カラー。スタンドアロンでインストール可能：
+
+```bash
+npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+```
+
+| 特徴 | 内容 |
+|------|------|
+| Segments | Directory, Git branch, Model, Context %, Cost, >200k alert |
+| Themes | ansi-default, catppuccin-mocha, dracula, nord, none |
+| Engine | POSIX shell + JSON stdin + semantic color tokens |
+| Accessibility | WCAG AA contrast, NO\_COLOR support |
+
+[詳細ドキュメント](docs/features/statusline-config/2-tech-spec.md)
+
 ## アーキテクチャ
 
 ```

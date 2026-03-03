@@ -294,6 +294,23 @@ Hook은 기본적으로 안전합니다. 환경 변수로 동작을 커스터마
 | `{BUILD_COMMAND}` | 빌드 명령어 | yarn build |
 | `{TYPECHECK_COMMAND}` | 타입 체크 | yarn typecheck |
 
+## 쇼케이스: StatusLine Config
+
+Claude Code의 statusline 커스터마이즈 — 세그먼트, 테마, 색상. 단독 설치 가능:
+
+```bash
+npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+```
+
+| 특징 | 내용 |
+|------|------|
+| Segments | Directory, Git branch, Model, Context %, Cost, >200k alert |
+| Themes | ansi-default, catppuccin-mocha, dracula, nord, none |
+| Engine | POSIX shell + JSON stdin + semantic color tokens |
+| Accessibility | WCAG AA contrast, NO\_COLOR support |
+
+[전체 문서](docs/features/statusline-config/2-tech-spec.md)
+
 ## 아키텍처
 
 ```

@@ -294,6 +294,23 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `{BUILD_COMMAND}` | 构建命令 | yarn build |
 | `{TYPECHECK_COMMAND}` | 类型检查 | yarn typecheck |
 
+## 展示：StatusLine Config
+
+自定义 Claude Code 的状态栏 — 区段、主题与色彩。可单独安装：
+
+```bash
+npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+```
+
+| 特性 | 内容 |
+|------|------|
+| Segments | Directory, Git branch, Model, Context %, Cost, >200k alert |
+| Themes | ansi-default, catppuccin-mocha, dracula, nord, none |
+| Engine | POSIX shell + JSON stdin + semantic color tokens |
+| Accessibility | WCAG AA contrast, NO\_COLOR support |
+
+[完整文档](docs/features/statusline-config/2-tech-spec.md)
+
 ## 架构
 
 ```
