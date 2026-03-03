@@ -1,7 +1,7 @@
 # Best Practices Audit Skill
 
 > **Created**: 2026-03-03
-> **Status**: In Development
+> **Status**: Completed
 > **Priority**: P1
 > **Tech Spec**: Pending
 > **Source**: Codex Brainstorm Nash Equilibrium (2026-03-03)
@@ -48,7 +48,7 @@ sd0x-dev-flow 目前缺少「業界最佳實踐對標」能力。onekey onchain 
 - [x] When NOT to Use section 完備
 - [x] Output section 定義報告格式
 - [x] Verification checklist 完備
-- [ ] `/skill-health-check` 全維度通過
+- [x] `/skill-health-check` 全維度通過（Routing ✅ | When-NOT ✅ | Output ✅ | Verification ✅ | Refs ✅ | ArgHint ✅）
 - [x] `/codex-review-doc` 通過（Round 3 ✅ Mergeable）
 
 ## Progress
@@ -57,8 +57,8 @@ sd0x-dev-flow 目前缺少「業界最佳實踐對標」能力。onekey onchain 
 | ----- | ------ | ---- |
 | Analysis | Done | Codex Brainstorm 均衡結論確認 Rank #1 |
 | Development | Done | SKILL.md + references/ + command wrapper + CLAUDE.md 更新 |
-| Testing | In Progress | `/codex-review-doc` 通過；`/skill-health-check` 待執行 |
-| Acceptance | In Progress | 8/10 AC checked |
+| Testing | Done | `/codex-review-doc` ✅ Mergeable；`/skill-health-check` ✅ 全維度通過 |
+| Acceptance | Done | 10/10 AC checked |
 
 ## References
 
