@@ -6,7 +6,7 @@
 
 編輯程式碼 → 自動 review → 自動修正 → gate 通過 → 交付。無需手動步驟。
 
-59 commands | 42 skills | 14 agents | ~4% context 佔用
+60 commands | 44 skills | 14 agents | ~4% context 佔用
 
 ## 運作方式
 
@@ -22,7 +22,7 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-loop 引擎**自動執行品質關卡——任何程式碼編輯後，Claude 在同一回覆中觸發 review。Hooks 在所有 gate 通過前阻止停止。
+**Auto-loop 引擎**自動執行品質關卡——任何程式碼編輯後，Claude 在同一回覆中觸發 review。Hooks 在 review 未完成時發出警告（設為 strict 模式可阻止停止）。
 
 ```mermaid
 sequenceDiagram
@@ -46,7 +46,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: stop-guard blocks until<br/>review + precommit pass
+    Note over H: stop-guard warns until<br/>review + precommit pass
 ```
 
 ## 安裝
@@ -133,12 +133,12 @@ flowchart TD
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 60 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 44 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
-| Scripts | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
+| Scripts | 7 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate |
 
 ### 極小的 Context 佔用
 
@@ -180,6 +180,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `/create-pr` | 從 branch 建立 GitHub PR |
 | `/git-worktree` | 管理 git worktree |
 | `/merge-prep` | 合併前分析與準備 |
+| `/smart-rebase` | 智慧局部 rebase（squash-merge 倉庫適用） |
 
 ### Review（Codex MCP）
 
@@ -233,6 +234,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `/pr-summary` | PR 狀態摘要（依 ticket 分組） |
 | `/contract-decode` | EVM 合約錯誤/calldata 解碼器 |
 | `/skill-health-check` | 驗證 Skill 品質與 routing |
+| `/statusline-config` | 自訂 statusline 區段與主題 |
 | `/claude-health` | Claude Code 設定健康檢查 |
 | `/op-session` | 初始化 1Password CLI session（避免重複生物辨識提示） |
 | `/obsidian-cli` | Obsidian vault 整合（透過官方 CLI） |

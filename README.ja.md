@@ -6,7 +6,7 @@
 
 コード編集 → 自動レビュー → 自動修正 → ゲート通過 → 出荷。手動操作は不要です。
 
-59 commands | 42 skills | 14 agents | ~4% context footprint
+60 commands | 44 skills | 14 agents | ~4% context footprint
 
 ## 仕組み
 
@@ -22,7 +22,7 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、Claude は同じ返答内でレビューを開始し、すべてのゲートを通過するまで Hook が停止をブロックします。
+**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、Claude は同じ返答内でレビューを開始し、レビュー未完了時に Hook が警告を出します（strict モードでブロック可能）。
 
 ```mermaid
 sequenceDiagram
@@ -46,7 +46,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: stop-guard blocks until<br/>review + precommit pass
+    Note over H: stop-guard warns until<br/>review + precommit pass
 ```
 
 ## インストール
@@ -133,12 +133,12 @@ flowchart TD
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| スキル | 42 | project-setup, code-explore, smart-commit, contract-decode |
+| コマンド | 60 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| スキル | 44 | project-setup, code-explore, smart-commit, contract-decode |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | ルール | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
-| スクリプト | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
+| スクリプト | 7 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate |
 
 ### 極小の Context 使用量
 
@@ -180,6 +180,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `/create-pr` | ブランチから GitHub PR を作成 |
 | `/git-worktree` | git worktree の管理 |
 | `/merge-prep` | マージ前の分析と準備 |
+| `/smart-rebase` | squash-merge リポジトリ向けスマート部分 rebase |
 
 ### レビュー（Codex MCP）
 
@@ -233,6 +234,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `/pr-summary` | PR ステータスサマリー（チケット別グループ） |
 | `/contract-decode` | EVM コントラクトエラー/calldata デコーダー |
 | `/skill-health-check` | スキル品質とルーティングの検証 |
+| `/statusline-config` | ステータスラインのセグメントとテーマをカスタマイズ |
 | `/claude-health` | Claude Code 設定のヘルスチェック |
 | `/op-session` | 1Password CLI セッションの初期化（繰り返しの生体認証を回避） |
 | `/obsidian-cli` | Obsidian vault 連携（公式 CLI 経由） |

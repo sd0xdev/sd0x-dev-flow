@@ -6,7 +6,7 @@
 
 Editar código → auto-review → auto-fix → gate-pass → entregar. Sin pasos manuales.
 
-59 commands | 42 skills | 14 agents | ~4% de context footprint
+60 commands | 44 skills | 14 agents | ~4% de context footprint
 
 ## Cómo funciona
 
@@ -22,7 +22,7 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-El **motor auto-loop** aplica quality gates automáticamente — tras cualquier edición de código, Claude dispara la revisión en la misma respuesta. Los hooks bloquean la detención hasta que todas las puertas pasen.
+El **motor auto-loop** aplica quality gates automáticamente — tras cualquier edición de código, Claude dispara la revisión en la misma respuesta. Los hooks advierten sobre revisiones incompletas antes de detenerse (usar modo strict para bloquear).
 
 ```mermaid
 sequenceDiagram
@@ -46,7 +46,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: stop-guard blocks until<br/>review + precommit pass
+    Note over H: stop-guard warns until<br/>review + precommit pass
 ```
 
 ## Instalación
@@ -133,12 +133,12 @@ flowchart TD
 
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 60 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 44 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
-| Scripts | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
+| Scripts | 7 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate |
 
 ### Mínimo consumo de context
 
@@ -180,6 +180,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/create-pr` | Crear GitHub PR desde branch |
 | `/git-worktree` | Gestionar git worktrees |
 | `/merge-prep` | Análisis y preparación pre-merge |
+| `/smart-rebase` | Rebase parcial inteligente para repos con squash-merge |
 
 ### Review (Codex MCP)
 
@@ -233,6 +234,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/pr-summary` | Resumen de estado de PRs (agrupados por ticket) |
 | `/contract-decode` | Decodificador de errores/calldata de contratos EVM |
 | `/skill-health-check` | Validar calidad y routing de skills |
+| `/statusline-config` | Personalizar segmentos y temas de la línea de estado |
 | `/claude-health` | Verificación de configuración de Claude Code |
 | `/op-session` | Inicializar sesión de 1Password CLI (evita solicitudes biométricas repetidas) |
 | `/obsidian-cli` | Integración con vault de Obsidian vía CLI oficial |

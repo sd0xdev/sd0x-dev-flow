@@ -6,7 +6,7 @@
 
 编辑代码 → 自动审查 → 自动修复 → 质量关卡通过 → 交付。无需手动步骤。
 
-59 commands | 42 skills | 14 agents | ~4% context 占用
+60 commands | 44 skills | 14 agents | ~4% context 占用
 
 ## 工作原理
 
@@ -22,7 +22,7 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-Loop 引擎**自动执行质量关卡——任何代码编辑后，Claude 会在同一回复中自动触发审查。Hooks 在所有关卡通过前阻止停止。
+**Auto-Loop 引擎**自动执行质量关卡——任何代码编辑后，Claude 会在同一回复中自动触发审查。Hooks 在审查未完成时发出警告（设为 strict 模式可阻止停止）。
 
 ```mermaid
 sequenceDiagram
@@ -46,7 +46,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: stop-guard blocks until<br/>review + precommit pass
+    Note over H: stop-guard warns until<br/>review + precommit pass
 ```
 
 ## 安装
@@ -133,12 +133,12 @@ flowchart TD
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| 技能 | 42 | project-setup, code-explore, smart-commit, contract-decode |
+| 命令 | 60 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| 技能 | 44 | project-setup, code-explore, smart-commit, contract-decode |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | 规则 | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
-| 脚本 | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
+| 脚本 | 7 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate |
 
 ### 极小的 Context 占用
 
@@ -180,6 +180,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/create-pr` | 从分支创建 GitHub PR |
 | `/git-worktree` | 管理 git worktree |
 | `/merge-prep` | 合并前分析与准备 |
+| `/smart-rebase` | 智能局部 rebase（squash-merge 仓库适用） |
 
 ### 审查（Codex MCP）
 
@@ -233,6 +234,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/pr-summary` | PR 状态摘要（按 ticket 分组） |
 | `/contract-decode` | EVM 合约错误/calldata 解码器 |
 | `/skill-health-check` | 验证 Skill 质量与 routing |
+| `/statusline-config` | 自定义状态栏区段与主题 |
 | `/claude-health` | Claude Code 配置健康检查 |
 | `/op-session` | 初始化 1Password CLI session（避免重复生物识别提示） |
 | `/obsidian-cli` | Obsidian vault 集成（通过官方 CLI） |

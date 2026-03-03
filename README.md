@@ -6,7 +6,7 @@
 
 Edit code → auto-review → auto-fix → gate-pass → ship. No manual steps.
 
-59 commands | 42 skills | 14 agents | ~4% context footprint
+60 commands | 44 skills | 14 agents | ~4% context footprint
 
 ## How It Works
 
@@ -22,7 +22,7 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-The **auto-loop engine** enforces quality gates automatically — after any code edit, Claude triggers review in the same reply. Hooks block stopping until all gates pass.
+The **auto-loop engine** enforces quality gates automatically — after any code edit, Claude triggers review in the same reply. Hooks warn on incomplete reviews before stopping (set strict mode to block).
 
 ```mermaid
 sequenceDiagram
@@ -46,7 +46,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: stop-guard blocks until<br/>review + precommit pass
+    Note over H: stop-guard warns until<br/>review + precommit pass
 ```
 
 ## Install
@@ -133,12 +133,12 @@ flowchart TD
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 60 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 44 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
-| Scripts | 5 | precommit runner, verify runner, dep audit, namespace hint, skill runner |
+| Scripts | 7 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate |
 
 ### Minimal Context Footprint
 
@@ -180,6 +180,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/create-pr` | Create GitHub PR from branch |
 | `/git-worktree` | Manage git worktrees |
 | `/merge-prep` | Pre-merge analysis and preparation |
+| `/smart-rebase` | Smart partial rebase for squash-merge repos |
 
 ### Review (Codex MCP)
 
@@ -233,6 +234,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/pr-summary` | PR status summary (grouped by ticket) |
 | `/contract-decode` | EVM contract error/calldata decoder |
 | `/skill-health-check` | Validate skill quality and routing |
+| `/statusline-config` | Customize statusline segments and themes |
 | `/claude-health` | Claude Code config health check |
 | `/op-session` | Initialize 1Password CLI session (avoids repeated biometric prompts) |
 | `/obsidian-cli` | Obsidian vault integration via official CLI |
