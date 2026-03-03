@@ -144,6 +144,18 @@ git diff --cached -- <files> # staged
 - If project convention includes scope → `<type>(<scope>): <subject>`
 - If project convention includes ticket ID → append `[TICKET-ID]`
 
+**AI trailer sanitization** (mandatory, before outputting any commit command):
+
+Scan the generated message for forbidden patterns and **strip them silently** unless `--ai-co-author` was explicitly passed:
+
+| Forbidden Pattern | Regex |
+|-------------------|-------|
+| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|Claude Code\|AI\|GPT\|Copilot)` |
+| Emoji robot tag | `🤖.*(?:Claude\|AI\|GPT)` |
+
+If any pattern matches and `--ai-co-author` was **not** passed → remove the matching line(s) from the message before output/execute.
+
 **5c. Output or execute commands**
 
 **Manual mode** — output copy-pasteable commands:
@@ -205,12 +217,46 @@ Execute mode: Proceed to next group automatically after successful commit.
 
 ### Step 6: Verification
 
+**Execute mode**:
+
 ```bash
 git status --short
 ```
 
 - Still has unhandled changes → return to Step 4
 - All clear → output summary table
+
+After each commit, run **post-commit AI trailer detection** (detect-only, no amend):
+
+```bash
+git log -1 --format='%B'
+```
+
+Scan for the same forbidden patterns from Step 5b. If any match is found:
+
+```
+⚠️ AI attribution detected in commit <sha>:
+   Line: "Co-Authored-By: Claude <noreply@anthropic.com>"
+   This was NOT requested via --ai-co-author.
+   To fix: git commit --amend (manual)
+   To prevent: install commit-msg hook via /install-scripts commit-msg-guard
+     then: cp .claude/scripts/commit-msg-guard.sh .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+```
+
+**Do NOT auto-amend.** Only warn. Amending is a destructive git operation reserved for the developer.
+
+**Manual mode**:
+
+In manual mode, Step 6 outputs a post-execution checklist (Claude has NOT executed any commands):
+
+```
+## Post-Execution Checklist
+After running the commands above:
+1. git status --short  (verify all changes committed)
+2. git log -3 --format='%H%n%B%n----'  (verify commit messages have no AI trailers)
+```
+
+Do NOT run `git status` convergence loops or `git log -1` trailer detection in manual mode — the commands have not been executed yet.
 
 ## AI Co-Author Attribution
 

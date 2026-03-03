@@ -159,7 +159,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 
 1. **Reference existing code** -- find similar files first, keep style consistent
 2. **Test command** -- `{TEST_COMMAND}`
-3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`)
+3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`). Forbidden patterns in commit messages: `Co-Authored-By:.*Claude`, `Co-Authored-By:.*Anthropic`, `Generated with.*Claude`, `🤖.*Claude`. Install `commit-msg-guard.sh` via `/install-scripts` for programmatic enforcement.
 4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)
 
 ## Tech Stack

@@ -72,6 +72,7 @@ The available scripts and their dependencies are:
 | `precommit-runner.js` | Node.js | `/precommit`, `/precommit-fast` | `lib/utils.js` |
 | `verify-runner.js` | Node.js | `/verify` | `lib/utils.js` |
 | `dep-audit.sh` | Bash | `/dep-audit` | None |
+| `commit-msg-guard.sh` | Bash | git `commit-msg` hook | None |
 | `lib/utils.js` | Node.js (shared) | Required by all `.js` runners | None (Node builtins only) |
 
 If `--list` is specified, output this table and **stop**.
