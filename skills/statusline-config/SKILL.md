@@ -56,7 +56,7 @@ Scripts use semantic tokens instead of hardcoded colors:
 | `C_CTX_BAD`  | Context <= 20%       | red                 |
 | `C_COST`     | Cost display         | muted text          |
 | `C_ALERT`    | >200k token warning  | orange/peach + bold |
-| `C_SEP`      | Pipe separator `|`   | dim/overlay         |
+| `C_SEP`      | Pipe separator `\|`  | dim/overlay         |
 | `C_MUTED`    | Secondary info       | subtext             |
 | `C_TEXT`     | General text         | foreground          |
 | `C_RESET`    | Reset all formatting | `\033[0m`           |
