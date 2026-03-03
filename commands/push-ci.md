@@ -37,7 +37,8 @@ $ARGUMENTS
 
 ### Key Rules
 
-- **User approval is mandatory** — use AskUserQuestion before push
+- **User approval is mandatory** — use AskUserQuestion before push (advisory layer)
+- **Primary gate is `pre-push-gate.sh`** — terminal-level `/dev/tty` confirmation, immune to session caching. Install via `/install-scripts`
 - **This is the ONLY skill authorized to execute `git push`**
 - **Protected branches** (main, master, develop, release/*) — warn + require explicit user override via AskUserQuestion (do not hard-abort)
 - **Never use `--force`** (only `--force-with-lease` when explicitly requested)
