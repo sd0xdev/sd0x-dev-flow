@@ -127,6 +127,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/post-dev-test` | Post-dev test completion | After feature |
 | `/check-coverage` | Test coverage analysis | Quality |
 | `/project-audit` | Project health audit with scoring | Quality |
+| `/best-practices` | Industry best practices audit | Quality |
 | `/dep-audit` | Dependency vulnerability audit | Periodic / PR |
 | `/update-docs` | Sync docs with code | Doc changes |
 | `/doc-refactor` | Simplify documents | Doc changes |
