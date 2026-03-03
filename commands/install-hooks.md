@@ -65,6 +65,7 @@ Find the plugin's `hooks/` directory using this priority (short-circuit on first
 
 2. **Plugin-relative fallback** — since this command is loaded from the plugin, try reading `@hooks/pre-edit-guard.sh` to confirm accessibility. If readable, derive the hooks directory by resolving the path returned (parent of `pre-edit-guard.sh`).
 3. **Not found** → **hard error** (do not silently skip). Output explicit failure with remediation steps, then stop (unlike `/project-setup` which continues to Phase 7, `/install-hooks` is standalone and has no subsequent phases):
+
    ```
    ⛔ Hook source not found. Auto-loop enforcement layer cannot be installed.
 

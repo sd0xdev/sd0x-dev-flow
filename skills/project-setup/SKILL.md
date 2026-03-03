@@ -145,6 +145,7 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
 
 2. **Plugin-relative fallback** — try reading `@rules/auto-loop.md` to confirm accessibility. If readable, derive the rules directory.
 3. **Not found** → **hard error for this phase** (do not silently skip). Output explicit failure with remediation steps:
+
    ```
    ⛔ Rule source not found. Auto-loop rules cannot be installed.
 
@@ -153,6 +154,7 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
    2. Copy rules manually from a machine that has the plugin installed
    3. Re-run with --no-rules to skip (rules layer will be missing)
    ```
+
    Then skip Phase 5 and continue to Phase 6. Phase 7 will report this as `⚠️ Partial`.
 
 ### 5.2 Copy Rules
@@ -222,6 +224,7 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
 2. `Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/hooks/pre-edit-guard.sh`
 3. Plugin-relative fallback: `@hooks/pre-edit-guard.sh`
 4. **Not found** → **hard error for this phase** (do not silently skip). Output explicit failure with remediation steps:
+
    ```
    ⛔ Hook source not found. Auto-loop enforcement layer cannot be installed.
 
@@ -230,6 +233,7 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
    2. Copy hooks manually from a machine that has the plugin installed
    3. Re-run with --no-hooks to skip (enforcement layer will be missing)
    ```
+
    Then skip Phase 6 and continue to Phase 7. Phase 7 will report this as `⚠️ Partial`.
 
 ### 6.2 Copy Hook Scripts
