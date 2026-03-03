@@ -1,8 +1,8 @@
 ---
 description: Push to remote (with user approval) and monitor CI status.
-argument-hint: [--timeout <minutes>] [--force-with-lease] [--set-upstream]
+argument-hint: [--timeout <min>] [--force-with-lease] [--set-upstream]
 disable-model-invocation: true
-allowed-tools: Bash(git:*), Bash(gh:*), Read, Grep, Glob, AskUserQuestion
+allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Read, Grep, Glob, AskUserQuestion
 ---
 
 **Must read and follow the skill below before executing this command:**
@@ -12,8 +12,8 @@ allowed-tools: Bash(git:*), Bash(gh:*), Read, Grep, Glob, AskUserQuestion
 ## Context
 
 - Branch: !`git rev-parse --abbrev-ref HEAD`
-- Remote: !`git remote get-url origin 2>/dev/null || echo "no remote"`
-- Ahead: !`git rev-list --count origin/$(git rev-parse --abbrev-ref HEAD)..HEAD 2>/dev/null || echo "new branch"`
+- Remote: !`gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "no remote"`
+- Ahead: !`bash -c 'b=$(git rev-parse --abbrev-ref HEAD) && git rev-list --count "origin/$b..HEAD" 2>/dev/null || echo "new branch"'`
 - HEAD SHA: !`git rev-parse --short HEAD`
 - Status: !`git status --short | head -5`
 
