@@ -6,7 +6,7 @@
 
 コード編集 → 自動レビュー → 自動修正 → ゲート通過 → 出荷。手動操作は不要です。
 
-56 commands | 39 skills | 14 agents | ~4% context footprint
+59 commands | 42 skills | 14 agents | ~4% context footprint
 
 ## 仕組み
 
@@ -19,7 +19,7 @@ flowchart LR
     P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
     B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
     G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+    S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
 **Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、Claude は同じ返答内でレビューを開始し、すべてのゲートを通過するまで Hook が停止をブロックします。
@@ -133,8 +133,8 @@ flowchart TD
 
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
-| コマンド | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| スキル | 39 | project-setup, code-explore, smart-commit, contract-decode |
+| コマンド | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| スキル | 42 | project-setup, code-explore, smart-commit, contract-decode |
 | エージェント | 14 | strict-reviewer, verify-app, coverage-analyst |
 | フック | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | ルール | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -176,6 +176,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `/code-investigate` | デュアル視点コード調査（Claude + Codex 独立探索） |
 | `/next-step` | コンテキスト認識型の次ステップアドバイザー |
 | `/smart-commit` | スマートバッチコミット（グループ化 + メッセージ + コマンド） |
+| `/push-ci` | プッシュ（承認制）+ CI モニタリング |
 | `/create-pr` | ブランチから GitHub PR を作成 |
 | `/git-worktree` | git worktree の管理 |
 | `/merge-prep` | マージ前の分析と準備 |

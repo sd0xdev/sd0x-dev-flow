@@ -6,7 +6,7 @@
 
 Edit code → auto-review → auto-fix → gate-pass → ship. No manual steps.
 
-56 commands | 39 skills | 14 agents | ~4% context footprint
+59 commands | 42 skills | 14 agents | ~4% context footprint
 
 ## How It Works
 
@@ -19,7 +19,7 @@ flowchart LR
     P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
     B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
     G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+    S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
 The **auto-loop engine** enforces quality gates automatically — after any code edit, Claude triggers review in the same reply. Hooks block stopping until all gates pass.
@@ -133,8 +133,8 @@ flowchart TD
 
 | Category | Count | Examples |
 |----------|-------|---------|
-| Commands | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 39 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -176,6 +176,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/code-investigate` | Dual-perspective code investigation (Claude + Codex independent) |
 | `/next-step` | Context-aware next step advisor |
 | `/smart-commit` | Smart batch commit (group + message + commands) |
+| `/push-ci` | Push (with approval) + CI monitor |
 | `/create-pr` | Create GitHub PR from branch |
 | `/git-worktree` | Manage git worktrees |
 | `/merge-prep` | Pre-merge analysis and preparation |

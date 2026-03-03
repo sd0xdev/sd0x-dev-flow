@@ -143,6 +143,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/claude-health` | Claude Code config health check | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
 | `/smart-commit` | Smart batch commit (group + message + commands) | Git |
+| `/push-ci` | Push (with approval) + CI monitor | Git |
 | `/create-pr` | Create GitHub PR from branch | Git |
 | `/git-worktree` | Manage git worktrees | Git |
 | `/smart-rebase` | Smart partial rebase (squash-merge repos) | Git |
@@ -158,7 +159,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 1. **Reference existing code** -- find similar files first, keep style consistent
 2. **Test command** -- `{TEST_COMMAND}`
 3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`)
-4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push`
+4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)
 
 ## Tech Stack
 

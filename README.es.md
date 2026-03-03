@@ -6,7 +6,7 @@
 
 Editar código → auto-review → auto-fix → gate-pass → entregar. Sin pasos manuales.
 
-56 commands | 39 skills | 14 agents | ~4% de context footprint
+59 commands | 42 skills | 14 agents | ~4% de context footprint
 
 ## Cómo funciona
 
@@ -19,7 +19,7 @@ flowchart LR
     P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
     B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
     G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+    S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
 El **motor auto-loop** aplica quality gates automáticamente — tras cualquier edición de código, Claude dispara la revisión en la misma respuesta. Los hooks bloquean la detención hasta que todas las puertas pasen.
@@ -133,8 +133,8 @@ flowchart TD
 
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Commands | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 39 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -176,6 +176,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/code-investigate` | Investigación de código con doble perspectiva (Claude + Codex independientes) |
 | `/next-step` | Asesor contextual de siguiente paso |
 | `/smart-commit` | Commit inteligente por lotes (agrupar + mensaje + comandos) |
+| `/push-ci` | Push (con aprobación) + monitoreo de CI |
 | `/create-pr` | Crear GitHub PR desde branch |
 | `/git-worktree` | Gestionar git worktrees |
 | `/merge-prep` | Análisis y preparación pre-merge |

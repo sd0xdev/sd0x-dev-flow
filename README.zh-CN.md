@@ -6,7 +6,7 @@
 
 编辑代码 → 自动审查 → 自动修复 → 质量关卡通过 → 交付。无需手动步骤。
 
-56 commands | 39 skills | 14 agents | ~4% context 占用
+59 commands | 42 skills | 14 agents | ~4% context 占用
 
 ## 工作原理
 
@@ -19,7 +19,7 @@ flowchart LR
     P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
     B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
     G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+    S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
 **Auto-Loop 引擎**自动执行质量关卡——任何代码编辑后，Claude 会在同一回复中自动触发审查。Hooks 在所有关卡通过前阻止停止。
@@ -133,8 +133,8 @@ flowchart TD
 
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| 命令 | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| 技能 | 39 | project-setup, code-explore, smart-commit, contract-decode |
+| 命令 | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| 技能 | 42 | project-setup, code-explore, smart-commit, contract-decode |
 | 代理 | 14 | strict-reviewer, verify-app, coverage-analyst |
 | 钩子 | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | 规则 | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -176,6 +176,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/code-investigate` | 双视角代码调查（Claude + Codex 独立探索） |
 | `/next-step` | 情境感知的下一步建议 |
 | `/smart-commit` | 智能批量 commit（分组 + 消息 + 命令） |
+| `/push-ci` | 推送（需审批）+ CI 监控 |
 | `/create-pr` | 从分支创建 GitHub PR |
 | `/git-worktree` | 管理 git worktree |
 | `/merge-prep` | 合并前分析与准备 |

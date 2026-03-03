@@ -1,12 +1,12 @@
 ---
 name: smart-commit
-description: "Smart batch commit. Analyzes uncommitted changes, groups by cohesion, generates commit messages matching project style, outputs git commands for manual execution. Use when: user says 'commit', 'batch commit', 'prepare commit', 'write commit message', or /smart-commit"
-allowed-tools: Bash(git:*), Read, Grep, Glob
+description: "Smart batch commit. Analyzes uncommitted changes, groups by cohesion, generates commit messages matching project style. Default: output git commands for manual execution. With --execute: directly run git add + git commit (requires user approval). Use when: user says 'commit', 'batch commit', 'prepare commit', 'write commit message', or /smart-commit"
+allowed-tools: Bash(git:*), Read, Grep, Glob, AskUserQuestion
 ---
 
 # Smart Commit
 
-Analyze uncommitted changes → group by cohesion → generate commit messages → output git commands for manual execution.
+Analyze uncommitted changes → group by cohesion → generate commit messages → output git commands (or execute directly with `--execute`).
 
 ## Workflow
 
@@ -22,7 +22,11 @@ sequenceDiagram
     U->>C: Confirm/adjust
     loop Each commit group
         C->>C: Read diff → generate message
-        C->>U: Output git commands for manual execution
+        alt --execute mode
+            C->>C: git add + git commit (directly)
+        else manual mode
+            C->>U: Output git commands for manual execution
+        end
     end
     C->>C: Step 6: git status verification
 ```
@@ -35,10 +39,12 @@ Read CLAUDE.md and `.claude/rules/git-workflow.md` to determine mode:
 
 | Mode | Condition | Behavior |
 |------|-----------|----------|
-| manual | Git rules forbid Claude from running `git add`/`git commit` | Output commands only |
-| auto | No git restrictions found | Execute directly (with user confirmation) |
+| manual | No `--execute` flag (default) | Output commands only |
+| execute | `--execute` flag passed | Execute directly (with user approval via AskUserQuestion) |
 
-Default to **manual mode** if unclear.
+Default to **manual mode**. Direct execution requires explicit `--execute` flag regardless of project git restrictions.
+
+**`--execute` mode**: When `--execute` is passed, use `AskUserQuestion` to show the full commit plan and get explicit user approval before executing. This is a skill-level exception to git-workflow rules (same pattern as `/push-ci`).
 
 **1b. Learn Commit Style**
 
@@ -138,7 +144,9 @@ git diff --cached -- <files> # staged
 - If project convention includes scope → `<type>(<scope>): <subject>`
 - If project convention includes ticket ID → append `[TICKET-ID]`
 
-**5c. Output commands**
+**5c. Output or execute commands**
+
+**Manual mode** — output copy-pasteable commands:
 
 Already staged group (no `git add` needed):
 
@@ -170,6 +178,13 @@ EOF
 ```
 ````
 
+**Execute mode** (`--execute`) — run commands directly:
+
+1. Use `AskUserQuestion` to show the full commit plan (all groups) and get approval once
+2. For each approved commit group, execute `git add` (if needed) then `git commit` via Bash
+3. After each commit, verify with `git log --oneline -1` to confirm success
+4. If any commit fails, stop and report the error (do not continue to next group)
+
 With `--ai-co-author` flag, append trailer:
 
 ````markdown
@@ -185,7 +200,8 @@ EOF
 
 **5d. Continue to next group**
 
-Output all groups' git commands at once, prompt user to execute in order.
+Manual mode: Output all groups' git commands at once, prompt user to execute in order.
+Execute mode: Proceed to next group automatically after successful commit.
 
 ### Step 6: Verification
 
@@ -212,7 +228,8 @@ AI attribution is **off by default**. The developer owns the commit. Only add th
 - **No merging unrelated changes**: Better an extra commit than sacrificing cohesion
 - **No omissions**: Must `git status` verify after completion
 - **No secrets**: Sensitive files must be warned about, never included
-- **No violations**: When git restriction rules are detected, **never** directly execute git add/commit
+- **No unauthorized execution**: Without `--execute` flag, **never** directly execute git add/commit
+- **No silent execution**: In `--execute` mode, must use `AskUserQuestion` for approval before executing commits
 
 ## Examples
 
@@ -224,4 +241,14 @@ Action: Detect manual mode → pre-flight check → analyze 20 changes → group
 ```
 Input: /smart-commit
 Action: Detect mode → pre-flight check → analyze 5 changes → all same feature → generate 1 commit
+```
+
+```
+Input: /smart-commit --execute
+Action: Override to execute mode → pre-flight check → analyze changes → group → AskUserQuestion approval → git add + git commit each group → git status verify
+```
+
+```
+Input: /smart-commit --execute --ai-co-author
+Action: Execute mode + AI co-author → group → approve → git add + git commit (with Co-Authored-By trailer) → verify
 ```

@@ -6,7 +6,7 @@
 
 編輯程式碼 → 自動 review → 自動修正 → gate 通過 → 交付。無需手動步驟。
 
-56 commands | 39 skills | 14 agents | ~4% context 佔用
+59 commands | 42 skills | 14 agents | ~4% context 佔用
 
 ## 運作方式
 
@@ -19,7 +19,7 @@ flowchart LR
     P -.- P1["/codex-brainstorm<br/>/feasibility-study<br/>/tech-spec"]
     B -.- B1["/feature-dev<br/>/bug-fix<br/>/codex-implement"]
     G -.- G1["/codex-review-fast<br/>/precommit<br/>/codex-test-review"]
-    S -.- S1["/smart-commit<br/>/create-pr<br/>/pr-review"]
+    S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
 **Auto-loop 引擎**自動執行品質關卡——任何程式碼編輯後，Claude 在同一回覆中觸發 review。Hooks 在所有 gate 通過前阻止停止。
@@ -133,8 +133,8 @@ flowchart TD
 
 | 類別 | 數量 | 範例 |
 |------|------|------|
-| Commands | 56 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
-| Skills | 39 | project-setup, code-explore, smart-commit, contract-decode |
+| Commands | 59 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit` |
+| Skills | 42 | project-setup, code-explore, smart-commit, contract-decode |
 | Agents | 14 | strict-reviewer, verify-app, coverage-analyst |
 | Hooks | 5 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint |
 | Rules | 11 | auto-loop, codex-invocation, security, testing, git-workflow, self-improvement |
@@ -176,6 +176,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `/code-investigate` | 雙視角程式碼調查（Claude + Codex 獨立探索） |
 | `/next-step` | 情境感知的下一步建議 |
 | `/smart-commit` | 智慧批次 commit（分組 + 訊息 + 指令） |
+| `/push-ci` | 推送（需核准）+ CI 監控 |
 | `/create-pr` | 從 branch 建立 GitHub PR |
 | `/git-worktree` | 管理 git worktree |
 | `/merge-prep` | 合併前分析與準備 |
