@@ -112,9 +112,11 @@ flowchart TD
         O1["/project-setup"] --> O2["/repo-intake"]
         O2 --> O3["Develop"]
         O3 --> O4["/project-audit"]
+        O3 --> O7["/best-practices"]
         O3 --> O5["/risk-assess"]
         O4 --> O6["/next-step --go"]
         O5 --> O6
+        O7 --> O6
     end
 ```
 
@@ -201,6 +203,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | Dependency security audit |
 | `/project-audit` | Project health audit (deterministic scoring) |
+| `/best-practices` | Industry best practices audit with adversarial debate |
 | `/risk-assess` | Uncommitted code risk assessment |
 
 ### Planning

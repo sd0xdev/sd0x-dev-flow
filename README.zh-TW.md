@@ -112,9 +112,11 @@ flowchart TD
         O1["/project-setup"] --> O2["/repo-intake"]
         O2 --> O3["Develop"]
         O3 --> O4["/project-audit"]
+        O3 --> O7["/best-practices"]
         O3 --> O5["/risk-assess"]
         O4 --> O6["/next-step --go"]
         O5 --> O6
+        O7 --> O6
     end
 ```
 
@@ -201,6 +203,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依賴套件安全稽核 |
 | `/project-audit` | 專案健康審計（確定性評分） |
+| `/best-practices` | 業界最佳實踐審計（含對抗式辯論） |
 | `/risk-assess` | 未提交程式碼風險評估 |
 
 ### 規劃

@@ -112,9 +112,11 @@ flowchart TD
         O1["/project-setup"] --> O2["/repo-intake"]
         O2 --> O3["Develop"]
         O3 --> O4["/project-audit"]
+        O3 --> O7["/best-practices"]
         O3 --> O5["/risk-assess"]
         O4 --> O6["/next-step --go"]
         O5 --> O6
+        O7 --> O6
     end
 ```
 
@@ -201,6 +203,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依赖安全审计 |
 | `/project-audit` | 项目健康审计（确定性评分） |
+| `/best-practices` | 行业最佳实践审计（含对抗式辩论） |
 | `/risk-assess` | 未提交代码风险评估 |
 
 ### 规划

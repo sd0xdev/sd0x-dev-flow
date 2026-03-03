@@ -112,9 +112,11 @@ flowchart TD
         O1["/project-setup"] --> O2["/repo-intake"]
         O2 --> O3["Develop"]
         O3 --> O4["/project-audit"]
+        O3 --> O7["/best-practices"]
         O3 --> O5["/risk-assess"]
         O4 --> O6["/next-step --go"]
         O5 --> O6
+        O7 --> O6
     end
 ```
 
@@ -201,6 +203,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | 依存パッケージのセキュリティ監査 |
 | `/project-audit` | プロジェクトヘルス監査（決定論的スコアリング） |
+| `/best-practices` | 業界ベストプラクティス監査（敵対的ディベート付き） |
 | `/risk-assess` | 未コミットコードのリスク評価 |
 
 ### プランニング

@@ -112,9 +112,11 @@ flowchart TD
         O1["/project-setup"] --> O2["/repo-intake"]
         O2 --> O3["Develop"]
         O3 --> O4["/project-audit"]
+        O3 --> O7["/best-practices"]
         O3 --> O5["/risk-assess"]
         O4 --> O6["/next-step --go"]
         O5 --> O6
+        O7 --> O6
     end
 ```
 
@@ -201,6 +203,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/precommit-fast` | lint:fix -> test:unit |
 | `/dep-audit` | Auditoría de seguridad de dependencias |
 | `/project-audit` | Auditoría de salud del proyecto (puntuación determinista) |
+| `/best-practices` | Auditoría de mejores prácticas de la industria (con debate adversarial) |
 | `/risk-assess` | Evaluación de riesgos de código no commiteado |
 
 ### Planificación
