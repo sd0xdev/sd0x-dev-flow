@@ -39,7 +39,7 @@ $ARGUMENTS
 
 - **User approval is mandatory** — use AskUserQuestion before push
 - **This is the ONLY skill authorized to execute `git push`**
-- **Never push to protected branches** (main, master, develop, release/*)
+- **Protected branches** (main, master, develop, release/*) — warn + require explicit user override via AskUserQuestion (do not hard-abort)
 - **Never use `--force`** (only `--force-with-lease` when explicitly requested)
 - **Match CI run by HEAD SHA**, not "latest"
 

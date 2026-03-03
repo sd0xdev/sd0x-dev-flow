@@ -21,7 +21,7 @@ Push to remote with user approval, then monitor CI run until completion.
 |------|-----------|-----------------|
 | `git push` | Execute (after user approval) | Forbidden (output only) |
 | `git push --force` | Forbidden | Forbidden |
-| Push to main/master | Blocked (preflight rejects) | Forbidden |
+| Push to protected branches (main/master/develop/release/*) | Warn + require explicit override via AskUserQuestion | Forbidden |
 
 ## Workflow
 
@@ -32,6 +32,10 @@ sequenceDiagram
     participant GH as GitHub
 
     C->>C: Phase 0: Preflight
+    alt Protected branch detected
+        C->>U: ⚠️ Warning + ask override
+        U->>C: Override / Abort
+    end
     C->>U: Phase 1: Show push plan + ask approval
     U->>C: Approve / Reject
     alt Approved
@@ -46,15 +50,15 @@ sequenceDiagram
 
 ### Phase 0: Preflight
 
-Run all checks. Abort on any failure.
+Run all checks. Hard-abort on infrastructure failures; warn-and-confirm on protected branches.
 
 ```bash
 # 1. Current branch
 BRANCH=$(git rev-parse --abbrev-ref HEAD)
 
-# 2. Protected branch guard
-# Abort if on main, master, develop, or release/*
-# (never push directly to protected branches)
+# 2. Protected branch detection
+# If main, master, develop, or release/* → warn + AskUserQuestion override
+# (do NOT hard-abort; let user decide)
 
 # 3. Remote exists
 git ls-remote --exit-code origin >/dev/null 2>&1
@@ -71,9 +75,19 @@ HEAD_SHA=$(git rev-parse HEAD)
 
 | Check | Pass | Fail |
 |-------|------|------|
-| Branch is not protected | Continue | Abort: "Cannot push directly to `<branch>`" |
+| Branch is not protected | Continue | **Warn + AskUserQuestion** (see below) |
 | Remote exists | Continue | Abort: "No remote 'origin' configured" |
 | Has commits ahead | Continue | Abort: "Nothing to push (0 commits ahead)" |
+
+**Protected branch override flow**:
+
+When branch is `main`, `master`, `develop`, or `release/*`:
+
+1. Show warning with branch name and commit count
+2. Use AskUserQuestion with options:
+   - "Override — push to `<branch>`" — continue to Phase 1
+   - "Abort" — stop immediately
+3. If user aborts → stop. If user overrides → continue normally (Phase 1 will still ask push approval separately)
 
 ### Phase 1: Push Plan + User Approval
 
@@ -113,8 +127,9 @@ CMD="$CMD origin $BRANCH"
 
 # 2. Execute push (ONLY after explicit approval)
 $CMD
+# If push fails (non-zero exit) → stop immediately, report error, do NOT proceed to CI
 
-# 3. Find CI run matching HEAD_SHA
+# 3. Find CI run matching HEAD_SHA (only if push succeeded)
 gh run list --branch $BRANCH --limit 5 --json databaseId,headSha,status,name \
   --jq ".[] | select(.headSha == \"$HEAD_SHA\")"
 
@@ -127,6 +142,8 @@ gh run watch <run-id> --exit-status
 **`--set-upstream` auto-detect**: If `git rev-parse --abbrev-ref --symbolic-full-name @{u}` fails (no upstream), add `-u` automatically.
 
 **CI Run Selection** — match by `headSha + branch`, not "latest" (see step 3 above).
+
+**Multiple CI runs**: If multiple workflow runs match the same SHA (e.g. CI + Auto Release), monitor all of them in parallel. Report verdict for each run individually. Overall verdict is the worst result across all runs.
 
 If no run found after 30 seconds, retry up to 3 times (10s interval). If still not found:
 
@@ -162,7 +179,7 @@ If no run found after 30 seconds, retry up to 3 times (10s interval). If still n
 ```
 - Executing git push WITHOUT prior user approval via AskUserQuestion
 - Suggesting or executing git push --force (ever)
-- Pushing to main, master, develop, or release/* branches
+- Pushing to protected branches WITHOUT explicit user override via AskUserQuestion
 - Auto-triggering this skill (disable-model-invocation: true)
 - Skipping preflight checks
 - Monitoring wrong CI run (must match HEAD SHA)
@@ -195,8 +212,17 @@ Phase 3: Verdict
 
 ```
 Input: /push-ci --force-with-lease
-Phase 0: Preflight (still rejects protected branches)
+Phase 0: Preflight (warns on protected branches)
 Phase 1: Show plan with --force-with-lease → user approves
 Phase 2: git push --force-with-lease origin feat/rebase-cleanup
 Phase 3: CI monitoring
+```
+
+```
+Input: /push-ci (on main branch)
+Phase 0: Preflight — ⚠️ "main is a protected branch" → AskUserQuestion override
+User: Override → continue
+Phase 1: Show plan → user approves push
+Phase 2: git push origin main → gh run watch
+Phase 3: ✅ CI passed
 ```
