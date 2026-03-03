@@ -59,12 +59,13 @@ bash scripts/run-skill.sh skill-health-check skill-lint.js --fix-hint
 | 7 | Scripts contract | P2 | Each script filename referenced in SKILL.md body |
 | 8 | Line count | P2 | Warning >150, flag >250 |
 
-**Cross-skill checks (2 items):**
+**Cross-skill checks (3 items):**
 
 | # | Check | Severity | Criteria |
 |---|-------|----------|----------|
 | 9 | Orphan detection | P2 | Commands ↔ Skills pairing |
 | 10 | Description overlap | P2 | Jaccard similarity >60% flagged |
+| 11 | Argument hint | P2 | Command with skill reference has `argument-hint` in frontmatter |
 
 ### Step 2: Manual Review (when comprehensive audit requested)
 
@@ -96,9 +97,9 @@ Only run Step 2 when user explicitly requests deep audit. Default: Step 1 only.
 
 ## Per-Skill Results
 
-| Skill | Routing | When-NOT | Output | Verification | Refs | Lines | Status |
-|-------|---------|----------|--------|--------------|------|-------|--------|
-| name  | ✅/🟡/⚪ | ...    | ...    | ...          | ...  | N     | ✅/🟡  |
+| Skill | Routing | When-NOT | Output | Verification | Refs | ArgHint | Lines | Status |
+|-------|---------|----------|--------|--------------|------|---------|-------|--------|
+| name  | ✅/🟡/⚪ | ...    | ...    | ...          | ...  | ✅/⚪/— | N     | ✅/🟡  |
 
 ## P1 (Should Fix)
 - **skill-name**: Issue → Fix recommendation

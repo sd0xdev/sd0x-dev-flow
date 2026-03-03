@@ -327,6 +327,54 @@ function detectDescriptionOverlap(skillResults) {
   return findings;
 }
 
+function detectMissingArgumentHints(skillNames, commandFiles) {
+  const findings = [];
+  const argHintStatus = {}; // skillName -> true | false | null
+
+  // Parse all commands to find skill references and argument-hint (array per skill)
+  const commandsBySkill = {};
+  for (const cmdFile of commandFiles) {
+    const content = normalizeContent(readFileSync(join(commandsDir, cmdFile), 'utf8'));
+    const fm = parseFrontmatter(content);
+    const cmdName = basename(cmdFile, '.md');
+    const match = content.match(/@skills\/([^/]+)\//);
+    const referencedSkill = match ? match[1] : null;
+    if (referencedSkill) {
+      if (!commandsBySkill[referencedSkill]) commandsBySkill[referencedSkill] = [];
+      commandsBySkill[referencedSkill].push({
+        cmdName,
+        hasArgHint: !!(fm && fm['argument-hint']),
+      });
+    }
+  }
+
+  for (const skillName of skillNames) {
+    const cmds = commandsBySkill[skillName];
+    if (!cmds) {
+      argHintStatus[skillName] = null; // No matching command
+      continue;
+    }
+    const missing = cmds.filter((c) => !c.hasArgHint);
+    if (missing.length === 0) {
+      argHintStatus[skillName] = true;
+    } else {
+      argHintStatus[skillName] = false;
+      for (const cmd of missing) {
+        findings.push({
+          check: 'argument-hint',
+          pass: false,
+          severity: 'P2',
+          skill: skillName,
+          message: `Command "${cmd.cmdName}" lacks \`argument-hint\` — no parameter hints in Claude Code UI`,
+          fix: 'Add `argument-hint: "<usage>"` to command frontmatter',
+        });
+      }
+    }
+  }
+
+  return { findings, argHintStatus };
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -356,6 +404,7 @@ function main() {
   // Cross-skill checks
   const orphanFindings = detectOrphans(skillDirs, commandFiles);
   const overlapFindings = detectDescriptionOverlap(skillResults);
+  const { findings: argHintFindings, argHintStatus } = detectMissingArgumentHints(skillDirs, commandFiles);
 
   // Aggregate
   const allFindings = [];
@@ -379,7 +428,7 @@ function main() {
     }
   }
 
-  for (const f of [...orphanFindings, ...overlapFindings]) {
+  for (const f of [...orphanFindings, ...overlapFindings, ...argHintFindings]) {
     allFindings.push({ skill: '(cross-skill)', ...f });
     if (f.severity === 'P0') p0Count++;
     else if (f.severity === 'P1') p1Count++;
@@ -424,8 +473,8 @@ function main() {
 
   // Per-skill summary
   console.log('## Per-Skill Results\n');
-  console.log('| Skill | Routing | When-NOT | Output | Verification | Refs | Lines | Status |');
-  console.log('|-------|---------|----------|--------|--------------|------|-------|--------|');
+  console.log('| Skill | Routing | When-NOT | Output | Verification | Refs | ArgHint | Lines | Status |');
+  console.log('|-------|---------|----------|--------|--------------|------|---------|-------|--------|');
   for (const result of skillResults) {
     const get = (check) => {
       const f = result.findings.find((x) => x.check === check);
@@ -434,9 +483,11 @@ function main() {
     };
     const lines = existsSync(result.path) ? countLines(readFileSync(result.path, 'utf8')) : 0;
     const issues = result.findings.filter((f) => !f.pass);
-    const status = issues.length === 0 ? '✅' : issues.some((f) => f.severity === 'P0') ? '🔴' : issues.some((f) => f.severity === 'P1') ? '🟡' : '⚪';
+    const hasArgHintIssue = argHintStatus[result.name] === false;
+    const status = (issues.length === 0 && !hasArgHintIssue) ? '✅' : issues.some((f) => f.severity === 'P0') ? '🔴' : issues.some((f) => f.severity === 'P1') ? '🟡' : '⚪';
+    const argHint = argHintStatus[result.name] === true ? '✅' : argHintStatus[result.name] === false ? '⚪' : '—';
     console.log(
-      `| ${result.name} | ${get('routing-signature')} | ${get('when-not')} | ${get('output')} | ${get('verification')} | ${get('references-routing')} | ${lines} | ${status} |`
+      `| ${result.name} | ${get('routing-signature')} | ${get('when-not')} | ${get('output')} | ${get('verification')} | ${get('references-routing')} | ${argHint} | ${lines} | ${status} |`
     );
   }
   console.log();

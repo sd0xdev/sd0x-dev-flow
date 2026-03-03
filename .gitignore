@@ -6,3 +6,6 @@ node_modules/
 settings.local.json
 .claude_review_state.json
 .claude/
+
+# Local-only skills (not published)
+skills/bump-version/
