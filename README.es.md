@@ -294,6 +294,23 @@ Ejecuta `/project-setup` para autodetectar y configurar todos los placeholders, 
 | `{BUILD_COMMAND}` | Comando de build | yarn build |
 | `{TYPECHECK_COMMAND}` | Type checking | yarn typecheck |
 
+## Demostración: StatusLine Config
+
+Personaliza la statusline de Claude Code — segmentos, temas y colores. Instalar como skill independiente:
+
+```bash
+npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+```
+
+| Característica | Detalles |
+|----------------|----------|
+| Segments | Directory, Git branch, Model, Context %, Cost, >200k alert |
+| Themes | ansi-default, catppuccin-mocha, dracula, nord, none |
+| Engine | POSIX shell + JSON stdin + semantic color tokens |
+| Accessibility | WCAG AA contrast, NO\_COLOR support |
+
+[Documentación completa](docs/features/statusline-config/2-tech-spec.md)
+
 ## Arquitectura
 
 ```

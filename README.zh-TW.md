@@ -294,6 +294,23 @@ Hook 預設是安全的。使用環境變數自訂行為：
 | `{BUILD_COMMAND}` | Build 指令 | yarn build |
 | `{TYPECHECK_COMMAND}` | Type check | yarn typecheck |
 
+## 展示：StatusLine Config
+
+自訂 Claude Code 的 statusline — 區段、主題與色彩。可單獨安裝：
+
+```bash
+npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+```
+
+| 特色 | 內容 |
+|------|------|
+| Segments | Directory, Git branch, Model, Context %, Cost, >200k alert |
+| Themes | ansi-default, catppuccin-mocha, dracula, nord, none |
+| Engine | POSIX shell + JSON stdin + semantic color tokens |
+| Accessibility | WCAG AA contrast, NO\_COLOR support |
+
+[完整文件](docs/features/statusline-config/2-tech-spec.md)
+
 ## 架構
 
 ```
