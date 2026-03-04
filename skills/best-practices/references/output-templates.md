@@ -56,6 +56,12 @@
 **Debate threadId**: <threadId from Phase 3>
 **Verdict**: OK (largely compliant) / WARN (room for improvement) / FAIL (major deviation)
 
+### Phase 3 Evidence (mandatory — proves debate was executed)
+
+- **Debate command**: /codex-brainstorm
+- **Debate threadId**: <threadId from Phase 3 session>
+- **Debate rounds**: <N rounds or "equilibrium at round N">
+
 ### Debate Conclusion (mandatory — references Phase 3 equilibrium)
 
 - Equilibrium / consensus / divergence (cite specific rounds and arguments from Phase 3)
@@ -90,7 +96,9 @@
 | Sources table | 1 | Yes | Min 3 independent sources |
 | Effective scope | 2 | Yes | Print in output header |
 | Code locations | 2 | Yes | `file:line` format |
-| Debate Conclusion | 4 | **Mandatory** | Must reference Phase 3 debate results; cannot be blank or placeholder |
+| Debate command | 4 | **Mandatory** | Must be `/codex-brainstorm` (not raw MCP) |
 | Debate threadId | 4 | **Mandatory** | Thread ID from Phase 3 debate session; proves debate was executed |
+| Debate rounds | 4 | **Mandatory** | Number of rounds or equilibrium point |
+| Debate Conclusion | 4 | **Mandatory** | Must reference Phase 3 debate results; cannot be blank or placeholder |
 | Verdict | 4 | Yes | OK / WARN / FAIL |
 | Priority column | 4 | Yes | P1 / P2 / P3 |
