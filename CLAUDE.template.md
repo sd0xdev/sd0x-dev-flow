@@ -105,6 +105,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/bug-fix` | Bug fix workflow | Bug fixing |
 | `/feature-dev` | Feature development | Development |
 | `/feature-verify` | Feature verification (READ-ONLY) | Development |
+| `/load-pr-review` | Load PR review comments into session | Development |
 | `/code-explore` | Code exploration | Understanding |
 | `/code-investigate` | Dual-perspective code investigation | Understanding |
 | `/git-investigate` | Track code history | Finding source |
