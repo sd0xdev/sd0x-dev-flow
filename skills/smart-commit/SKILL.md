@@ -14,21 +14,26 @@ Analyze uncommitted changes → group by cohesion → generate commit messages �
 sequenceDiagram
     participant C as Claude
     participant U as User
-    C->>C: Step 1: Detect permissions + learn style
+    C->>C: Step 1a: Detect permissions
+    C->>C: Step 1b: Learn commit style
+    C->>C: Step 1c: Identity diagnostics
+    C->>C: Step 1d: Signing diagnostics
+    C->>C: Step 1e: AI guard readiness
     C->>C: Step 2: Pre-flight check (precommit)
     C->>C: Step 3: Collect changes + exclude sensitive files
     C->>C: Step 4: Group (high cohesion)
-    C->>U: Show commit plan
+    C->>U: Show commit plan (with Author/Signing/Guard)
     U->>C: Confirm/adjust
     loop Each commit group
         C->>C: Read diff → generate message
+        C->>C: AI trailer sanitization
         alt --execute mode
-            C->>C: git add + git commit (directly)
+            C->>C: Runtime validation → git commit
         else manual mode
-            C->>U: Output git commands for manual execution
+            C->>U: Output git commands
         end
     end
-    C->>C: Step 6: git status verification
+    C->>C: Step 6: Verification + post-commit leak detection
 ```
 
 ### Step 1: Detect Permissions + Learn Style
@@ -53,6 +58,103 @@ git log --oneline -15
 ```
 
 Infer format, type vocabulary, subject conventions (capitalization/tense/ticket ID), and language from recent commits.
+
+**1c. Identity Diagnostics**
+
+```bash
+# Read effective identity + origin
+git config --show-origin --show-scope --get-all user.name
+git config --show-origin --show-scope --get-all user.email
+# Check environment variable overrides
+printf "GIT_AUTHOR_NAME=%s\nGIT_AUTHOR_EMAIL=%s\nGIT_COMMITTER_NAME=%s\nGIT_COMMITTER_EMAIL=%s\n" \
+  "${GIT_AUTHOR_NAME:-}" "${GIT_AUTHOR_EMAIL:-}" \
+  "${GIT_COMMITTER_NAME:-}" "${GIT_COMMITTER_EMAIL:-}"
+```
+
+Decision logic:
+
+| Condition | Behavior |
+|-----------|----------|
+| `user.name` and `user.email` resolve to single values | Silent continue, record identity for commit plan |
+| `git config --get user.name` returns nothing | **HALT** — output `git config --local user.name "..."` setup guidance |
+| `git config --get user.email` returns nothing | **HALT** — output `git config --local user.email "..."` setup guidance |
+| `GIT_AUTHOR_*` or `GIT_COMMITTER_*` env vars set | Warn: env vars will override config; commit plan shows `(env override)` |
+| `--get-all` returns multiple different values | **AskUserQuestion**: list candidate profiles, user selects once |
+| Conflict + `CI=true` env var | **HALT** (fail-closed) — output fix guidance, do not silently inherit |
+
+Design principles:
+- **Diagnostic, not override**: Do not use `git -c user.name=...` to override. Respect `includeIf` settings.
+- **Interrupt only on anomaly**: Normal identity resolution produces no prompt.
+- **Conflict ≠ multiple sources**: `includeIf` producing multiple config sources that resolve to the same value = normal.
+
+**1d. Signing Diagnostics**
+
+```bash
+git config --show-origin --get commit.gpgsign 2>/dev/null || echo "unset"
+git config --show-origin --get user.signingkey 2>/dev/null || echo "unset"
+git config --show-origin --get gpg.format 2>/dev/null || echo "gpg"
+```
+
+Decision logic:
+
+| Condition | Behavior |
+|-----------|----------|
+| `commit.gpgsign=true` + key exists | Display `Signing: enabled (<gpg.format>)` |
+| `commit.gpgsign=true` + key missing | ⚠️ Warning: signing enabled but key not configured |
+| `commit.gpgsign` unset | Display `Signing: not configured (inherit)` |
+| `--execute` mode signing failure | **Immediate stop** + fix guidance |
+
+Post-commit visibility (`--execute` mode):
+
+```bash
+git log -1 --format='%G?' # N=unsigned, G=good, U=good-untrusted, etc.
+```
+
+**Signing override flags** (`--sign` / `--no-sign`):
+
+| Flag | Effect | Git flag |
+|------|--------|----------|
+| `--sign` | Force signing for this batch | `-S` on each `git commit` |
+| `--no-sign` | Disable signing for this batch | `--no-gpg-sign` on each `git commit` |
+| Both | **Error** — mutually exclusive | Halt with error message |
+| Neither | Inherit from `commit.gpgsign` config | (default behavior) |
+
+When `--sign` or `--no-sign` is used, **AskUserQuestion** to confirm the override and warn about potential branch protection / CI policy conflicts.
+
+**1e. AI Guard Readiness**
+
+```bash
+# Detect effective hook path (handles relative paths and worktrees)
+HOOK_FILE=$(git rev-parse --git-path hooks/commit-msg 2>/dev/null)
+# If core.hooksPath is set, use it instead
+CUSTOM_HOOKS=$(git config --get core.hooksPath 2>/dev/null)
+if [ -n "$CUSTOM_HOOKS" ]; then
+  # Resolve relative paths against repo root
+  case "$CUSTOM_HOOKS" in
+    /*) ;; # absolute — use as-is
+    *)  CUSTOM_HOOKS="$(git rev-parse --show-toplevel 2>/dev/null)/${CUSTOM_HOOKS}" ;;
+  esac
+  HOOK_FILE="${CUSTOM_HOOKS}/commit-msg"
+fi
+# Check commit-msg hook
+if [ -f "$HOOK_FILE" ] && [ ! -x "$HOOK_FILE" ]; then
+  echo "guard:not-executable"
+elif [ -x "$HOOK_FILE" ]; then
+  echo "guard:installed"
+else
+  echo "guard:missing"
+fi
+```
+
+Decision logic:
+
+| Condition | Behavior |
+|-----------|----------|
+| Hook installed + executable | Display `AI guard: active` |
+| Hook not installed | ⚠️ Warning (non-blocking): suggest install (`/install-scripts commit-msg-guard` then `cp .claude/scripts/commit-msg-guard.sh <hooks-path>/commit-msg && chmod +x <hooks-path>/commit-msg`) |
+| Hook exists but not executable | ⚠️ Warning: suggest `chmod +x <hook-path>` |
+
+**Important**: Hook installation is NOT a blocker for `--execute` mode. Runtime validation (Step 5c) provides an independent safety layer.
 
 ### Step 2: Pre-flight Check
 
@@ -90,6 +192,14 @@ node_modules/ | dist/ | .cache/ | files covered by .gitignore
 
 **Partial-staged detection**: If a file has both staged and unstaged changes (`MM` in `git status`), warn user and ask them to resolve first.
 
+**`--scope` filtering**: When `--scope <path>` is specified, only include changes under that path. Apply after collecting all changes:
+
+```bash
+git status --short -- "${SCOPE_PATH}"
+```
+
+Exclude changes outside the scope path. If no changes remain after filtering → report "No changes under `<path>`" and stop.
+
 If no changes → report "No uncommitted changes" and stop.
 
 ### Step 4: Group (High Cohesion)
@@ -115,10 +225,14 @@ Each group should form a semantically complete commit.
 git rev-parse --abbrev-ref HEAD
 ```
 
-Show grouping plan and ask user to confirm:
+Show grouping plan and ask user to confirm. Include identity, signing, and AI guard metadata from Step 1c/1d/1e:
 
 ```
 ## Commit Plan
+
+**Author**: Jane Doe <jane@company.com> (local config)
+**Signing**: enabled (GPG, key: ABCD1234)
+**AI guard**: active (commit-msg hook installed)
 
 | # | Type | Files | Summary |
 |---|------|-------|---------|
@@ -143,18 +257,24 @@ git diff --cached -- <files> # staged
 - Subject focuses on "what was done", not "which files changed"
 - If project convention includes scope → `<type>(<scope>): <subject>`
 - If project convention includes ticket ID → append `[TICKET-ID]`
+- **`--type` override**: When `--type <type>` is specified, use that type for all commit groups instead of inferring from changes. Takes precedence over inferred type.
 
 **AI trailer sanitization** (mandatory, before outputting any commit command):
 
 Scan the generated message for forbidden patterns and **strip them silently** unless `--ai-co-author` was explicitly passed:
 
-| Forbidden Pattern | Regex |
-|-------------------|-------|
-| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(?:Claude\|AI\|GPT)` |
+| Forbidden Pattern | Regex (POSIX ERE, `grep -Ei`) |
+|-------------------|------|
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+
+> **Note**: `\|` in the table above is Markdown table escaping. Actual POSIX ERE uses unescaped `|`.
+> **Canonical regex source**: `scripts/commit-msg-guard.sh` (POSIX ERE, `grep -Ei`)
 
 If any pattern matches and `--ai-co-author` was **not** passed → remove the matching line(s) from the message before output/execute.
+
+**`--ai-co-author` narrow whitelist** (enforced by runtime validation in Step 5c): When `--ai-co-author` is passed, only the exact line `Co-Authored-By: Claude <noreply@anthropic.com>` is permitted. All other AI patterns (`Generated by`, `🤖`, variant Co-Authored-By formats) remain blocked even with `--ai-co-author`. Note: the commit-msg hook (`ALLOW_AI_COAUTHOR=1`) bypasses all hook checks — the narrow whitelist is enforced solely by the runtime `validate_msg()` function, not by the hook.
 
 **5c. Output or execute commands**
 
@@ -193,15 +313,16 @@ EOF
 **Execute mode** (`--execute`) — run commands directly:
 
 1. Use `AskUserQuestion` to show the full commit plan (all groups) and get approval once
-2. For each approved commit group, execute `git add` (if needed) then `git commit` via Bash
-3. After each commit, verify with `git log --oneline -1` to confirm success
-4. If any commit fails, stop and report the error (do not continue to next group)
+2. For each approved commit group, execute `git add` (if needed)
+3. **Runtime validation** — before each `git commit`, validate the sanitized message via temp file + `validate_msg()`. See [execute-mode.md](references/execute-mode.md) for full implementation.
+4. After each commit, verify with `git log --oneline -1` to confirm success
+5. If any commit fails or runtime validation fails, stop and report the error (do not continue to next group)
 
-With `--ai-co-author` flag, append trailer:
+With `--ai-co-author` flag, append trailer and set `ALLOW_AI_COAUTHOR=1` (required to pass commit-msg hook):
 
 ````markdown
 ```bash
-git commit -m "$(cat <<'EOF'
+ALLOW_AI_COAUTHOR=1 git commit -m "$(cat <<'EOF'
 fix: Fix circuit breaker timeout logic
 
 Co-Authored-By: Claude <noreply@anthropic.com>
@@ -223,27 +344,11 @@ Execute mode: Proceed to next group automatically after successful commit.
 git status --short
 ```
 
-- Still has unhandled changes → return to Step 4
+- Still has unhandled changes (committable files) → return to Step 4
+- Only excluded files remain (`.env*`, `*.pem`, etc.) → stop with warning summary listing excluded files
 - All clear → output summary table
 
-After each commit, run **post-commit AI trailer detection** (detect-only, no amend):
-
-```bash
-git log -1 --format='%B'
-```
-
-Scan for the same forbidden patterns from Step 5b. If any match is found:
-
-```
-⚠️ AI attribution detected in commit <sha>:
-   Line: "Co-Authored-By: Claude <noreply@anthropic.com>"
-   This was NOT requested via --ai-co-author.
-   To fix: git commit --amend (manual)
-   To prevent: install commit-msg hook via /install-scripts commit-msg-guard
-     then: cp .claude/scripts/commit-msg-guard.sh .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
-```
-
-**Do NOT auto-amend.** Only warn. Amending is a destructive git operation reserved for the developer.
+After each commit, run **post-commit AI trailer detection** (hard stop on leak): scan `git log -1 --format='%B'` for forbidden patterns. When `--ai-co-author` is active, strip the exact allowed line (`Co-Authored-By: Claude <noreply@anthropic.com>`) before scanning — same logic as `validate_msg()`. If any remaining match → **immediately stop** all remaining groups + output amend guidance. See [execute-mode.md § Post-commit Detection](references/execute-mode.md) for implementation. **Do NOT auto-amend** — amending is a destructive git operation reserved for the developer.
 
 **Manual mode**:
 
@@ -276,6 +381,14 @@ AI attribution is **off by default**. The developer owns the commit. Only add th
 - **No secrets**: Sensitive files must be warned about, never included
 - **No unauthorized execution**: Without `--execute` flag, **never** directly execute git add/commit
 - **No silent execution**: In `--execute` mode, must use `AskUserQuestion` for approval before executing commits
+
+## Bundled References
+
+| File | Purpose | When |
+|------|---------|------|
+| [execute-mode.md](references/execute-mode.md) | Runtime validation (`validate_msg()`) + post-commit AI trailer detection | `--execute` mode |
+
+> **Note**: Bash code in `references/execute-mode.md` is a **behavioral specification**. Claude translates it to allowed tool calls (`Bash(git:*)` for `git commit -F`, etc.) — it is not a standalone script requiring additional shell permissions.
 
 ## Examples
 

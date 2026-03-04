@@ -1,6 +1,6 @@
 ---
 description: Smart batch commit — group changes by cohesion, generate commit messages matching project style, output git commands (or execute directly with --execute)
-argument-hint: [--execute] [--scope <path>] [--type <type>] [--ai-co-author]
+argument-hint: [--execute] [--scope <path>] [--type <type>] [--ai-co-author] [--sign] [--no-sign]
 allowed-tools: Bash(git:*), Read, Grep, Glob, AskUserQuestion
 ---
 
@@ -13,6 +13,9 @@ allowed-tools: Bash(git:*), Read, Grep, Glob, AskUserQuestion
 - Status: !`git status --short`
 - Recent style: !`git log --oneline -10`
 - Branch: !`git rev-parse --abbrev-ref HEAD`
+- Identity: !`git config --show-origin --show-scope --get user.name 2>/dev/null && git config --show-origin --show-scope --get user.email 2>/dev/null`
+- Signing: !`git config --get commit.gpgsign 2>/dev/null || echo "unset"`
+- Hooks path: !`git config --get core.hooksPath 2>/dev/null || echo "default"`
 
 ## Task
 
@@ -30,6 +33,9 @@ Arguments:
 - `--scope <path>`: Only include changes under this path
 - `--type <type>`: Force all commits to use this type (feat/fix/docs/etc.)
 - `--ai-co-author`: Add `Co-Authored-By: Claude <noreply@anthropic.com>` trailer to commit messages (off by default)
+- `--sign`: Force commit signing (`-S`) for this batch (requires AskUserQuestion confirmation)
+- `--no-sign`: Disable commit signing (`--no-gpg-sign`) for this batch (requires AskUserQuestion confirmation)
+- `--sign` + `--no-sign`: Mutually exclusive — error if both specified
 
 ## Output
 

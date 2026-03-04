@@ -16,17 +16,17 @@ if [ "${ALLOW_AI_COAUTHOR:-}" = "1" ]; then
   exit 0
 fi
 
-# Forbidden patterns (case-insensitive)
+# Forbidden patterns (case-insensitive, POSIX ERE)
 PATTERNS=(
-  'Co-Authored-By:.*\(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic\)'
-  'Generated \(by\|with\).*\(Claude\|AI\|GPT\|Copilot\|Claude Code\)'
-  '🤖.*\(Claude\|AI\|GPT\)'
+  'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)'
+  'Generated (by|with).*(Claude|Claude Code|AI|GPT|Copilot)'
+  '🤖.*(Claude|AI|GPT)'
 )
 
 FOUND=""
 for pat in "${PATTERNS[@]}"; do
-  if grep -qi "$pat" "$MSG_FILE" 2>/dev/null; then
-    MATCH=$(grep -i "$pat" "$MSG_FILE" | head -1)
+  if grep -Eqi "$pat" "$MSG_FILE" 2>/dev/null; then
+    MATCH=$(grep -Ei "$pat" "$MSG_FILE" | head -1)
     FOUND="${FOUND}\n  ${MATCH}"
   fi
 done
