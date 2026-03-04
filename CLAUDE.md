@@ -95,7 +95,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/project-setup` | Auto-detect and configure project | Onboarding |
 | `/claude-health` | Claude Code config health check | Onboarding |
 | `/pr-review` | PR self-review checklist | Before PR |
-| `/smart-commit` | Smart batch commit (group + message + commands) | Git |
+| `/smart-commit` | Smart batch commit (identity/signing diagnostics + group + message + commands) | Git |
 | `/push-ci` | Push (with approval) + CI monitor | Git |
 | `/create-pr` | Create GitHub PR from branch | Git |
 | `/git-worktree` | Manage git worktrees | Git |
