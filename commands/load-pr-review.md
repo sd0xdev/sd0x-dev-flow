@@ -4,15 +4,13 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(bash:*), Bash(jq:*), Read, Grep, Gl
 argument-hint: "[PR#|URL] [--mode summary|plan|fix] [--all] [--writeback] [--budget <N>]"
 ---
 
-<!-- Bash(bash:*) required for context check wrapping — see CLAUDE.md Footguns -->
-
 @skills/load-pr-review/SKILL.md
 
 ## Context
 
 - Branch: !`git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(detached)"`
 - Repo: !`gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "(unknown)"`
-- PR: !`bash -c 'set -o pipefail; gh pr view --json number,title,state 2>/dev/null | jq -r "\"#\\(.number) \\(.title) [\\(.state)]\"" || echo "(no PR on this branch)"'`
+- PR: !`gh pr view --json number,title,state --template '#{{.number}} {{.title}} [{{.state}}]' 2>/dev/null || echo "(no PR on this branch)"`
 
 ## Task
 
