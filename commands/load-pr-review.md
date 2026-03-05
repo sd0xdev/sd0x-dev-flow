@@ -10,7 +10,7 @@ argument-hint: "[PR#|URL] [--mode summary|plan|fix] [--all] [--writeback] [--bud
 
 - Branch: !`git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "(detached)"`
 - Repo: !`gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo "(unknown)"`
-- PR: !`gh pr view --json number,title,state --jq '"#\(.number) \(.title) [\(.state)]"' 2>/dev/null || echo "(no PR on this branch)"`
+- PR: !`gh pr view --json number,title,state --jq '"#"+(.number|tostring)+" "+.title+" ["+.state+"]"' 2>/dev/null || echo "(no PR on this branch)"`
 
 ## Task
 
@@ -24,7 +24,7 @@ Load the PR review comments per SKILL.md workflow. Use context block data for PR
 | `--mode summary\|plan\|fix` | Interaction mode (default: summary) |
 | `--all` | Include resolved + outdated threads |
 | `--writeback` | Enable reply/resolve writeback |
-| `--budget <N>` | Max loaded comments (default: 30) |
+| `--budget <N>` | Max loaded comments (default: 30, 200 with --all) |
 
 ### Workflow
 
