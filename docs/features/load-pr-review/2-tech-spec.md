@@ -192,7 +192,7 @@ bash scripts/run-skill.sh load-pr-review load-pr-review.js \
 
 | Argument | Description | Default |
 | -------- | ----------- | ------- |
-| `<PR#\|URL\|branch>` | PR 指定 | 當前分支的 PR |
+| `<PR#\|URL>` | PR 指定 | 當前分支的 PR |
 | `--mode <summary\|plan\|fix>` | 互動模式 | `summary` |
 | `--all` | 顯示全部 comments（含已解決，硬上限 200） | `false` |
 | `--writeback` | 啟用回寫功能 | `false` |
@@ -206,9 +206,8 @@ bash scripts/run-skill.sh load-pr-review load-pr-review.js \
 ```
 1. 明確指定 PR# → 直接使用
 2. 指定 URL → 解析 owner/repo/number
-3. 無參數 → gh pr view --json number,title (current branch)
-4. 無 PR → gh pr list --head <branch> --state open --limit 1
-5. 都找不到 → AskUserQuestion 請使用者輸入
+3. 無參數 → gh pr view --json number,title (current branch auto-detect)
+4. 都找不到 → AskUserQuestion 請使用者輸入
 ```
 
 #### Step 1: Fetch Metadata
@@ -382,3 +381,30 @@ gh api graphql -f query='mutation($id:ID!) { resolveReviewThread(input: {threadI
 | 3 | fix mode 中 auto-loop 失敗（precommit fail）怎麼辦？ | 修復中斷 | 遵循 auto-loop rule（fix → re-run） |
 | 4 | 是否需要支援 cross-repo PR（fork 的 PR）？ | Fork-based workflow | v1 不支援，`--repo` flag 預留 |
 | 5 | Skill name: `load-pr-review` vs `pr-feedback` vs `address-review`？ | 命名一致性 | 待使用者確認 |
+
+## 8. Known Issues
+
+### 8.1 Context Check Permission Parser vs jq `()` Syntax
+
+**Root Cause**: Claude Code permission parser 將 `!` context check 中的 `()` 字元解釋為 shell subshell，觸發 approval prompt。jq 大量使用 `()`（如 `\(.number)`、`(.number|tostring)`）。
+
+**Failed Attempts**:
+
+| # | Approach | Problem |
+|---|----------|---------|
+| 1 | `--jq '"#\(.number)..."'` | Parser strips `\`, sees `()` |
+| 2 | `--jq '"#"+(.number\|tostring)+"..."'` | Parser sees `()` around `.number\|tostring` |
+| 3 | `bash -c '... \| jq ...'` | "This command requires approval" |
+
+**Solution**: Go templates (`gh --template`) — decided via Codex Brainstorm session `019cbbcd`
+
+| Criterion | jq | Go Template |
+|-----------|----|----|
+| `()` 字元 | 必須 | 無 |
+| Permission parser | 失敗 | 通過 |
+| 專案 precedent | 4 個 `--jq` | 0（首例） |
+| 輸出格式控制 | 完整 | 完整 |
+
+```bash
+gh pr view --json number,title,state --template '#{{.number}} {{.title}} [{{.state}}]'
+```

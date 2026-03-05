@@ -124,7 +124,7 @@ Print effective scope in the Phase 2 output header.
 Invoke `/codex-brainstorm` via Skill tool (always available as a Claude Code built-in; no `allowed-tools` declaration needed). See [debate-guide.md](references/debate-guide.md) for debate topic template, constraints, and completion criteria.
 
 > **Phase 3 must use `/codex-brainstorm` (Skill tool). Raw `mcp__codex__codex` calls for debate are invalid.** The MCP tools in `allowed-tools` exist because `/codex-brainstorm` uses them internally — they are not for direct Phase 3 debate invocation.
-
+>
 > **Phase 4 is blocked until Phase 3 is complete.**
 
 ### Phase 4: Gap Report

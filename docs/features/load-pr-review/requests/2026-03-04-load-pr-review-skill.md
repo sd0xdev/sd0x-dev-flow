@@ -1,7 +1,7 @@
 # Load PR Review Skill
 
 > **Created**: 2026-03-04
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Source**: Best Practices Audit + Codex Brainstorm Nash Equilibrium (2026-03-04)
@@ -15,7 +15,7 @@
 - 建立新 skill `/load-pr-review`，將 GitHub PR review 建議載入 Claude Code session
 - 使用 GraphQL `reviewThreads` 取得完整 thread 結構（含 `isResolved`、`isOutdated`）
 - 三層互動模式：`summary`（預設）→ `plan`（分類策略）→ `fix`（guided 修復）
-- Smart defaults：無參數自動偵測當前分支 PR、支援 PR# / URL / branch 輸入
+- Smart defaults：無參數自動偵測當前分支 PR、支援 PR# / URL 輸入
 - Token budget 機制：預設載入 30 條 unresolved comments，防止 context 爆量
 - 回寫功能（gated）：reply comment + resolve thread，dry-run first + AskUserQuestion 確認
 - REST fallback：GraphQL 失敗時降級，顯示 degraded banner
@@ -43,7 +43,7 @@
 
 ## Acceptance Criteria
 
-- [ ] PR auto-detect：無參數偵測當前分支 PR，支援 PR# / URL / branch
+- [ ] PR auto-detect：無參數偵測當前分支 PR，支援 PR# / URL
 - [ ] GraphQL fetch：正確取得 `reviewThreads` 含 `isResolved`、`isOutdated`
 - [ ] REST fallback：GraphQL 失敗時降級 + degraded banner
 - [ ] Token budget：預設 30 條，超出截斷 + metadata 顯示
@@ -55,14 +55,15 @@
 - [ ] `/skill-health-check` 全維度通過
 - [ ] `/codex-review-doc` 通過
 - [ ] Unit test coverage: happy path + error + edge cases
+- [ ] Context check: `!` PR context renders without permission prompt
 
 ## Progress
 
 | Phase | Status | Note |
 | ----- | ------ | ---- |
 | Analysis | Done | Best Practices Audit completed |
-| Development | - | |
-| Testing | - | |
+| Development | In Progress | Context check hotfix (jq→Go template) |
+| Testing | In Progress | 18 new tests for error paths + edge cases |
 | Acceptance | - | |
 
 ## References
