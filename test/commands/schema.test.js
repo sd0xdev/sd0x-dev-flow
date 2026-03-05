@@ -72,3 +72,23 @@ test('command frontmatter schema', () => {
     }
   }
 });
+
+test('context checks must not pipe to jq (use gh --template instead)', () => {
+  const files = walk(commandsDir);
+  const contextCheckPattern = /^- .+: !`(.+)`$/gm;
+  // Pipe-to-jq is dangerous in context checks: jq expressions use ()
+  // which triggers the permission parser. Use gh --template instead.
+  const pipeToJqPattern = /\|\s*jq\b/;
+
+  for (const file of files) {
+    const content = readFileSync(file, 'utf8');
+    let match;
+    while ((match = contextCheckPattern.exec(content)) !== null) {
+      const cmd = match[1];
+      assert.ok(
+        !pipeToJqPattern.test(cmd),
+        `${basename(file)}: context check pipes to jq (triggers permission parser). Use gh --template instead: ${cmd.slice(0, 80)}`
+      );
+    }
+  }
+});

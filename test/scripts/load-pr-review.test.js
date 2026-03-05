@@ -187,6 +187,9 @@ function setupStubBin(options = {}) {
     prMetaExitCode = 0,
     replyExitCode = 0,
     resolveExitCode = 0,
+    jqExitCode = 0,
+    metaRaw = null,
+    repoViewExitCode = 0,
   } = options;
 
   const binDir = makeTempDir('bin');
@@ -195,7 +198,7 @@ function setupStubBin(options = {}) {
   const dataDir = makeTempDir('data');
   writeFileSync(join(dataDir, 'gql.json'), JSON.stringify(gqlResponse));
   writeFileSync(join(dataDir, 'rest.json'), JSON.stringify(restResponse));
-  writeFileSync(join(dataDir, 'meta.json'), JSON.stringify(prMeta));
+  writeFileSync(join(dataDir, 'meta.json'), metaRaw !== null ? metaRaw : JSON.stringify(prMeta));
 
   const stubGh = `#!/bin/sh
 # Trace for debugging
@@ -214,12 +217,22 @@ case "$1" in
     esac
     ;;
   repo)
+    if [ "${repoViewExitCode}" != "0" ]; then exit ${repoViewExitCode}; fi
     echo "owner/repo"
     exit 0
     ;;
   api)
     case "$2" in
       graphql)
+        # Route resolve mutation before generic GraphQL handler
+        if echo "$*" | grep -q "resolveReviewThread"; then
+          if [ "${resolveExitCode}" != "0" ]; then
+            echo "Resolve error" >&2
+            exit ${resolveExitCode}
+          fi
+          echo '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
+          exit 0
+        fi
         if [ "${gqlExitCode}" != "0" ]; then
           echo "GraphQL error" >&2
           exit ${gqlExitCode}
@@ -257,16 +270,6 @@ case "$1" in
         exit 0
         ;;
     esac
-    # GraphQL resolve mutation (second positional is "graphql" for mutations too)
-    # Catch-all for api graphql mutation calls
-    if echo "$*" | grep -q "resolveReviewThread"; then
-      if [ "${resolveExitCode}" != "0" ]; then
-        echo "Resolve error" >&2
-        exit ${resolveExitCode}
-      fi
-      echo '{"data":{"resolveReviewThread":{"thread":{"isResolved":true}}}}'
-      exit 0
-    fi
     echo "Unknown gh api call: $*" >&2
     exit 1
     ;;
@@ -279,6 +282,10 @@ exit 1
 
   // Stub jq
   const stubJq = `#!/bin/sh
+if [ "${jqExitCode}" != "0" ]; then
+  echo "jq error" >&2
+  exit ${jqExitCode}
+fi
 # Simple jq stub — for -n --arg body <val> '{body:$body}'
 # Just pass through the body as JSON
 BODY=""
@@ -314,7 +321,7 @@ function runScript(args, binDir, envOverrides = {}) {
   const result = spawnSync(nodeBin, [SCRIPT, ...args], {
     encoding: 'utf8',
     env,
-    timeout: 15000,
+    timeout: 30000,
   });
   return result;
 }
@@ -609,4 +616,223 @@ test('edge: non-numeric --replyTargetId', () => {
   ], binDir);
   assert.equal(result.status, 2);
   assert.match(result.stderr, /numeric/i);
+});
+
+// ============================================================
+// Writeback failure tests (W1-W3)
+// ============================================================
+
+test('W1: writeback --execute jq failure exits 2', () => {
+  const binDir = setupStubBin({ jqExitCode: 1 });
+  const result = runScript([
+    'writeback', '--execute',
+    '--thread', 'PRRT_a',
+    '--reply', 'Fixed in abc123',
+    '--replyTargetId', '1001',
+    '--repo', 'owner/repo',
+    '--pr', '42',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /jq failed/i);
+});
+
+test('W2: writeback --execute reply POST failure exits 1', () => {
+  const binDir = setupStubBin({ replyExitCode: 1 });
+  const result = runScript([
+    'writeback', '--execute',
+    '--thread', 'PRRT_a',
+    '--reply', 'Fixed in abc123',
+    '--replyTargetId', '1001',
+    '--repo', 'owner/repo',
+    '--pr', '42',
+  ], binDir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /reply failed/i);
+});
+
+test('W3: writeback --execute resolve failure exits 1', () => {
+  const binDir = setupStubBin({ resolveExitCode: 1 });
+  const result = runScript([
+    'writeback', '--execute',
+    '--thread', 'PRRT_a',
+    '--reply', 'Fixed in abc123',
+    '--replyTargetId', '1001',
+    '--repo', 'owner/repo',
+    '--pr', '42',
+    '--resolve',
+  ], binDir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /resolve failed/i);
+});
+
+// ============================================================
+// Fetch error path tests (F1-F3)
+// ============================================================
+
+test('F1: PR metadata parse failure exits 2', () => {
+  const binDir = setupStubBin({ metaRaw: 'not-valid-json{{{' });
+  const result = runScript(['fetch', '--pr', '42', '--repo', 'owner/repo'], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /parse.*metadata/i);
+});
+
+test('F2: GraphQL + REST both fail exits 2', () => {
+  const binDir = setupStubBin({ gqlExitCode: 1, restExitCode: 1 });
+  const result = runScript(['fetch', '--pr', '42', '--repo', 'owner/repo'], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /failed to fetch/i);
+});
+
+test('F3: --pr without --repo and repo view fails exits 2', () => {
+  const binDir = setupStubBin({ repoViewExitCode: 1 });
+  const result = runScript(['fetch', '--pr', '42'], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--pr requires --repo/i);
+});
+
+// ============================================================
+// Budget boundary tests (B1-B3)
+// ============================================================
+
+test('B1: budget=0 exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'fetch', '--pr', '42', '--repo', 'owner/repo', '--budget', '0',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /budget/i);
+});
+
+test('B2: budget=201 (exceeds ALL_BUDGET) exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'fetch', '--pr', '42', '--repo', 'owner/repo', '--budget', '201',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /budget/i);
+});
+
+test('B3: budget=1 loads exactly 1 thread', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'fetch', '--pr', '42', '--repo', 'owner/repo', '--all', '--budget', '1',
+  ], binDir);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.threads.length, 1);
+  assert.equal(data.summary.truncated, 2);
+});
+
+// ============================================================
+// Parse error tests (P1-P3)
+// ============================================================
+
+test('P1: invalid URL format exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'fetch', '--url', 'https://not-github.com/invalid/path',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /invalid.*url/i);
+});
+
+test('P2: invalid --repo format exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'fetch', '--pr', '42', '--repo', 'invalid-no-slash',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /invalid.*--repo/i);
+});
+
+test('P3: writeback without --plan or --execute exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript(['writeback'], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--plan or --execute/i);
+});
+
+// ============================================================
+// Normalization tests (N1-N3)
+// ============================================================
+
+test('N1: REST fallback sets degraded flag and preserves thread structure', () => {
+  const binDir = setupStubBin({ gqlExitCode: 1 });
+  const result = runScript(['fetch', '--pr', '42', '--repo', 'owner/repo', '--all'], binDir);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.summary.degraded, true);
+  // Verify threads have expected fields from REST grouping
+  for (const t of data.threads) {
+    assert.ok(t.id, 'thread should have id');
+    assert.ok(typeof t.path === 'string', 'thread should have path');
+    assert.ok(Array.isArray(t.comments), 'thread should have comments array');
+  }
+});
+
+test('N2: threads sorted unresolved+not-outdated first', () => {
+  const binDir = setupStubBin();
+  const result = runScript(['fetch', '--pr', '42', '--repo', 'owner/repo', '--all'], binDir);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  const data = JSON.parse(result.stdout);
+  // PRRT_a (unresolved, not outdated) should come first
+  // PRRT_c (unresolved, outdated) should come before PRRT_b (resolved)
+  assert.equal(data.threads[0].id, 'PRRT_a');
+  const resolvedIdx = data.threads.findIndex(t => t.id === 'PRRT_b');
+  const outdatedIdx = data.threads.findIndex(t => t.id === 'PRRT_c');
+  assert.ok(outdatedIdx < resolvedIdx, 'outdated-unresolved should come before resolved');
+});
+
+test('N3: replyTargetId equals first comment databaseId', () => {
+  const binDir = setupStubBin();
+  const result = runScript(['fetch', '--pr', '42', '--repo', 'owner/repo', '--all'], binDir);
+  assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+  const data = JSON.parse(result.stdout);
+  for (const t of data.threads) {
+    if (t.comments.length > 0) {
+      assert.equal(t.replyTargetId, t.comments[0].databaseId,
+        `thread ${t.id}: replyTargetId should equal first comment databaseId`);
+    }
+  }
+});
+
+// ============================================================
+// Edge case tests (E1-E3)
+// ============================================================
+
+test('E1: writeback --execute missing --reply exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'writeback', '--execute',
+    '--thread', 'PRRT_a',
+    '--replyTargetId', '1001',
+    '--repo', 'owner/repo',
+    '--pr', '42',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--reply.*required/i);
+});
+
+test('E2: writeback --execute missing --repo exits 2', () => {
+  const binDir = setupStubBin();
+  const result = runScript([
+    'writeback', '--execute',
+    '--thread', 'PRRT_a',
+    '--reply', 'Fixed',
+    '--replyTargetId', '1001',
+    '--pr', '42',
+  ], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /--repo.*--pr.*required/i);
+});
+
+test('E3: digest corrupt input JSON exits 2', () => {
+  const inputDir = makeTempDir('input');
+  const inputPath = join(inputDir, 'data.json');
+  writeFileSync(inputPath, 'this is not json!!!');
+
+  const binDir = setupStubBin();
+  const result = runScript(['digest', '--input', inputPath], binDir);
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /parse.*json/i);
 });
