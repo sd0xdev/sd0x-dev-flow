@@ -313,6 +313,51 @@ test('.js file sets has_code_change in state', () => {
   assert.equal(state.has_code_change, true);
 });
 
+test('.sh shell hook sets has_code_change in state (this repo is .sh-primary)', () => {
+  const workDir = makeTempDir('sd0x-format-sh-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/hooks/stop-guard.sh',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'state file should exist');
+  assert.equal(state.has_code_change, true, '.sh edits must engage the review gate');
+});
+
+test('.bash shell script sets has_code_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-bash-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/scripts/deploy.bash',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_code_change, true);
+});
+
+test('.zsh shell script sets has_code_change in state', () => {
+  const workDir = makeTempDir('sd0x-format-zsh-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/scripts/profile.zsh',
+    env: { HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state);
+  assert.equal(state.has_code_change, true);
+});
+
 // =============================================================================
 // State tracking: doc changes
 // =============================================================================

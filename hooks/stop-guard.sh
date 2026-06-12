@@ -55,6 +55,33 @@ _resolve_guard_mode() {
       _m=$(jq -r '.env.STOP_GUARD_MODE // .hooks_config.stop_guard_mode // empty' "$_sf" 2>/dev/null) || true
       if [[ -n "$_m" ]]; then echo "$_m"; return; fi
     done
+  else
+    # jq-free fallback: a missing jq must NOT silently downgrade a settings-configured strict
+    # mode to warn — that would let the jq-unavailable branch below allow stop. Best-effort grep
+    # of the same settings files; bias to strict when both appear (fail-closed). The env var
+    # (priority 1) is already handled above and needs no jq.
+    for _sf in "${CLAUDE_PROJECT_DIR:-.}/.claude/settings.local.json" \
+               "${CLAUDE_PROJECT_DIR:-.}/.claude/settings.json"; do
+      [[ -f "$_sf" ]] || continue
+      # Collapse newlines so a key/value split across physical lines (valid JSON, e.g. a
+      # hand-formatted settings file) is still matched. A line-oriented grep would miss it and
+      # fall through to warn — under the jq-unavailable branch below that is a fail-OPEN. The
+      # `[[:space:]]*` between colon and value absorbs the leftover indentation after newline
+      # removal. Newline strip is a bash builtin (parameter expansion); only `cat` is external,
+      # which the rest of this hook already depends on (jq is the sole tool we treat as optional).
+      # Note: `$(< file)` is NOT used — adding `2>/dev/null` to it disables bash's read-file
+      # special form and yields empty output.
+      local _raw _flat
+      _raw=$(cat "$_sf" 2>/dev/null) || _raw=""
+      _flat=${_raw//$'\n'/}
+      _flat=${_flat//$'\r'/}
+      if grep -Eq '"(STOP_GUARD_MODE|stop_guard_mode)"[[:space:]]*:[[:space:]]*"strict"' <<< "$_flat"; then
+        echo "strict"; return
+      fi
+      if grep -Eq '"(STOP_GUARD_MODE|stop_guard_mode)"[[:space:]]*:[[:space:]]*"warn"' <<< "$_flat"; then
+        echo "warn"; return
+      fi
+    done
   fi
   # Priority 4: default
   echo "warn"
@@ -79,24 +106,99 @@ INPUT=$(cat)
 STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null || echo "false")
 if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then exit 0; fi
 
+# State file path (needed by the jq-unavailable fail-closed check below)
+STATE_FILE=".claude_review_state.json"
+
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
-  echo "[Stop Guard] jq not installed, allowing stop" >&2
-  echo '{"ok":true,"reason":"jq not installed"}'
+  # jq is the review-state parser. Without it we cannot read .claude_review_state.json, so a
+  # missing dependency must NOT silently bypass the gate. Fail CLOSED in strict mode whenever a
+  # state file (or its fail-closed sidecar) exists. The recursion guard here is jq-free: the
+  # guard at the top falls back to "false" when jq is absent, so grep the raw stdin for
+  # stop_hook_active:true to avoid an infinite block loop. Collapse newlines first (same builtin
+  # parameter-expansion approach as the settings fallback in _resolve_guard_mode) so a
+  # stop_hook_active key/value split across physical lines is still matched. A miss here is
+  # fail-closed (the strict branch below would still block), but collapsing keeps the recursion
+  # guard reliable and the two jq-free greps consistent.
+  _input_flat=${INPUT//$'\n'/}
+  _input_flat=${_input_flat//$'\r'/}
+  if grep -Eq '"stop_hook_active"[[:space:]]*:[[:space:]]*true' <<< "$_input_flat"; then
+    echo '{"ok":true,"reason":"jq not installed (recursion guard)"}'
+    exit 0
+  fi
+  # Sidecar is the race-safe fail-closed marker; the jq-available path forces strict on it
+  # (a file-existence check, no jq needed). A missing jq must NOT let it downgrade to warn —
+  # block unconditionally, matching the sidecar handler in the state-file block below.
+  if [[ -f "${STATE_FILE}.blocked" ]]; then
+    echo "[Stop Guard] jq unavailable + blocked sidecar — failing closed" >&2
+    echo '{"ok":false,"reason":"jq unavailable + blocked sidecar — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+    exit 2
+  fi
+  if [[ -f "$STATE_FILE" ]]; then
+    # review_mode=dual forces strict wherever jq is available, so it must not downgrade to warn
+    # here either. Detect it jq-free (newline-collapsed, same approach as the recursion guard)
+    # and fail closed; a single-mode pending state keeps the warn/strict behavior.
+    # Read inside the `if` condition so `set -e` does not abort on a read failure (which would
+    # exit 1 — a non-blocking hook error → fail-OPEN). A present-but-unreadable state file with
+    # jq also missing is fully unverifiable, so fail closed (block) rather than guess.
+    if ! _state_flat=$(cat "$STATE_FILE" 2>/dev/null); then
+      echo "[Stop Guard] jq unavailable + unreadable review state — failing closed" >&2
+      echo '{"ok":false,"reason":"jq unavailable + unreadable review state — failing closed","description":"Restore read access to the review state (and install jq), then re-run the pending review/precommit; do not stop with unverified state"}'
+      exit 2
+    fi
+    _state_flat=${_state_flat//$'\n'/}
+    _state_flat=${_state_flat//$'\r'/}
+    if [[ "$GUARD_MODE" == "strict" ]] || grep -Eq '"review_mode"[[:space:]]*:[[:space:]]*"dual"' <<< "$_state_flat"; then
+      echo "[Stop Guard] jq unavailable but review state exists (strict or dual) — failing closed" >&2
+      echo '{"ok":false,"reason":"jq unavailable; cannot verify review state — failing closed","description":"Install jq (the review-gate parser), then re-run the pending review/precommit; do not stop with unverified state"}'
+      exit 2
+    fi
+    echo "[Stop Guard] WARN: jq unavailable but review state exists (set STOP_GUARD_MODE=strict to block)" >&2
+    echo '{"ok":true,"reason":"jq unavailable; review state unverified (warn mode)"}'
+    exit 0
+  fi
+  echo "[Stop Guard] jq not installed, no review state — allowing stop" >&2
+  echo '{"ok":true,"reason":"jq not installed; no review state"}'
   exit 0
+fi
+
+# Sidecar present but main state file missing → state is unverifiable. The sidecar is the
+# race-safe fail-closed marker (written before best-effort JSON recovery in the writer hooks),
+# so it must fail closed regardless of whether the transcript is readable. Hoisted above the
+# transcript handling so a READABLE transcript cannot route a sidecar-only state into the legacy
+# transcript-parsing allow path (USE_STATE_FILE=false). When the state file IS present, the
+# sidecar handler in the state-file block below takes over.
+if [[ ! -f "$STATE_FILE" && -f "${STATE_FILE}.blocked" ]]; then
+  echo "[Stop Guard] Blocked sidecar without state file — failing closed" >&2
+  echo '{"ok":false,"reason":"blocked sidecar present without state file — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+  exit 2
 fi
 
 # Extract transcript_path
 TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
 
 if [[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]]; then
-  echo "[Stop Guard] Cannot read transcript, allowing stop" >&2
-  echo '{"ok":true,"reason":"no transcript"}'
-  exit 0
+  # A missing/unreadable transcript must NOT bypass the review-state gate (fail-closed).
+  # The state file is the PRIMARY enforcement source and needs no transcript; only the
+  # legacy fallback scan (USE_STATE_FILE=false branch) reads the transcript. Allow the stop
+  # only when there is genuinely no state to enforce. This mirrors the jq-unavailable
+  # fail-closed branch above. (Prior code unconditionally exited ok here, letting a missing
+  # transcript silently clear a pending strict/dual gate — a fail-OPEN hole.)
+  # Sidecar-only (STATE_FILE absent + .blocked present) already failed closed above, so a
+  # missing state file here means there is genuinely nothing to enforce.
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "[Stop Guard] Cannot read transcript and no review state — allowing stop" >&2
+    echo '{"ok":true,"reason":"no transcript; no review state"}'
+    exit 0
+  fi
+  # State file exists → defer to state-file enforcement below (transcript not needed there).
+  if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
+    echo "[Stop Guard] Transcript missing; deferring to review-state enforcement" >&2
+  fi
+  TRANSCRIPT=""
 fi
 
-# === Prefer reading state file ===
-STATE_FILE=".claude_review_state.json"
+# === Prefer reading state file === (STATE_FILE defined above for the jq-unavailable check)
 USE_STATE_FILE=false
 
 if [[ -f "$STATE_FILE" ]]; then
@@ -156,22 +258,31 @@ if [[ -f "$STATE_FILE" ]]; then
   fi
 
   # === Stale-state git check (with cross-platform timeout) ===
-  # Skip stale-state reconciliation when sidecar is present — sidecar means state is
-  # unreliable, so git-based downgrade would undo the fail-closed HAS_* forcing above.
-  if [[ -f "${STATE_FILE}.blocked" ]]; then
+  # Reconciliation is ONE-WAY (true→false) so it only matters when a flag is true; skip the
+  # git call entirely otherwise. -uall walks the full untracked tree and can be costly, so it
+  # MUST be bounded: run only under timeout/gtimeout. When neither helper exists we cannot
+  # bound the walk, so we skip (fail-closed: keep flags → gate stays engaged) rather than risk
+  # an unbounded hang. Sidecar present → also skip (would undo the fail-closed HAS_* forcing).
+  if [[ "$HAS_CODE_CHANGE" != "true" && "$HAS_DOC_CHANGE" != "true" ]]; then
+    GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+  elif [[ -f "${STATE_FILE}.blocked" ]]; then
     # Sidecar present → skip stale-state reconciliation (would undo fail-closed HAS_* forcing)
     GIT_PORCELAIN="__GIT_UNAVAILABLE__"
   elif command -v timeout &>/dev/null; then
-    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
   elif command -v gtimeout &>/dev/null; then
-    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
   else
-    GIT_PORCELAIN=$(git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+    # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
+    GIT_PORCELAIN="__GIT_UNAVAILABLE__"
   fi
   if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
     # Strip porcelain quoting (git quotes filenames with spaces/unicode)
     GIT_PORCELAIN_CLEAN=$(echo "$GIT_PORCELAIN" | sed 's/^.. "//; s/"$//')
     # Stale-state reconciliation is ONE-WAY: only true→false.
+    # NOTE: git status above uses -uall (all untracked, incl. files inside newly-created
+    # dirs) so a brand-new untracked code/doc file is NOT falsely downgraded true→false.
+    # The prior -uno hid untracked files, silently clearing the gate for new files.
     # We can safely override has_*_change from true to false when git status
     # shows no matching files — the state file was set in a prior edit that
     # has since been reverted or committed.
@@ -181,7 +292,11 @@ if [[ -f "$STATE_FILE" ]]; then
     # file's false→true transition is handled by post-tool-review-state.sh
     # at edit time, which has the correct session context.
     if [[ "$HAS_CODE_CHANGE" == "true" ]]; then
-      if ! echo "$GIT_PORCELAIN_CLEAN" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)($|\s|")'; then
+      # Use a here-string (not echo | grep) so grep -q's early-exit on match cannot
+      # SIGPIPE the writer: under `set -o pipefail`, a large -uall output piped into
+      # `grep -q` lets grep close the pipe early, killing echo (exit 141), which would
+      # flip the pipeline non-zero and falsely downgrade HAS_CODE_CHANGE.
+      if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)($|[[:space:]]|")' <<< "$GIT_PORCELAIN_CLEAN"; then
         HAS_CODE_CHANGE="false"
         if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
           echo "[Debug] Stale has_code_change overridden to false (no code in git status)" >&2
@@ -190,7 +305,7 @@ if [[ -f "$STATE_FILE" ]]; then
     fi
     # Override stale has_doc_change if no doc files in worktree
     if [[ "$HAS_DOC_CHANGE" == "true" ]]; then
-      if ! echo "$GIT_PORCELAIN_CLEAN" | grep -qE '\.(md|mdx)($|\s|")'; then
+      if ! grep -qE '\.(md|mdx)($|[[:space:]]|")' <<< "$GIT_PORCELAIN_CLEAN"; then
         HAS_DOC_CHANGE="false"
         if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
           echo "[Debug] Stale has_doc_change overridden to false (no docs in git status)" >&2
@@ -207,7 +322,7 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   CONVERSATION=$(tail -500 "$TRANSCRIPT" 2>/dev/null || echo "")
 
   # Check change types
-  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)"' | grep -E '"(Edit|Write)"' | head -1 || true)
+  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)"' | grep -E '"(Edit|Write)"' | head -1 || true)
   HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(md|mdx)"' | grep -E '"(Edit|Write)"' | head -1 || true)
 
   # Check if required commands were executed

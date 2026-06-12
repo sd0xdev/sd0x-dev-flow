@@ -60,20 +60,35 @@ if [[ -f "${STATE_FILE}.blocked" ]]; then
 fi
 
 # Stale-state reconciliation (one-way: true→false only, same as stop-guard/post-compact)
-# Skip when sidecar present — would undo fail-closed HAS_* forcing
-if [[ -f "${STATE_FILE}.blocked" ]]; then
-  GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+# Use -uall (include ALL untracked, even inside new dirs) to avoid false downgrade
+# of newly-created untracked code/doc files (the prior -uno hid them).
+# Only reconcile when a change flag is set (nothing to downgrade otherwise) — this also
+# avoids walking a large untracked tree on every skill completion when no review is pending.
+# Bound git with timeout/gtimeout (cross-platform); -uall can be costly on big trees.
+# Skip when sidecar present — would undo fail-closed HAS_* forcing.
+if [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) && ! -f "${STATE_FILE}.blocked" ]]; then
+  if command -v timeout &>/dev/null; then
+    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+  elif command -v gtimeout &>/dev/null; then
+    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+  else
+    # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
+    GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+  fi
 else
-  GIT_PORCELAIN=$(git status --porcelain -uno 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 fi
 if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
+  # here-string (not echo | grep): grep -q's early-exit on match would SIGPIPE the
+  # writer under `set -o pipefail`, flipping the pipeline non-zero and falsely
+  # downgrading the flag on large -uall output.
   if [[ "$HAS_CODE" == "true" ]]; then
-    if ! echo "$GIT_PORCELAIN" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)($|\s|")'; then
+    if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
       HAS_CODE="false"
     fi
   fi
   if [[ "$HAS_DOC" == "true" ]]; then
-    if ! echo "$GIT_PORCELAIN" | grep -qE '\.(md|mdx)($|\s|")'; then
+    if ! grep -qE '\.(md|mdx)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
       HAS_DOC="false"
     fi
   fi

@@ -335,8 +335,9 @@ _track_session_touched_file() {
   return 0
 }
 
-# Track code changes (all recognized code extensions)
-if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs)$'; then
+# Track code changes (all recognized code extensions, incl. shell scripts: sh/bash/zsh —
+# this repo's own hooks are .sh, so shell edits must engage the review gate)
+if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)$'; then
   if _lock; then
     update_change_flag "has_code_change"
     _track_changed_file "$file_path" || true
@@ -442,8 +443,9 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
 fi
 
 # Track non-code/non-doc files for session commit scope (D-5)
-# Covers .json, .yml, .sh, .toml, lockfiles etc. that aren't in the code/doc branches above.
-if ! echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|md|mdx)$'; then
+# Covers .json, .yml, .toml, lockfiles etc. that aren't in the code/doc branches above.
+# (Shell scripts sh/bash/zsh are now classified as code above, so they're excluded here.)
+if ! echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|md|mdx)$'; then
   _track_session_touched_file "$file_path" || true
 fi
 

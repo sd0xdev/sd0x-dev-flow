@@ -6,6 +6,8 @@ const {
   writeFileSync,
   chmodSync,
   rmSync,
+  existsSync,
+  symlinkSync,
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
@@ -826,6 +828,38 @@ if echo "$*" | grep -q "status --porcelain"; then
 fi
 exit 1
 `);
+  // Reconciliation only runs the -uall walk under a timeout helper (no helper → fail-closed
+  // skip). Install a passthrough timeout so tests deterministically exercise the real
+  // reconciliation path: `timeout 5 git ...` → strips the duration → `git ...`.
+  installPassthroughTimeout(binDir);
+}
+
+// Passthrough `timeout`: drops the duration arg and execs the rest. Used so reconciliation
+// tests take the bounded timeout branch regardless of whether the host has a real `timeout`.
+function installPassthroughTimeout(binDir) {
+  writeExecutable(join(binDir, 'timeout'), `#!/bin/sh\nshift; exec "$@"\n`);
+}
+
+// Build a PATH that has every utility the hook needs EXCEPT timeout/gtimeout, so the
+// no-timeout-helper branch is exercised deterministically on every host (including GNU/Linux
+// CI where the real `timeout` lives in /usr/bin alongside grep/sed). stubBinDir supplies the
+// jq + git stubs; cleanDir symlinks the real system tools by name, omitting timeout/gtimeout.
+function makeNoTimeoutPath(stubBinDir) {
+  const cleanDir = makeTempDir('sd0x-stop-guard-clean-bin-');
+  const needed = ['bash', 'sh', 'env', 'node', 'grep', 'sed', 'cat', 'basename', 'head', 'tail', 'printf', 'dirname'];
+  // Resolve every tool path in a SINGLE subprocess (keeps the test light under parallel load).
+  const script = needed.map((n) => `command -v ${n} || true`).join('; ');
+  const resolved = spawnSync('sh', ['-c', script], { encoding: 'utf8' });
+  for (const realPath of (resolved.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    if (!existsSync(realPath)) continue;
+    const name = realPath.slice(realPath.lastIndexOf('/') + 1);
+    try {
+      symlinkSync(realPath, join(cleanDir, name));
+    } catch {
+      /* already linked — skip */
+    }
+  }
+  return `${stubBinDir}:${cleanDir}`;
 }
 
 test('clean worktree overrides stale has_code_change (allows stop)', () => {
@@ -937,6 +971,139 @@ test('quoted filenames in porcelain are still detected (B2 fix)', () => {
   assert.equal(payload.ok, false);
 });
 
+// Flag-aware git stub: emulates real git's untracked visibility across all three modes.
+//   -uno      → untracked hidden (the original bug)
+//   -uall     → every untracked file listed individually (the fix)
+//   default/-unormal/plain --porcelain → a brand-new untracked dir collapses to "?? dir/"
+// Pins the fix against BOTH regressions: reverting to `-uno` returns `tracked` only, and
+// reverting to plain `--porcelain` returns the collapsed dir form (`?? src/`) — in both
+// cases the extension grep misses the file and the one-way true→false reconciliation
+// would silently clear the fail-closed gate, so either revert fails the tests below.
+function setupStubGitUntrackedAware(binDir, { tracked = '', untracked = '', untrackedCollapsed = '' }) {
+  // Join non-empty parts with a newline so a caller setting BOTH tracked and untracked yields
+  // two valid porcelain lines, not one malformed concatenated line (` M a.ts?? b.md`).
+  const uallOut = [tracked, untracked].filter(Boolean).join('\n');
+  const collapsedOut = [tracked, untrackedCollapsed].filter(Boolean).join('\n');
+  writeExecutable(
+    join(binDir, 'git'),
+    `#!/bin/sh
+if echo "$*" | grep -q "status --porcelain"; then
+  if echo "$*" | grep -q -- "-uno"; then
+    printf '%s' '${tracked}'
+  elif echo "$*" | grep -q -- "-uall"; then
+    printf '%s' '${uallOut}'
+  else
+    printf '%s' '${collapsedOut}'
+  fi
+  exit 0
+fi
+exit 1
+`
+  );
+  // Run reconciliation through the bounded timeout branch (see installPassthroughTimeout).
+  installPassthroughTimeout(binDir);
+}
+
+test('untracked new code file is not downgraded (-uall fix) → strict blocks', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-untracked-code-');
+  const binDir = setupStubBin();
+  // Real git: -uno hides this untracked .ts (old bug); plain --porcelain collapses the
+  // new dir to "?? src/" (misses the .ts); only -uall surfaces the file itself.
+  setupStubGitUntrackedAware(binDir, {
+    tracked: '',
+    untracked: '?? src/new-feature.ts',
+    untrackedCollapsed: '?? src/',
+  });
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'new untracked .ts must keep has_code_change → strict blocks');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('untracked new doc file is not downgraded (-uall fix) → strict blocks', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-untracked-doc-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, {
+    tracked: '',
+    untracked: '?? docs/new-guide.md',
+    untrackedCollapsed: '?? docs/',
+  });
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: true,
+      doc_review: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'new untracked .md must keep has_doc_change → strict blocks');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+  assert.ok(payload.description.includes('/codex-review-doc'), 'should require doc review');
+});
+
+test('no timeout helper → -uall walk is not bounded → reconciliation skipped (fail-closed)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-no-timeout-');
+  const binDir = setupStubBin();
+  // git stub reports a CLEAN tree: if reconciliation runs, the stale has_code_change would
+  // be downgraded true→false and stop allowed (status 0). Note: setupStubGit installs a
+  // passthrough timeout, so we write the git stub directly to keep binDir timeout-free.
+  writeExecutable(join(binDir, 'git'), `#!/bin/sh
+if echo "$*" | grep -q "status --porcelain"; then
+  printf '%s' ''
+  exit 0
+fi
+exit 1
+`);
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  // Force the no-timeout-helper branch on every host (PATH has no timeout/gtimeout).
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict', PATH: makeNoTimeoutPath(binDir) },
+  });
+  // No bounded path → reconciliation skipped → stale flag kept → fail-closed block.
+  // (If a future regression reran bare unbounded git here, the clean tree would downgrade the
+  //  flag and allow stop → status 0 → this assertion would fail.)
+  assert.equal(result.status, 2, 'without a timeout helper, reconciliation is skipped → block');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
 test('A3: git timeout fails open (trusts state file)', () => {
   const workDir = makeTempDir('sd0x-stop-guard-a3-timeout-');
   const binDir = setupStubBin();
@@ -967,6 +1134,46 @@ test('A3: git timeout fails open (trusts state file)', () => {
   assert.equal(result.status, 2, 'should block stop (trusts state file when git times out)');
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, false);
+});
+
+test('A3b: partial git stdout on timeout-kill is discarded → strict blocks (no fail-open)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-a3b-partial-');
+  const binDir = setupStubBin();
+  // Simulate a real timeout kill that lands AFTER git flushed a partial, non-code/non-doc
+  // porcelain line: the timeout shim prints one line then exits 124 (never reaching the
+  // .ts/.md entries git had not yet walked). The fixed hook keeps `|| sentinel` OUTSIDE the
+  // command substitution, so the non-zero exit overwrites GIT_PORCELAIN with the EXACT
+  // sentinel — the partial bytes are discarded and reconciliation is skipped. The old buggy
+  // form `$(timeout ... || echo sentinel)` appended the sentinel to the partial line, so the
+  // exact-match guard saw a 2-line string (≠ sentinel) and reconciled against the partial
+  // output → no code/doc extension found → stale has_code_change downgraded true→false →
+  // stop allowed (fail-OPEN, status 0). Asserting a block pins the fix against that regression.
+  writeExecutable(join(binDir, 'timeout'), `#!/bin/sh
+printf '%s\\n' ' M notes.txt'
+exit 124
+`);
+  // Never reached via the shim above (it short-circuits before exec'ing git), but present so
+  // any direct git call elsewhere in the hook cannot error the run.
+  writeExecutable(join(binDir, 'git'), '#!/bin/sh\nexit 0\n');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'partial-output-on-kill must not downgrade the stale flag → block');
+  assert.equal(parseJson(result.stdout).ok, false);
 });
 
 test('git unavailable fails open (trusts state file)', () => {
@@ -1625,4 +1832,433 @@ test('recursion guard: stop_hook_active absent behaves normally', () => {
     env: { STOP_GUARD_MODE: 'strict' },
   });
   assert.equal(result.status, 2, 'without stop_hook_active, strict mode should block');
+});
+
+// =============================================================================
+// Shell-hook gating (.sh/.bash/.zsh treated as code — this repo is .sh-primary)
+// =============================================================================
+
+test('dirty shell hook (.sh) keeps has_code_change → strict blocks', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-sh-code-');
+  const binDir = setupStubBin();
+  // Only a .sh file is dirty. Before the fix, the reconciler regex excluded .sh, so the
+  // one-way true→false reconciliation cleared has_code_change and allowed stop (fail-OPEN
+  // for this .sh-primary repo). Now .sh is code → flag kept → strict blocks.
+  setupStubGit(binDir, ' M hooks/stop-guard.sh');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'a dirty .sh hook is code → gate stays engaged');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+// =============================================================================
+// jq-unavailable fail-closed (dependency loss must not bypass the gate)
+// =============================================================================
+
+// Build a PATH that has every tool stop-guard needs EXCEPT jq (macOS ships jq in /usr/bin, so
+// `/usr/bin:/bin` is NOT jq-free). cleanDir symlinks the real system tools by name, omitting jq —
+// mirrors makeNoTimeoutPath. This deterministically exercises the jq-unavailable branch on any host.
+function makeNoJqPath() {
+  const cleanDir = makeTempDir('sd0x-stop-guard-nojq-clean-');
+  const needed = ['bash', 'sh', 'env', 'grep', 'sed', 'cat', 'basename', 'head', 'tail', 'printf', 'dirname'];
+  const script = needed.map((n) => `command -v ${n} || true`).join('; ');
+  const resolved = spawnSync('sh', ['-c', script], { encoding: 'utf8' });
+  for (const realPath of (resolved.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean)) {
+    if (!existsSync(realPath)) continue;
+    const name = realPath.slice(realPath.lastIndexOf('/') + 1);
+    try {
+      symlinkSync(realPath, join(cleanDir, name));
+    } catch {
+      /* already linked — skip */
+    }
+  }
+  return cleanDir;
+}
+
+// Run stop-guard with a jq-free PATH. No local-hook/settings setup → arbitration does not defer,
+// so the hook reaches the jq-availability check.
+function runHookNoJq({ cwd, input, env = {} }) {
+  return spawnSync('bash', [hookPath], {
+    cwd,
+    input: JSON.stringify(input),
+    encoding: 'utf8',
+    env: {
+      PATH: makeNoJqPath(),
+      CLAUDE_PROJECT_DIR: cwd,
+      HOME: process.env.HOME,
+      ...env,
+    },
+  });
+}
+
+test('jq unavailable + pending state file + strict → fail-closed block', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-strict-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  const result = runHookNoJq({
+    cwd: workDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'missing jq must not bypass the gate when review state exists (strict)');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + pending state file + warn → allow with warning', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-warn-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // No STOP_GUARD_MODE → default warn (jq missing → settings unreadable → default applies).
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 0, 'warn mode is non-blocking even when jq missing');
+  assert.equal(parseJson(result.stdout).ok, true);
+  assert.match(result.stderr, /jq unavailable/);
+});
+
+test('jq unavailable + no state file → allow stop', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-nostate-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // No .claude_review_state.json and no sidecar → nothing to enforce.
+  const result = runHookNoJq({
+    cwd: workDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'no review state → allow stop even without jq');
+  assert.equal(parseJson(result.stdout).ok, true);
+});
+
+test('jq unavailable + stop_hook_active=true → recursion guard allows (no infinite block)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-recursion-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // Even with a pending state file in strict mode, an active stop-hook re-entry must short-circuit
+  // — otherwise the fail-closed block would loop forever when jq is absent.
+  const result = runHookNoJq({
+    cwd: workDir,
+    input: { stop_hook_active: true, transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, 'recursion guard must short-circuit even without jq');
+});
+
+test('jq unavailable + strict configured via settings (no env) → fail-closed block', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-settings-strict-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // Strict configured ONLY via settings.json (not env). _resolve_guard_mode reads settings via
+  // jq; without a jq-free fallback it would default to warn and the jq-unavailable branch would
+  // allow stop — defeating the fail-closed fix for projects that configure mode in settings.
+  mkdirSync(join(workDir, '.claude'), { recursive: true });
+  writeFileSync(
+    join(workDir, '.claude', 'settings.json'),
+    JSON.stringify({ env: { STOP_GUARD_MODE: 'strict' } })
+  );
+  // No STOP_GUARD_MODE env → mode must come from settings via the jq-free fallback.
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'settings-configured strict must block even when jq is missing');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('dirty .bash script keeps has_code_change → strict blocks (alternation pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-bash-code-');
+  const binDir = setupStubBin();
+  // Pins bash|zsh in the reconciler (not just sh): a dirty .bash file is code → no downgrade.
+  setupStubGit(binDir, ' M scripts/deploy.bash');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'a dirty .bash script is code → gate stays engaged');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + strict split across physical lines (multi-line JSON) → fail-closed block', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-multiline-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // Valid JSON where the key and its value sit on DIFFERENT physical lines. A line-oriented grep
+  // sees `"STOP_GUARD_MODE":` and `"strict"` on separate lines → matches neither → falls through
+  // to warn → the jq-unavailable branch ALLOWS stop. That is a fail-OPEN. The fix collapses
+  // newlines (bash parameter expansion ${_raw//$'\n'/}) before grep, so the key/value reunite
+  // and strict is detected.
+  mkdirSync(join(workDir, '.claude'), { recursive: true });
+  writeFileSync(
+    join(workDir, '.claude', 'settings.json'),
+    '{\n  "env": {\n    "STOP_GUARD_MODE":\n      "strict"\n  }\n}\n'
+  );
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'multi-line strict must still block when jq is missing (no fail-open)');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + strict via legacy hooks_config.stop_guard_mode → fail-closed block', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-legacy-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // The jq path resolves both env.STOP_GUARD_MODE and legacy hooks_config.stop_guard_mode; the
+  // jq-free fallback alternation must pin the legacy shape too, else a legacy-configured strict
+  // project silently degrades to warn under a missing jq.
+  mkdirSync(join(workDir, '.claude'), { recursive: true });
+  writeFileSync(
+    join(workDir, '.claude', 'settings.json'),
+    JSON.stringify({ hooks_config: { stop_guard_mode: 'strict' } })
+  );
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'legacy hooks_config strict must block even when jq is missing');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('dirty .zsh script keeps has_code_change → strict blocks (alternation pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-zsh-code-');
+  const binDir = setupStubBin();
+  // Completes the sh|bash|zsh reconciler alternation pin (writer side is covered in
+  // post-edit-format.test.js): a dirty .zsh file is code → no stale-flag downgrade.
+  setupStubGit(binDir, ' M scripts/build.zsh');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'a dirty .zsh script is code → gate stays engaged');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+// === Missing-transcript must not bypass the state-file gate (fail-open P0 pin) ===
+// The state file is the PRIMARY enforcement source and needs no transcript. A missing/
+// unreadable transcript previously short-circuited to {"ok":true} BEFORE consulting the
+// state file — letting a pending strict/dual gate be silently cleared (fail-OPEN). These
+// tests pin the fall-through: a reverted fix (unconditional exit 0 on missing transcript)
+// makes the strict cases below return 0 and FAIL.
+
+test('strict + missing transcript + pending code-review state → block (fail-open pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-notranscript-strict-');
+  const binDir = setupStubBin();
+  // Deliberately do NOT create the transcript file — points at a nonexistent path.
+  const transcriptPath = join(workDir, 'does-not-exist.jsonl');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      review_mode: 'single',
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+      doc_review: { passed: true },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'missing transcript must defer to pending state, not allow stop');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('warn (single) + missing transcript + pending state → allow (warn preserved)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-notranscript-warn-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'does-not-exist.jsonl');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      review_mode: 'single',
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+      doc_review: { passed: true },
+    })
+  );
+  // Default (warn) mode: the fix must not over-block — single-mode warn still allows stop.
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 0, 'warn mode keeps allowing stop even with missing transcript');
+  assert.equal(parseJson(result.stdout).ok, true);
+});
+
+test('strict + missing transcript + blocked sidecar without state file → fail closed', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-notranscript-sidecar-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'does-not-exist.jsonl');
+  // Sidecar present, main state file ABSENT → state unverifiable → strict must block.
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'lock-failed');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'sidecar-only + missing transcript must fail closed in strict');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + stop_hook_active split across physical lines → recursion guard allows (no block loop)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-recursion-multiline-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // Pending strict state exists: without the recursion guard catching stop_hook_active=true,
+  // the jq-unavailable branch would fail-closed (exit 2) on every re-fire → infinite block loop.
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  // Raw multi-line JSON with the recursion flag split across physical lines (valid JSON). A
+  // line-oriented grep would miss it; the newline-collapse in the recursion guard reunites it.
+  const rawInput = '{\n  "transcript_path":\n    "' + transcriptPath + '",\n  "stop_hook_active":\n    true\n}\n';
+  const result = spawnSync('bash', [hookPath], {
+    cwd: workDir,
+    input: rawInput,
+    encoding: 'utf8',
+    env: {
+      PATH: makeNoJqPath(),
+      CLAUDE_PROJECT_DIR: workDir,
+      HOME: process.env.HOME,
+      STOP_GUARD_MODE: 'strict',
+    },
+  });
+  assert.equal(result.status, 0, 'multi-line stop_hook_active must be recognized → allow, not block-loop');
+  assert.match(parseJson(result.stdout).reason || '', /recursion guard/);
+});
+
+// ── Sidecar / jq-unavailable fail-closed corners (P0-1 / P0-2) ──────────────────
+// The sidecar (.blocked) is the strongest fail-closed marker; the jq-available state-file path
+// forces strict on it. These tests pin the gap paths where it must NOT be downgraded to a warn
+// allow: (P0-2) a readable transcript routing a sidecar-only state into legacy transcript
+// parsing, and (P0-1) a missing jq letting a sidecar or a dual-mode gate exit in warn.
+
+test('jq available + sidecar-only + readable transcript → fail closed (P0-2 pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-sidecar-only-readable-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]'); // readable, empty → legacy parse would find no change
+  // Sidecar present, main state file ABSENT. A reverted hoist would skip the sidecar handler
+  // (it lives inside the transcript-missing branch and inside `[[ -f STATE_FILE ]]`), fall to
+  // USE_STATE_FILE=false, parse the empty transcript, and ALLOW (status 0).
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'lock-failed');
+  // Default (warn) mode: sidecar must still fail closed regardless of warn.
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'sidecar-only + readable transcript must fail closed, not parse-allow');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + blocked sidecar (warn default) → fail closed (P0-1 sidecar pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-sidecar-warn-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // Sidecar present (no main state file needed). Pre-fix, the jq-missing branch only blocked in
+  // strict, so warn-default + sidecar would ALLOW (status 0) — inconsistent with the jq-available
+  // path that forces strict on any sidecar.
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'lock-failed');
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'jq-missing + sidecar must fail closed even in warn');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + dual-mode state (warn default) → fail closed (P0-1 dual pin)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-dual-warn-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // review_mode=dual forces strict wherever jq is available; without jq, a jq-free grep must
+  // still detect it. Pre-fix, warn-default would ALLOW (status 0). No sidecar here → isolates
+  // the dual-detection path from the sidecar path above.
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      review_mode: 'dual',
+      has_code_change: true,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 2, 'jq-missing + dual-mode state must fail closed even in warn');
+  assert.equal(parseJson(result.stdout).ok, false);
+});
+
+test('jq unavailable + present-but-unreadable state file → fail closed (P2 set-e pin)', () => {
+  // The jq-missing dual-detection read must not abort under `set -e` on an unreadable state
+  // file: a bare `_state_flat=$(cat …)` would exit 1 (a non-blocking hook error → fail-OPEN).
+  // The guarded read fails closed (exit 2) instead.
+  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+  if (isRoot) return; // root bypasses chmod 000 → cannot simulate an unreadable file
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-unreadable-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  const statePath = join(workDir, '.claude_review_state.json');
+  writeFileSync(
+    statePath,
+    JSON.stringify({ has_code_change: true, code_review: { passed: false }, precommit: { passed: false } })
+  );
+  chmodSync(statePath, 0o000); // present (`-f` true) but `cat` fails
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  chmodSync(statePath, 0o644); // restore so temp-dir cleanup can remove it
+  assert.equal(result.status, 2, 'unreadable state + jq missing must fail closed, not set-e abort (exit 1)');
+  assert.equal(parseJson(result.stdout).ok, false);
 });

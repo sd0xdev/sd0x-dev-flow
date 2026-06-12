@@ -143,6 +143,105 @@ test('post-compact-auto-loop exits 0 when all passed (no output)', () => {
   assert.equal(result.stdout.trim(), '', 'should not inject when all passed');
 });
 
+// --- Stale-state reconciliation regression (pins -uno→-uall + ||-outside-$() fixes) ---
+
+// Flag-aware git stub: -uno hides untracked (old bug), -uall lists the file (fix), plain
+// --porcelain collapses a brand-new untracked dir to "?? src/" (also misses the file). Reverting
+// either to -uno or to plain --porcelain makes the extension grep miss the file, so the one-way
+// true→false reconciliation would silently clear the fail-closed flag and the hook stays silent.
+function setupStubGitUntrackedAware(binDir, { tracked = '', untracked = '', untrackedCollapsed = '' }) {
+  // Join non-empty parts with a newline so a caller setting BOTH tracked and untracked yields
+  // two valid porcelain lines, not one malformed concatenated line (` M a.ts?? b.md`).
+  const uallOut = [tracked, untracked].filter(Boolean).join('\n');
+  const collapsedOut = [tracked, untrackedCollapsed].filter(Boolean).join('\n');
+  writeExecutable(
+    join(binDir, 'git'),
+    `#!/bin/sh
+if echo "$*" | grep -q "status --porcelain"; then
+  if echo "$*" | grep -q -- "-uno"; then
+    printf '%s' '${tracked}'
+  elif echo "$*" | grep -q -- "-uall"; then
+    printf '%s' '${uallOut}'
+  else
+    printf '%s' '${collapsedOut}'
+  fi
+  exit 0
+fi
+exit 1
+`
+  );
+  // Reconciliation only runs the -uall walk under a timeout helper; install a passthrough one.
+  writeExecutable(join(binDir, 'timeout'), `#!/bin/sh\nshift; exec "$@"\n`);
+}
+
+test('reconciliation: untracked new code file surfaced by -uall → injects review', () => {
+  const cwd = makeTempDir('sd0x-pc-uall-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, {
+    tracked: '',
+    untracked: '?? src/new-feature.ts',
+    untrackedCollapsed: '?? src/',
+  });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  assert.ok(
+    result.stdout.includes('/codex-review-fast'),
+    'untracked new .ts must keep has_code_change (−uall) → inject, not silently downgrade'
+  );
+});
+
+test('reconciliation: partial git stdout on timeout-kill is discarded → injects review', () => {
+  const cwd = makeTempDir('sd0x-pc-partial-');
+  const binDir = setupStubBin();
+  // timeout shim prints a partial, non-code porcelain line then dies (exit 124). The fixed hook
+  // overwrites GIT_PORCELAIN with the exact sentinel (|| OUTSIDE $()), so reconciliation is
+  // skipped → flag kept → inject. The old in-substitution `|| echo sentinel` appended the
+  // sentinel to the partial line, reconciled against it (no code ext) and downgraded → silent.
+  writeExecutable(join(binDir, 'timeout'), `#!/bin/sh\nprintf '%s\\n' ' M notes.txt'\nexit 124\n`);
+  writeExecutable(join(binDir, 'git'), '#!/bin/sh\nexit 0\n');
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  assert.ok(
+    result.stdout.includes('/codex-review-fast'),
+    'partial-output-on-kill must not downgrade the stale flag → inject'
+  );
+});
+
+test('reconciliation: dirty shell hook (.sh) keeps flag → injects review', () => {
+  const cwd = makeTempDir('sd0x-pc-sh-');
+  const binDir = setupStubBin();
+  // Only a .sh file is dirty. Before the fix, .sh was not a code extension, so the reconciler
+  // downgraded the stale flag and stayed silent (fail-OPEN for this .sh-primary repo).
+  setupStubGitUntrackedAware(binDir, { tracked: ' M hooks/x.sh' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  assert.ok(
+    result.stdout.includes('/codex-review-fast'),
+    'a dirty .sh hook is code → flag kept → inject (not silently downgraded)'
+  );
+});
+
 // --- Pending code review ---
 
 test('post-compact-auto-loop injects /codex-review-fast when code review pending', () => {

@@ -64,25 +64,30 @@ fi
 
 # --- Stale-state reconciliation (one-way: true→false only) ---
 # Only run git status when state has pending changes (performance optimization)
-# Include untracked files (no -uno) to avoid false downgrade when only new files exist
+# Include ALL untracked files (-uall, even inside newly-created dirs) to avoid false
+# downgrade when only new files exist (plain -unormal misses files inside new untracked dirs)
 # Skip when sidecar present — would undo fail-closed HAS_* forcing
 if [[ -f "${STATE_FILE}.blocked" ]]; then
   GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 elif command -v timeout &>/dev/null; then
-  GIT_PORCELAIN=$(timeout 3 git status --porcelain 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  GIT_PORCELAIN=$(timeout 3 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 elif command -v gtimeout &>/dev/null; then
-  GIT_PORCELAIN=$(gtimeout 3 git status --porcelain 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  GIT_PORCELAIN=$(gtimeout 3 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 else
-  GIT_PORCELAIN=$(git status --porcelain 2>/dev/null || echo "__GIT_UNAVAILABLE__")
+  # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
+  GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 fi
 if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
+  # here-string (not echo | grep): grep -q's early-exit on match would SIGPIPE the
+  # writer under `set -o pipefail`, flipping the pipeline non-zero and falsely
+  # downgrading the flag on large -uall output.
   if [[ "$HAS_CODE" == "true" ]]; then
-    if ! echo "$GIT_PORCELAIN" | grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh)($|\s|")'; then
+    if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
       HAS_CODE="false"
     fi
   fi
   if [[ "$HAS_DOC" == "true" ]]; then
-    if ! echo "$GIT_PORCELAIN" | grep -qE '\.(md|mdx)($|\s|")'; then
+    if ! grep -qE '\.(md|mdx)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
       HAS_DOC="false"
     fi
   fi
