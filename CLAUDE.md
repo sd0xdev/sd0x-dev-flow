@@ -51,6 +51,8 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/feasibility-study` | Feasibility analysis | Requirements |
 | `/tech-spec` | Generate tech spec | Design |
 | `/review-spec` | Review tech spec | Design |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop | Planning |
+| `/orchestrate` | Agent-driven workflow planning + read-only fanout (report-only v1) | Planning |
 | `/deep-analyze` | Deep analysis + roadmap | Design |
 | `/architecture` | Architecture design + 3-architecture.md | Design |
 | `/project-brief` | PM/CTO executive summary | Design |

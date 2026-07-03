@@ -269,7 +269,11 @@ function main() {
 
   const publicSkills = getPublicSkills(catalog);
   const publicCount = publicSkills.length;
-  // Count tracked skill dirs (what actually ships to plugin users).
+  // Count tracked + untracked-but-not-ignored skill dirs (what ships to plugin
+  // users once the worktree is committed). --others --exclude-standard keeps
+  // newly added (not yet staged) skills in the count while still excluding
+  // gitignored junk dirs — otherwise the README undercounts in the window
+  // between adding a skill and committing it, and ships stale after commit.
   // Falls back to filesystem when git is unavailable (e.g. unpacked tarball)
   // or when ls-files returns no entries (e.g. sparse checkout excluding skills/).
   // `git ls-files` always emits POSIX path separators, so `split('/')` is safe
@@ -278,7 +282,7 @@ function main() {
   try {
     const out = execFileSync(
       'git',
-      ['ls-files', '--cached', 'skills/'],
+      ['ls-files', '--cached', '--others', '--exclude-standard', 'skills/'],
       { encoding: 'utf8', cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }
     );
     const dirSet = new Set(

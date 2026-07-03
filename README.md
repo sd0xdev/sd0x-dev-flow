@@ -9,7 +9,7 @@
 **Quality gates that AI can't skip.** A reference implementation of AI Agent Harness Engineering for [Claude Code](https://claude.com/claude-code) — hook-enforced dual review, state-machine gates that survive context compaction, and fail-closed safety where it counts.
 
 <!-- BEGIN:HERO-COUNT -->
-96 bundled · 96 public skills · 15 agents — ~4% of Claude's context window
+98 bundled · 98 public skills · 15 agents — ~4% of Claude's context window
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -162,8 +162,8 @@ npx skills add sd0xdev/sd0x-dev-flow
 <!-- BEGIN:INSTALL-COVERAGE -->
 | Method | Tools | Coverage |
 |--------|-------|----------|
-| Plugin install | Claude Code | Full (96 bundled skills, hooks, rules, auto-loop) |
-| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (96 public skills) |
+| Plugin install | Claude Code | Full (98 bundled skills, hooks, rules, auto-loop) |
+| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (98 public skills) |
 | `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
@@ -247,7 +247,7 @@ Real-world scenarios showing which skills to combine and in what order.
 <!-- BEGIN:WHATS-INCLUDED-COUNT -->
 | Category | Count | Examples |
 |----------|-------|---------|
-| Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
+| Skills | 98 public (98 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
@@ -291,7 +291,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 <!-- BEGIN:FULL-CATALOG -->
 <details>
-<summary>All 96 public skills</summary>
+<summary>All 98 public skills</summary>
 
 ### Development (33)
 
@@ -331,7 +331,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### Review (Codex MCP) (14)
+### Review (Codex MCP) (15)
 
 | Skill | Description | Loop Support |
 |-------|-------------|--------------|
@@ -346,6 +346,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
 | `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
 | `/doc-review` | Document review via Codex MCP. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
 | `/security-review` | Security review via Codex MCP. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
 | `/test-review` | Test coverage review via Codex MCP. | - |
@@ -368,7 +369,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/test-health` | Holistic test coverage measurement. |
 | `/verify` | Verification loop — lint -> typecheck -> unit -> integration -> e2e |
 
-### Planning (16)
+### Planning (17)
 
 | Skill | Description |
 |-------|-------------|
@@ -378,6 +379,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/deep-research` | Universal multi-source research orchestration. |
 | `/feasibility-study` | Feasibility analysis from first principles. |
 | `/fp-brief` | First-principles briefing from technical documents. |
+| `/orchestrate` | Agent-driven workflow orchestration (v1 report-only). |
 | `/post-dev-recap` | Post-development recap wrapper. |
 | `/project-brief` | Convert a technical spec into a PM/CTO-readable executive summary. |
 | `/recap-ask` | Interactive Q&A over an existing recap document. |
