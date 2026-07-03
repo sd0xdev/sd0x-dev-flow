@@ -26,7 +26,7 @@
 
 | Module | Role for plan-review | Reference |
 |--------|---------------------|-----------|
-| `hooks/post-tool-review-state.sh` | State carrier + MCP sentinel router；`init_state_file()` 產出 `schema_version: 2` | [`:128-150`](../../../hooks/post-tool-review-state.sh)（state init）、[`:682-700`](../../../hooks/post-tool-review-state.sh)（MCP routing） |
+| `hooks/post-tool-review-state.sh` | State carrier + MCP sentinel router；pre-v1 既有 state 為 `schema_version: 2`（as-built：`init_state_file()` 直接產出 v3 含 `plan_review`；既有 v2 檔由 migration 升級） | [`init_state_file()`](../../../hooks/post-tool-review-state.sh)（state init）、[MCP routing Priority 1.5 plan branch](../../../hooks/post-tool-review-state.sh)（`## Plan Review` discriminator；行號隨版本漂移，以符號名為準） |
 | `hooks/stop-guard.sh` | Stop gate enforcement；`grep -E '✅ Mergeable\|✅ Ready'` 視為 REVIEW_PASSED | transcript-fallback 模式的 `REVIEW_PASSED` / `REVIEW_BLOCKED` / `LAST_REVIEW` 變數（[`hooks/stop-guard.sh`](../../../hooks/stop-guard.sh)；引用穩定符號名而非行號以免漂移） |
 | `scripts/emit-review-gate.sh` | gate emission contract（`PENDING\|READY\|BLOCKED` → `REVIEW_GATE=$GATE`） | [`scripts/emit-review-gate.sh`](../../../scripts/emit-review-gate.sh) |
 | `skills/doc-review/SKILL.md` | Codex loop topology：first `mcp__codex__codex`（存 threadId）→ `mcp__codex__codex-reply` loop；`sandbox: read-only`, `approval-policy: never` | [`skills/doc-review/SKILL.md:48-58`](../../../skills/doc-review/SKILL.md) |
@@ -52,13 +52,13 @@
 | `skills/plan-review/SKILL.md` | **New** | 核心 orchestration skill（A1） |
 | `skills/plan-review/references/codex-prompt-plan.md` | **New** | Codex prompt template（OQ-Sx-5：plan 作為 "candidate artifact to attack"） |
 | `skills/plan-review/references/review-loop-plan.md` | **New** | re-review 續輪 template |
-| `.claude/skills/plan-review/...` + thin command entry | **New** | 使用者可呼叫入口 |
+| `.claude/skills/plan-review/...`（經 `.claude/skills -> ../skills` dir symlink 自動可見）+ `docs/skill-catalog.yml` + 3 份 CLAUDE quick-ref row | **New/Modify** | 使用者可呼叫入口（v3 起無 `commands/` thin entry，skill 直接註冊） |
 | `scripts/emit-plan-gate.sh` | **New** | plan gate emission contract |
 | `hooks/post-tool-review-state.sh` | **Modify** | (a) `init_state_file()` 加 `plan_review`、`schema_version` 2→3；(b) schema migration 分支；(c) MCP routing 加 Priority 1.5 plan branch |
 | `hooks/stop-guard.sh` | **Modify** | plan sentinel 隔離（`✅ Plan Ready` 不得滿足 code/doc gate；plan pending 獨立追蹤）— OQ-Sx-3 |
 | `rules/auto-loop-project.md` | **Modify** | 新增 `## Plan Review Max Rounds` 配置區塊（OQ-10，default 5） |
 | `rules/auto-loop.md` | **Modify** | Standard Gate Sentinels 表加 plan namespace 列 |
-| `test/skills/plan-review.test.js` | **New** | skill 行為測試 |
+| `test/skills/plan-review.test.js` | **New** | skill 結構/契約測試（靜態斷言；行為驗證見 §6） |
 | `test/scripts/emit-plan-gate.test.js` | **New** | gate emission 測試 |
 | `test/hooks/post-tool-review-state.test.js` | **Modify** | 加 plan sentinel routing + schema migration fixtures |
 | `test/hooks/stop-guard.test.js` | **Modify** | 加 plan isolation fixtures |
@@ -129,7 +129,7 @@ sequenceDiagram
 
 `.claude_review_state.json` schema v2 → **v3**（additive）。新增 `plan_review` 頂層欄位，與 `code_review` / `doc_review` / `aggregate_gate` 同層但**互不覆寫**（NFR-7）。
 
-> **以下 JSON 為部分節錄（partial excerpt），僅示 `plan_review` 新增子樹**。`init_state_file()`（[`post-tool-review-state.sh:128-150`](../../../hooks/post-tool-review-state.sh)）實際 v2 已含 `session_id`、`updated_at`、`review_mode`、`has_code_change`、`has_doc_change`、`code_review`、`doc_review`、**`precommit`**、`aggregate_gate`、`schema_version`、root `iteration_history`。Migration 必須完整保留**全部**既有頂層欄位（含 `precommit` 與 metadata），不只 code/doc/aggregate/root iteration。
+> **以下 JSON 為部分節錄（partial excerpt），僅示 `plan_review` 新增子樹**。As-built：[`init_state_file()`](../../../hooks/post-tool-review-state.sh) 直接產出 **v3**（含 `plan_review`）；**pre-v1 既有 state 檔為 v2**，由 migration 升級。v2/v3 頂層欄位（migration 必須完整保留**值**者）：`session_id`、`updated_at`、`review_mode`、`has_code_change`、`has_doc_change`、`code_review`、`doc_review`、**`precommit`**、`aggregate_gate`、root `iteration_history`——不只 code/doc/aggregate/root iteration；`schema_version` 為唯一刻意改值的欄位（2→3，見 migration 一節）。
 
 ```jsonc
 // partial excerpt — only the additive plan_review subtree shown
@@ -165,16 +165,15 @@ sequenceDiagram
 | `plan_review.history[]` | per-plan reset；保留最近 **5** 筆 trail（schema 見下），超出 FIFO 汰除 | OQ-6 |
 | `plan_review.degraded` | reviewer 不可達 **或** 偵測到 high-confidence secret 時 `true`；output 伴隨 `[PLAN_REVIEW_DEGRADED]` | NFR-3 / NFR-8 |
 | `plan_review.skipped` | 使用者明示 bypass 時 `true`（**與 `degraded` 區分**：使用者意圖 ≠ reliability 失效） | FR-5 / NFR-5 |
-| `plan_review.status_reason` | `null \| "user-skip" \| "reviewer-unavailable" \| "secret-detected"` | NFR-3/5/8 |
+| `plan_review.status_reason` | `null \| "user-skip" \| "reviewer-unavailable" \| "secret-detected" \| "needs-human"`（最後者由 `update_plan_state()` 於 `NEEDS_HUMAN` 寫入） | NFR-3/5/8 |
 | `plan_review.tier` | `"quick"\|"standard"\|"deep"` | OQ-Sx-4 |
 | 無 `strategic_reset_fired` | plan-review v1 不啟用 strategic reset（plateau 屬 V2） | OQ-9 → V2 |
 
-`plan_review.history[]` 元素 schema（範例）：
+`plan_review.history[]` 元素 schema（範例；v1 實作僅寫入以下 5 欄——`hooks/post-tool-review-state.sh update_plan_state()`）：
 
 ```json
 { "ts": "2026-05-18T10:00:00Z", "tier": "standard", "rounds": 3,
-  "findings_total": 5, "outcome": "ready",
-  "modified_sections": ["§Approach", "§Risk Register"] }
+  "findings_total": 5, "outcome": "ready" }
 ```
 
 **Migration**（`post-tool-review-state.sh`，`init_state_file()` 之後新增分支；jq 以 `. +` 合併保留未知欄位）：
@@ -203,44 +202,52 @@ Migration 為**純加法**：`. +` 合併確保**所有**既有頂層欄位（�
 
 > **Forbidden（硬約束）**：plan-review 路徑**永不**輸出裸 `✅ Ready` / `✅ Mergeable` / `## Gate: ✅` / 裸 `⛔ Block*`（會被 code/doc/aggregate routing 誤收）。Collision 分析（**已實測**：`printf '✅ Plan Ready' | grep -qE '✅ Ready'` → **SAFE**）：`✅ Plan Ready` 不含子字串 `✅ Ready`（`✅` 與 `Ready` 間為 `" Plan "`），故 `✅` 方向安全。**真正風險在 `⛔` 方向**：`stop-guard.sh` 的 `REVIEW_BLOCKED` / `LAST_REVIEW` grep（`⛔.*Block`）會匹配 `⛔ Plan Blocked`——故 `## Plan Review` discriminator + routing 順序（T2）+ stop-guard 過濾（T4）三層防護缺一不可。
 
-#### T2 — MCP sentinel routing 擴充（`post-tool-review-state.sh:~684`）
+#### T2 — MCP sentinel routing 擴充（`post-tool-review-state.sh` MCP routing Priority 1.5 分支）
 
 於既有 doc(Priority 1) 與 code(Priority 2) 之間插入 **Priority 1.5 plan branch**：
 
 ```
 if   '## Document Review' && '✅ Mergeable'      → doc_review pass      # P1（不動）
 elif '## Document Review' && '⛔ Needs revision' → doc_review fail      # P1（不動）
-elif '## Plan Review'     && '✅ Plan Ready'     → plan_review pass     # P1.5（新增）
-elif '## Plan Review'     && '⛔ Plan Blocked'   → plan_review fail     # P1.5（新增）
-elif '## Plan Review'     && grep -F '[PLAN_REVIEW_DEGRADED]' → plan_review degraded  # P1.5
-elif '## Plan Review'     && grep -F '[PLAN_REVIEW_SKIPPED]'  → plan_review skipped   # P1.5
+elif '## Plan Review'     && grep -F '[PLAN_REVIEW_DEGRADED]' → plan_review degraded  # P1.5（token 先判）
+elif '## Plan Review'     && grep -F '[PLAN_REVIEW_SKIPPED]'  → plan_review skipped   # P1.5（token 先判）
+elif '## Plan Review'     && '⛔ Plan Blocked'   → plan_review fail     # P1.5（BLOCKED 先於 READY）
+elif '## Plan Review'     && '✅ Plan Ready'     → plan_review pass     # P1.5
 elif '✅ Ready'                                  → code_review pass     # P2（不動）
 elif '⛔ Blocked'                                → code_review fail     # P2（不動）
 ```
 
 > **⚠️ Literal-match 硬約束**：`[PLAN_REVIEW_DEGRADED]` / `[PLAN_REVIEW_SKIPPED]` 含 `[` `]`，在 `grep -E`（ERE）中 `[...]` 是 **character class**（會匹配 `P/L/A/N/_/...` 任一字元），**絕不可**用 `grep -qE '[PLAN_REVIEW_DEGRADED]'`。**必須** `grep -qF '[PLAN_REVIEW_DEGRADED]'`（fixed string）或 escaped ERE `\[PLAN_REVIEW_DEGRADED\]`。Routing regression 必含：`## Plan Review` + `⚠️ Plan Needs Human`（無 degraded/skipped token）**不得**被標記為 degraded。
+>
+> **分支優先序（as-built，fail-closed）**：machine token（DEGRADED/SKIPPED）**先於** verdict 文字——degraded/skipped 輸出若在 prose 中引述 verdict marker，不得丟失 flag/status_reason；再 `⛔ Plan Blocked` **先於** `✅ Plan Ready`——同時含兩個 verdict marker 的 ambiguous 輸出一律路由為 blocked。
 
-新增 `update_plan_state()` helper（鏡射 `update_state()`，寫 `plan_review.*` + `plan_review.iteration_history`，不觸碰 root iteration_history）。
+**寫入路徑（as-built，history 單一擁有者）**：terminal `history[]` 由 emit-plan-gate Bash 路徑獨佔。MCP verdict 分支走 `_update_plan_iteration`（先記 round/finding counts，state file 缺失時 `init_state_file`）→ `update_plan_verdict(passed)`（僅 verdict，無 history append）；MCP token 分支走 `update_plan_state(gate, "", "", "no-history")`。如此後續 `emit-plan-gate.sh` 的 history snapshot 取得 fresh counts 且不重複 append。MCP degraded 不帶 reason（恆 `reviewer-unavailable`）：secret-detected 永不經 MCP 路由——skill 在外送 reviewer 前即 fail-closed，由 Bash 路徑記錄 reason。
 
 #### T3 — `scripts/emit-plan-gate.sh` + **hook parse branch**（鏡射 `emit-review-gate.sh` 全鏈）
 
-`emit-review-gate.sh` 只是 emitter；**狀態真正被更新是因為 `post-tool-review-state.sh:642-643` 有對應 `Bash` parse 分支**解析 `REVIEW_GATE=`。plan gate 必須補齊**兩端**：
+`emit-review-gate.sh` 只是 emitter；**狀態真正被更新是因為 `post-tool-review-state.sh` 的 `emit-review-gate` parse 分支**（`Bash` PostToolUse）解析 `REVIEW_GATE=`。plan gate 必須補齊**兩端**：
 
 **(a) Emitter** `scripts/emit-plan-gate.sh`：
 
 ```
-Usage: bash scripts/emit-plan-gate.sh PENDING|READY|BLOCKED|DEGRADED|NEEDS_HUMAN|SKIPPED
+Usage: bash scripts/emit-plan-gate.sh PENDING [quick|standard|deep]      # tier（僅 PENDING 接受）
+       bash scripts/emit-plan-gate.sh DEGRADED [reviewer-unavailable|secret-detected]  # reason（僅 DEGRADED 接受）
+       bash scripts/emit-plan-gate.sh READY|BLOCKED|NEEDS_HUMAN|SKIPPED  # 其餘 gate 拒絕額外參數
 → echo "PLAN_REVIEW_GATE=$GATE"   # namespace 前綴避免與 REVIEW_GATE 衝突
-非法值 / 空參數 → exit 1（set -euo pipefail）
+→ 另輸出 PLAN_REVIEW_TIER= / PLAN_REVIEW_REASON=（有對應參數時）
+非法值 / 空參數 / 非法 tier/reason → exit 1（set -euo pipefail）
 ```
 
-**(b) Hook parse branch**（`post-tool-review-state.sh`，鏡射 `:642-643` 的 `emit-review-gate` 分支，新增獨立分支）：
+**(b) Hook parse branch**（`post-tool-review-state.sh`，鏡射 `emit-review-gate` 分支，新增獨立分支）：
 
 ```bash
-# === emit-plan-gate parse branch (mirror of :642) ===
+# === emit-plan-gate parse branch (as-built) ===
 if [[ "$TOOL_NAME" == "Bash" ]] && echo "$COMMAND" | grep -qF 'emit-plan-gate'; then
-  PLAN_GATE=$(echo "$TOOL_OUTPUT" | grep -oE '^PLAN_REVIEW_GATE=(PENDING|READY|BLOCKED|DEGRADED|NEEDS_HUMAN|SKIPPED)' | tail -1 | cut -d= -f2)
-  # map → update_plan_state() (all 6 values defined)
+  PLAN_GATE=$(echo "$TOOL_OUTPUT" | grep -oE '^PLAN_REVIEW_GATE=(PENDING|READY|BLOCKED|DEGRADED|NEEDS_HUMAN|SKIPPED)' | tail -1 | cut -d= -f2) || PLAN_GATE=""
+  # REASON 集合鏡射 emitter 實際輸出（僅 DEGRADED；SKIPPED 不發 REASON，user-skip 由 update_plan_state 內部硬編碼）
+  PLAN_REASON=$(... '^PLAN_REVIEW_REASON=(reviewer-unavailable|secret-detected)' ...) || PLAN_REASON=""
+  PLAN_TIER=$(... '^PLAN_REVIEW_TIER=(quick|standard|deep)' ...) || PLAN_TIER=""
+  update_plan_state "$PLAN_GATE" "$PLAN_REASON" "$PLAN_TIER"   # 第 4 參數 history_mode 預設 append
 fi
 ```
 
@@ -248,13 +255,15 @@ fi
 
 | Gate | `executed` | `passed` | 其他 flag | stop-guard 視角 |
 |------|-----------|----------|-----------|------------------|
-| `PENDING` | `true` | `false` | — | loop 進行中：warn-only 提示，不阻塞 |
-| `READY` | `true` | `true` | — | 收斂；不滿足 code/doc gate（隔離） |
+| `PENDING` | `true` | `false` | reset per-plan cycle（round 0、findings 清空、degraded/skipped/status_reason 歸零；接受 tier） | loop 進行中：warn-only 提示，不阻塞 |
+| `READY` | `true` | `true` | terminal → history append | 收斂；不滿足 code/doc gate（隔離） |
 | `BLOCKED` | `true` | `false` | — | 續 loop；不阻塞 code/doc Stop（T4 過濾） |
-| `DEGRADED` | `true` | `false` | `degraded=true`、`status_reason` | 非阻塞，warn-only |
-| `SKIPPED` | `true` | `false` | `skipped=true`、`status_reason=user-skip` | 非阻塞，warn-only |
-| `NEEDS_HUMAN` | `true` | `false` | — | 終態 `⚠️ Plan Needs Human`；behavior-layer 升級，warn-only（非 hook hard-block） |
+| `DEGRADED` | `true` | `false` | `degraded=true`、`status_reason`（reason 參數，預設 reviewer-unavailable）；terminal → history append | 非阻塞，warn-only |
+| `SKIPPED` | `true` | `false` | `skipped=true`、`status_reason=user-skip`；terminal → history append | 非阻塞，warn-only |
+| `NEEDS_HUMAN` | `true` | `false` | `status_reason=needs-human`（stop-guard 以此視為終態，不發 pending warn）；terminal → history append | 終態 `⚠️ Plan Needs Human`；behavior-layer 升級，warn-only（非 hook hard-block） |
 
+> **as-built 補充**：terminal history（FIFO last-5，欄位 ts/tier/rounds/findings_total/outcome）僅由本 Bash 路徑 append（`history_mode=append` 預設）；MCP 路由一律 no-history（見 T2）。Schema migration fail-closed：`schema_version` 非數字或 >3 → `_migrate_state_plan_review` 回傳 1，所有 plan writers（update_plan_state /_update_plan_iteration / update_plan_verdict）整段 skip 並 stderr 註記，state 完全不動。
+>
 > hook 端測試**必須涵蓋全 6 值**（非僅 READY/BLOCKED/DEGRADED/SKIPPED）。
 >
 > 測試必須涵蓋 **hook 端**（Bash 命令含 `emit-plan-gate` → `plan_review.*` 正確更新），不僅 script stdout。
@@ -264,8 +273,8 @@ fi
 | 問題 | 實際風險（已驗證） | 修正 |
 |------|------|------|
 | `REVIEW_PASSED` 的 `✅ Ready` 誤收 `✅ Plan Ready` | **低**：實測 `✅ Plan Ready` 不含 `✅ Ready`（SAFE） | 加防護但非主風險 |
-| **`REVIEW_BLOCKED` + `LAST_REVIEW` 的 `⛔.*Block` 匹配 `⛔ Plan Blocked`** | **高（主風險）**：plan ⛔ 被誤判為 code/doc FAIL，阻塞無關 Stop | 在 `REVIEW_PASSED`/`REVIEW_BLOCKED`/`LAST_REVIEW` 的 grep pipeline **內**先 `grep -vE 'Plan Review\|✅ Plan \|⛔ Plan '` 濾掉 plan sentinel 行，再判 PASS/BLOCKED，使 plan sentinel **既不滿足也不阻塞** code/doc gate |
-| plan-review pending 未被 stop-guard 感知 | — | 讀 `plan_review.executed && !passed && !degraded && !skipped` → **warn-only** 提示「plan-review 進行中」，**不**併入 code/doc aggregate 決策（隔離） |
+| **`REVIEW_BLOCKED` + `LAST_REVIEW` 的 `⛔.*Block` 匹配 `⛔ Plan Blocked`** | **高（主風險）**：plan ⛔ 被誤判為 code/doc FAIL，阻塞無關 Stop | **as-built：`_strip_plan_sentinels()` substring strip**（sed 移除四個 plan sentinel token），套用於 `REVIEW_PASSED`/`REVIEW_BLOCKED`/`LAST_REVIEW` 三處掃描。**不採整行 `grep -v`**：transcript 為 JSONL（一行打包整則訊息），整行過濾會把同行的真 code/doc gate verdict 一併丟棄（false allow）；substring strip 使 plan sentinel **既不滿足也不阻塞** code/doc gate，且保留同行其餘內容 |
+| plan-review pending 未被 stop-guard 感知 | — | 讀 `plan_review.executed && !passed && !degraded && !skipped && status_reason != "needs-human"` → **warn-only** 提示「plan-review 進行中」，**不**併入 code/doc aggregate 決策（隔離）。`needs-human` 為終態（使用者仲裁中），排除於 pending 之外 |
 
 > stop-guard 對 plan-review 採 **warn-only**（不 strict-block）：plan-review 是 analysis-only、skill-driven、ExitPlanMode 前置流程，非 precommit-style 強制 gate。
 
@@ -370,7 +379,7 @@ fi
 | # | Risk | Likelihood | Impact | Mitigation |
 |---|------|-----------|--------|------------|
 | R1 | **OQ-Sx-2**：plan mode 內 MCP / Skill 呼叫不可用 → A1 根本不可實作 | Medium | **Critical** | **Hard precondition**：實作前先跑 smoke test（見 §7）；若不可用 → ⛔ 架構回頭（A1 不成立，需重評 A2/A3 或 harness 協作） |
-| R2 | **OQ-Sx-3**：stop-guard 未隔離 → `⛔ Plan Blocked` 觸發 `⛔.*Block`（stop-guard `REVIEW_BLOCKED`/`LAST_REVIEW` grep）誤判 code/doc FAIL，阻塞無關 Stop（NFR-7 破功） | Medium | High | **Hard precondition**：T4 隔離擴充（pipeline 內 `grep -vE` 濾 plan sentinel）+ 回歸測試斷言互不覆寫 |
+| R2 | **OQ-Sx-3**：stop-guard 未隔離 → `⛔ Plan Blocked` 觸發 `⛔.*Block`（stop-guard `REVIEW_BLOCKED`/`LAST_REVIEW` grep）誤判 code/doc FAIL，阻塞無關 Stop（NFR-7 破功） | Medium | High | **Hard precondition**：T4 隔離擴充（as-built：`_strip_plan_sentinels()` **substring strip**——transcript 為 JSONL 一行打包整則訊息，整行 `grep -v` 會把同行真 code/doc verdict 一併丟棄造成 false allow）+ 回歸測試斷言互不覆寫 |
 | R3 | A1 為 best-effort：即使使用者已 `## Plan Review: enabled`，Claude 忘記 self-invoke `/plan-review` → 繞過 review（**enabled-but-unexecuted gap**）。v1 無偵測路徑：stop-guard 的 plan-pending 檢查需 `plan_review.executed` 已存在才有意義、ExitPlanMode 不被攔截（FR-4 tool-boundary 層 v1 未保證） | Medium | Medium | **v1 明確界定為「review-gated only when /plan-review invoked」**（見 §3.4 v1 Acceptance Scope）；`auto-loop` + Stop Hook 提示 raise compliance（advisory）；enabled-but-unexecuted 偵測 + tool-boundary 強制留待 v2 OQ-Sx-1 harness probe（A3） |
 | R4 | schema migration 破壞既有 state | Low | High | 純加法 jq 注入；atomic write + lock；回歸測試斷言除 `schema_version` 外語意等價 |
 | R5 | dual-review 在 standard tier 使短 plan 成本/延遲翻倍 | Medium | Low | Secondary 背景並行不阻塞主 gate；pilot 量測；不符 ROI 可回退 deep-only（feasibility default） |
@@ -401,18 +410,18 @@ fi
 | W1.2 | schema v2→v3 additive migration 分支 + atomic/lock | W1.1 | M | 同上（migration：除 `schema_version` 外語意等價斷言） |
 | W1.3 | MCP routing Priority 1.5 plan branch（`grep -F` literal for `[PLAN_REVIEW_*]`）+ `update_plan_state()` | W1.1 | M | 同上（plan routing + literal-match + collision 斷言） |
 | **W2** | **Gate emission + 隔離** | W1 | M | |
-| W2.1 | `scripts/emit-plan-gate.sh`（6 值含 SKIPPED + namespace 前綴）**+ `post-tool-review-state.sh` `emit-plan-gate` parse 分支**（鏡射 `:642`） | W1.3 | M | `test/scripts/emit-plan-gate.test.js`（emitter）+ `test/hooks/post-tool-review-state.test.js`（hook parse 分支） |
+| W2.1 | `scripts/emit-plan-gate.sh`（6 值含 SKIPPED + namespace 前綴）**+ `post-tool-review-state.sh` `emit-plan-gate` parse 分支**（鏡射 `emit-review-gate` parse 分支） | W1.3 | M | `test/scripts/emit-plan-gate.test.js`（emitter）+ `test/hooks/post-tool-review-state.test.js`（hook parse 分支） |
 | W2.2 | `stop-guard.sh` 隔離擴充（T4） | W0.2,W1 | M | `test/hooks/stop-guard.test.js`（plan isolation fixtures） |
 | **W3** | **`/plan-review` skill** | W1,W2 | L | |
 | W3.1 | `skills/plan-review/SKILL.md`（tier ladder / loop / bypass / degrade） | W1,W2 | L | `test/skills/plan-review.test.js`（new） |
 | W3.2 | `references/codex-prompt-plan.md` + `review-loop-plan.md`（OQ-Sx-5 framing） | W3.1 | M | skill test 引用斷言 |
-| W3.3 | secret redaction 串接（NFR-8，呼叫 `security-redact.js`） | W3.1 | S | skill test（dummy secret payload 斷言） |
-| W3.4 | standard tier dual-dispatch（Codex + Task secondary 並行） | W3.1 | M | skill test（dual 行為） |
-| W3.5 | deep tier 委派 `/codex-brainstorm` | W3.1 | S | skill test（委派路徑） |
+| W3.3 | secret redaction 串接（NFR-8，呼叫 `security-redact.js`） | W3.1 | S | skill test（**as-built：靜態斷言** SKILL.md 含 redaction contract + fail-closed 流程；end-to-end dummy-payload 行為驗證留 pilot 手動） |
+| W3.4 | standard tier dual-dispatch（Codex + Task secondary 並行） | W3.1 | M | skill test（**as-built：靜態斷言** dual-dispatch 段落存在；skill 為 model-driven markdown，行為驗證留 pilot 手動） |
+| W3.5 | deep tier 委派 `/codex-brainstorm` | W3.1 | S | skill test（**as-built：靜態斷言** deep tier 委派段落存在；行為驗證留 pilot 手動） |
 | **W4** | **Config + rules + 文件** | W3 | M | |
-| W4.1 | `auto-loop-project.md` 加 `## Plan Review Max Rounds`（default 5）+ `## Plan Review: enabled` opt-in 開關 | W1 | S | config 解析測試（鏡射 `_read_project_max_rounds`） |
+| W4.1 | `auto-loop-project.md` 加 `## Plan Review Max Rounds`（default 5）+ `## Plan Review: enabled` opt-in 開關 | W1 | S | Max Rounds：hook 解析測試（`_read_project_plan_max_rounds`，含 range/邊界）；**`## Plan Review: enabled` 為 model-read advisory（v1 無 hook 解析，無自動化測試）** |
 | W4.2 | `rules/auto-loop.md` Standard Gate Sentinels 加 plan namespace 列 | W3 | S | doc review |
-| W4.3 | `/plan-review` thin command entry + `CLAUDE.md` Command Quick Reference 加列 | W3 | S | skills-schema 測試 |
+| W4.3 | `/plan-review` skill 登錄（`.claude/skills -> ../skills` symlink 自動可見 + `docs/skill-catalog.yml`）+ `CLAUDE.md` Command Quick Reference 加列（v3 起無 thin command entry） | W3 | S | skills-schema 測試 + symlink parity 斷言 |
 | W4.4 | request ticket（`/create-request`）追蹤 AC 進度 | W3 | S | — |
 
 預估：W0 ~1 day（gating）；W1-W4 ~6-8 person-days（feasibility §6 A1+B1+C2 估值範圍內）。
@@ -426,13 +435,13 @@ fi
 | **Unit** | schema migration | v2→v3 `. +` 合併注入 `plan_review`；v3 no-op；migration 後**全部 v2 頂層欄位**（`session_id`/`updated_at`/`review_mode`/`has_code_change`/`has_doc_change`/`code_review`/`doc_review`/**`precommit`**/`aggregate_gate`/root `iteration_history`）語意等價，**`schema_version` 單獨斷言 2→3**（NFR-7 Signal 4） |
 | **Unit** | MCP routing | `## Plan Review`+`✅ Plan Ready` → pass；`+⛔ Plan Blocked` → fail；`+[PLAN_REVIEW_DEGRADED]`（**`grep -F` literal**）→ degraded；`+[PLAN_REVIEW_SKIPPED]` → skipped；**`## Plan Review`+`⚠️ Plan Needs Human`（無 token）不得標 degraded**（literal-match regression）；實測 `printf '✅ Plan Ready' \| grep -qE '✅ Ready'` = SAFE 斷言；doc/code branch 不回歸 |
 | **Unit** | stop-guard 隔離 | **主**：`⛔ Plan Blocked` 不觸發 `REVIEW_BLOCKED`（`⛔.*Block` regex）→ 不誤判 code/doc FAIL；`✅ Plan Ready` 不滿足 `REVIEW_PASSED`；plan pending → warn-only 不併入 aggregate |
-| **Unit** | config 解析 | `## Plan Review Max Rounds` 覆寫 default 5；缺區塊 → fallback 5；`## Plan Review: enabled` 切換 opt-in |
-| **Integration** | skill loop（mock Codex） | P0/P1 → revise → re-review → `✅ Plan Ready` 收斂；max_rounds=5 未收斂 → `⚠️ Plan Needs Human`+殘餘 findings（Signal 2/7） |
-| **Integration** | bypass vs degrade（分離斷言） | `--skip-review` ≤1 輪跳出 → `[PLAN_REVIEW_SKIPPED]`+`skipped=true`（Signal 3）；mock reviewer offline/401/timeout → `[PLAN_REVIEW_DEGRADED]`+`status_reason=reviewer-unavailable` 不卡死（Signal 6）；兩者 sentinel/flag 不混用 |
-| **Integration** | secret redaction | medium dummy（`password=hunter2dummy`）→ `maskMediumConfidence` `[REDACTED]` 後照送；high dummy（**regex-valid**：`sk-` + ≥20 字元、`ghp_` + 恰 36 字元、PEM header）→ `scanHighConfidence` truthy → fail-closed：plan **不外送** reviewer + `[PLAN_REVIEW_DEGRADED]`、`status_reason=secret-detected`，payload grep 無高敏 pattern（Signal 8/NFR-8） |
-| **Integration** | 並行隔離 | 同 session 觸發 code-review + plan-review → 兩者 state 互不覆寫（Signal 4/NFR-7） |
+| **Unit** | config 解析 | `## Plan Review Max Rounds` 覆寫 default 5（含 range 3-50 inclusive 邊界 + 超界 fallback + migration path 覆寫）；缺區塊 → fallback 5；**`## Plan Review: enabled` 為 model-read advisory，v1 無 hook 解析 → 無自動化測試（doc review 覆蓋）** |
+| **Integration**（v1 deferred → pilot 手動） | skill loop（mock Codex） | P0/P1 → revise → re-review → `✅ Plan Ready` 收斂；max_rounds=5 未收斂 → `⚠️ Plan Needs Human`+殘餘 findings（Signal 2/7）。**As-built：skill 為 model-driven markdown，無法以 node:test 驅動 loop；v1 以 `test/skills/plan-review.test.js` 靜態結構斷言 + pilot 手動驗證取代** |
+| **Integration**（v1 部分自動化） | bypass vs degrade（分離斷言） | `--skip-review` ≤1 輪跳出 → `[PLAN_REVIEW_SKIPPED]`+`skipped=true`（Signal 3）；mock reviewer offline/401/timeout → `[PLAN_REVIEW_DEGRADED]`+`status_reason=reviewer-unavailable` 不卡死（Signal 6）；兩者 sentinel/flag 不混用。**As-built：sentinel/state 語意（含不混用）已由 emit-plan-gate + hook routing unit tests 覆蓋；end-to-end skill 行為留 pilot** |
+| **Integration**（v1 deferred → pilot 手動） | secret redaction | medium dummy（`password=hunter2dummy`）→ `maskMediumConfidence` `[REDACTED]` 後照送；high dummy（**regex-valid**：`sk-` + ≥20 字元、`ghp_` + 恰 36 字元、PEM header）→ `scanHighConfidence` truthy → fail-closed：plan **不外送** reviewer + `[PLAN_REVIEW_DEGRADED]`、`status_reason=secret-detected`，payload grep 無高敏 pattern（Signal 8/NFR-8）。**As-built：redaction contract 由 skill 結構測試靜態斷言；`security-redact.js` 自身既有測試；end-to-end fail-closed 行為留 pilot** |
+| **Integration**（v1 已於 unit 層覆蓋） | 並行隔離 | 同 session 觸發 code-review + plan-review → 兩者 state 互不覆寫（Signal 4/NFR-7）。**As-built：雙向隔離由 `post-tool-review-state.test.js` unit fixtures 自動化覆蓋** |
 
-Conventions 遵 [`rules/testing.md`](../../../rules/testing.md)：AAA、`assert/strict`、≤7 assertions/case、realistic data。每個 Acceptance Signal（§8）對應 ≥1 自動化證據（Evidence Model priority 1）。
+Conventions 遵 [`rules/testing.md`](../../../rules/testing.md)：AAA、`assert/strict`、≤7 assertions/case、realistic data。Evidence 對應（Acceptance Signals 定義於 [1-requirements.md §8](./1-requirements.md)）：state / sentinel / gate / 隔離層 Signal 由 unit + 靜態結構自動化證據覆蓋（Evidence Model priority 1）；上表標記「v1 deferred → pilot 手動」的 end-to-end skill 行為面向，v1 以結構斷言 + pilot 手動驗證為證據（priority 2/3，pilot 期間補齊）。
 
 **Doc link-check**：本 lifecycle doc 位於 depth 3（`docs/features/plan-review-loop/`），跨 repo-root 引用用 `../../../`。CI doc-link 檢查涵蓋本檔；已 spot-check `../../../rules/auto-loop.md`、`../../../hooks/post-tool-review-state.sh`、`../dual-reviewer/2-tech-spec.md` 均可解析。
 
