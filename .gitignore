@@ -6,6 +6,7 @@ node_modules/
 settings.local.json
 .claude_review_state.json
 .claude_nit_history.json
+.claude_workflows/
 .claude/
 
 # Local-only skills (not published)

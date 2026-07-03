@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "mode": "deny-by-default",
+  "fanout_allowlist": [
+    {
+      "name": "Explore",
+      "type": "builtin",
+      "rationale": "Harness definition excludes Edit/Write/NotebookEdit; existing deep-explore fanout baseline (accepted exposure, not new attack surface); doubles as the planner agent (only research-capable entry).",
+      "residual_risk": "Has Bash — could theoretically mutate files or git state. Mitigated by prompt read-only contract + run-verify.js full git-scoped checks (porcelain + tracked/untracked content hashes/refs/config/worktree/stash). Writes outside the repo are out of v1 verification scope (v2 OQ)."
+    },
+    {
+      "name": "performance-optimizer",
+      "type": "repo-agent",
+      "expected_tools": "Read, Grep, Glob",
+      "rationale": "Pure-read tool set; no Bash.",
+      "residual_risk": "None."
+    }
+  ],
+  "explicit_exclusions": [
+    {
+      "name": "coverage-analyst",
+      "reason": "Bash(find:*) carries a write surface (-exec/-delete); verification-surface ⊇ attack-surface principle not satisfied for a new exposure."
+    },
+    {
+      "name": "git-investigator",
+      "reason": "Bash(git:*) carries git write operations (tag/config/ref). run-verify.js refs/config hashes would detect them, but deny-by-default: new exposure without an existing fanout precedent is not worth the benefit. History archaeology runs as main-skill (/git-investigate) instead."
+    }
+  ]
+}
