@@ -226,6 +226,13 @@ Review commands must output standard markers. Hook-parsed sentinels are consumed
 | `✅ All Pass` | Precommit | All checks passed | Hook |
 | `⛔ FAIL` / `❌ FAIL` | Precommit | Check failed | Hook |
 | `⚠️ Need Human` | Any | Needs human intervention | Behavior-layer only |
+| `✅ Plan Ready` | Plan review (requires `## Plan Review` header) | No P0/P1, plan converged | Hook + behavior |
+| `⛔ Plan Blocked` | Plan review (requires `## Plan Review` header) | Has P0/P1, loop continues | Hook + behavior |
+| `⚠️ Plan Needs Human` | Plan review | max_rounds reached without convergence | Behavior-layer only |
+| `[PLAN_REVIEW_DEGRADED]` | Plan review | Reviewer unavailable or secret detected (fail-closed) | Hook + behavior |
+| `[PLAN_REVIEW_SKIPPED]` | Plan review | User-intent bypass | Hook + behavior |
+
+> **Plan namespace isolation**: plan sentinels live in the `plan_review.*` state subtree and never touch `code_review` / `doc_review` / `aggregate_gate`. Plan-review output must never contain bare `✅ Ready` / `✅ Mergeable` / `## Gate:` / bare `⛔ Blocked`. Stop-guard treats a pending plan review as **warn-only** (never blocks). Gate transitions flow through `scripts/emit-plan-gate.sh`; see `skills/plan-review/SKILL.md`.
 
 ### Adequacy Gate (behavior-layer, request-doc-aware)
 

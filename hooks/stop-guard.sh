@@ -257,6 +257,17 @@ if [[ -f "$STATE_FILE" ]]; then
     echo "[Debug] PRECOMMIT_PASSED=$PRECOMMIT_PASSED" >&2
   fi
 
+  # === Plan-review pending advisory (T4 — warn-only, isolated) ===
+  # plan_review is an analysis-only, skill-driven pre-ExitPlanMode flow, NOT a
+  # precommit-style hard gate: a pending plan review warns on stderr but never
+  # joins MISSING/BLOCKED_REASON and never feeds the code/doc aggregate decision.
+  # status_reason "needs-human" marks the NEEDS_HUMAN terminal outcome (user is
+  # already arbitrating) — excluded so it is not misread as an in-progress review.
+  PLAN_PENDING=$(echo "$STATE" | jq -r 'if ((.plan_review.executed // false) == true) and ((.plan_review.passed // false) != true) and ((.plan_review.degraded // false) != true) and ((.plan_review.skipped // false) != true) and ((.plan_review.status_reason // "") != "needs-human") then "true" else "false" end' 2>/dev/null) || PLAN_PENDING="false"
+  if [[ "$PLAN_PENDING" == "true" ]]; then
+    echo "[Stop Guard] Plan review in progress (warn-only; isolated from code/doc gates)" >&2
+  fi
+
   # === Stale-state git check (with cross-platform timeout) ===
   # Reconciliation is ONE-WAY (true→false) so it only matters when a flag is true; skip the
   # git call entirely otherwise. -uall walks the full untracked tree and can be costly, so it
@@ -331,8 +342,19 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   HAS_REVIEW_DOC=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?codex-review-doc($|[[:space:]])|/(sd0x-dev-flow:)?review-spec($|[[:space:]])' | tail -1 || true)
 
   # Check review results (standard sentinel — includes doc review sentinels ✅ Mergeable / ✅ Ready)
-  REVIEW_PASSED=$(echo "$CONVERSATION" | grep -E '## Gate: ✅|✅ All Pass|✅ Mergeable|✅ Ready|Gate.*PASS' | tail -1 || true)
-  REVIEW_BLOCKED=$(echo "$CONVERSATION" | grep -E '## Gate: ⛔|⛔.*Block|⛔ Needs revision|⛔ Must fix|Gate.*FAIL' | tail -1 || true)
+  # Plan-review isolation (T4): plan sentinel SUBSTRINGS are stripped FIRST so that
+  # `⛔ Plan Blocked` cannot satisfy the `⛔.*Block` pattern (it would otherwise be
+  # misread as a code/doc FAIL and block an unrelated Stop), and `✅ Plan Ready`
+  # neither satisfies nor blocks the code/doc gate. Substring stripping (not whole-line
+  # grep -v): transcript is JSONL — one line packs a whole message, so dropping any
+  # line containing "Plan Review" would also drop a genuine code/doc gate verdict
+  # that happens to mention plan review in prose (false allow). Plan review has its
+  # own plan_review.* state and is warn-only by design.
+  _strip_plan_sentinels() {
+    sed -e 's/## Plan Review//g' -e 's/✅ Plan Ready//g' -e 's/⛔ Plan Blocked//g' -e 's/⚠️ Plan Needs Human//g'
+  }
+  REVIEW_PASSED=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: ✅|✅ All Pass|✅ Mergeable|✅ Ready|Gate.*PASS' | tail -1 || true)
+  REVIEW_BLOCKED=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: ⛔|⛔.*Block|⛔ Needs revision|⛔ Must fix|Gate.*FAIL' | tail -1 || true)
 
   if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
     echo "[Debug] Using transcript parsing mode" >&2
@@ -383,7 +405,8 @@ else
   # Check if review passed — use last verdict for recency-correct detection
   # (handles fail→pass→fail re-runs: the LAST verdict wins)
   if [[ -n "$HAS_CODEX_REVIEW" || -n "$HAS_REVIEW_DOC" ]]; then
-    LAST_REVIEW=$(echo "$CONVERSATION" | grep -E '## Gate: (✅|⛔)|✅ (All Pass|Mergeable|Ready)|⛔.*(Block|Needs revision|Must fix)|Gate.*(PASS|FAIL)' | tail -1 || true)
+    # Same plan-sentinel strip as REVIEW_PASSED/REVIEW_BLOCKED above (T4 isolation)
+    LAST_REVIEW=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: (✅|⛔)|✅ (All Pass|Mergeable|Ready)|⛔.*(Block|Needs revision|Must fix)|Gate.*(PASS|FAIL)' | tail -1 || true)
     if [[ -n "$LAST_REVIEW" ]] && echo "$LAST_REVIEW" | grep -qE '⛔|FAIL'; then
       BLOCKED_REASON="Review not passed (Blocked)"
     fi

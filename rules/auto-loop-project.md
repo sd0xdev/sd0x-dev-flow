@@ -43,6 +43,24 @@ Or use: /install-rules --customize auto-loop --add-section
 
 <!-- 10 -->
 
+## Plan Review
+
+<!-- Set to "enabled" to have Claude self-invoke /plan-review in plan mode
+     before presenting a plan via ExitPlanMode (A1 skill-driven; v1 has no
+     hook enforcement — enabled-but-unexecuted detection is v2).
+     To enable: uncomment the line below. -->
+
+<!-- ## Plan Review: enabled -->
+
+## Plan Review Max Rounds
+
+<!-- Override the max_rounds hard cap for the plan-review loop (independent
+     of the code/doc review budget above).
+     Default: 5. Range: 3-50. Parsed by hooks on plan_review state init.
+     To override: uncomment and set the line below (must be a bare integer, no comments). -->
+
+<!-- 5 -->
+
 ## Git Memory
 
 <!-- Inject git context (last 5 commits, diff stat, working tree) after compaction.

@@ -128,8 +128,9 @@ fi
 init_state_file() {
   if [[ ! -f "$STATE_FILE" ]]; then
     # R6: read project max_rounds override for initial value (fallback 10)
-    local _mr
+    local _mr _pmr
     _mr=$(_read_project_max_rounds 10)
+    _pmr=$(_read_project_plan_max_rounds 5)
     cat > "$STATE_FILE" << EOF
 {
   "session_id": "",
@@ -141,22 +142,26 @@ init_state_file() {
   "doc_review": {"executed": false, "passed": false, "last_run": ""},
   "precommit": {"executed": false, "passed": false, "last_run": ""},
   "aggregate_gate": {"executed": false, "gate": null, "source": null, "reason": null, "last_run": ""},
-  "schema_version": 2,
+  "plan_review": {"executed": false, "passed": false, "degraded": false, "skipped": false, "status_reason": null, "tier": null, "last_run": "", "iteration_history": {"current_round": 0, "max_rounds": ${_pmr}, "findings_by_round": [], "total_rounds_session": 0}, "history": []},
+  "schema_version": 3,
   "iteration_history": {"current_round": 0, "max_rounds": ${_mr}, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}
 }
 EOF
   fi
 }
 
-# Read max_rounds override from project config (R6)
-# Scans from "## Max Rounds" heading until next "## " heading, picking first bare integer line.
+# Read an integer setting from a "## <Heading>" section of auto-loop-project.md
+# Scans from the heading until next "## " heading, picking first bare integer line.
 # Tracks multi-line HTML comment state so integers inside <!-- ... --> blocks are not picked up.
-_read_project_max_rounds() {
-  local default_val="${1:-10}"
+# Heading is matched literally and anchored (^## <heading>$), so "Max Rounds" cannot
+# accidentally match the longer "Plan Review Max Rounds" section.
+_read_project_int_setting() {
+  local heading="$1"
+  local default_val="$2"
   local rf val
   for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
     [[ ! -f "$rf" ]] && continue
-    val=$(awk '
+    val=$(awk -v heading="$heading" '
       function strip_comments(line,    out, op, cp) {
         out = ""
         while (length(line) > 0) {
@@ -175,7 +180,12 @@ _read_project_max_rounds() {
         }
         return out
       }
-      /^## Max Rounds[[:space:]]*$/ { in_section = 1; next }
+      {
+        # Literal heading match (no regex metacharacters expected in headings)
+        stripped = $0
+        sub(/[[:space:]]+$/, "", stripped)
+        if (stripped == "## " heading) { in_section = 1; next }
+      }
       /^## / && in_section { exit }
       in_section {
         processed = strip_comments($0)
@@ -188,6 +198,16 @@ _read_project_max_rounds() {
     fi
   done
   echo "$default_val"
+}
+
+# Read max_rounds override from project config (R6)
+_read_project_max_rounds() {
+  _read_project_int_setting "Max Rounds" "${1:-10}"
+}
+
+# Read plan-review max_rounds override (plan-review-loop OQ-10, default 5)
+_read_project_plan_max_rounds() {
+  _read_project_int_setting "Plan Review Max Rounds" "${1:-5}"
 }
 
 # Migrate state file to schema v2 (add iteration_history if missing)
@@ -204,6 +224,41 @@ _migrate_state_v2() {
     jq --argjson mr "$mr" '.schema_version = 2
       | .iteration_history //= {"current_round": 0, "max_rounds": $mr, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}' \
       "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+  fi
+}
+
+# Migrate state file to schema v3 (additive: inject plan_review subtree).
+# `. +` merge preserves ALL existing top-level fields verbatim; the only deliberate
+# change besides the injected subtree is schema_version 2→3 (plan-review-loop spec §3.2).
+# Returns 1 for UNSUPPORTED schemas (non-numeric or newer than v3): callers must
+# skip their plan write entirely — a "warn-skip" must not be followed by a partial
+# plan_review mutation on a schema this hook does not understand.
+_migrate_state_plan_review() {
+  local state_file="${1:-$STATE_FILE}"
+  [[ ! -f "$state_file" ]] && return 0
+  local ver
+  ver=$(jq -r '.schema_version // 1' "$state_file" 2>/dev/null || echo 1)
+  if ! [[ "$ver" =~ ^[0-9]+$ ]]; then
+    echo "[Review State] plan migration skipped: non-numeric schema_version='$ver'" >&2
+    return 1
+  fi
+  if [[ "$ver" -eq 3 ]]; then return 0; fi
+  if [[ "$ver" -gt 3 ]]; then
+    echo "[Review State] plan migration skipped: schema_version=$ver is newer than this hook supports" >&2
+    return 1
+  fi
+  # Ensure v2 invariants (iteration_history) exist before the v3 additive step
+  _migrate_state_v2 "$state_file"
+  local pmr tmp
+  pmr=$(_read_project_plan_max_rounds 5)
+  tmp=$(mktemp)
+  if jq --argjson pmr "$pmr" '. + {plan_review: (.plan_review // {"executed": false, "passed": false, "degraded": false, "skipped": false, "status_reason": null, "tier": null, "last_run": "", "iteration_history": {"current_round": 0, "max_rounds": $pmr, "findings_by_round": [], "total_rounds_session": 0}, "history": []})}
+      | .schema_version = 3' \
+    "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    mv "$tmp" "$state_file"
+  else
+    rm -f "$tmp" 2>/dev/null
+    echo "[Review State] plan migration failed (jq write)" >&2
   fi
 }
 
@@ -291,6 +346,167 @@ _update_iteration() {
   else
     echo "[Review State] Iteration update skipped (lock contention)" >&2
   fi
+}
+
+# Update plan_review state (plan-review-loop T3 gate semantics).
+# Mirrors update_state() but writes ONLY the plan_review subtree — never review_mode,
+# aggregate_gate, code/doc fields, or root iteration_history (NFR-7 isolation).
+# Deliberately does NOT clear the .blocked sidecar: that marker belongs to the
+# code/doc/aggregate fail-closed plane and a plan write must not relax it.
+update_plan_state() {
+  local gate="$1"
+  local reason="${2:-}"
+  local tier="${3:-}"
+  # append (default) | no-history — MCP token routing passes no-history: terminal
+  # history[] is owned by the emit-plan-gate Bash path (the skill always runs
+  # emit-plan-gate.sh after the token), so appending here too would double-write.
+  local history_mode="${4:-append}"
+
+  if ! _lock; then
+    # Plan gate is warn-only/advisory: skip on contention rather than risk an
+    # unlocked read-modify-write racing the critical code/doc/aggregate writers.
+    echo "[Review State] plan_review update skipped (lock contention)" >&2
+    return 0
+  fi
+  init_state_file
+  if ! _migrate_state_plan_review "$STATE_FILE"; then
+    _unlock
+    echo "[Review State] plan_review update skipped (unsupported schema)" >&2
+    return 0
+  fi
+
+  local now tmp
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  tmp=$(mktemp)
+  # Gate semantics (spec §3.3 T3): PENDING resets the per-plan cycle (OQ-6),
+  # READY is the only passed=true outcome, DEGRADED/SKIPPED set their flag +
+  # status_reason, terminal gates append a trail entry to history[] (last 5, FIFO).
+  # NEEDS_HUMAN additionally stamps status_reason="needs-human" so stop-guard can
+  # distinguish this terminal outcome from a pending (in-progress) review.
+  if jq --arg gate "$gate" --arg reason "$reason" --arg tier "$tier" --arg now "$now" --arg history "$history_mode" '
+    .plan_review.executed = true
+    | .plan_review.last_run = $now
+    | .updated_at = $now
+    | .plan_review.passed = ($gate == "READY")
+    | (if $gate == "PENDING" then
+         .plan_review.degraded = false
+         | .plan_review.skipped = false
+         | .plan_review.status_reason = null
+         | (if $tier != "" then .plan_review.tier = $tier else . end)
+         | .plan_review.iteration_history.current_round = 0
+         | .plan_review.iteration_history.findings_by_round = []
+       elif $gate == "DEGRADED" then
+         .plan_review.degraded = true
+         | .plan_review.status_reason = (if $reason != "" then $reason else (.plan_review.status_reason // "reviewer-unavailable") end)
+       elif $gate == "SKIPPED" then
+         .plan_review.skipped = true
+         | .plan_review.status_reason = "user-skip"
+       elif $gate == "NEEDS_HUMAN" then
+         .plan_review.status_reason = "needs-human"
+       else . end)
+    | (if ($gate == "READY" or $gate == "DEGRADED" or $gate == "SKIPPED" or $gate == "NEEDS_HUMAN") and $history == "append" then
+         .plan_review.history = (((.plan_review.history // []) + [{
+           "ts": $now,
+           "tier": .plan_review.tier,
+           "rounds": (.plan_review.iteration_history.current_round // 0),
+           "findings_total": ((.plan_review.iteration_history.findings_by_round // []) | map(.total) | add // 0),
+           "outcome": ($gate | ascii_downcase)
+         }]) | .[-5:])
+       else . end)
+  ' "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    mv "$tmp" "$STATE_FILE"
+  else
+    rm -f "$tmp" 2>/dev/null
+    echo "[Review State] plan_review update failed (jq write)" >&2
+  fi
+  _unlock
+}
+
+# Update plan_review iteration history from reviewer output (mirror of _update_iteration;
+# writes plan_review.iteration_history only — never root iteration_history).
+_update_plan_iteration() {
+  local tool_output="$1"
+  local state_file="${2:-$STATE_FILE}"
+
+  local p0_count p1_count p2_count nit_count total
+  p0_count=$(echo "$tool_output" | grep -cE '^\- \[P0\]|^#### P0' 2>/dev/null) || p0_count=0
+  p1_count=$(echo "$tool_output" | grep -cE '^\- \[P1\]|^#### P1' 2>/dev/null) || p1_count=0
+  p2_count=$(echo "$tool_output" | grep -cE '^\- \[P2\]|^#### P2' 2>/dev/null) || p2_count=0
+  nit_count=$(echo "$tool_output" | grep -cE '^\- \[Nit\]|^#### Nit' 2>/dev/null) || nit_count=0
+  total=$((p0_count + p1_count + p2_count + nit_count))
+
+  local now tmp
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if _lock; then
+    # MCP routing calls this BEFORE update_plan_verdict — on a fresh session the
+    # state file may not exist yet. Bailing here would silently drop the round
+    # (current_round stuck at 0, findings lost from the later history snapshot).
+    init_state_file
+    if [[ ! -f "$state_file" ]]; then
+      # Reserved for future non-default-path callers: init_state_file only manages
+      # $STATE_FILE. All current callers pass $STATE_FILE (this branch is unreachable
+      # today) — kept so a future caller cannot hit jq against a missing file.
+      _unlock
+      return 0
+    fi
+    if ! _migrate_state_plan_review "$state_file"; then
+      _unlock
+      echo "[Review State] plan iteration skipped (unsupported schema)" >&2
+      return 0
+    fi
+    tmp=$(mktemp)
+    if jq --argjson total "$total" --argjson p0 "$p0_count" \
+       --argjson p1 "$p1_count" --argjson p2 "$p2_count" \
+       --argjson nit "$nit_count" --arg now "$now" \
+       '.plan_review.iteration_history.current_round += 1 |
+        .plan_review.iteration_history.total_rounds_session = ((.plan_review.iteration_history.total_rounds_session // 0) + 1) |
+        .plan_review.iteration_history.findings_by_round += [{"round": (.plan_review.iteration_history.current_round), "total": $total, "p0": $p0, "p1": $p1, "p2": $p2, "nit": $nit, "timestamp": $now}] |
+        .updated_at = $now' \
+       "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+      mv "$tmp" "$state_file"
+      if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
+        echo "[Review State] Plan iteration updated: total=$total (p0=$p0_count p1=$p1_count p2=$p2_count nit=$nit_count)" >&2
+      fi
+    else
+      rm -f "$tmp" 2>/dev/null
+      echo "[Review State] Plan iteration update skipped (jq write failed)" >&2
+    fi
+    _unlock
+  else
+    echo "[Review State] Plan iteration update skipped (lock contention)" >&2
+  fi
+}
+
+# Lightweight plan verdict write for MCP routing (no history append).
+# Terminal history ownership belongs to the emit-plan-gate Bash path: the skill
+# always runs emit-plan-gate.sh after the reviewer verdict, so writing history
+# here too would double-append — and with stale rounds/findings_total, since the
+# iteration update for the final round lands right before this call.
+update_plan_verdict() {
+  local passed="$1"
+  if ! _lock; then
+    echo "[Review State] plan_review verdict skipped (lock contention)" >&2
+    return 0
+  fi
+  init_state_file
+  if ! _migrate_state_plan_review "$STATE_FILE"; then
+    _unlock
+    echo "[Review State] plan_review verdict skipped (unsupported schema)" >&2
+    return 0
+  fi
+  local now tmp
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  tmp=$(mktemp)
+  if jq --argjson passed "$passed" --arg now "$now" \
+     '.plan_review.passed = $passed | .plan_review.executed = true | .plan_review.last_run = $now | .updated_at = $now' \
+     "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    mv "$tmp" "$STATE_FILE"
+  else
+    rm -f "$tmp" 2>/dev/null
+    echo "[Review State] plan_review verdict failed (jq write)" >&2
+  fi
+  _unlock
 }
 
 # Reset changed files array on review pass (D-3)
@@ -640,12 +856,28 @@ update_aggregate_blocked() {
 
 # === emit-review-gate parse branch ===
 if [[ "$TOOL_NAME" == "Bash" ]] && echo "$COMMAND" | grep -qE 'emit-review-gate'; then
-  GATE_VALUE=$(echo "$TOOL_OUTPUT" | grep -oE '^REVIEW_GATE=(PENDING|READY|BLOCKED)' | tail -1 | cut -d= -f2)
+  GATE_VALUE=$(echo "$TOOL_OUTPUT" | grep -oE '^REVIEW_GATE=(PENDING|READY|BLOCKED)' | tail -1 | cut -d= -f2) || GATE_VALUE=""
   if [[ -n "$GATE_VALUE" ]]; then
     _lock || { update_aggregate_blocked "lock_failure"; echo "[Review State] Lock failed, fail-closed BLOCKED (reason: lock_failure)" >&2; exit 0; }
     update_aggregate_gate "$GATE_VALUE"
     _unlock
     echo "[Review State] aggregate_gate updated: gate=$GATE_VALUE" >&2
+  fi
+fi
+
+# === emit-plan-gate parse branch (plan namespace — mirror of emit-review-gate above) ===
+# grep -F: command match is a literal token; 'emit-plan-gate' never matches the
+# 'emit-review-gate' branch above and vice versa (distinct literals).
+if [[ "$TOOL_NAME" == "Bash" ]] && echo "$COMMAND" | grep -qF 'emit-plan-gate'; then
+  PLAN_GATE=$(echo "$TOOL_OUTPUT" | grep -oE '^PLAN_REVIEW_GATE=(PENDING|READY|BLOCKED|DEGRADED|NEEDS_HUMAN|SKIPPED)' | tail -1 | cut -d= -f2) || PLAN_GATE=""
+  if [[ -n "$PLAN_GATE" ]]; then
+    # Reason set mirrors emit-plan-gate.sh exactly: REASON is only emitted for
+    # DEGRADED (reviewer-unavailable|secret-detected). SKIPPED never emits a
+    # REASON line — update_plan_state hardcodes status_reason="user-skip".
+    PLAN_REASON=$(echo "$TOOL_OUTPUT" | grep -oE '^PLAN_REVIEW_REASON=(reviewer-unavailable|secret-detected)' | tail -1 | cut -d= -f2) || PLAN_REASON=""
+    PLAN_TIER=$(echo "$TOOL_OUTPUT" | grep -oE '^PLAN_REVIEW_TIER=(quick|standard|deep)' | tail -1 | cut -d= -f2) || PLAN_TIER=""
+    update_plan_state "$PLAN_GATE" "$PLAN_REASON" "$PLAN_TIER"
+    echo "[Review State] plan_review updated: gate=$PLAN_GATE" >&2
   fi
 fi
 
@@ -688,6 +920,42 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
   elif echo "$TOOL_OUTPUT" | grep -qE '## Document Review' && echo "$TOOL_OUTPUT" | grep -qE '⛔ Needs revision'; then
     update_state "doc_review" "true" "false"
     echo "[Review State] doc_review updated (MCP): passed=false" >&2
+  # Priority 1.5: plan-specific (## Plan Review discriminator — isolated namespace).
+  # Token markers use grep -qF: [PLAN_REVIEW_*] contains [ ] which grep -E would treat
+  # as a character class (matching any single char inside), a guaranteed false positive.
+  # `## Plan Review` + `⚠️ Plan Needs Human` (no token) deliberately matches NO branch:
+  # NEEDS_HUMAN is recorded via the emit-plan-gate Bash path, not MCP routing.
+  # Branch precedence: machine tokens (DEGRADED/SKIPPED) FIRST — degraded/skipped
+  # output may quote a verdict marker in prose/verbose context, and routing such
+  # output as a verdict would lose the degraded/skipped flags + status_reason.
+  # Then BLOCKED before READY (fail-closed): ambiguous reviewer output containing
+  # both verdict markers must route to blocked, never to ready.
+  # All MCP writes skip history (verdict path via update_plan_verdict, token path
+  # via no-history mode): terminal history is owned by the emit-plan-gate Bash
+  # path, and iteration runs before verdict so the final round's counts are
+  # recorded before any later history snapshot reads them. Iteration + verdict
+  # lock/unlock separately (non-atomic window between the two writes) — acceptable
+  # while the plan plane is single-producer (only the plan-review skill writes
+  # plan_review.*); fold into one locked write if plan review ever runs concurrently.
+  elif echo "$TOOL_OUTPUT" | grep -qE '## Plan Review' && echo "$TOOL_OUTPUT" | grep -qF '[PLAN_REVIEW_DEGRADED]'; then
+    # No reason arg → status_reason defaults to "reviewer-unavailable". This is by
+    # design: secret-detected degradation never reaches MCP routing — the skill
+    # detects secrets BEFORE any reviewer send (fail-closed, Step 2) and records
+    # the reason via the Bash emit-plan-gate path. A degraded token inside MCP
+    # output can therefore only mean the reviewer plane itself failed.
+    update_plan_state "DEGRADED" "" "" "no-history"
+    echo "[Review State] plan_review updated (MCP): degraded=true" >&2
+  elif echo "$TOOL_OUTPUT" | grep -qE '## Plan Review' && echo "$TOOL_OUTPUT" | grep -qF '[PLAN_REVIEW_SKIPPED]'; then
+    update_plan_state "SKIPPED" "" "" "no-history"
+    echo "[Review State] plan_review updated (MCP): skipped=true" >&2
+  elif echo "$TOOL_OUTPUT" | grep -qE '## Plan Review' && echo "$TOOL_OUTPUT" | grep -qE '⛔ Plan Blocked'; then
+    _update_plan_iteration "$TOOL_OUTPUT" "$STATE_FILE"
+    update_plan_verdict "false"
+    echo "[Review State] plan_review updated (MCP): passed=false" >&2
+  elif echo "$TOOL_OUTPUT" | grep -qE '## Plan Review' && echo "$TOOL_OUTPUT" | grep -qE '✅ Plan Ready'; then
+    _update_plan_iteration "$TOOL_OUTPUT" "$STATE_FILE"
+    update_plan_verdict "true"
+    echo "[Review State] plan_review updated (MCP): passed=true" >&2
   # Priority 2: code-specific
   elif echo "$TOOL_OUTPUT" | grep -qE '✅ Ready'; then
     update_state "code_review" "true" "true"

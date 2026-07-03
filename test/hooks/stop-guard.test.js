@@ -188,6 +188,16 @@ if (query && query.includes('.has_doc_change')) {
   process.exit(0);
 }
 
+// Plan-review pending advisory (warn-only): boolean over plan_review flags
+// needs-human is terminal (user arbitrating), not pending — mirrors the hook query
+if (query && query.includes('.plan_review.executed')) {
+  const pr = data.plan_review || {};
+  const pending = pr.executed === true && pr.passed !== true && pr.degraded !== true
+    && pr.skipped !== true && (pr.status_reason || '') !== 'needs-human';
+  process.stdout.write(pending ? 'true' : 'false');
+  process.exit(0);
+}
+
 // Handle contains query (arbitration guard): jq -e '.. | strings | select(contains("X"))'
 if (query && query.includes('contains(')) {
   const m = query.match(/contains\\("([^"]+)"\\)/);
@@ -2261,4 +2271,196 @@ test('jq unavailable + present-but-unreadable state file → fail closed (P2 set
   chmodSync(statePath, 0o644); // restore so temp-dir cleanup can remove it
   assert.equal(result.status, 2, 'unreadable state + jq missing must fail closed, not set-e abort (exit 1)');
   assert.equal(parseJson(result.stdout).ok, false);
+});
+
+// =============================================================================
+// plan-review-loop v1 (T4): plan sentinel isolation + warn-only pending advisory
+// =============================================================================
+
+test('plan T4: transcript strict — ⛔ Plan Blocked after code gate pass does not block stop', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-blocked-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  // Plan sentinel lines come LAST: without the grep -vE plan filter, `⛔ Plan Blocked`
+  // would win the last-verdict scan via the `⛔.*Block` pattern and falsely block.
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: ✅',
+    'user: /precommit',
+    '## Gate: ✅',
+    '## Plan Review',
+    '⛔ Plan Blocked',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, `plan sentinel must be isolated from code gate, stderr: ${result.stderr}`);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+});
+
+test('plan T4: transcript strict — ✅ Plan Ready must not overwrite a code-blocked verdict', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-ready-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  // Code review blocked, then plan review passes. Without the plan filter the
+  // last-verdict scan would pick `✅ Plan Ready` and falsely allow the stop.
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: ⛔',
+    'user: /precommit',
+    '## Plan Review',
+    '✅ Plan Ready',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, '✅ Plan Ready must not satisfy the code review gate');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('plan T4: code verdict mentioning "Plan Review" in prose is not suppressed (substring strip, not line drop)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-prose-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  // Transcript is JSONL: one line packs a whole message, so a genuine ⛔ code gate
+  // and the words "Plan Review" can share a single line. Whole-line grep -v would
+  // drop the verdict entirely (false allow); substring stripping must keep it.
+  const transcript = [
+    '{"tool_name":"Edit","tool_input":{"path":"src/app.ts"}}',
+    'user: /codex-review-fast',
+    '## Gate: ⛔ — fix the Plan Review trail summary emitted by skills/plan-review',
+  ].join('\n');
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'code ⛔ verdict on a line mentioning Plan Review must still block');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('plan pending: state file warn mode — pending plan review warns on stderr but allows stop', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-pending-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { passed: false },
+      doc_review: { passed: false },
+      precommit: { passed: false },
+      plan_review: { executed: true, passed: false, degraded: false, skipped: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+  });
+  assert.equal(result.status, 0);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.ok(
+    result.stderr.includes('Plan review in progress'),
+    `pending plan review should emit stderr advisory, got: ${result.stderr}`
+  );
+});
+
+test('plan pending: state file strict — pending plan never joins MISSING (all other gates passed)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-strict-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      plan_review: { executed: true, passed: false, degraded: false, skipped: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 0, `plan pending must be warn-only even in strict mode, stderr: ${result.stderr}`);
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, true);
+  assert.ok(result.stderr.includes('Plan review in progress'));
+});
+
+test('plan pending: degraded plan review does not emit pending advisory', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-plan-degraded-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      plan_review: { executed: true, passed: false, degraded: true, skipped: false, status_reason: 'reviewer-unavailable' },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+  });
+  assert.equal(result.status, 0);
+  assert.ok(
+    !result.stderr.includes('Plan review in progress'),
+    `degraded plan is terminal, not pending; got: ${result.stderr}`
+  );
+});
+
+test('plan pending: terminal/inactive plan states do not emit pending advisory', () => {
+  const fixtures = [
+    { name: 'passed', plan_review: { executed: true, passed: true, degraded: false, skipped: false } },
+    { name: 'skipped', plan_review: { executed: true, passed: false, degraded: false, skipped: true, status_reason: 'user-skip' } },
+    { name: 'needs-human', plan_review: { executed: true, passed: false, degraded: false, skipped: false, status_reason: 'needs-human' } },
+    { name: 'not-executed', plan_review: { executed: false, passed: false, degraded: false, skipped: false } },
+    { name: 'absent', plan_review: undefined },
+  ];
+  for (const fixture of fixtures) {
+    const workDir = makeTempDir(`sd0x-stop-guard-plan-neg-${fixture.name}-`);
+    const binDir = setupStubBin();
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    const state = { has_code_change: false, has_doc_change: false };
+    if (fixture.plan_review) state.plan_review = fixture.plan_review;
+    writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(state));
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: { transcript_path: transcriptPath },
+    });
+    assert.equal(result.status, 0, `${fixture.name}: should allow stop`);
+    assert.ok(
+      !result.stderr.includes('Plan review in progress'),
+      `${fixture.name}: must not emit pending advisory, got: ${result.stderr}`
+    );
+  }
 });
