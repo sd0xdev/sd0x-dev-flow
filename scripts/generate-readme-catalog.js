@@ -162,10 +162,10 @@ function buildWhatsIncludedCount({ publicCount, bundledCount }) {
     '|----------|-------|---------|',
     `| Skills | ${publicCount} public (${bundledCount} bundled) | \`/project-setup\`, \`/codex-review-fast\`, \`/verify\`, \`/smart-commit\`, \`/deep-research\` |`,
     '| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |',
-    '| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |',
+    '| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |',
     '| Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |',
-    // Static counts — update when adding/removing scripts
-    '| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |',
+    // Static counts — update when adding/removing scripts (top-level scripts/*.sh + *.js)
+    '| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |',
   ].join('\n');
 }
 

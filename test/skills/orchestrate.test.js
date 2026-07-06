@@ -161,7 +161,11 @@ test('orchestrate is registered in docs/skill-catalog.yml under planning', () =>
 
 test('orchestrate appears in the CLAUDE.md command quick references', () => {
   for (const rel of ['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.template.md']) {
-    const content = readFileSync(resolve(root, rel), 'utf8');
+    const path = resolve(root, rel);
+    // .claude/ is gitignored local install state — absent in fresh clones,
+    // worktrees, and CI. Only assert it when the local install exists.
+    if (rel.startsWith('.claude/') && !existsSync(path)) continue;
+    const content = readFileSync(path, 'utf8');
     assert.match(content, /\| `\/orchestrate` \|/, `${rel} quick reference should include /orchestrate`);
   }
 });

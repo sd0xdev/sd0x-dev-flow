@@ -26,7 +26,7 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 | 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `✅ All Pass` gate markers parsed into durable state | [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (producer) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser) |
 | 3 | **Context recovery across compaction** | `[AUTO_LOOP_RESUME]` stdout injection after SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 hook event types dispatched to 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 86 of 95 public skills declare `allowed-tools` |
+| 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 89 of 98 public skills declare `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Dual review: Codex (primary) + Claude (secondary) dispatched in parallel on every review cycle | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Dual Review Mode) |
 | 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + convergence plateau detection | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
@@ -55,7 +55,7 @@ Most harness projects cover 2–4 of these. sd0x-dev-flow covers all 10 — whic
 /project-setup
 ```
 
-One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 14 rules + 9 hooks.
+One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 14 rules + 8 hooks.
 
 Use `--lite` to only configure CLAUDE.md (skip rules/hooks).
 
@@ -249,9 +249,9 @@ Real-world scenarios showing which skills to combine and in what order.
 |----------|-------|---------|
 | Skills | 98 public (98 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |
+| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Minimal Context Footprint
@@ -421,7 +421,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 ## Rules & Hooks
 
-14 rules (always-loaded conventions) + 9 hooks (automated guardrails).
+14 rules (always-loaded conventions) + 8 hooks (automated guardrails).
 
 > **Customization**: Edit `auto-loop-project.md` to override auto-loop behavior per project. Plugin updates won't conflict — see [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 

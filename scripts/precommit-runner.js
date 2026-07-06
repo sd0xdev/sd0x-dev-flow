@@ -160,6 +160,7 @@ async function main() {
       });
     } else {
       process.stdout.write(`> skip lint_fix (no "lint:fix" script in package.json)\n`);
+      steps.push({ name: 'lint_fix', status: 'skip', reason: 'script missing' });
     }
 
     // build (full mode only)
@@ -169,6 +170,7 @@ async function main() {
         steps.push({ name: 'build', cmd, args: buildArgs });
       } else {
         process.stdout.write(`> skip build (no "build" script in package.json)\n`);
+        steps.push({ name: 'build', status: 'skip', reason: 'script missing' });
       }
     }
 
@@ -187,9 +189,18 @@ async function main() {
       }
     } else {
       process.stdout.write(`> skip test_unit (no test script in package.json)\n`);
+      steps.push({ name: 'test_unit', status: 'skip', reason: 'script missing' });
     }
 
     for (const s of steps) {
+      // Skip records flow into results so a repo with zero runnable scripts
+      // reports "PASS (all steps skipped)" instead of an unfixable FAIL that
+      // wedges the strict stop gate (mirrors verify-runner semantics).
+      if (s.status === 'skip') {
+        results.push(s);
+        appendLog(runnerLog, `[${nowISO()}] step_skip ${s.name} (${s.reason})\n`);
+        continue;
+      }
       appendLog(runnerLog, `[${nowISO()}] step_start ${s.name}\n`);
       process.stdout.write(`> running ${s.name}...\n`);
       const r = await runStep({
@@ -231,8 +242,12 @@ async function main() {
       code: r.code,
       durationMs: r.durationMs,
       logFile: r.logFile,
+      status: r.status,
+      reason: r.reason,
     })),
-    overallPass: results.length > 0 && results.every(r => r.code === 0),
+    overallPass:
+      results.length > 0 &&
+      results.every(r => r.status === 'skip' || r.code === 0),
     error: summaryError || undefined,
   };
   writeJson(path.join(logDir, 'summary.json'), summary);
@@ -257,6 +272,11 @@ async function main() {
     lines.push('- (no steps executed)');
   }
   for (const r of results) {
+    if (r.status === 'skip') {
+      lines.push(`- ⏭️ ${r.name} (skipped: ${r.reason})`);
+      lines.push('');
+      continue;
+    }
     lines.push(formatStepLine(r.name, r.code, r.durationMs, r.logFile));
     const ok = r.code === 0;
     const showTail = ok ? args.tailSuccess > 0 : true;
@@ -290,7 +310,13 @@ async function main() {
   lines.push('```');
   lines.push('');
 
-  lines.push(`## Overall: ${summary.overallPass ? '✅ PASS' : '❌ FAIL'}`);
+  const allSkipped =
+    results.length > 0 && results.every(r => r.status === 'skip');
+  lines.push(
+    `## Overall: ${summary.overallPass ? '✅ PASS' : '❌ FAIL'}${
+      allSkipped ? ' (all steps skipped — no runnable scripts)' : ''
+    }`
+  );
   lines.push('');
   lines.push('## Single-test recipes (this repo)');
   const recipes = buildRecipes(pkg, pm);

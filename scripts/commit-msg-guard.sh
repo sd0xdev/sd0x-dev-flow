@@ -16,11 +16,14 @@ if [ "${ALLOW_AI_COAUTHOR:-}" = "1" ]; then
   exit 0
 fi
 
-# Forbidden patterns (case-insensitive, POSIX ERE)
+# Forbidden patterns (case-insensitive ERE with \b word boundaries — verified
+# on both BSD and GNU grep; POSIX [[:<:]] is not portable).
+# Bare `AI`/`GPT` without boundaries false-positived on ordinary words under
+# -i: "maintainer"/"domain"/"detailed" all contain "ai".
 PATTERNS=(
-  'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)'
-  'Generated (by|with).*(Claude|Claude Code|AI|GPT|Copilot)'
-  '🤖.*(Claude|AI|GPT)'
+  'Co-Authored-By:.*(Claude|Anthropic|\bGPT\b|OpenAI|Copilot|noreply@anthropic)'
+  'Generated (by|with).*(Claude|\bAI\b|\bGPT\b|Copilot)'
+  '🤖.*(Claude|\bAI\b|\bGPT\b)'
 )
 
 FOUND=""

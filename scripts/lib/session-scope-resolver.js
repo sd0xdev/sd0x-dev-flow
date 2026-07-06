@@ -30,6 +30,9 @@ function resolveSessionScope({ cwd, all = false, scope } = {}) {
   }
 
   const scs = state.session_commit_scope;
+  // session_id check is internal consistency (scope vs state-file root), not a
+  // live-session probe: session-init rewrites the root session_id each new
+  // session, so a mismatch means the scope was written by an earlier session.
   if (!scs || scs.session_id !== state.session_id || scs.baseline_dirty_files === null || scs.baseline_dirty_files === undefined) {
     return { included: gitFiles.all, excluded: [], warned: [], mode: 'all' };
   }

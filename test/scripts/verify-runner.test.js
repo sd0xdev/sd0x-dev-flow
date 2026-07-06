@@ -171,3 +171,15 @@ test('verify full mode skips integration without --integration arg', () => {
   assert.equal(intStep.status, 'skip');
   assert.match(intStep.reason, /file not specified/);
 });
+
+test('verify zero runnable scripts → PASS with all steps skipped', () => {
+  // Cross-runner contract pin: precommit-runner and verify-runner must agree
+  // that "nothing to run" is a pass, not a wedge-inducing failure.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+
+  const { summary } = runVerify(dir, ['--mode', 'fast']);
+  assert.equal(summary.overallPass, true);
+  assert.ok(summary.steps.length > 0, 'skips must be recorded, not dropped');
+  assert.ok(summary.steps.every(step => step.status === 'skip'));
+});

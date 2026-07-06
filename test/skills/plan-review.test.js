@@ -130,8 +130,14 @@ test('review-loop-plan.md exists with verify-not-confirm loop contract', () => {
 // instead: the symlink resolves into skills/ and every bundled file is reachable
 // through it.
 
-test('.claude/skills/plan-review resolves through the skills symlink to source files', () => {
+test('.claude/skills/plan-review resolves through the skills symlink to source files', (t) => {
   const installRoot = resolve(root, '.claude/skills');
+  // .claude/ is gitignored local install state — absent in fresh clones,
+  // worktrees, and CI. The install-shape check only applies when installed.
+  if (!existsSync(installRoot)) {
+    t.skip('.claude/skills not present (gitignored local install state)');
+    return;
+  }
   const st = lstatSync(installRoot);
   if (st.isSymbolicLink()) {
     assert.equal(

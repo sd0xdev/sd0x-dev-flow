@@ -83,7 +83,7 @@ test('full precommit with all scripts passes', () => {
   );
 });
 
-test('missing lint:fix still passes with fewer steps', () => {
+test('missing lint:fix still passes, recorded as explicit skip', () => {
   const pkg = {
     name: 'temp',
     version: '1.0.0',
@@ -96,7 +96,13 @@ test('missing lint:fix still passes with fewer steps', () => {
 
   const { summary } = runPrecommit(dir, 'fast');
   assert.equal(summary.overallPass, true);
-  assert.deepEqual(summary.steps.map(step => step.name), ['test_unit']);
+  assert.deepEqual(
+    summary.steps.map(step => step.name),
+    ['lint_fix', 'test_unit']
+  );
+  const lintStep = summary.steps.find(step => step.name === 'lint_fix');
+  assert.equal(lintStep.status, 'skip');
+  assert.equal(lintStep.reason, 'script missing');
 });
 
 test('fallback to test script when test:unit missing', () => {
@@ -113,7 +119,27 @@ test('fallback to test script when test:unit missing', () => {
   const { stdout, summary } = runPrecommit(dir, 'fast');
   assert.match(stdout, /test: using "test" \(fast mode\)/);
   assert.equal(summary.overallPass, true);
-  assert.deepEqual(summary.steps.map(step => step.name), ['test_unit']);
+  assert.deepEqual(
+    summary.steps.map(step => step.name),
+    ['lint_fix', 'test_unit']
+  );
+  const ran = summary.steps.find(step => step.name === 'test_unit');
+  assert.equal(ran.status, undefined, 'test_unit actually ran (not a skip)');
+});
+
+test('zero runnable scripts → PASS with all steps skipped (no unfixable FAIL)', () => {
+  // Regression: a repo with no lint:fix/build/test scripts used to emit
+  // "## Overall: ❌ FAIL" (results.length === 0), which the strict stop
+  // gate greps as a hard failure the model can never fix. Aligned with
+  // verify-runner: skips are explicit records and all-skip is a pass.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+
+  const { stdout, summary } = runPrecommit(dir, 'full');
+  assert.equal(summary.overallPass, true);
+  assert.ok(summary.steps.length > 0, 'skips must be recorded, not dropped');
+  assert.ok(summary.steps.every(step => step.status === 'skip'));
+  assert.match(stdout, /## Overall: ✅ PASS \(all steps skipped/);
 });
 
 test('build failure makes overallPass false', () => {
