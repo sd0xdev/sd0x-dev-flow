@@ -2335,3 +2335,274 @@ test('plan max rounds: inclusive boundaries 3 and 50 are accepted', () => {
     assert.equal(state.plan_review.iteration_history.max_rounds, good, `boundary ${good} is inside the inclusive 3-50 range`);
   }
 });
+
+// === deep-explore regressions: multi-fence gate parsing (fail-closed) ===
+
+test('review gate: BLOCKED in second json fence + stray pass text → passed=false (fail-closed)', () => {
+  const workDir = makeTempDir('sd0x-gate-multifence-');
+  const binDir = setupStubBin();
+  const output = [
+    'Finding quotes a config example:',
+    '```json',
+    '{"example": true}',
+    '```',
+    '## Gate: ✅ Ready',
+    '```json',
+    '{"gate": "BLOCKED"}',
+    '```',
+  ].join('\n');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: output,
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'authoritative JSON BLOCKED must win over stray pass text');
+});
+
+test('review gate: READY json fence + matching pass text → passed=true', () => {
+  const workDir = makeTempDir('sd0x-gate-ready-');
+  const binDir = setupStubBin();
+  const output = ['## Gate: ✅ Ready', '```json', '{"gate": "READY"}', '```'].join('\n');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: output,
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true);
+});
+
+test('review gate: stray READY example without pass text → passed=false (conflict resolution)', () => {
+  const workDir = makeTempDir('sd0x-gate-strayready-');
+  const binDir = setupStubBin();
+  const output = [
+    'Blocked for P0 issues. Example of a passing payload:',
+    '```json',
+    '{"gate": "READY"}',
+    '```',
+    '## Gate: ⛔ Blocked',
+  ].join('\n');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: output,
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'JSON READY without corroborating pass text must stay blocked');
+});
+
+// === deep-explore regressions: Skill launch placeholder must not write state ===
+
+test('Skill launch placeholder (code review) → no state write, no iteration bump', () => {
+  const workDir = makeTempDir('sd0x-skill-placeholder-');
+  const binDir = setupStubBin();
+  const seeded = {
+    schema_version: 3,
+    code_review: { executed: false, passed: false },
+    iteration_history: { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0 },
+  };
+  writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Skill',
+      tool_input: { skill: 'codex-review-fast' },
+      tool_response: 'Launching skill: codex-review-fast',
+    },
+  });
+  assert.equal(result.status, 0);
+  assert.ok(result.stderr.includes('placeholder'), `stderr should note the placeholder skip, got: ${result.stderr}`);
+  const state = readState(workDir);
+  assert.equal(state.code_review.executed, false, 'launch ack must not mark review executed');
+  assert.equal(state.iteration_history.current_round, 0, 'launch ack must not consume a review round');
+});
+
+test('Skill launch placeholder (precommit) → no state write', () => {
+  const workDir = makeTempDir('sd0x-skill-placeholder-pc-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Skill',
+      tool_input: { skill: 'precommit' },
+      tool_response: 'Launching skill: precommit',
+    },
+  });
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null, 'placeholder must not create state');
+});
+
+test('Skill with real verdict markers still captures gate (pinned behavior preserved)', () => {
+  const workDir = makeTempDir('sd0x-skill-verdict-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Skill',
+      tool_input: { skill: 'codex-review-fast' },
+      tool_response: '## Gate: ✅ Ready',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true);
+});
+
+// === deep-explore regressions: contention skips instead of unlocked fallback ===
+
+test('code_review update under held lock → skipped, state not mutated (fail-closed contention)', () => {
+  const workDir = makeTempDir('sd0x-code-lock-');
+  const binDir = setupStubBin();
+  const seeded = {
+    schema_version: 3,
+    code_review: { executed: false, passed: false },
+  };
+  writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
+  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ⛔',
+    },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+  });
+  assert.equal(result.status, 0, 'contention must not fail the hook');
+  assert.ok(result.stderr.includes('lock contention'), `stderr should mention lock contention, got: ${result.stderr}`);
+  const state = readState(workDir);
+  assert.deepEqual(state.code_review, seeded.code_review, 'no unlocked fallback write under contention');
+});
+
+// === test-review supplements: jq-missing warning, locked helper contention, doc placeholder ===
+
+test('jq missing → warns that review-state tracking is disabled, writes nothing', () => {
+  const workDir = makeTempDir('sd0x-post-tool-nojq-');
+  const noJqBin = makeTempDir('sd0x-post-tool-nojq-bin-');
+  // Shim only the externals the hook touches before the jq check (`basename`
+  // under set -e, `cat` for stdin) — a bare /usr/bin:/bin PATH is not
+  // deterministic since Linux distros ship jq in /usr/bin.
+  writeExecutable(join(noJqBin, 'cat'), '#!/bin/sh\nexec /bin/cat "$@"\n');
+  writeExecutable(join(noJqBin, 'basename'), '#!/bin/sh\nexec /usr/bin/basename "$@"\n');
+  const result = spawnSync('/bin/bash', [hookPath], {
+    cwd: workDir,
+    input: JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ✅ Ready',
+    }),
+    encoding: 'utf8',
+    env: { ...process.env, PATH: noJqBin },
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /jq not found/, `stderr should surface the degradation, got: ${result.stderr}`);
+  assert.equal(readState(workDir), null, 'no state can be written without jq');
+});
+
+test('passing code_review under held lock skips changed_files reset (no unlocked write)', () => {
+  const workDir = makeTempDir('sd0x-reset-lock-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      code_review: { executed: false, passed: false },
+      changed_files_since_review: ['src/app.ts'],
+    })
+  );
+  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ✅ Ready',
+    },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /changed_files reset skipped \(lock contention\)/);
+  assert.deepEqual(
+    readState(workDir).changed_files_since_review,
+    ['src/app.ts'],
+    'stale changed_files must survive (fail-closed: review stays invalidated)'
+  );
+});
+
+test('passing precommit under held lock skips review_phase reset (no unlocked write)', () => {
+  const workDir = makeTempDir('sd0x-phase-lock-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      review_phase: 'precommit_pending',
+      precommit: { executed: false, passed: false },
+    })
+  );
+  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit' },
+      tool_output: '## Overall: ✅ PASS',
+    },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /phase reset skipped \(lock contention\)/);
+  assert.equal(
+    readState(workDir).review_phase,
+    'precommit_pending',
+    'phase transition must retry later, not clobber via unlocked write'
+  );
+});
+
+test('Skill launch placeholder (doc review) → no state write', () => {
+  const workDir = makeTempDir('sd0x-skill-placeholder-doc-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Skill',
+      tool_input: { skill: 'codex-review-doc' },
+      tool_response: 'Launching skill: codex-review-doc',
+    },
+  });
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /placeholder/);
+  assert.equal(readState(workDir), null, 'doc-review placeholder must not create state');
+});

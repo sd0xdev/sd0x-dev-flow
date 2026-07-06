@@ -54,9 +54,10 @@ try {
   data = input ? JSON.parse(input) : {};
 } catch {}
 
-// Handle .tool_input.file_path
+// Handle .tool_input.file_path (with notebook_path coalesce, mirroring jq //)
 if (query && query.includes('.tool_input.file_path')) {
-  const val = (data.tool_input && data.tool_input.file_path) || '';
+  const ti = data.tool_input || {};
+  const val = ti.file_path || (query.includes('notebook_path') ? ti.notebook_path : '') || '';
   process.stdout.write(val);
   process.exit(0);
 }
@@ -391,4 +392,19 @@ test('arbitration: registered in settings.local.json defers', () => {
     !result.stderr.includes('Blocked sensitive file'),
     'should not produce guard output'
   );
+});
+
+// === deep-explore regression: NotebookEdit must not bypass the guard ===
+
+test('NotebookEdit notebook_path targeting .env → rejected (exit 2)', () => {
+  const binDir = setupStubBin();
+  const result = spawnSync('bash', [hookPath], {
+    input: JSON.stringify({
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: '/project/.env' },
+    }),
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 2, 'guard must read notebook_path, not just file_path');
 });

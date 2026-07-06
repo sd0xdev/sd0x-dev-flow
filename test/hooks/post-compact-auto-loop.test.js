@@ -655,3 +655,22 @@ test('R10 strategic reset fires only once', () => {
     'should NOT inject strategic reset when already fired'
   );
 });
+
+test('reconciliation: dirty .ipynb keeps has_code_change → injects review', () => {
+  const cwd = makeTempDir('sd0x-pc-ipynb-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: ' M analysis/model.ipynb' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  assert.ok(
+    result.stdout.includes('/codex-review-fast'),
+    'notebook must count as code — flag must not downgrade to silent'
+  );
+});

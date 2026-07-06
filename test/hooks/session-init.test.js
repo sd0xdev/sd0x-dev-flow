@@ -264,3 +264,49 @@ test('session-init D-5: non-git dir produces null baseline', () => {
   const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
   assert.equal(state.session_commit_scope.baseline_dirty_files, null, 'should be null for non-git');
 });
+
+// ---------------------------------------------------------------------------
+// deep-explore regression: orphan .blocked sidecar cleanup
+// ---------------------------------------------------------------------------
+
+test('session-init: new session removes orphan .blocked sidecar', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ session_id: 'old-sess', code_review: { executed: true, passed: false } })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-sess' } });
+  assert.equal(result.status, 0);
+  assert.ok(
+    !existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'stale escalation marker must not outlive its session (reset is already fail-closed)'
+  );
+});
+
+test('session-init: same session keeps .blocked sidecar', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-keep-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ session_id: 'same-sess' })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({ cwd: workDir, input: { session_id: 'same-sess' } });
+  assert.equal(result.status, 0);
+  assert.ok(
+    existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'an in-session sidecar is still meaningful — resume must not relax it'
+  );
+});
+
+test('session-init: sidecar without state file removed on fresh create', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-orphan-');
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({ cwd: workDir, input: { session_id: 'fresh-sess' } });
+  assert.equal(result.status, 0);
+  assert.ok(existsSync(join(workDir, '.claude_review_state.json')), 'state created');
+  assert.ok(
+    !existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'orphan sidecar from a deleted session must be cleared'
+  );
+});

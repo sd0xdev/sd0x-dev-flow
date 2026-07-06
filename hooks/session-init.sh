@@ -60,6 +60,12 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.current_round = 0 |
       .iteration_history.findings_by_round = []
     ' "$STATE_FILE" > "$TMP" && mv "$TMP" "$STATE_FILE"
+    # A .blocked sidecar left by a crashed previous session has no other
+    # removal path (stop-guard only escalates on it; update_state clears it
+    # only after a successful locked review write). The reset above already
+    # puts every gate at executed=false — fail-closed — so the stale
+    # escalation marker must not outlive its session.
+    rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
     # Initialize session commit scope with baseline (D-5)
     BASELINE=$(_capture_baseline)
     TMP_SCOPE=$(mktemp)
@@ -90,4 +96,7 @@ else
       "updated_at": $now
     }
   }' > "$STATE_FILE"
+  # Same rationale as the reset branch: a sidecar without its state file is
+  # an orphan from a deleted/crashed session — clear it with the fresh start.
+  rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
 fi

@@ -285,3 +285,20 @@ test('hook always exits 0 (non-blocking)', () => {
   const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
   assert.equal(result.status, 0, 'hook must always exit 0');
 });
+
+test('stale-state reconciliation: untracked .ipynb keeps has_code_change → inject', () => {
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: true,
+    code_review: { passed: false },
+  });
+  writeFileSync(join(dir, 'analysis.ipynb'), '{}');
+  const shimDir = makeTimeoutShimDir();
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    PATH: `${shimDir}:${process.env.PATH}`,
+  });
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes('[PENDING_REVIEW]'), 'notebook counts as code — must inject');
+  assert.ok(result.stdout.includes('/codex-review-fast'));
+});

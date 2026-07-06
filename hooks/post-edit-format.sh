@@ -87,7 +87,10 @@ if ! command -v jq &> /dev/null; then
 fi
 
 # Use printf to avoid echo interpretation issues
-file_path=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
+# NotebookEdit matches the Edit|Write hook matcher but carries notebook_path,
+# not file_path — without the fallback, notebook edits silently bypass all
+# change tracking and review gates.
+file_path=$(printf '%s' "$INPUT" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
 
 if [[ -z "$file_path" ]]; then
   exit 0
@@ -119,16 +122,22 @@ fi
 # === Auto-format supported file types ===
 if [[ "${HOOK_NO_FORMAT:-}" != "1" ]]; then
   if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|rb|php|json|md|mdx|yaml|yml)$'; then
-    has_prettier=false
-    # Only run if project has prettier configured
-    if [[ -f "node_modules/.bin/prettier" ]] || \
-       [[ -f ".prettierrc" ]] || [[ -f ".prettierrc.json" ]] || [[ -f ".prettierrc.js" ]] || \
-       [[ -f "prettier.config.js" ]] || [[ -f "prettier.config.mjs" ]]; then
-      has_prettier=true
+    # Require an installed prettier binary. Config files alone used to route
+    # through `npx prettier`, which on a config-only repo downloads prettier
+    # from the network on every single edit (no timeout, one fetch per file).
+    # Local node_modules binary = project opted in via dependency; a global
+    # binary still needs a config file as the opt-in signal.
+    prettier_bin=""
+    if [[ -x "node_modules/.bin/prettier" ]]; then
+      prettier_bin="node_modules/.bin/prettier"
+    elif command -v prettier >/dev/null 2>&1 && {
+        [[ -f ".prettierrc" ]] || [[ -f ".prettierrc.json" ]] || [[ -f ".prettierrc.js" ]] || \
+        [[ -f "prettier.config.js" ]] || [[ -f "prettier.config.mjs" ]]; }; then
+      prettier_bin="prettier"
     fi
 
-    if [[ "$has_prettier" == "true" ]]; then
-      npx prettier --write "$file_path" 2>/dev/null || true
+    if [[ -n "$prettier_bin" ]]; then
+      "$prettier_bin" --write "$file_path" 2>/dev/null || true
     fi
   fi
 fi
@@ -337,7 +346,7 @@ _track_session_touched_file() {
 
 # Track code changes (all recognized code extensions, incl. shell scripts: sh/bash/zsh —
 # this repo's own hooks are .sh, so shell edits must engage the review gate)
-if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)$'; then
+if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)$'; then
   if _lock; then
     update_change_flag "has_code_change"
     _track_changed_file "$file_path" || true
@@ -445,7 +454,7 @@ fi
 # Track non-code/non-doc files for session commit scope (D-5)
 # Covers .json, .yml, .toml, lockfiles etc. that aren't in the code/doc branches above.
 # (Shell scripts sh/bash/zsh are now classified as code above, so they're excluded here.)
-if ! echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|md|mdx)$'; then
+if ! echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb|md|mdx)$'; then
   _track_session_touched_file "$file_path" || true
 fi
 

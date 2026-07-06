@@ -157,7 +157,7 @@ if ! command -v jq &> /dev/null; then
     echo '{"ok":true,"reason":"jq unavailable; review state unverified (warn mode)"}'
     exit 0
   fi
-  echo "[Stop Guard] jq not installed, no review state — allowing stop" >&2
+  echo "[Stop Guard] jq not installed, no review state — allowing stop (review gates are UNENFORCED: without jq the state writer never creates a state file, so nothing here can ever block; install jq to enable enforcement)" >&2
   echo '{"ok":true,"reason":"jq not installed; no review state"}'
   exit 0
 fi
@@ -307,7 +307,7 @@ if [[ -f "$STATE_FILE" ]]; then
       # SIGPIPE the writer: under `set -o pipefail`, a large -uall output piped into
       # `grep -q` lets grep close the pipe early, killing echo (exit 141), which would
       # flip the pipeline non-zero and falsely downgrade HAS_CODE_CHANGE.
-      if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)($|[[:space:]]|")' <<< "$GIT_PORCELAIN_CLEAN"; then
+      if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)($|[[:space:]]|")' <<< "$GIT_PORCELAIN_CLEAN"; then
         HAS_CODE_CHANGE="false"
         if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
           echo "[Debug] Stale has_code_change overridden to false (no code in git status)" >&2
@@ -333,7 +333,7 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   CONVERSATION=$(tail -500 "$TRANSCRIPT" 2>/dev/null || echo "")
 
   # Check change types
-  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)"' | grep -E '"(Edit|Write)"' | head -1 || true)
+  HAS_CODE_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)"' | grep -E '"(Edit|Write|NotebookEdit)"' | head -1 || true)
   HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(md|mdx)"' | grep -E '"(Edit|Write)"' | head -1 || true)
 
   # Check if required commands were executed
@@ -439,7 +439,10 @@ fi
 # === Output result ===
 if [[ -n "${MISSING:-}" ]]; then
   if [[ "$GUARD_MODE" == "strict" ]]; then
+    # On exit 2 only stderr reaches the model (stdout JSON is test-consumed),
+    # so the actionable instruction must be here, not just in the JSON.
     echo "[Stop Guard] STRICT: Missing steps:${MISSING}" >&2
+    echo "[Stop Guard] Execute immediately:${MISSING} — invoke the command now; do not ask the user, do not summarize." >&2
     printf '{"ok":false,"reason":"Missing required steps","description":"Execute immediately:%s, do not ask user"}\n' "${MISSING}"
     exit 2
   else
@@ -454,7 +457,9 @@ elif [[ -n "${BLOCKED_REASON:-}" ]]; then
     BLOCK_DESC="Max rounds reached; escalate to human, do not auto-retry"
   fi
   if [[ "$GUARD_MODE" == "strict" ]]; then
+    # Same as the MISSING branch: the model only sees stderr on exit 2.
     echo "[Stop Guard] STRICT: ${BLOCKED_REASON}" >&2
+    echo "[Stop Guard] ${BLOCK_DESC}" >&2
     printf '{"ok":false,"reason":"%s","description":"%s"}\n' "${BLOCKED_REASON}" "${BLOCK_DESC}"
     exit 2
   else

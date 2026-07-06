@@ -84,7 +84,7 @@ if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
   # writer under `set -o pipefail`, flipping the pipeline non-zero and falsely
   # downgrading the flag on large -uall output.
   if [[ "$HAS_CODE" == "true" ]]; then
-    if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
+    if ! grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)($|[[:space:]]|")' <<< "$GIT_PORCELAIN"; then
       HAS_CODE="false"
     fi
   fi

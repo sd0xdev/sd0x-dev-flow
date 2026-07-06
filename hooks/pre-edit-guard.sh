@@ -43,7 +43,9 @@ fi
 stdin_data=$(cat)
 
 # Read file_path from stdin JSON (use printf to avoid echo interpretation issues)
-file_path=$(printf '%s' "$stdin_data" | jq -r '.tool_input.file_path // empty' 2>/dev/null || true)
+# NotebookEdit carries notebook_path instead of file_path — fall back so
+# notebook edits get the same guard instead of silently passing through.
+file_path=$(printf '%s' "$stdin_data" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty' 2>/dev/null || true)
 
 if [[ -z "$file_path" ]]; then
   exit 0

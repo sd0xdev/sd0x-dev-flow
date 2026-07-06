@@ -262,3 +262,22 @@ test('reconciliation: dirty shell hook (.sh) keeps flag → injects review', () 
     'a dirty .sh hook is code → flag kept → inject (not silently downgraded)'
   );
 });
+
+test('reconciliation: dirty .ipynb keeps has_code_change → injects review', () => {
+  const cwd = makeTempDir('sd0x-ps-ipynb-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: ' M analysis/model.ipynb' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  assert.ok(
+    result.stdout.includes('/codex-review-fast'),
+    'notebook must count as code — flag must not downgrade to silent'
+  );
+});

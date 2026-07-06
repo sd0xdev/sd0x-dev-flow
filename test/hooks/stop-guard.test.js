@@ -2464,3 +2464,94 @@ test('plan pending: terminal/inactive plan states do not emit pending advisory',
     );
   }
 });
+
+// === deep-explore regression: strict exit-2 stderr must carry the instruction ===
+// On exit 2 only stderr reaches the model; the stdout JSON description is
+// consumed by tests alone. Pin that the actionable guidance is on stderr.
+
+test('strict block puts actionable instruction on stderr (not only stdout JSON)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-stderr-guidance-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: true },
+      doc_review: { passed: true },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2);
+  assert.match(
+    result.stderr,
+    /do not ask the user|Fix issues and re-run|escalate to human/,
+    `stderr must instruct the model what to do next, got: ${result.stderr}`
+  );
+});
+
+// === deep-explore regression: .ipynb counts as code in reconciliation ===
+// post-edit-format classifies notebook edits as code changes; the porcelain
+// reconciliation here must agree, or a dirty notebook downgrades
+// has_code_change to false and strict stop lets the session end unreviewed.
+
+test('dirty .ipynb in porcelain keeps has_code_change true (strict blocks)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-ipynb-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M analysis/model.ipynb');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'dirty notebook must not be reconciled away as non-code');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('transcript strict: NotebookEdit without review blocks (fallback tool filter)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-transcript-nb-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.txt');
+  const transcript =
+    '{"tool_name":"NotebookEdit","tool_input":{"notebook_path":"analysis/model.ipynb"}}\n';
+  writeFileSync(transcriptPath, transcript);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+  assert.equal(result.status, 2, 'notebook edit in transcript must count as a code change');
+  const payload = parseJson(result.stdout);
+  assert.equal(payload.ok, false);
+});
+
+test('jq unavailable + no state file → allows stop but stderr notes gates UNENFORCED', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-nostate-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  const result = runHookNoJq({ cwd: workDir, input: { transcript_path: transcriptPath } });
+  assert.equal(result.status, 0, 'nothing to enforce without state file');
+  assert.match(result.stderr, /UNENFORCED/, `stderr must warn enforcement is off, got: ${result.stderr}`);
+});

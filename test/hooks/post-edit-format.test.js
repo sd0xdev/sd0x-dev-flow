@@ -75,9 +75,10 @@ try {
   data = input ? JSON.parse(input) : {};
 } catch {}
 
-// Handle .tool_input.file_path
+// Handle .tool_input.file_path (with notebook_path coalesce, mirroring jq //)
 if (query && query.includes('.tool_input.file_path')) {
-  const val = (data.tool_input && data.tool_input.file_path) || '';
+  const ti = data.tool_input || {};
+  const val = ti.file_path || (query.includes('notebook_path') ? ti.notebook_path : '') || '';
   process.stdout.write(val);
   process.exit(0);
 }
@@ -1175,5 +1176,118 @@ test('R6: init rejects out-of-range override (100) and uses default', () => {
   assert.equal(
     state.iteration_history.max_rounds, 10,
     'out-of-range override must fall back to default'
+  );
+});
+
+// === deep-explore regressions: prettier binary requirement + NotebookEdit ===
+
+test('prettier config without installed binary → npx never invoked (no network fetch)', () => {
+  const workDir = makeTempDir('sd0x-format-npx-guard-');
+  const binDir = setupStubBin();
+  const marker = join(workDir, 'npx-invoked.marker');
+  writeExecutable(join(binDir, 'npx'), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+  writeFileSync(join(workDir, '.prettierrc'), '{}');
+  writeFileSync(join(workDir, 'app.js'), 'const x = 1;\n');
+  const result = runHook({ cwd: workDir, binDir, filePath: 'app.js' });
+  assert.equal(result.status, 0);
+  assert.ok(
+    !existsSync(marker),
+    'config-only repo must not route through npx (per-edit network download)'
+  );
+});
+
+test('local node_modules prettier binary → invoked directly (no config needed)', () => {
+  const workDir = makeTempDir('sd0x-format-local-prettier-');
+  const binDir = setupStubBin();
+  const marker = join(workDir, 'prettier-invoked.marker');
+  mkdirSync(join(workDir, 'node_modules', '.bin'), { recursive: true });
+  writeExecutable(
+    join(workDir, 'node_modules', '.bin', 'prettier'),
+    `#!/bin/sh\ntouch "${marker}"\nexit 0\n`
+  );
+  writeFileSync(join(workDir, 'app.js'), 'const x = 1;\n');
+  const result = runHook({ cwd: workDir, binDir, filePath: 'app.js' });
+  assert.equal(result.status, 0);
+  assert.ok(existsSync(marker), 'installed local prettier should run');
+});
+
+test('NotebookEdit notebook_path → tracked as code change (gate bypass regression)', () => {
+  const workDir = makeTempDir('sd0x-format-notebook-');
+  const binDir = setupStubBin();
+  writeFileSync(join(workDir, 'analysis.ipynb'), '{}');
+  const result = spawnSync('bash', [hookPath], {
+    cwd: workDir,
+    input: JSON.stringify({
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: 'analysis.ipynb' },
+    }),
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.ok(state, 'notebook edit must create/update review state');
+  assert.equal(state.has_code_change, true, 'notebook edit must invalidate review');
+});
+
+test('global prettier + config file → invoked', () => {
+  const workDir = makeTempDir('sd0x-format-global-prettier-');
+  const binDir = setupStubBin();
+  const marker = join(workDir, 'global-prettier.marker');
+  writeExecutable(join(binDir, 'prettier'), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+  writeFileSync(join(workDir, '.prettierrc'), '{}');
+  writeFileSync(join(workDir, 'app.js'), 'const x = 1;\n');
+  const result = runHook({ cwd: workDir, binDir, filePath: 'app.js' });
+  assert.equal(result.status, 0);
+  assert.ok(existsSync(marker), 'global prettier with project config should run');
+});
+
+test('global prettier without config file → not invoked (no project opt-in)', () => {
+  const workDir = makeTempDir('sd0x-format-global-noconfig-');
+  const binDir = setupStubBin();
+  const marker = join(workDir, 'global-prettier.marker');
+  writeExecutable(join(binDir, 'prettier'), `#!/bin/sh\ntouch "${marker}"\nexit 0\n`);
+  writeFileSync(join(workDir, 'app.js'), 'const x = 1;\n');
+  const result = runHook({ cwd: workDir, binDir, filePath: 'app.js' });
+  assert.equal(result.status, 0);
+  assert.ok(!existsSync(marker), 'global binary alone is not a project opt-in signal');
+});
+
+test('.ipynb with valid session scope → code branch: has_code_change + touched_files', () => {
+  const workDir = makeTempDir('sd0x-format-notebook-scope-');
+  const binDir = setupStubBin();
+  spawnSync('git', ['init', '--initial-branch=main'], { cwd: workDir });
+  const resolvedWorkDir = realpathSync(workDir);
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 2,
+      session_id: 'sess-1',
+      session_commit_scope: {
+        session_id: 'sess-1',
+        baseline_dirty_files: [],
+        touched_files: [],
+        updated_at: '2026-01-01T00:00:00Z',
+      },
+    })
+  );
+  writeFileSync(join(workDir, 'analysis.ipynb'), '{}');
+  const result = spawnSync('bash', [hookPath], {
+    cwd: workDir,
+    input: JSON.stringify({
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: `${resolvedWorkDir}/analysis.ipynb` },
+    }),
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HOOK_NO_FORMAT: '1' },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  // has_code_change proves the notebook took the code branch (the generic
+  // non-code branch tracks touched_files but never sets this flag).
+  assert.equal(state.has_code_change, true, 'notebook must classify as code');
+  assert.ok(
+    state.session_commit_scope.touched_files.includes('analysis.ipynb'),
+    'code branch must also record the notebook in session commit scope'
   );
 });

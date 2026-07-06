@@ -34,7 +34,8 @@ STATE_FILE=".claude_review_state.json"
 
 # === Portable mkdir locking (macOS has no flock) ===
 LOCKDIR="${STATE_FILE}.lockdir"
-LOCK_TIMEOUT=5
+# Env-overridable so contention tests don't pay the full wait per lock site.
+LOCK_TIMEOUT="${REVIEW_STATE_LOCK_TIMEOUT:-5}"
 LOCK_TTL=30
 HAVE_LOCK=0
 
@@ -74,6 +75,9 @@ INPUT=$(cat)
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
+  # Without jq no state is ever written, so every downstream gate silently
+  # fails open — surface the degradation instead of exiting mutely.
+  echo "[Review State] jq not found — review-state tracking disabled (gates unenforced)" >&2
   exit 0
 fi
 
@@ -288,18 +292,12 @@ update_state() {
     fi
     _unlock
   else
-    # Fail-open for review state (not as critical as aggregate gate)
-    init_state_file
-    local now
-    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    local tmp
-    tmp=$(mktemp)
-    jq --arg key "$key" \
-       --argjson executed "$executed" \
-       --argjson passed "$passed" \
-       --arg now "$now" \
-       '.[$key].executed = $executed | .[$key].passed = $passed | .[$key].last_run = $now | .updated_at = $now' \
-       "$STATE_FILE" > "$tmp" && mv "$tmp" "$STATE_FILE" 2>/dev/null || true
+    # Lock contention: skip rather than fall back to an unlocked
+    # read-modify-write — the unlocked mv could clobber a concurrent locked
+    # writer (worst case reverting an aggregate BLOCKED) with stale content.
+    # Skipping is fail-closed: an unrecorded review stays "not executed" and
+    # the stop gate keeps asking for it.
+    echo "[Review State] ${key} update skipped (lock contention)" >&2
   fi
 }
 
@@ -509,9 +507,16 @@ update_plan_verdict() {
   _unlock
 }
 
-# Reset changed files array on review pass (D-3)
+# Reset changed files array on review pass (D-3).
+# Locked: an unlocked mv here can revert a concurrent locked write (e.g. an
+# aggregate BLOCKED) with stale pre-write content. On contention, skip —
+# keeping stale changed_files is fail-closed (review stays invalidated).
 _reset_changed_files() {
   [[ ! -f "$STATE_FILE" ]] && return 0
+  if ! _lock; then
+    echo "[Review State] changed_files reset skipped (lock contention)" >&2
+    return 0
+  fi
   local tmp
   tmp=$(mktemp)
   if jq '.changed_files_since_review = []' "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
@@ -519,6 +524,27 @@ _reset_changed_files() {
   else
     rm -f "$tmp" 2>/dev/null
   fi
+  _unlock
+  return 0
+}
+
+# Set review_phase=idle after a passing precommit. Locked for the same reason
+# as _reset_changed_files; on contention, skip — the phase transition retries
+# on the next passing precommit.
+_set_phase_idle() {
+  [[ ! -f "$STATE_FILE" ]] && return 0
+  if ! _lock; then
+    echo "[Review State] phase reset skipped (lock contention)" >&2
+    return 0
+  fi
+  local tmp
+  tmp=$(mktemp)
+  if jq '.review_phase = "idle"' "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    mv "$tmp" "$STATE_FILE"
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+  _unlock
   return 0
 }
 
@@ -777,14 +803,39 @@ check_passed() {
   fi
 }
 
+# Skill tool_response is a launch acknowledgement ("Launching skill: <name>"),
+# not the review verdict — the verdict arrives later via the MCP or Bash
+# routes. Only treat Skill output as a verdict when it carries an explicit
+# gate/verdict marker; recording the placeholder would both double-count the
+# review round (once here, once on the MCP verdict) and transiently flip
+# passed=false on a passing review.
+_skill_output_has_verdict() {
+  printf '%s' "$1" | grep -qE '## Gate:|"gate"[[:space:]]*:|## Overall:|✅ All Pass|✅ Mergeable|⛔'
+}
+
 # D-5: Parse review gate with JSON-first, text sentinel fallback
 # Conflict policy: JSON READY + text BLOCKED → fail-closed BLOCKED
 _parse_review_gate() {
   local output="$1"
   local json_gate text_gate
 
-  # Try JSON block: look for {"gate":"READY"} or {"gate":"BLOCKED"}
-  json_gate=$(echo "$output" | sed -n '/```json/,/```/p' | sed '1d;$d' | jq -r '.gate // empty' 2>/dev/null || true)
+  # Scan every {"gate":"..."} occurrence in the output. The previous
+  # single-range sed extraction (`/```json/,/```/p`) broke when the output
+  # carried 2+ ```json fences: the range reopened on the second fence, inner
+  # fence lines survived, jq failed, and the authoritative gate was silently
+  # dropped — falling open to the text sentinel. Scanning all occurrences
+  # with BLOCKED-wins keeps stray example blocks fail-closed: noise can only
+  # tighten the gate, never relax it.
+  json_gate=""
+  local all_gates
+  all_gates=$(printf '%s\n' "$output" | grep -oE '"gate"[[:space:]]*:[[:space:]]*"(READY|BLOCKED)"' | grep -oE 'READY|BLOCKED' || true)
+  if [[ -n "$all_gates" ]]; then
+    if printf '%s\n' "$all_gates" | grep -qx 'BLOCKED'; then
+      json_gate="BLOCKED"
+    else
+      json_gate="READY"
+    fi
+  fi
 
   # Text sentinel
   text_gate=$(check_passed "$output")
@@ -883,32 +934,40 @@ fi
 
 # /codex-review-fast or /codex-review (also matches Skill name: sd0x-dev-flow:codex-review-fast)
 if echo "$COMMAND" | grep -qE '/?(sd0x-dev-flow:)?codex-review(-fast)?($|\s)'; then
-  passed=$(_parse_review_gate "$TOOL_OUTPUT")
-  update_state "code_review" "true" "$passed"
-  [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
-  _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
-  echo "[Review State] code_review updated: passed=$passed" >&2
+  if [[ "$TOOL_NAME" == "Skill" ]] && ! _skill_output_has_verdict "$TOOL_OUTPUT"; then
+    echo "[Review State] Skill launch placeholder — no code_review verdict to record" >&2
+  else
+    passed=$(_parse_review_gate "$TOOL_OUTPUT")
+    update_state "code_review" "true" "$passed"
+    [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
+    _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
+    echo "[Review State] code_review updated: passed=$passed" >&2
+  fi
 fi
 
 # /codex-review-doc or /review-spec (also matches Skill name form)
 if echo "$COMMAND" | grep -qE '/?(sd0x-dev-flow:)?codex-review-doc($|[[:space:]])|/?(sd0x-dev-flow:)?review-spec($|[[:space:]])'; then
-  passed=$(check_passed "$TOOL_OUTPUT")
-  update_state "doc_review" "true" "$passed"
-  echo "[Review State] doc_review updated: passed=$passed" >&2
+  if [[ "$TOOL_NAME" == "Skill" ]] && ! _skill_output_has_verdict "$TOOL_OUTPUT"; then
+    echo "[Review State] Skill launch placeholder — no doc_review verdict to record" >&2
+  else
+    passed=$(check_passed "$TOOL_OUTPUT")
+    update_state "doc_review" "true" "$passed"
+    echo "[Review State] doc_review updated: passed=$passed" >&2
+  fi
 fi
 
 # /precommit or /precommit-fast (also matches Skill name form)
 if echo "$COMMAND" | grep -qE '/?(sd0x-dev-flow:)?precommit(-fast)?($|\s)'; then
-  passed=$(check_passed "$TOOL_OUTPUT")
-  update_state "precommit" "true" "$passed"
-  if [[ "$passed" == "true" ]]; then
-    ( _phase_tmp=$(mktemp)
-      if jq '.review_phase = "idle"' "$STATE_FILE" > "$_phase_tmp" 2>/dev/null && [[ -s "$_phase_tmp" ]]; then
-        mv "$_phase_tmp" "$STATE_FILE"
-      else rm -f "$_phase_tmp" 2>/dev/null; fi
-    ) 2>/dev/null || true
+  if [[ "$TOOL_NAME" == "Skill" ]] && ! _skill_output_has_verdict "$TOOL_OUTPUT"; then
+    echo "[Review State] Skill launch placeholder — no precommit verdict to record" >&2
+  else
+    passed=$(check_passed "$TOOL_OUTPUT")
+    update_state "precommit" "true" "$passed"
+    if [[ "$passed" == "true" ]]; then
+      _set_phase_idle || true
+    fi
+    echo "[Review State] precommit updated: passed=$passed" >&2
   fi
-  echo "[Review State] precommit updated: passed=$passed" >&2
 fi
 
 # === MCP sentinel routing (no command to parse) ===
@@ -969,11 +1028,7 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
   # Priority 3: precommit
   elif echo "$TOOL_OUTPUT" | grep -qE '## Overall: ✅ PASS'; then
     update_state "precommit" "true" "true"
-    ( _phase_tmp=$(mktemp)
-      if jq '.review_phase = "idle"' "$STATE_FILE" > "$_phase_tmp" 2>/dev/null && [[ -s "$_phase_tmp" ]]; then
-        mv "$_phase_tmp" "$STATE_FILE"
-      else rm -f "$_phase_tmp" 2>/dev/null; fi
-    ) 2>/dev/null || true
+    _set_phase_idle || true
     echo "[Review State] precommit updated (MCP): passed=true" >&2
   elif echo "$TOOL_OUTPUT" | grep -qE '## Overall: (⛔ FAIL|❌ FAIL)'; then
     update_state "precommit" "true" "false"
