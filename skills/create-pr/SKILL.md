@@ -86,15 +86,15 @@ Format: `<type>: [<TICKET>] <concise summary>`
 - Use imperative mood in bullet points
 - Omit Ticket section if no ticket ID or `{ISSUE_TRACKER_URL}` not configured
 
-**Forbidden patterns** (POSIX ERE, case-insensitive — canonical source: `scripts/commit-msg-guard.sh:19-23`):
+**Forbidden patterns** (case-insensitive ERE with `\b` word boundaries — canonical source: `scripts/commit-msg-guard.sh`):
 
 | Pattern Category | Regex |
 |-----------------|-------|
-| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
 
-> **Note**: `\|` in the table above is Markdown table escaping. Actual POSIX ERE uses unescaped `|`.
+> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. `\b` prevents bare `AI`/`GPT` from matching inside ordinary words ("maintainer", "domain") under `-i`.
 
 ### 4b. AI Content Sanitization
 

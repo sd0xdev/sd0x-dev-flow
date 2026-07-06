@@ -228,18 +228,19 @@ AI_CO_AUTHOR="${AI_CO_AUTHOR:-0}"  # set to 1 when --ai-co-author passed
 
 validate_msg() {
   local tmpfile="$1"
+  # \b 字界避免裸 AI/GPT 在 -i 下誤中一般字詞（maintainer、domain）
   # Pattern 1: Co-Authored-By AI（若 --ai-co-author 啟用，僅允許精確格式）
   if [ "$AI_CO_AUTHOR" = "1" ]; then
     # 移除精確允許行後再檢查殘留 AI patterns
     grep -Eiv '^Co-Authored-By: Claude <noreply@anthropic\.com>$' "$tmpfile" | \
-      grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' && return 1
+      grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|\bGPT\b|OpenAI|Copilot|noreply@anthropic)' && return 1
   else
-    grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
+    grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|\bGPT\b|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
   fi
   # Pattern 2: Generated-by tag（always blocked）
-  grep -Ei 'Generated (by|with).*(Claude|Claude Code|AI|GPT|Copilot)' "$tmpfile" && return 1
+  grep -Ei 'Generated (by|with).*(Claude|\bAI\b|\bGPT\b|Copilot)' "$tmpfile" && return 1
   # Pattern 3: Emoji robot tag（always blocked）
-  grep -Ei '🤖.*(Claude|AI|GPT)' "$tmpfile" && return 1
+  grep -Ei '🤖.*(Claude|\bAI\b|\bGPT\b)' "$tmpfile" && return 1
   return 0
 }
 
@@ -280,13 +281,13 @@ MSG=$(git log -1 --format='%B')
 
 **統一為 POSIX ERE**（`grep -E`）:
 
-| Pattern | 舊（混合） | 新（POSIX ERE, `grep -Ei`） |
+| Pattern | 舊（混合） | 新（ERE + `\b` 字界, `grep -Ei`） |
 |---------|-----------|----------------|
-| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|AI\|GPT)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
+| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
 
-**注意**：POSIX ERE 中 `|` 和 `()` 不需要反斜線跳脫。上表「新」欄位中的 `\|` 為 Markdown 表格跳脫，實際 regex 為 `|`。所有 pattern 使用 `grep -Ei`（ERE + case-insensitive）。
+**注意**：ERE 中 `|` 和 `()` 不需要反斜線跳脫。上表「新」欄位中的 `\|` 為 Markdown 表格跳脫，實際 regex 為 `|`。所有 pattern 使用 `grep -Ei`（ERE + case-insensitive）。裸 `AI`/`GPT` 在 `-i` 下會誤中 "maintainer"、"domain" 等一般字詞，故加 `\b` 字界（BSD 與 GNU grep 皆支援；POSIX `[[:<:]]` 不可攜）。
 
 **Canonical source**: `scripts/commit-msg-guard.sh` 為正規化後的唯一真實來源，SKILL.md 引用之。
 

@@ -1,7 +1,7 @@
 ---
 name: dep-audit
 description: "Audit dependency security risks"
-allowed-tools: Bash(yarn audit *), Bash(npm audit *), Bash(pnpm audit *), Bash(npx *), Bash(bash *), Read, Glob
+allowed-tools: Bash(yarn audit:*), Bash(npm audit:*), Bash(pnpm audit:*), Bash(npx:*), Bash(bash:*), Read, Glob
 ---
 
 # Dependency Audit

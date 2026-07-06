@@ -13,20 +13,20 @@
 
 | Module | 可復用部分 |
 | ------ | ---------- |
-| `scripts/commit-msg-guard.sh:19-23` | Canonical forbidden patterns（3 組 POSIX ERE） |
-| `skills/smart-commit/SKILL.md:290-305` | AI trailer sanitization flow、`--ai-co-author` narrow whitelist |
+| `scripts/commit-msg-guard.sh` | Canonical forbidden patterns（3 組 ERE + `\b` 字界） |
+| `skills/smart-commit/SKILL.md`（AI Attribution Sanitization 節） | AI trailer sanitization flow、`--ai-co-author` narrow whitelist |
 | `skills/smart-commit/references/execute-mode.md` | `validate_msg()` 實作、post-commit detection |
 | `skills/create-pr/SKILL.md` | 現有 PR 建立/更新 workflow（Step 1-7） |
 
 ### Canonical Forbidden Patterns
 
-來源：`scripts/commit-msg-guard.sh:19-23`（POSIX ERE, case-insensitive）
+來源：`scripts/commit-msg-guard.sh`（ERE + `\b` 字界, case-insensitive — 裸 `AI`/`GPT` 在 `-i` 下會誤中 "maintainer"、"domain" 等一般字詞）
 
 | Pattern Category | Regex |
 |-----------------|-------|
-| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
 
 ### Files Requiring Changes
 
