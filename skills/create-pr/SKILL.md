@@ -90,11 +90,11 @@ Format: `<type>: [<TICKET>] <concise summary>`
 
 | Pattern Category | Regex |
 |-----------------|-------|
-| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
-> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. `\b` prevents bare `AI`/`GPT` from matching inside ordinary words ("maintainer", "domain") under `-i`.
+> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. Only `AI` is `\b`-bounded — it prevents bare `AI` from matching inside ordinary words ("maintainer", "domain") under `-i`. `GPT` and `OpenAI` are intentionally left unbounded so they still match inside `ChatGPT` / `GPT-4` (no English word contains "gpt").
 
 ### 4b. AI Content Sanitization
 
@@ -228,7 +228,7 @@ After `gh pr create` or `gh pr edit` completes in `--execute` mode, verify the p
 gh pr view <number> --json title,body --template '{{.title}}{{"\n"}}{{.body}}'
 ```
 
-**Step 2**: Scan for forbidden patterns (same 3 POSIX ERE from Step 4b).
+**Step 2**: Scan for forbidden patterns (same 3 `ERE + \b` patterns from Step 4b).
 
 **Step 3**: If leak detected — **auto-remediate** (single attempt, using pre-sanitized snapshot from Step 4b):
 

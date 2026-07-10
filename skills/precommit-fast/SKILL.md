@@ -34,8 +34,9 @@ Run quick pre-commit checks: **lint:fix -> test** (no build step)
 Use Glob to check if `.claude/scripts/precommit-runner.js` exists in the project root.
 
 - **Found** → run: `node .claude/scripts/precommit-runner.js --mode fast --tail 60`
-  - If runner succeeds, use its output and skip to the Output section.
-  - If runner **fails**, treat as a real precommit failure (do not silently fallback).
+  - If runner emits `## Overall: ✅ PASS`, use its output and skip to the Output section.
+  - If runner emits `## Overall: ⚠️ NO CHECKS RUN` (no matching `package.json` scripts), do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection to run the project's real checks.
+  - If runner **fails** (`## Overall: ❌ FAIL`), treat as a real precommit failure (do not silently fallback).
 - **NOT found** → **Auto-install attempt**:
   1. **Node.js gate**: Use Glob to check if `package.json` exists. If no `package.json` → skip, fall through to Step 2.
   2. **Locate plugin scripts**: 3-level Glob fallback (short-circuit on first match):

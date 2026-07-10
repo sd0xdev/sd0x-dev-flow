@@ -25,7 +25,7 @@
 | ---- | ------ | ----------- |
 | `skills/smart-commit/SKILL.md` | Modify | 新增 Step 1c/1d/1e + runtime validation |
 | `commands/smart-commit.md` | Modify | Context block 加入 identity/signing 資訊 |
-| `scripts/commit-msg-guard.sh` | Modify | Regex 正規化為 POSIX ERE |
+| `scripts/commit-msg-guard.sh` | Modify | Regex 正規化為 ERE + `\b` 字界 |
 | `test/scripts/smart-commit.test.js` | New | Identity/AI guard/signing pre-flight 測試 |
 
 ## 3. Technical Solution
@@ -223,24 +223,24 @@ cat <<'EOF' > "$TMPFILE"
 <sanitized commit message>
 EOF
 
-# 3. Runtime validation（POSIX ERE, all use grep -Ei）
+# 3. Runtime validation（ERE + \b 字界, all use grep -Ei）
 AI_CO_AUTHOR="${AI_CO_AUTHOR:-0}"  # set to 1 when --ai-co-author passed
 
 validate_msg() {
   local tmpfile="$1"
-  # \b 字界避免裸 AI/GPT 在 -i 下誤中一般字詞（maintainer、domain）
+  # 僅 AI 加 \b 字界，避免 -i 下誤中一般字詞（maintainer、domain）；GPT/OpenAI 刻意不加界以匹配 ChatGPT/GPT-4
   # Pattern 1: Co-Authored-By AI（若 --ai-co-author 啟用，僅允許精確格式）
   if [ "$AI_CO_AUTHOR" = "1" ]; then
     # 移除精確允許行後再檢查殘留 AI patterns
     grep -Eiv '^Co-Authored-By: Claude <noreply@anthropic\.com>$' "$tmpfile" | \
-      grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|\bGPT\b|OpenAI|Copilot|noreply@anthropic)' && return 1
+      grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' && return 1
   else
-    grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|\bGPT\b|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
+    grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
   fi
   # Pattern 2: Generated-by tag（always blocked）
-  grep -Ei 'Generated (by|with).*(Claude|\bAI\b|\bGPT\b|Copilot)' "$tmpfile" && return 1
+  grep -Ei 'Generated (by|with).*(Claude|\bAI\b|GPT|OpenAI|Copilot)' "$tmpfile" && return 1
   # Pattern 3: Emoji robot tag（always blocked）
-  grep -Ei '🤖.*(Claude|\bAI\b|\bGPT\b)' "$tmpfile" && return 1
+  grep -Ei '🤖.*(Claude|\bAI\b|GPT|OpenAI)' "$tmpfile" && return 1
   return 0
 }
 
@@ -279,15 +279,15 @@ MSG=$(git log -1 --format='%B')
 
 **現況問題**: `SKILL.md` 用 PCRE-style（`(?:...)`），`commit-msg-guard.sh` 用 BRE-style（`\(...\)`），產生方言不一致。
 
-**統一為 POSIX ERE**（`grep -E`）:
+**統一為 ERE + `\b` 字界**（`grep -E`）:
 
 | Pattern | 舊（混合） | 新（ERE + `\b` 字界, `grep -Ei`） |
 |---------|-----------|----------------|
-| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
-| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
-**注意**：ERE 中 `|` 和 `()` 不需要反斜線跳脫。上表「新」欄位中的 `\|` 為 Markdown 表格跳脫，實際 regex 為 `|`。所有 pattern 使用 `grep -Ei`（ERE + case-insensitive）。裸 `AI`/`GPT` 在 `-i` 下會誤中 "maintainer"、"domain" 等一般字詞，故加 `\b` 字界（BSD 與 GNU grep 皆支援；POSIX `[[:<:]]` 不可攜）。
+**注意**：ERE 中 `|` 和 `()` 不需要反斜線跳脫。上表「新」欄位中的 `\|` 為 Markdown 表格跳脫，實際 regex 為 `|`。所有 pattern 使用 `grep -Ei`（ERE + case-insensitive）。裸 `AI` 在 `-i` 下會誤中 "maintainer"、"domain" 等一般字詞，故僅對 `AI` 加 `\b` 字界（BSD 與 GNU grep 皆支援；POSIX `[[:<:]]` 不可攜）；`GPT`/`OpenAI` 刻意不加字界，以匹配 `ChatGPT`/`GPT-4`（無英文字含 "gpt"）。
 
 **Canonical source**: `scripts/commit-msg-guard.sh` 為正規化後的唯一真實來源，SKILL.md 引用之。
 
@@ -330,7 +330,7 @@ MSG=$(git log -1 --format='%B')
 | W5 | 修改 SKILL.md：Step 5b `--ai-co-author` 窄白名單 | S | W4 |
 | W6 | 修改 SKILL.md：Post-commit 洩漏 hard stop | S | W4 |
 | W7 | 修改 SKILL.md：Commit plan 摘要增強 | S | W1, W2, W3 |
-| W8 | 正規化 `commit-msg-guard.sh` regex 為 POSIX ERE | S | — |
+| W8 | 正規化 `commit-msg-guard.sh` regex 為 ERE + `\b` 字界 | S | — |
 | W9 | 修改 `commands/smart-commit.md` context block | S | W1, W2 |
 | W10 | 新增 `--sign` / `--no-sign` flags | S | W2 |
 | W11 | 新增 `test/scripts/smart-commit.test.js` | M | W1–W10 |
@@ -356,7 +356,7 @@ MSG=$(git log -1 --format='%B')
 | Signing: enabled + key present | 顯示 enabled 狀態 |
 | Signing: enabled + key missing | 顯示 warning |
 | Signing: not configured | 顯示 inherit 狀態 |
-| Regex: POSIX ERE 跨平台一致性 | GNU grep 和 BSD grep 相同結果 |
+| Regex: ERE + `\b` 字界跨平台一致性 | GNU grep 和 BSD grep 相同結果 |
 | Hook detection: `core.hooksPath` awareness | 非標準 hook 路徑正確偵測 |
 
 ### 6.2 Integration Tests

@@ -322,11 +322,11 @@ Scan the generated message for forbidden patterns and **strip them silently** un
 
 | Forbidden Pattern | Regex (ERE with `\b`, `grep -Ei`) |
 |-------------------|------|
-| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|\bGPT\b\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|\bGPT\b\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|\bGPT\b)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
-> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. `\b` word boundaries keep bare `AI`/`GPT` from matching inside ordinary words ("maintainer", "domain") under `-i`.
+> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. Only `AI` is `\b`-bounded — it keeps bare `AI` from matching inside ordinary words ("maintainer", "domain") under `-i`. `GPT` and `OpenAI` are intentionally left unbounded so they still match inside `ChatGPT` / `GPT-4` (no English word contains "gpt").
 > **Canonical regex source**: `scripts/commit-msg-guard.sh` (ERE, `grep -Ei`)
 
 If any pattern matches and `--ai-co-author` was **not** passed → remove the matching line(s) from the message before output/execute.
