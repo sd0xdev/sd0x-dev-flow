@@ -11,7 +11,12 @@
  *   A2  kind:fanout with mutating:true → reject (contradictory declaration)
  *   A3  any mutating:true step must have kind:proposed-manual (v1 report-only)
  *   A4  kind:main-skill target must exist in plan-context skill_candidates
- *       (anti-hallucination — planner may only pick real skills)
+ *       (anti-hallucination — planner may only pick real skills). v1 is
+ *       report-only: main-skill steps are advisory/non-executing, so a
+ *       mutating skill named here cannot mutate the repo — and any mutation it
+ *       somehow caused is still caught by run-verify.js's no-change proof. When
+ *       main-skill execution lands (v2), skill_candidates must carry a mutation
+ *       flag and a mutating main-skill target must be rejected here.
  *   G1  mutating steps present → required_gates must cover them
  *       (mutation_class "doc" → doc-review; anything else, including the
  *       conservative default "code", → code-review + precommit)
@@ -22,7 +27,7 @@
  *   S1  serialized plan must not contain hook-parsed sentinel strings
  *   SCHEMA  structural integrity: intent/done_definition non-empty, steps is
  *       an array, known kind, step ids present and unique, depends_on is an
- *       array whose references resolve to existing ids
+ *       array whose references resolve to existing ids and form a DAG (no cycle)
  *
  * Usage:
  *   node skills/orchestrate/scripts/validate-plan.js --plan <path|-> --context <path|->
@@ -31,10 +36,30 @@
 const fs = require('fs');
 
 const VALID_KINDS = new Set(['fanout', 'main-skill', 'verify', 'gate', 'proposed-manual']);
-// Forbidden hook-parsed sentinels — substring match on the serialized plan.
-// '✅ Ready' also catches '✅ Plan Ready'; fail-closed by design (plans must
-// describe gates by name, never by reciting sentinel text).
-const FORBIDDEN_SENTINELS = ['## Gate:', '✅ Ready', '✅ Mergeable', '⛔ Blocked', '✅ All Pass'];
+// Forbidden hook-parsed sentinels — literal substring match on the serialized
+// plan. Kept aligned with the strings hooks/stop-guard.sh and
+// hooks/post-tool-review-state.sh act on, so a plan that recites a gate verdict
+// (in a why/done_definition later surfaced in a preview/summary) cannot poison
+// the safety-plane gate parsing this feature is designed to isolate from.
+// Substring match is literal: '✅ Ready' does NOT cover '✅ Plan Ready' (after
+// '✅ ' comes "Plan", not "Ready"), and '⛔ Blocked' does NOT cover
+// '⛔ Plan Blocked' — the plan-namespace sentinels are therefore listed
+// explicitly, and the header triggers ('## Overall:', '## Document Review',
+// '## Plan Review') are blocked so a recited verdict body cannot attach to them.
+const FORBIDDEN_SENTINELS = [
+  '## Gate:', // ## Gate: ✅ / ⛔
+  '## Overall:', // ## Overall: ✅ PASS / ⛔ FAIL / ❌ FAIL (precommit)
+  '## Document Review', // doc-review parser trigger
+  '## Plan Review', // plan-review parser trigger
+  '✅ Ready',
+  '✅ Mergeable',
+  '✅ All Pass',
+  '✅ Plan Ready',
+  '⛔ Blocked',
+  '⛔ Needs revision',
+  '⛔ Must fix',
+  '⛔ Plan Blocked',
+];
 
 function fail(msg) {
   process.stderr.write(`[validate-plan] ${msg}\n`);
@@ -149,6 +174,46 @@ function validate(plan, context) {
         add('SCHEMA', `depends_on references unknown step id "${dep}"`, step.id || '(missing id)');
       }
     }
+  }
+
+  // depends_on must form a DAG — execution-policy.md mandates topological order,
+  // so a cycle (s1→s2→s1) is an unsatisfiable plan. Kahn's algorithm is
+  // iterative (no recursion), so an adversarial deep chain cannot exhaust the
+  // call stack before the B1 size cap is evaluated. Only edges to resolvable
+  // ids are followed (dangling refs are already reported as SCHEMA above);
+  // duplicate edges are collapsed so indegree accounting stays exact, and a
+  // self-edge (s1→s1) never reaches indegree 0 → reported as a cycle.
+  // Build the graph from the first step per unique id: a duplicate id is already
+  // a SCHEMA violation, and double-counting its edges could distort indegree
+  // bookkeeping enough to mask a real cycle. Deduping up front keeps the DAG
+  // check exact and independent of the duplicate-id rule.
+  const firstById = new Map();
+  for (const step of steps) {
+    if (typeof step.id !== 'string' || step.id.trim() === '') continue;
+    if (!firstById.has(step.id)) firstById.set(step.id, step);
+  }
+  const dependents = new Map([...firstById.keys()].map((id) => [id, []])); // dep id → ids that require it
+  const indegree = new Map([...firstById.keys()].map((id) => [id, 0]));
+  for (const [id, step] of firstById) {
+    const deps = Array.isArray(step.depends_on) ? step.depends_on.filter((d) => indegree.has(d)) : [];
+    for (const dep of new Set(deps)) {
+      dependents.get(dep).push(id);
+      indegree.set(id, indegree.get(id) + 1);
+    }
+  }
+  const ready = [...indegree.keys()].filter((id) => indegree.get(id) === 0);
+  let resolvedCount = 0;
+  while (ready.length) {
+    const id = ready.pop();
+    resolvedCount += 1;
+    for (const dependent of dependents.get(id)) {
+      indegree.set(dependent, indegree.get(dependent) - 1);
+      if (indegree.get(dependent) === 0) ready.push(dependent);
+    }
+  }
+  // A DAG resolves every unique node; a shortfall means a cycle remains.
+  if (resolvedCount < indegree.size) {
+    add('SCHEMA', 'depends_on forms a cycle — plan must be a DAG (topological execution required)');
   }
 
   const mutatingSteps = steps.filter((s) => s.mutating === true);

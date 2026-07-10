@@ -164,6 +164,19 @@ test('validate-plan S1: plan text reciting a hook sentinel → rejected', () => 
   assert.match(result.output.violations.find((v) => v.rule === 'S1').message, /describe gates by name/);
 });
 
+test('validate-plan S1: sentinels aligned with hook parsers — precommit + plan-namespace + false-block strings', () => {
+  // Each string is one a hook parser acts on but the pre-fix list missed.
+  // '✅ Plan Ready' / '⛔ Plan Blocked' are NOT covered by '✅ Ready' / '⛔ Blocked'
+  // (literal substring match), so they must be caught by their own entries.
+  for (const sentinel of ['## Overall: ✅ PASS', '✅ Plan Ready', '⛔ Plan Blocked', '⛔ Needs revision', '⛔ Must fix']) {
+    const plan = basePlan();
+    plan.done_definition = `report is done once the gate shows ${sentinel} downstream`;
+    const result = runValidate(plan);
+    assert.equal(result.exitCode, 1, `"${sentinel}" must be rejected`);
+    assert.ok(rules(result).includes('S1'), `"${sentinel}" must trip S1`);
+  }
+});
+
 test('validate-plan B1: non-numeric converge.max_rounds → rejected (no silent coercion)', () => {
   const plan = basePlan();
   plan.steps[0].converge = { max_rounds: 'abc', until: 'no new findings' };
@@ -194,6 +207,28 @@ test('validate-plan SCHEMA: duplicate step ids and dangling depends_on rejected'
   const schemaMessages = result.output.violations.filter((v) => v.rule === 'SCHEMA').map((v) => v.message);
   assert.ok(schemaMessages.some((m) => m.includes('duplicate step id')), 'duplicate id must be rejected');
   assert.ok(schemaMessages.some((m) => m.includes('unknown step id')), 'dangling depends_on must be rejected');
+});
+
+test('validate-plan SCHEMA: depends_on cycle → rejected (plan must be a DAG)', () => {
+  const plan = basePlan();
+  // s1 → s2 → s1: every id resolves, but the graph is not topologically
+  // orderable, so execution-policy.md's topological run is unsatisfiable.
+  plan.steps[0].depends_on = ['s2'];
+  plan.steps[1].depends_on = ['s1'];
+  const result = runValidate(plan);
+  assert.equal(result.exitCode, 1);
+  assert.ok(
+    result.output.violations.some((v) => v.rule === 'SCHEMA' && /cycle/.test(v.message)),
+    'a dependency cycle must be reported as a SCHEMA violation'
+  );
+});
+
+test('validate-plan SCHEMA: linear depends_on chain (no cycle) → accepted', () => {
+  const plan = basePlan();
+  // s1 (no deps) → s2 depends on s1 → s3 depends on s2: a valid DAG.
+  plan.steps.push({ id: 's3', kind: 'verify', target: 'run-verify', why: 'second-stage no-change proof', depends_on: ['s2'] });
+  const result = runValidate(plan);
+  assert.equal(result.exitCode, 0, 'a well-formed dependency chain must not be flagged as a cycle');
 });
 
 test('validate-plan SCHEMA: non-array steps and unknown kind fail closed', () => {
