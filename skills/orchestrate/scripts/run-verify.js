@@ -19,6 +19,10 @@
  *   local_config_sha256  — local git config tampering (incl. core.hooksPath)
  *   worktrees            — sneaky worktree creation
  *   stash_count          — git stash hiding changes (stash ref also under refs hash)
+ *   git_internals_sha256 — .git/hooks/* (planted-hook persistence) and
+ *                          .git/info/exclude (hides a matching untracked write
+ *                          from porcelain AND ls-files) — both invisible to
+ *                          every working-tree check above
  *
  * Any git failure → exit 1 (fail-closed; an unverifiable repo is a drift).
  *
@@ -45,6 +49,78 @@ function git(repo, cliArgs) {
   return execFileSync('git', ['-C', repo, ...cliArgs], { encoding: 'utf8' }).trimEnd();
 }
 
+// hash-object in batches: passing every untracked path as one argv can exceed
+// ARG_MAX (E2BIG) on repos with very many untracked files. CHUNK bounds the
+// element COUNT per call, which covers the common case; a single chunk of a few
+// hundred multi-KB paths could still exceed the byte limit, but that overflow
+// throws → fail-closed (safe), never a silent miss. argv (not --stdin-paths) is
+// deliberate — it stays correct for paths containing newlines, which a hostile
+// worker could otherwise use to slip a write past a line-delimited reader.
+function hashObjects(repo, paths) {
+  const hashes = [];
+  const CHUNK = 500;
+  for (let i = 0; i < paths.length; i += CHUNK) {
+    const out = git(repo, ['hash-object', '--', ...paths.slice(i, i + CHUNK)]);
+    if (out !== '') hashes.push(...out.split('\n'));
+  }
+  return hashes;
+}
+
+// Digest of the .git-internal state that changes what git executes (hooks) or
+// what porcelain/ls-files report (info/exclude) yet is invisible to every
+// working-tree check in snapshot():
+//   .git/hooks/*       — a planted pre-commit is a code-execution persistence
+//                        payload; a chmod +x of a sample is itself a change.
+//   .git/info/exclude  — appending a pattern hides a matching untracked write
+//                        from both `status --porcelain` and
+//                        `ls-files --exclude-standard`.
+// Paths resolve through `git rev-parse --git-path`, which returns the
+// worktree-shared common-dir location (worktree-safe) AND follows an effective
+// core.hooksPath (Git >= 2.10) regardless of the config scope that set it — so
+// this digest catches a redirected hooks dir even when the redirect lives in
+// global/system config, which local_config_sha256 (local scope only) would miss.
+// include.path tampering remains covered by local_config_sha256 (includes are
+// resolved at read time).
+function gitInternalsDigest(repo) {
+  const parts = [];
+  const gitPath = (rel) => path.resolve(repo, git(repo, ['rev-parse', '--git-path', rel]));
+
+  const hooksDir = gitPath('hooks');
+  let hookEntries = [];
+  try {
+    hookEntries = fs
+      .readdirSync(hooksDir, { withFileTypes: true })
+      .filter((d) => !d.isDirectory()) // files + symlinked hooks (git runs those too)
+      .map((d) => d.name)
+      .sort();
+  } catch {
+    hookEntries = []; // no hooks dir → nothing to hash
+  }
+  for (const name of hookEntries) {
+    const abs = path.join(hooksDir, name);
+    let content = 'UNREADABLE';
+    let exec = '-';
+    try {
+      content = crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
+      exec = fs.statSync(abs).mode & 0o111 ? 'x' : '-';
+    } catch {
+      /* keep UNREADABLE marker — a present-but-unreadable hook is itself state */
+    }
+    parts.push(`hook ${name} ${exec} ${content}`);
+  }
+
+  const excludeAbs = gitPath('info/exclude');
+  let excludeHash = 'ABSENT';
+  try {
+    excludeHash = crypto.createHash('sha256').update(fs.readFileSync(excludeAbs)).digest('hex');
+  } catch {
+    /* no info/exclude → ABSENT sentinel (distinct from an empty file's hash) */
+  }
+  parts.push(`info/exclude ${excludeHash}`);
+
+  return sha256(parts.join('\n'));
+}
+
 function snapshot(repo) {
   try {
     const head = git(repo, ['rev-parse', 'HEAD']);
@@ -61,17 +137,16 @@ function snapshot(repo) {
       .split('\0')
       .filter(Boolean)
       .sort();
-    const untrackedHashes = untrackedPaths.length
-      ? git(repo, ['hash-object', '--', ...untrackedPaths]).split('\n')
-      : [];
+    const untrackedHashes = hashObjects(repo, untrackedPaths);
     const untrackedContent = untrackedPaths.map((p, i) => `${p}\u0000${untrackedHashes[i]}`).join('\n');
     const refs = git(repo, ['for-each-ref', '--format=%(refname)%(objectname)']);
-    let localConfig = '';
-    try {
-      localConfig = git(repo, ['config', '--list', '--local']);
-    } catch {
-      localConfig = ''; // a repo may legitimately have an empty local config
-    }
+    // `git config --list --local` exits 0 for a normal OR empty local config, so
+    // there is no "empty → swallow" case to special-case. Dropping the former
+    // inner `catch { '' }` is defensive hardening: a config-specific failure now
+    // propagates to snapshot()'s outer catch → fail-closed, consistent with every
+    // other git call here. (In practice a corrupt repo already fails earlier at
+    // `rev-parse HEAD`, so this closes a latent inconsistency, not a live hole.)
+    const localConfig = git(repo, ['config', '--list', '--local']);
     const worktrees = git(repo, ['worktree', 'list', '--porcelain'])
       .split('\n')
       .filter((l) => l.startsWith('worktree '))
@@ -87,6 +162,7 @@ function snapshot(repo) {
       untracked_content_sha256: sha256(untrackedContent),
       refs_sha256: sha256(refs),
       local_config_sha256: sha256(localConfig),
+      git_internals_sha256: gitInternalsDigest(repo),
       worktrees,
       stash_count: stashCount,
     };
@@ -104,6 +180,7 @@ const COMPARE_FIELDS = [
   'untracked_content_sha256',
   'refs_sha256',
   'local_config_sha256',
+  'git_internals_sha256',
   'worktrees',
   'stash_count',
 ];

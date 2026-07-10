@@ -6,7 +6,7 @@
       "name": "Explore",
       "type": "builtin",
       "rationale": "Harness definition excludes Edit/Write/NotebookEdit; existing deep-explore fanout baseline (accepted exposure, not new attack surface); doubles as the planner agent (only research-capable entry).",
-      "residual_risk": "Has Bash — could theoretically mutate files or git state. Mitigated by prompt read-only contract + run-verify.js full git-scoped checks (porcelain + tracked/untracked content hashes/refs/config/worktree/stash). Writes outside the repo are out of v1 verification scope (v2 OQ)."
+      "residual_risk": "Has Bash — could theoretically mutate files or git state. Mitigated by prompt read-only contract + run-verify.js git-scoped checks (porcelain + tracked/untracked content hashes/refs/config/worktree/stash + .git/ hooks & info/exclude digest). Out of v1 verification scope (v2 OQ): writes outside the repo; and index-mediated hiding of a tracked-file edit via `git update-index --assume-unchanged`/`--skip-worktree` (the edit then shows in neither `status --porcelain` nor `diff HEAD`, and the digest does not hash `.git/index`) — v2 must fold a stat-independent index digest in. (Packed-refs ref retarget/add/delete is already caught by refs_sha256's for-each-ref, so it is not a gap.)"
     },
     {
       "name": "performance-optimizer",

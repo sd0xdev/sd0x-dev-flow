@@ -1,6 +1,6 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, chmodSync, rmSync } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { execFileSync } = require('node:child_process');
@@ -66,6 +66,7 @@ test('run-verify snapshot: emits every compare field (T3 check set)', () => {
     'untracked_content_sha256',
     'refs_sha256',
     'local_config_sha256',
+    'git_internals_sha256',
     'worktrees',
     'stash_count',
   ]) {
@@ -200,6 +201,97 @@ test('run-verify compare: baseline missing a check field → drift (cannot prove
   assert.equal(result.exitCode, 1);
   const missing = result.output.drift.find((d) => d.field === 'refs_sha256');
   assert.equal(missing.reason, 'field missing from baseline');
+});
+
+test('run-verify compare: planted .git/hooks/pre-commit after baseline → git_internals drift (porcelain blind)', () => {
+  const { base, repo } = createRepo();
+  const { baselinePath } = snapshotToFile(base, repo);
+  // A persistence payload that fires on the next commit — git never lists
+  // .git/ contents in status/ls-files, so only the internals digest can see it.
+  const hook = join(repo, '.git', 'hooks', 'pre-commit');
+  writeFileSync(hook, '#!/bin/sh\necho pwned\n');
+  chmodSync(hook, 0o755);
+  const result = compare(repo, baselinePath);
+  assert.equal(result.exitCode, 1);
+  const fields = driftFields(result);
+  assert.ok(fields.includes('git_internals_sha256'), 'planted hook must trip the internals digest');
+  assert.ok(!fields.includes('porcelain_sha256'), 'a .git/ write is invisible to porcelain — internals digest must catch it');
+});
+
+test('run-verify compare: .git/info/exclude append + matching write → git_internals drift (both porcelain AND ls-files blind)', () => {
+  const { base, repo } = createRepo();
+  const { baselinePath } = snapshotToFile(base, repo);
+  // Appending a pattern then writing a matching file hides that write from both
+  // `status --porcelain` and `ls-files --exclude-standard`; the only signal is
+  // the exclude file itself, which the internals digest hashes.
+  appendFileSync(join(repo, '.git', 'info', 'exclude'), 'sneaky-output.md\n');
+  writeFileSync(join(repo, 'sneaky-output.md'), 'exfiltrated\n');
+  const result = compare(repo, baselinePath);
+  assert.equal(result.exitCode, 1);
+  const fields = driftFields(result);
+  assert.ok(fields.includes('git_internals_sha256'), 'exclude tampering must trip the internals digest');
+  assert.ok(!fields.includes('porcelain_sha256'), 'the excluded write is invisible to porcelain');
+  assert.ok(!fields.includes('untracked_content_sha256'), 'the excluded write is invisible to ls-files too');
+});
+
+test('run-verify compare: chmod +x a pre-existing hook sample → git_internals drift (exec-bit sensitivity)', () => {
+  const { base, repo } = createRepo();
+  // Pre-plant an inert, non-executable hook file that is part of the baseline.
+  const hook = join(repo, '.git', 'hooks', 'pre-push');
+  writeFileSync(hook, '#!/bin/sh\ntrue\n');
+  chmodSync(hook, 0o644);
+  const { baselinePath } = snapshotToFile(base, repo);
+  // Arming it (chmod +x) makes git start running it — a state change with no
+  // content change; the digest folds the exec bit in to catch exactly this.
+  chmodSync(hook, 0o755);
+  const result = compare(repo, baselinePath);
+  assert.equal(result.exitCode, 1);
+  assert.ok(driftFields(result).includes('git_internals_sha256'), 'arming a hook must trip the internals digest');
+});
+
+test('run-verify snapshot: 1200 untracked files → snapshot succeeds (hash-object multi-chunk correctness)', () => {
+  const { base, repo } = createRepo();
+  // 1200 paths cross the CHUNK=500 boundary twice, so the batch loop runs three
+  // hash-object calls; this locks down chunk ordering/concatenation. (It does
+  // not exercise the byte limit itself — short paths here stay under ARG_MAX;
+  // an oversized chunk would throw → fail-closed, which is the safe outcome.)
+  for (let i = 0; i < 1200; i += 1) writeFileSync(join(repo, `untracked-${i}.txt`), `content ${i}\n`);
+  const { baselinePath, baseline } = snapshotToFile(base, repo);
+  assert.ok('untracked_content_sha256' in baseline, 'snapshot must not throw across chunk boundaries');
+  const result = compare(repo, baselinePath);
+  assert.equal(result.exitCode, 0, 'a re-snapshot of the same tree is drift-free');
+});
+
+test('run-verify compare: untracked file whose name contains a newline → tracked with stable alignment', () => {
+  const { base, repo } = createRepo();
+  // argv-based hash-object (not --stdin-paths) keeps path→hash alignment even
+  // when a path contains a newline — a line-delimited reader would desync here.
+  const weird = join(repo, 'weird\nname.txt');
+  writeFileSync(weird, 'sneaky\n');
+  const { baselinePath, baseline } = snapshotToFile(base, repo);
+  assert.ok('untracked_content_sha256' in baseline);
+  assert.equal(compare(repo, baselinePath).exitCode, 0, 'a stable newline-named path must not self-drift');
+  writeFileSync(weird, 'tampered\n');
+  const result = compare(repo, baselinePath);
+  assert.equal(result.exitCode, 1);
+  assert.ok(driftFields(result).includes('untracked_content_sha256'), 'edit to a newline-named file must still be caught');
+});
+
+test('run-verify snapshot: corrupt .git/config → fail-closed exit 1 (unverifiable repo is drift)', () => {
+  const { base, repo } = createRepo();
+  // A malformed config makes git reads exit non-zero (in practice the very first
+  // call, `rev-parse HEAD`); snapshot must fail-closed on any git failure rather
+  // than emit a partial/blank baseline. General corrupt-repo guard — it does not
+  // isolate the localConfig line, whose swallow-to-'' catch was removed for the
+  // same fail-closed reason.
+  writeFileSync(join(repo, '.git', 'config'), '[unterminated section\n');
+  let status = 0;
+  try {
+    execFileSync('node', [scriptPath, 'snapshot', '--repo', repo], { encoding: 'utf8' });
+  } catch (err) {
+    status = err.status;
+  }
+  assert.equal(status, 1, 'an unverifiable (corrupt) repo must fail-closed');
 });
 
 test('run-verify: unknown command, missing baseline flag, non-repo dir all fail closed', () => {

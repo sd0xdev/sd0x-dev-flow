@@ -147,6 +147,7 @@ flowchart TB
     "untracked_content_sha256": "7c6d…",        // untracked（--exclude-standard）檔案 path+blob hash 的 hash（內容面）
     "refs_sha256": "cd34…",                     // git for-each-ref 全 refs 的 hash（tag/ref 面）
     "local_config_sha256": "ef56…",             // git config --list --local 的 hash
+    "git_internals_sha256": "a1b2…",            // .git/hooks/*（內容+執行位）+ .git/info/exclude 的 hash（porcelain/ls-files 皆盲的 .git 內部面）
     "worktrees": ["/Users/…/sd0x-dev-flow"],
     "stash_count": 0
   },
@@ -247,12 +248,13 @@ node skills/orchestrate/scripts/run-verify.js compare --baseline <path|stdin>   
 | untracked（`ls-files --others --exclude-standard`）path+blob hash SHA-256 | **再改既有 untracked 檔的內容**（porcelain 行維持 `?? file` 不變）；gitignored 檔（如 run-state）合法寫入不觸發 | porcelain 只記狀態+路徑，不記內容 |
 | `git for-each-ref --format='%(refname)%(objectname)'` SHA-256 | **tag / branch ref / 其他 ref 的新建或移動**（HEAD/branch 檢查蓋不到的 ref 面） | porcelain 抓不到 |
 | `git config --list --local` SHA-256 | **改 local git config**（含 `core.hooksPath` 竄改） | porcelain 抓不到 |
+| `.git/hooks/*`（內容+執行位）+ `.git/info/exclude` SHA-256 | **植入 `.git/hooks/pre-commit`（下次 commit 觸發的 persistence payload）**；**`.git/info/exclude` 加 pattern 藏匿符合的 untracked 寫入**（porcelain 與 `ls-files --exclude-standard` 雙盲）。路徑經 `git rev-parse --git-path` 解析，worktree-safe 且涵蓋 `core.hooksPath` 改指向 | porcelain / ls-files 皆抓不到 `.git/` 內部 |
 | `git worktree list --porcelain` | worker 偷開 worktree | 新攻擊面 |
 | `git stash list` count | `git stash`（把變更藏起來讓 porcelain 變乾淨；stash ref 亦被 for-each-ref 覆蓋——雙重） | porcelain 抓不到 |
 
 **Dirty-baseline 政策**：v1 **支援 dirty 起點**（本 repo 常態為開發中 dirty）——比對語意是「**無新 drift**」（snapshot 時的 porcelain/content/refs/config hash 與 compare 時逐項相等），非「必須 clean start」。既有 dirty 檔不阻擋 run；任何**新增**變化（hash 改變，含已 dirty 檔的內容再變動）即 fail-closed。
 
-Compare 失敗（任一 drift）→ skill 標 run `failed` + 輸出 `⚠️ Need Human`（附 drift 欄位與修復指引），**不寫報告、不嘗試自動回復**（回復本身是 mutation）。宣告式外部副作用（如 Jira）：v1 fanout worker 名單無外部寫入工具，故「宣告外部副作用 = ∅」即為驗證（名單變更時須重審此假設——寫入 allowlist 檔的 review 義務）。**已知不在 v1 驗證範圍**：repo 之外的檔案系統寫入（如 `~/.claude/`）——由 allowlist 縮窄 + worker prompt 契約管理，正面偵測列 v2 OQ。
+Compare 失敗（任一 drift）→ skill 標 run `failed` + 輸出 `⚠️ Need Human`（附 drift 欄位與修復指引），**不寫報告、不嘗試自動回復**（回復本身是 mutation）。宣告式外部副作用（如 Jira）：v1 fanout worker 名單無外部寫入工具，故「宣告外部副作用 = ∅」即為驗證（名單變更時須重審此假設——寫入 allowlist 檔的 review 義務）。**已知不在 v1 驗證範圍**：(1) repo 之外的檔案系統寫入（如 `~/.claude/`）——由 allowlist 縮窄 + worker prompt 契約管理；(2) `git update-index --assume-unchanged` / `--skip-worktree` 令 tracked 檔的內容編輯對 porcelain 與 `diff HEAD` 皆隱形（digest 未 hash `.git/index`）。兩者正面偵測列 v2 OQ（v2 須納入 stat-independent 的 index digest）。（註：packed-refs 之 ref 改指向/增刪已由 `refs_sha256` 的 `for-each-ref` 覆蓋，非缺口。）
 
 #### T4 — `/orchestrate` skill 介面
 
