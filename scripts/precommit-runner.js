@@ -245,9 +245,15 @@ async function main() {
       status: r.status,
       reason: r.reason,
     })),
-    overallPass:
-      results.length > 0 &&
-      results.every(r => r.status === 'skip' || r.code === 0),
+    // PASS requires at least one REAL (non-skip) step that exited 0. An all-skip
+    // run is NOT a pass: precommit is a merge gate, so "nothing ran" must not be
+    // recorded as "verified". It gets its own sentinel below (⚠️ NO CHECKS RUN)
+    // so hooks fail-closed and the skill falls through to ecosystem detection,
+    // rather than the earlier behavior that minted all-skip as ✅ PASS.
+    overallPass: (() => {
+      const ran = results.filter(r => r.status !== 'skip');
+      return ran.length > 0 && ran.every(r => r.code === 0);
+    })(),
     error: summaryError || undefined,
   };
   writeJson(path.join(logDir, 'summary.json'), summary);
@@ -312,11 +318,17 @@ async function main() {
 
   const allSkipped =
     results.length > 0 && results.every(r => r.status === 'skip');
-  lines.push(
-    `## Overall: ${summary.overallPass ? '✅ PASS' : '❌ FAIL'}${
-      allSkipped ? ' (all steps skipped — no runnable scripts)' : ''
-    }`
-  );
+  if (allSkipped) {
+    // Distinct third state — NOT ✅ PASS (would false-green the gate) and NOT
+    // ❌ FAIL (would wedge). Matches neither the hooks' pass grep nor their fail
+    // grep, so precommit stays unrecorded (fail-closed); skills/precommit/SKILL.md
+    // Step 1 detects this marker and falls through to ecosystem detection.
+    lines.push(
+      '## Overall: ⚠️ NO CHECKS RUN (no runnable scripts — configure lint/build/test or run ecosystem checks)'
+    );
+  } else {
+    lines.push(`## Overall: ${summary.overallPass ? '✅ PASS' : '❌ FAIL'}`);
+  }
   lines.push('');
   lines.push('## Single-test recipes (this repo)');
   const recipes = buildRecipes(pkg, pm);

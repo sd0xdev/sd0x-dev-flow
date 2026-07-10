@@ -255,3 +255,66 @@ test('README resource counts: Scripts row count matches top-level scripts/ inven
   );
   assert.equal(scriptFiles.length, 17, `scripts/ inventory drifted: ${scriptFiles.join(', ')}`);
 });
+
+// === deep-explore regression: LOCALE READMEs must not drift from disk inventory ===
+// The 5 locale READMEs are hand-synced (not generated) and had gone stale at
+// "9 hooks (incl. namespace hint) / 13 scripts". Labels are localized, so rows
+// are located by their English example signature, not by the category label.
+
+const LOCALE_READMES = ['README.zh-TW.md', 'README.zh-CN.md', 'README.ja.md', 'README.ko.md', 'README.es.md'];
+
+function diskCount(dir, exts) {
+  return readdirSync(join(ROOT, dir)).filter(
+    (f) => statSync(join(ROOT, dir, f)).isFile() && exts.some((e) => f.endsWith(e))
+  ).length;
+}
+
+// A What's-included row's 3rd pipe-cell is the count: | label | N | examples |
+function rowCount(row) {
+  const cells = row.split('|').map((s) => s.trim());
+  return parseInt(cells[2], 10);
+}
+
+for (const locale of LOCALE_READMES) {
+  test(`${locale}: Hooks row count matches disk and excludes namespace hint`, () => {
+    const readme = readFileSync(join(ROOT, locale), 'utf8');
+    // What's-included Hooks row — identified by its English example signature.
+    const row = readme
+      .split('\n')
+      .find((l) => l.includes('pre-edit-guard') && l.includes('session-init'));
+    assert.ok(row, `${locale} should have a What's-included Hooks row`);
+    assert.equal(rowCount(row), diskCount('hooks', ['.sh']), `${locale} hook count drifted`);
+    assert.ok(
+      !row.includes('namespace hint'),
+      `${locale}: namespace hint is a script, not a hook`
+    );
+  });
+
+  test(`${locale}: Scripts row count matches disk inventory`, () => {
+    const readme = readFileSync(join(ROOT, locale), 'utf8');
+    const row = readme
+      .split('\n')
+      .find((l) => l.includes('precommit runner') && l.includes('readme-catalog'));
+    assert.ok(row, `${locale} should have a What's-included Scripts row`);
+    assert.equal(rowCount(row), diskCount('scripts', ['.sh', '.js']), `${locale} script count drifted`);
+    // Stale phantom entries that were removed from disk long ago.
+    assert.ok(!row.includes('utils (shared lib)'), `${locale}: 'utils (shared lib)' no longer exists`);
+    assert.ok(!row.includes('feature-resolver'), `${locale}: 'feature-resolver' no longer exists`);
+  });
+
+  // The table row and the *prose* count are synced separately by hand — the
+  // prose ("… 14 rules + N hooks") had drifted to 9 while the table said 8.
+  // Match the number-then-word prose form (localized 個/个/개 hooks, フック,
+  // 钩子); the "| Hooks | 8 |" table cell is word-then-number and never matches.
+  test(`${locale}: prose hook count matches disk (no stale "9 hooks" drift)`, () => {
+    const readme = readFileSync(join(ROOT, locale), 'utf8');
+    const hooks = diskCount('hooks', ['.sh']);
+    const mentions = [
+      ...readme.matchAll(/(\d+)\s*(?:個|个|개)?\s*(?:hooks?|フック|钩子)/gi),
+    ].map((m) => parseInt(m[1], 10));
+    assert.ok(mentions.length > 0, `${locale}: expected at least one prose hook-count mention`);
+    for (const n of mentions) {
+      assert.equal(n, hooks, `${locale}: prose says ${n} hooks but disk has ${hooks} (stale drift)`);
+    }
+  });
+}
