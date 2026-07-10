@@ -117,7 +117,7 @@ if (query && query.includes('contains(')) {
   process.stdout.write('null');
   process.exit(0);
 }
-if (query && query.includes('.tool_input.file_path')) { process.stdout.write((data.tool_input && data.tool_input.file_path) || ''); process.exit(0); }
+if (query && query.includes('.tool_input.file_path')) { const ti = data.tool_input || {}; process.stdout.write(ti.file_path || (query.includes('notebook_path') ? ti.notebook_path : '') || ''); process.exit(0); }
 if (query && query.includes('tool_output') && query.includes('type') && query.includes('content')) {
   const to = data.tool_output;
   if (to && typeof to === 'object') {

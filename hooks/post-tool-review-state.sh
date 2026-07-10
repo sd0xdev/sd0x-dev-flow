@@ -819,16 +819,23 @@ _parse_review_gate() {
   local output="$1"
   local json_gate text_gate
 
-  # Scan every {"gate":"..."} occurrence in the output. The previous
-  # single-range sed extraction (`/```json/,/```/p`) broke when the output
-  # carried 2+ ```json fences: the range reopened on the second fence, inner
-  # fence lines survived, jq failed, and the authoritative gate was silently
-  # dropped — falling open to the text sentinel. Scanning all occurrences
-  # with BLOCKED-wins keeps stray example blocks fail-closed: noise can only
-  # tighten the gate, never relax it.
+  # Scan {"gate":"..."} occurrences, but ONLY inside ```json fenced blocks —
+  # that is where the machine gate is emitted. Scanning the whole output (the
+  # previous behavior) let a gate string quoted in *prose* — a finding that
+  # discusses `{"gate":"BLOCKED"}`, or docs restating the contract — override a
+  # genuine READY, over-blocking a passing review. awk tracks fence state and
+  # prints only lines inside ```json … ``` (every such block, so the multi-fence
+  # BLOCKED-wins guarantee still holds: noise inside a json fence can only
+  # tighten the gate). If no json fence carries a gate, json_gate stays empty
+  # and we fall through to the text sentinel below.
   json_gate=""
-  local all_gates
-  all_gates=$(printf '%s\n' "$output" | grep -oE '"gate"[[:space:]]*:[[:space:]]*"(READY|BLOCKED)"' | grep -oE 'READY|BLOCKED' || true)
+  local fenced all_gates
+  fenced=$(printf '%s\n' "$output" | awk '
+    /^[[:space:]]*```[jJ][sS][oO][nN][[:space:]]*$/ { infence=1; next }
+    /^[[:space:]]*```[[:space:]]*$/ { infence=0; next }
+    infence { print }
+  ')
+  all_gates=$(printf '%s\n' "$fenced" | grep -oE '"gate"[[:space:]]*:[[:space:]]*"(READY|BLOCKED)"' | grep -oE 'READY|BLOCKED' || true)
   if [[ -n "$all_gates" ]]; then
     if printf '%s\n' "$all_gates" | grep -qx 'BLOCKED'; then
       json_gate="BLOCKED"
@@ -938,6 +945,16 @@ if echo "$COMMAND" | grep -qE '/?(sd0x-dev-flow:)?codex-review(-fast)?($|\s)'; t
     echo "[Review State] Skill launch placeholder — no code_review verdict to record" >&2
   else
     passed=$(_parse_review_gate "$TOOL_OUTPUT")
+    # These three mutations each take the state lock independently rather than
+    # sharing one locked jq. This is deliberate, not an oversight: each is
+    # independently fail-closed on contention (e.g. update_state can commit while
+    # _reset_changed_files skips — leaving changed_files stale keeps the review
+    # invalidated, the property pinned by the "held lock skips changed_files
+    # reset" test). Merging them would forfeit that independence and require
+    # folding the complex _update_iteration (finding parse, fingerprints,
+    # convergence tracking) into the shared critical section. Review commands run
+    # at human cadence, so the extra lock round-trips are uncontended and cheap;
+    # the atomicity is not worth the state-machine risk. Deferred by design.
     update_state "code_review" "true" "$passed"
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
@@ -960,8 +977,22 @@ fi
 if echo "$COMMAND" | grep -qE '/?(sd0x-dev-flow:)?precommit(-fast)?($|\s)'; then
   if [[ "$TOOL_NAME" == "Skill" ]] && ! _skill_output_has_verdict "$TOOL_OUTPUT"; then
     echo "[Review State] Skill launch placeholder — no precommit verdict to record" >&2
+  elif echo "$TOOL_OUTPUT" | grep -qE '^## Overall: ⚠️ NO CHECKS RUN' \
+       && ! echo "$TOOL_OUTPUT" | grep -qE '^## Overall: (✅ PASS|❌ FAIL|⛔ FAIL)'; then
+    # precommit-runner's fail-closed third state: no runnable scripts, so it
+    # emitted neither PASS nor FAIL. This is a NON-verdict — skills/precommit
+    # Step 1 then falls through to ecosystem detection and emits the real
+    # PASS/FAIL that a later hook fire records. Recording passed=false here would
+    # wedge stop-guard (state precommit.passed=false → re-request /precommit
+    # forever) on a genuinely check-less repo. Only skip when NO real Overall
+    # sentinel accompanies it, so a runner→ecosystem run in one output still
+    # records its real verdict below.
+    echo "[Review State] precommit: no runnable checks (runner fallback) — no verdict recorded" >&2
   else
     passed=$(check_passed "$TOOL_OUTPUT")
+    # Two independent locks (update_state + _set_phase_idle) — deferred by design
+    # for the same reason as the code_review branch above: independent fail-closed
+    # semantics over a human-cadence command, not worth merging.
     update_state "precommit" "true" "$passed"
     if [[ "$passed" == "true" ]]; then
       _set_phase_idle || true

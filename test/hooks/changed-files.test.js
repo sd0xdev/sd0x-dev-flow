@@ -82,8 +82,12 @@ if (query && query.includes('changed_files_since_review') && query.includes('uni
 }
 
 // ---- Read filters over stdin ----
+// notebook_path coalesce mirrors the real hook jq fallback (file_path // notebook_path)
+// so NotebookEdit events resolve a path through this mock just like production.
 if (query && query.includes('.tool_input.file_path')) {
-  process.stdout.write((data.tool_input && data.tool_input.file_path) || '');
+  const ti = data.tool_input || {};
+  const val = ti.file_path || (query.includes('notebook_path') ? ti.notebook_path : '') || '';
+  process.stdout.write(val);
   process.exit(0);
 }
 if (query && (query.includes('.tool_name') || query.includes('.tool_input') || query.includes('.tool_output') || query.includes('.transcript_path') || query.includes('.command'))) {

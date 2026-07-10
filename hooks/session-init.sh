@@ -9,6 +9,34 @@ INPUT=$(cat)
 # Require jq
 if ! command -v jq &> /dev/null; then exit 0; fi
 
+# True (exit 0) when the working tree has any dirty/untracked code or doc file.
+# A .blocked sidecar means "a code/doc edit happened but the state write failed"
+# — a fail-closed marker. On a new session we reset has_code_change=false, and
+# reconciliation elsewhere is one-way (true→false only), so if we ALSO delete the
+# sidecar while reviewable files are still dirty we erase every trace and let an
+# unreviewed edit from the crashed session stop unchecked. So the sidecar is only
+# cleared when the tree is genuinely clean (a true orphan). The two alternations
+# below are the exact code/doc extension lists used by the other gate hooks.
+#
+# Tri-state fail-closed contract (caller deletes the sidecar only on "clean"):
+#   - Not a git repo         → return 1 ("clean"): no working tree can be dirty,
+#                              so a sidecar here is a true orphan — safe to delete.
+#   - git repo, status FAILS → return 0 ("dirty"): we cannot prove the tree is
+#                              clean, so fail closed and preserve the sidecar.
+#   - git repo, status OK     → grep the porcelain; dirty reviewable → 0, else 1.
+_tree_has_dirty_reviewable() {
+  git rev-parse --git-dir &>/dev/null || return 1
+  local porcelain
+  porcelain=$(git status --porcelain 2>/dev/null) || return 0
+  if grep -qE '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)($|[[:space:]]|")' <<< "$porcelain"; then
+    return 0
+  fi
+  if grep -qE '\.(md|mdx)($|[[:space:]]|")' <<< "$porcelain"; then
+    return 0
+  fi
+  return 1
+}
+
 # Capture baseline dirty files for session commit scope (D-5)
 # Uses git status --porcelain -z for NUL-safe filename parsing (handles spaces, quotes, renames)
 _capture_baseline() {
@@ -60,12 +88,14 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.current_round = 0 |
       .iteration_history.findings_by_round = []
     ' "$STATE_FILE" > "$TMP" && mv "$TMP" "$STATE_FILE"
-    # A .blocked sidecar left by a crashed previous session has no other
-    # removal path (stop-guard only escalates on it; update_state clears it
-    # only after a successful locked review write). The reset above already
-    # puts every gate at executed=false — fail-closed — so the stale
-    # escalation marker must not outlive its session.
-    rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
+    # Clear a stale .blocked sidecar ONLY when the tree has no dirty reviewable
+    # files. Otherwise the marker may flag a real unreviewed edit from the
+    # crashed session; since the reset just set has_code_change=false and
+    # reconciliation never re-raises it, keeping the sidecar is the only thing
+    # that re-engages the gate (downstream hooks force HAS_CODE=true on it).
+    if ! _tree_has_dirty_reviewable; then
+      rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
+    fi
     # Initialize session commit scope with baseline (D-5)
     BASELINE=$(_capture_baseline)
     TMP_SCOPE=$(mktemp)
@@ -96,7 +126,10 @@ else
       "updated_at": $now
     }
   }' > "$STATE_FILE"
-  # Same rationale as the reset branch: a sidecar without its state file is
-  # an orphan from a deleted/crashed session — clear it with the fresh start.
-  rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
+  # Same rationale as the reset branch: a sidecar without its state file is an
+  # orphan from a deleted/crashed session — but only clear it when the tree has
+  # no dirty reviewable files, so a real unreviewed edit still holds the gate.
+  if ! _tree_has_dirty_reviewable; then
+    rm -f "${STATE_FILE}.blocked" 2>/dev/null || true
+  fi
 fi

@@ -23,12 +23,12 @@ function makeTempDir(prefix) {
 
 // Uses real jq (required: jq >= 1.6)
 
-function runHook({ cwd, input }) {
+function runHook({ cwd, input, env = {} }) {
   return spawnSync('bash', [hookPath], {
     cwd,
     input: JSON.stringify(input),
     encoding: 'utf8',
-    env: { ...process.env },
+    env: { ...process.env, ...env },
   });
 }
 
@@ -308,5 +308,88 @@ test('session-init: sidecar without state file removed on fresh create', () => {
   assert.ok(
     !existsSync(join(workDir, '.claude_review_state.json.blocked')),
     'orphan sidecar from a deleted session must be cleared'
+  );
+});
+
+// Conditional cleanup: a sidecar is only a true orphan when the tree is clean.
+// If reviewable files are still dirty, the marker may flag a real unreviewed
+// edit from the crashed session and must survive the reset (fail-closed), since
+// the reset sets has_code_change=false and reconciliation never re-raises it.
+
+test('session-init: new session KEEPS sidecar when a dirty code file exists', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-dirty-code-');
+  setupGitRepo(workDir);
+  writeFileSync(join(workDir, 'unreviewed.ts'), 'export const x = 1;\n');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ session_id: 'old-sess', code_review: { executed: true, passed: false } })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-sess' } });
+  assert.equal(result.status, 0);
+  assert.ok(
+    existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'dirty code file → sidecar must survive so the gate re-engages (fail-closed)'
+  );
+});
+
+test('session-init: new session DELETES sidecar when git tree is clean', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-clean-');
+  setupGitRepo(workDir);
+  // Commit everything so the tree is clean (setupGitRepo leaves an initial commit)
+  spawnSync('git', ['add', '-A'], { cwd: workDir });
+  spawnSync('git', ['commit', '-m', 'clean', '--allow-empty'], { cwd: workDir });
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ session_id: 'old-sess' })
+  );
+  spawnSync('git', ['add', '.claude_review_state.json'], { cwd: workDir });
+  // A tracked state file with only the sidecar dirty is not a reviewable-code change.
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-sess' } });
+  assert.equal(result.status, 0);
+  assert.ok(
+    !existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'clean tree → sidecar is a true orphan, safe to clear'
+  );
+});
+
+// Tri-state fail-closed: inside a git repo, a FAILED `git status` is "unknown",
+// not "clean". The sidecar must survive a transient status failure — deleting on
+// uncertainty would erase a real unreviewed edit's only trace. Simulated with a
+// git shim that fails the plain `--porcelain` dirty check but lets the NUL-safe
+// `--porcelain -z` baseline capture succeed, so the hook still completes.
+test('session-init: KEEPS sidecar when git status fails in a git repo (fail-closed)', () => {
+  const workDir = makeTempDir('sd0x-session-sidecar-gitfail-');
+  const shimDir = makeTempDir('sd0x-git-shim-');
+  writeFileSync(
+    join(shimDir, 'git'),
+    [
+      '#!/usr/bin/env bash',
+      'case "$1" in',
+      '  rev-parse) echo ".git"; exit 0 ;;', // we ARE in a git repo
+      '  status)',
+      '    for a in "$@"; do [ "$a" = "-z" ] && exit 0; done', // baseline capture succeeds (empty)
+      '    exit 1 ;;', // plain porcelain dirty check fails → "unknown"
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n')
+  );
+  chmodSync(join(shimDir, 'git'), 0o755);
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ session_id: 'old-sess' })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'BLOCKED');
+  const result = runHook({
+    cwd: workDir,
+    input: { session_id: 'new-sess' },
+    env: { PATH: `${shimDir}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 0);
+  assert.ok(
+    existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    'git status failure in a git repo → cannot prove clean → sidecar must survive (fail-closed)'
   );
 });

@@ -411,6 +411,20 @@ process.stdout.write('');
   return binDir;
 }
 
+// Seed a live lockdir (owner pid = this alive test runner, fresh ts → no stale
+// recovery) so the hook sees genuine contention and fails closed. Pair with
+// REVIEW_STATE_LOCK_TIMEOUT: '0' so the hook gives up on the first mkdir failure
+// instead of polling for LOCK_TIMEOUT seconds (the default 5s made one test burn
+// ~4.66s). timeout only affects the contended path — an acquirable lock is taken
+// on the first mkdir regardless.
+function seedHeldLock(workDir) {
+  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  return lockDir;
+}
+
 function runHook({ cwd, binDir, input, env = {} }) {
   return spawnSync('bash', [hookPath], {
     cwd,
@@ -501,6 +515,51 @@ test('/precommit pass sets precommit passed true', () => {
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
+  assert.equal(state.precommit.passed, true);
+});
+
+test('/precommit NO CHECKS RUN third-state records no verdict (fail-closed)', () => {
+  const workDir = makeTempDir('sd0x-post-tool-precommit-nochecks-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit' },
+      // precommit-runner's fail-closed third state (no runnable scripts).
+      tool_output: '## Overall: ⚠️ NO CHECKS RUN (no runnable scripts — configure lint/build/test or run ecosystem checks)',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  // Recording passed=false here would wedge stop-guard into re-requesting
+  // /precommit forever on a genuinely check-less repo. The third state is a
+  // non-verdict → precommit must stay unrecorded (no state file, or unexecuted).
+  assert.ok(
+    state === null || state.precommit.executed !== true,
+    `NO CHECKS RUN must not record a precommit verdict, got ${JSON.stringify(state && state.precommit)}`
+  );
+});
+
+test('/precommit NO CHECKS RUN followed by a real PASS records the PASS', () => {
+  const workDir = makeTempDir('sd0x-post-tool-precommit-nochecks-pass-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit' },
+      // Runner emitted the third state, then the skill fell through to ecosystem
+      // detection and emitted a real verdict in the same output — the real one wins.
+      tool_output:
+        '## Overall: ⚠️ NO CHECKS RUN\n(fell through to ecosystem detection)\n## Overall: ✅ PASS',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.precommit.executed, true);
   assert.equal(state.precommit.passed, true);
 });
 
@@ -1983,15 +2042,12 @@ test('plan gate: held lock skips plan write without mutating state (fail-closed 
     plan_review: { executed: false, passed: false, degraded: false, skipped: false, status_reason: null, tier: null, last_run: '', iteration_history: { current_round: 0, max_rounds: 5, findings_by_round: [], total_rounds_session: 0 }, history: [] },
   };
   writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
-  // Live lock: owner pid alive (this test runner) + fresh ts → no stale recovery
-  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(lockDir, { recursive: true });
-  writeFileSync(join(lockDir, 'pid'), String(process.pid));
-  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  seedHeldLock(workDir);
   const result = runHook({
     cwd: workDir,
     binDir,
     input: planGateInput('PLAN_REVIEW_GATE=READY'),
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
   assert.equal(result.status, 0, 'contention must not fail the hook');
   assert.ok(result.stderr.includes('lock contention'), `stderr should mention lock contention, got: ${result.stderr}`);
@@ -2383,6 +2439,58 @@ test('review gate: READY json fence + matching pass text → passed=true', () =>
   assert.equal(state.code_review.passed, true);
 });
 
+test('review gate: BLOCKED quoted in PROSE + real READY json fence + pass text → passed=true (prose ignored)', () => {
+  // The fix: gate strings are only authoritative inside ```json fences. A review
+  // that DISCUSSES {"gate":"BLOCKED"} in prose (e.g. explaining the contract, or
+  // reviewing this very hook) must not flip a genuine READY to blocked.
+  const workDir = makeTempDir('sd0x-gate-prose-');
+  const binDir = setupStubBin();
+  const output = [
+    'The hook emits {"gate":"BLOCKED"} when P0/P1 exist; here none were found.',
+    '## Gate: ✅ Ready',
+    '```json',
+    '{"gate": "READY"}',
+    '```',
+  ].join('\n');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: output,
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true, 'a BLOCKED string in prose must not override the fenced READY gate');
+});
+
+test('review gate: BLOCKED in fence still wins even when READY quoted in prose (fail-closed preserved)', () => {
+  // The complement: prose is ignored, but a real fenced BLOCKED still blocks.
+  const workDir = makeTempDir('sd0x-gate-prose-blocked-');
+  const binDir = setupStubBin();
+  const output = [
+    'A passing review would print {"gate":"READY"}, but this one did not:',
+    '## Gate: ⛔ Blocked',
+    '```json',
+    '{"gate": "BLOCKED"}',
+    '```',
+  ].join('\n');
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: output,
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'a fenced BLOCKED gate is authoritative regardless of prose');
+});
+
 test('review gate: stray READY example without pass text → passed=false (conflict resolution)', () => {
   const workDir = makeTempDir('sd0x-gate-strayready-');
   const binDir = setupStubBin();
@@ -2477,10 +2585,7 @@ test('code_review update under held lock → skipped, state not mutated (fail-cl
     code_review: { executed: false, passed: false },
   };
   writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
-  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(lockDir, { recursive: true });
-  writeFileSync(join(lockDir, 'pid'), String(process.pid));
-  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  seedHeldLock(workDir);
   const result = runHook({
     cwd: workDir,
     binDir,
@@ -2489,7 +2594,7 @@ test('code_review update under held lock → skipped, state not mutated (fail-cl
       tool_input: { command: '/codex-review-fast' },
       tool_output: '## Gate: ⛔',
     },
-    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
   assert.equal(result.status, 0, 'contention must not fail the hook');
   assert.ok(result.stderr.includes('lock contention'), `stderr should mention lock contention, got: ${result.stderr}`);
@@ -2533,10 +2638,7 @@ test('passing code_review under held lock skips changed_files reset (no unlocked
       changed_files_since_review: ['src/app.ts'],
     })
   );
-  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(lockDir, { recursive: true });
-  writeFileSync(join(lockDir, 'pid'), String(process.pid));
-  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  seedHeldLock(workDir);
   const result = runHook({
     cwd: workDir,
     binDir,
@@ -2545,7 +2647,7 @@ test('passing code_review under held lock skips changed_files reset (no unlocked
       tool_input: { command: '/codex-review-fast' },
       tool_output: '## Gate: ✅ Ready',
     },
-    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
   assert.equal(result.status, 0);
   assert.match(result.stderr, /changed_files reset skipped \(lock contention\)/);
@@ -2567,10 +2669,7 @@ test('passing precommit under held lock skips review_phase reset (no unlocked wr
       precommit: { executed: false, passed: false },
     })
   );
-  const lockDir = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(lockDir, { recursive: true });
-  writeFileSync(join(lockDir, 'pid'), String(process.pid));
-  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+  seedHeldLock(workDir);
   const result = runHook({
     cwd: workDir,
     binDir,
@@ -2579,7 +2678,7 @@ test('passing precommit under held lock skips review_phase reset (no unlocked wr
       tool_input: { command: '/precommit' },
       tool_output: '## Overall: ✅ PASS',
     },
-    env: { REVIEW_STATE_LOCK_TIMEOUT: '1' },
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
   assert.equal(result.status, 0);
   assert.match(result.stderr, /phase reset skipped \(lock contention\)/);
