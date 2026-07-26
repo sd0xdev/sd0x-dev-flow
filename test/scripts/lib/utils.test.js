@@ -204,6 +204,71 @@ test('testStdoutFilter - other output allowed', () => {
   assert.equal(testStdoutFilter('FAILURE mode'), true);
 });
 
+test('testStdoutFilter - TAP passing points suppressed', () => {
+  // node:test emits `ok N - name` per passing test — the bulk of a large-suite flood.
+  assert.equal(testStdoutFilter('ok 1 - single code edit tracked'), false);
+  // Nested subtests are indented; trimmed matching must still suppress them.
+  assert.equal(testStdoutFilter('    ok 12 - inner passing case'), false);
+  // ANSI-coloured ok line (stripAnsi runs first).
+  assert.equal(
+    testStdoutFilter('\x1B[32mok 3 - green pass\x1B[39m'),
+    false
+  );
+  // A PASSING test whose NAME contains Error/FAIL must still be suppressed —
+  // proves the TAP rule is evaluated before the generic /Error|FAIL/ keep.
+  assert.equal(testStdoutFilter('ok 5 - handles Error gracefully'), false);
+  assert.equal(testStdoutFilter('ok 6 - FAIL path returns null'), false);
+});
+
+test('testStdoutFilter - TAP per-test headers and YAML framing suppressed', () => {
+  assert.equal(testStdoutFilter('# Subtest: does a thing'), false);
+  assert.equal(testStdoutFilter('  ---'), false);
+  assert.equal(testStdoutFilter('  ...'), false);
+  assert.equal(testStdoutFilter('  duration_ms: 2276.384667'), false);
+});
+
+test('testStdoutFilter - TAP failures and their diagnostics always shown', () => {
+  // Failing points are kept, including nested/indented ones.
+  assert.equal(testStdoutFilter('not ok 2 - broken behaviour'), true);
+  assert.equal(testStdoutFilter('    not ok 3 - nested broken'), true);
+  // A `not ok` whose name starts like `ok` must NOT be mistaken for a pass.
+  assert.equal(testStdoutFilter('not ok 4 - ok-ish naming'), true);
+  // Failure YAML keys (indented) are kept — only ---/.../duration_ms are noise.
+  assert.equal(testStdoutFilter('  failureType: testCodeFailure'), true);
+  assert.equal(testStdoutFilter('  error: boom'), true);
+  assert.equal(testStdoutFilter('  stack: at foo (bar.js:1)'), true);
+  // `location:` is a must-keep failure key too — lock the contract against a future
+  // suppress-rule that anchors on it.
+  assert.equal(testStdoutFilter('  location: /path/test.js:11:10'), true);
+});
+
+test('testStdoutFilter - TAP summary counts always shown', () => {
+  assert.equal(testStdoutFilter('# tests 2302'), true);
+  assert.equal(testStdoutFilter('# pass 2298'), true);
+  assert.equal(testStdoutFilter('# fail 0'), true);
+  assert.equal(testStdoutFilter('TAP version 13'), true);
+});
+
+test('testStdoutFilter - non-TAP "ok " diagnostics are kept (not test points)', () => {
+  // Only a NUMBERED TAP test point (`ok <n>`) is a pass to suppress. A child process
+  // or test that prints a line merely beginning with "ok " is a real diagnostic and
+  // must stay visible — otherwise the flood-control filter silently hides output.
+  assert.equal(testStdoutFilter('ok diagnostic: database unavailable'), true);
+  assert.equal(testStdoutFilter('okay everything is fine'), true);
+  assert.equal(testStdoutFilter('ok - unnumbered TAP-ish note'), true);
+});
+
+test('testStdoutFilter - CRLF framing is normalized before matching', () => {
+  // runStep splits on '\n', leaving a trailing '\r'; a CRLF-emitting test command
+  // would otherwise defeat the exact `---`/`...` match and re-open the per-test flood.
+  assert.equal(testStdoutFilter('  ---\r'), false);
+  assert.equal(testStdoutFilter('  ...\r'), false);
+  assert.equal(testStdoutFilter('  duration_ms: 5.5\r'), false);
+  assert.equal(testStdoutFilter('ok 1 - crlf pass\r'), false);
+  // ...but a CRLF failure point is still kept.
+  assert.equal(testStdoutFilter('not ok 2 - crlf fail\r'), true);
+});
+
 // =============================================================================
 // runCapture
 // =============================================================================
@@ -398,4 +463,19 @@ test('loadLintGlobs warns on malformed config', () => {
   writeFileSync(join(dir, 'package.json'), '{}');
   const globs = loadLintGlobs(dir);
   assert.deepEqual(globs, DEFAULT_LINT_GLOBS);
+});
+
+test('testStdoutFilter - node:test spec reporter passing lines are suppressed, failing lines kept', () => {
+  // Only the TAP `ok <n>` form was suppressed, so a project running `--test-reporter=spec` flooded
+  // the captured tail with one line per PASSING test — pushing the real failure out of the window
+  // the filter exists to protect.
+  assert.equal(testStdoutFilter('✔ parses a valid plan (1.234ms)'), false);
+  assert.equal(testStdoutFilter('    ✔ nested subtest passes (0.5ms)'), false, 'nested indentation');
+  assert.equal(testStdoutFilter('✔ (2.0ms)'), false, 'unnamed test');
+  // The failing counterpart must stay visible — it is the diagnostic.
+  assert.equal(testStdoutFilter('✖ rejects a tampered digest (3.1ms)'), true);
+  assert.equal(testStdoutFilter('    ✖ nested subtest fails (1.0ms)'), true, 'nested failure');
+  // Not a spec-reporter test point: a checkmark inside prose must not be swallowed.
+  assert.equal(testStdoutFilter('✔all-good-marker'), true, 'no separator after the mark');
+  assert.equal(testStdoutFilter('build status: ✔ done'), true, 'mark not at line start');
 });

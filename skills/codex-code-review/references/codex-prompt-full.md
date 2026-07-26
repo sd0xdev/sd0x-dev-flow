@@ -89,7 +89,7 @@ Wait. Before assigning severity levels, independently verify each finding:
 1. **Evidence check**: For each issue, what specific code proves it's real? (file:line quote)
 2. **Context check**: Did you read enough surrounding code to understand intent?
 3. **False positive check**: Could this be intentional design? Check for comments, tests, or docs.
-4. **Severity check**: Could any finding be more severe than your initial assessment?
+4. **Severity check**: Is the severity right — in **both** directions? Could this be worse than you assessed, and could it be *less* than you assessed?
 5. **Gap check**: What related issues might you have overlooked?
 
 Only report findings that survive all 5 checks.
@@ -100,6 +100,14 @@ Only report findings that survive all 5 checks.
 - **P1**: Functional anomaly, severe performance degradation
 - **P2**: Code quality, maintainability
 - **Nit**: Style suggestion
+
+### Calibration ⚠️
+
+Anything at or above ${BLOCKING} **blocks the merge and costs a review round**. Reserve those severities for defects with a **concrete failure path you can describe**: given this input or this state, this code produces the wrong result, crashes, or leaks. If you cannot name the input, it is not P1.
+
+A missing defensive check is P2 unless you can show the path that reaches it. A theoretical hardening opportunity is P2. "This might race under some concurrency" is P2; a race with an interleaving you can spell out is P1.
+
+Do not inflate severity to make a point, and do not manufacture findings to fill a section. **No blocking finding is a normal, common result.**
 
 ## Output Format
 
@@ -123,9 +131,22 @@ ${SPEC_CHECKLIST ? `### AC Coverage
 |----|--------|----------|
 | <AC text> | ✅ Implemented / ⚠️ Partial / ❌ Missing / N/A | file:line |` : ''}
 
+### Deferred Findings
+
+For every finding **below** ${BLOCKING}, emit one line here, starting at column 0:
+
+\`\`\`
+[NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-<severity> | <ISO8601 UTC>
+\`\`\`
+
+That tag and field order are parsed out of this output by a hook and stored with a TTL, which is what stops the same finding being raised again next session. Field 2 is the issue text, field 3 the reason — do not reorder them, and do not use a different tag. Omit this section entirely if every finding blocks.
+
 ### Merge Gate
-- ✅ Ready: No P0/P1
-- ⛔ Blocked: Has P0/P1, needs fix
+
+Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}).
+
+- ✅ Ready: no ${BLOCKING} findings
+- ⛔ Blocked: has a ${BLOCKING} finding, needs fix
 
 ### Structured Summary (optional, after text report)
 

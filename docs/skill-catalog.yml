@@ -223,6 +223,11 @@ skills:
     category: review
     featured: false
     public: true
+  - command: /plan-review
+    category: review
+    featured: false
+    use_when: "Pre-ExitPlanMode adversarial plan review loop"
+    public: true
 
   # ── Verification ─────────────────────────────────────────
   - command: /verify
@@ -324,6 +329,11 @@ skills:
   - command: /req-analyze
     category: planning
     featured: false
+    public: true
+  - command: /orchestrate
+    category: planning
+    featured: false
+    use_when: "Agent-driven workflow planning + read-only fanout (report-only v1)"
     public: true
   - command: /request-tracking
     category: planning

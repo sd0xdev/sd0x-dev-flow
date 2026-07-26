@@ -6,13 +6,32 @@
 >
 > **⚠️ Supersession note** (2026-04-12): The following counts in this document were reconciled during implementation and should be read against the authoritative values in the request ticket + shipped README:
 >
-> | Location | Original text | Actual value shipped |
+> | Location | Original text | Value shipped **at 2026-04-12** |
 > |----------|--------------|---------------------|
 > | §4.2 FR-S1 "target: all surfaces say 92 skills" | 92 (filesystem count) | **90** (catalog-public count from `docs/skill-catalog.yml`; 2 local-only skills `readme-i18n-sync` + `update-readme` are gitignored) |
 > | §8.1.3 unified JSON description sample | "92 skills" | **90 skills** (byte-exact in `.claude-plugin/plugin.json`, `package.json`, `.claude-plugin/marketplace.json`) |
 > | §5 Pattern Map row 5 "83 of 92 skills with allowed-tools" | 83 of 92 (filesystem) | **81 of 90** (public, after subtracting 2 local-only skills which both declare `allowed-tools`) |
 >
-> The reconciliation rationale: `scripts/generate-readme-catalog.js` reads public skill count from catalog, not filesystem, so the marketing surfaces must use catalog count (90) to avoid drift with auto-generated README blocks.
+> The reconciliation rationale: `scripts/generate-readme-catalog.js` reads public skill count from catalog, not filesystem, so the marketing surfaces must use catalog count to avoid drift with auto-generated README blocks.
+>
+> **📌 Every number in this document is a dated snapshot, not a live value.** The catalog grows; these figures were correct on 2026-04-12 and are preserved as the historical record of that decision. Do not "correct" them in place — that would falsify what was reconciled at the time. Re-derive the current values instead:
+>
+> ```bash
+> node -e "const fs=require('fs');
+> const b=fs.readFileSync('docs/skill-catalog.yml','utf8').split(/^skills:/m)[1];
+> const c=[...b.matchAll(/^\s+-\s+command:\s*\/(\S+)/gm)].map(m=>m[1]);
+> const d=fs.readdirSync('skills').filter(x=>fs.existsSync('skills/'+x+'/SKILL.md'));
+> const at=n=>/^allowed-tools:/m.test(fs.readFileSync('skills/'+n+'/SKILL.md','utf8'));
+> console.log('catalog(public):',c.length,'| filesystem:',d.length);
+> console.log('allowed-tools:',c.filter(at).length,'of',c.length,'(public) ·',d.filter(at).length,'of',d.length,'(filesystem)');"
+> ```
+>
+> | Snapshot | Catalog (public) | Filesystem | `allowed-tools` (public) | `allowed-tools` (filesystem) |
+> |----------|-----------------|-----------|--------------------------|------------------------------|
+> | 2026-04-12 (rebrand) | 90 | 92 | 81 of 90 | 83 of 92 |
+> | 2026-07-25 (measured) | 98 | 100 | 89 of 98 | 91 of 100 |
+>
+> The invariant that survives both snapshots: filesystem = catalog + 2 (the gitignored local-only pair), and exactly **9** skills inherit default permissions rather than declaring `allowed-tools`.
 
 ## 1. Problem Statement
 
@@ -43,9 +62,9 @@ Update the brand layer of `sd0x-dev-flow` to position it as a reference implemen
 | C1 | **`plugin.json` `name` field MUST NOT change** | Stable identifier for install/upgrade; derived paths in scripts hardcode the literal | `.claude-plugin/plugin.json:2` |
 | C2 | **GitHub repository slug MUST NOT change** | Marketplace redirect behavior is unverified; breaking it requires manual migration for every existing user | `.claude-plugin/marketplace.json:9` (`"repo": "sd0xdev/sd0x-dev-flow"`) |
 | C3 | **`package.json` `name` field MUST NOT change** | npm identity; sync-locked with plugin.json | `package.json:2` |
-| C4 | **File names `README.md`, `CLAUDE.md`, `.claude/sd0x-dev-flow-lessons.md` MUST NOT change** | Claude Code discovery + derived state paths | Convention + `rules/self-improvement.md:67` (Two-Tier Model table canonical path) |
+| C4 | **File names `README.md`, `CLAUDE.md`, `.claude/sd0x-dev-flow-lessons.md` MUST NOT change** | Claude Code discovery + derived state paths | Convention + `rules/self-improvement.md` § Lesson format (canonical log path) |
 | C5 | **`~/.config/sd0x-dev-flow/` git-profile registry path MUST NOT change** | User-specific config directory; renaming orphans git-profile configurations | `skills/git-profile/scripts/git-profile.sh:18,33` |
-| C6 | **Hook regex patterns matching `sd0x-dev-flow:` prefix MUST NOT change** | Namespace-qualified command references | `hooks/stop-guard.sh:214-216`, `hooks/post-tool-review-state.sh:609-625` |
+| C6 | **Hook regex patterns matching `sd0x-dev-flow:` prefix MUST NOT change** | Namespace-qualified command references | `hooks/stop-guard.sh` — the `HAS_CODEX_REVIEW` / `HAS_PRECOMMIT` / `HAS_REVIEW_DOC` transcript-fallback greps; `hooks/post-tool-review-state.sh` — the `_code_review_matched` / `_doc_review_matched` / `_precommit_matched` command greps and `_precommit_mode_of()`. Cited by symbol, not line range: these files shift on every hardening pass |
 
 ### 2.2 Soft Constraints
 
@@ -152,13 +171,13 @@ Concise traceability from stakeholder → use case → primary requirement:
 | # | Harness sub-problem (source) | sd0x-dev-flow implementation | Code evidence |
 |---|------------------------------|------------------------------|---------------|
 | 1 | Tool loop control (Anthropic) | `/codex-review-fast` → `/precommit` auto-loop with sentinel-driven transitions | `rules/auto-loop.md` + `hooks/post-tool-review-state.sh` |
-| 2 | Sentinel-driven state machine (emerging pattern) | `✅ Ready` / `⛔ Blocked` / `✅ All Pass` gate markers parsed into durable state | `scripts/emit-review-gate.sh` (producer) + `hooks/post-tool-review-state.sh` (consumer/parser) |
-| 3 | Context recovery across compaction (Anthropic) | `[AUTO_LOOP_RESUME]` stdout injection after SessionStart(compact) | `hooks/post-compact-auto-loop.sh:133-144` |
+| 2 | Sentinel-driven state machine (emerging pattern) | Two distinct planes. **Reviewer markers** — `✅ Ready` / `⛔ Blocked` / `✅ Mergeable` / `## Overall: ✅ PASS` — are emitted by the review skills and parsed into durable state. **Aggregate machine gates** — `REVIEW_GATE=PENDING\|READY\|BLOCKED` — are emitted by `emit-review-gate.sh`, which produces no emoji markers at all. (`✅ All Pass` is behaviour-layer prose; no hook reads it.) | Reviewer markers: review skills (producer) + `hooks/post-tool-review-state.sh` (parser). Aggregate gate: `scripts/emit-review-gate.sh` (producer) + the same hook's `update_aggregate_gate` (parser) |
+| 3 | Context recovery across compaction (Anthropic) | `[AUTO_LOOP_RESUME]` stdout injection after SessionStart(compact) | `hooks/post-compact-auto-loop.sh` — the `[AUTO_LOOP_RESUME]` heredoc |
 | 4 | Lifecycle interceptors (Claude Agent SDK) | 5 hook event types dispatched to 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | `hooks/*.sh` (8 scripts) + `.claude/settings.json` |
-| 5 | Capability-based tool gating (arXiv 2603.05344) | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 81 of 90 public skills use `allowed-tools` frontmatter (9 skills inherit default permissions; see header supersession note for 83/92 filesystem-count reconciliation) |
-| 6 | Defense-in-depth safety (arXiv 2603.05344) | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | `scripts/pre-push-gate.sh` + `scripts/commit-msg-guard.sh` + `hooks/stop-guard.sh:114-149` |
-| 7 | Generator-evaluator split (Anthropic) | Dual review: Codex (primary) + Claude (secondary) dispatched in parallel on every review cycle | `rules/codex-invocation.md` + `rules/auto-loop.md:34-42` (Dual Review Mode) |
-| 8 | Incremental progress tracking (Anthropic) | `iteration_history.current_round` + `max_rounds` guard + convergence plateau detection (3+ rounds with ≥50% fingerprint overlap) | `rules/auto-loop.md:86-97` (exit conditions + strategic reset) |
+| 5 | Least-privilege **permission posture** (arXiv 2603.05344 discusses capability gating) | Skill frontmatter `allowed-tools` declares a **pre-approval list** — e.g., `/ask` declares no Edit/Write, so those tools are never silently pre-authorised. It is _not_ a hard deny boundary: omitting a tool means it is not pre-approved, not that it is unavailable through the normal permission flow. The enforced boundaries are the hooks (`pre-edit-guard`, `stop-guard`) and `sandbox: 'read-only'` on Codex calls | 81 of 90 public skills declared `allowed-tools` **as of 2026-04-12** (9 inherit default permissions). The 9-skill inheritance gap is the durable figure; the totals move with the catalog — 89 of 98 when re-measured 2026-07-25. See the header snapshot table and the re-derivation command. |
+| 6 | Defense-in-depth safety (arXiv 2603.05344) | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | `scripts/pre-push-gate.sh` + `scripts/commit-msg-guard.sh` + `hooks/stop-guard.sh` (the jq-unavailable fail-closed branch and the `.blocked` sidecar classification block) |
+| 7 | Generator-evaluator split (Anthropic) | The evaluator is a separate model that researches the repo itself — Codex, dispatched on every review cycle. Since 2026-07-26 it is the *only* reviewer by default; a parallel secondary is opt-in via `--dual` on the branch and plan variants | `rules/codex-invocation.md` + `rules/auto-loop.md` § Review Dispatch |
+| 8 | Incremental progress tracking (Anthropic) | `iteration_history.current_round` + `max_rounds` hard cap + `total_rounds_session` strategic reset. The cap is **hook-detected**, and blocks only in `strict` or dual-review mode — under the default `warn` mode `stop-guard.sh` prints to stderr and exits 0, leaving enforcement to the behaviour layer. Fingerprint-overlap plateau detection (3+ rounds ≥50% overlap) is a **designed V2 target, not shipped** — `_update_iteration()` stores per-round counts, not fingerprints, so the cap is the only convergence exit the hook observes at all | `rules/auto-loop.md` § Exit Conditions + [`4-implementation.md`](../auto-loop-evolution/4-implementation.md) §2 (round counter lifecycle) |
 | 9 | Human-in-the-loop safety gates (Martin Fowler) | `/dev/tty` confirmation in `pre-push-gate.sh` + `AskUserQuestion` for destructive ops | `scripts/pre-push-gate.sh` (`/dev/tty` read) + `skills/push-ci/SKILL.md` (AskUserQuestion flow) |
 | 10 | Self-improvement loop (novel) | Correction → record lesson → promote to rule (3+ recurrences) | `rules/self-improvement.md` + `.claude/sd0x-dev-flow-lessons.md` |
 

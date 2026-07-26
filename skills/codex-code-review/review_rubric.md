@@ -11,7 +11,11 @@
 
 ## Merge Gate
 
+Decided by the tier's blocking severity (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). `standard` is the default.
+
 | Gate      | Condition                              |
 | --------- | -------------------------------------- |
-| Ready     | No P0/P1; P2/Nit sweep policy applies before precommit |
-| Blocked   | Has P0/P1, needs fix                   |
+| Ready     | No finding at or above the blocking severity — sub-threshold ones are logged, not swept |
+| Blocked   | At least one such finding, needs fix   |
+
+There is no batch-fix-then-re-review sweep before precommit. See `@rules/auto-loop.md` § Sub-Threshold Findings.

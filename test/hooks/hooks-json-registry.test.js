@@ -58,3 +58,27 @@ test('no SessionStart hook uses empty matcher', () => {
     'to avoid errors when CLAUDE_PLUGIN_ROOT is unavailable on non-startup events'
   );
 });
+
+// Claude Code matchers are exact tool-name matches: "Edit|Write" alternates
+// on Edit and Write but never fires for NotebookEdit. The edit hooks read
+// tool_input.notebook_path as a fallback, so they MUST be dispatched for
+// NotebookEdit or that fallback is dead code and notebook edits bypass both
+// the sensitive-file guard (PreToolUse) and the review-gate tracker (PostToolUse).
+for (const { event, script } of [
+  { event: 'PreToolUse', script: 'pre-edit-guard' },
+  { event: 'PostToolUse', script: 'post-edit-format' },
+]) {
+  test(`${event} ${script} matcher includes NotebookEdit`, () => {
+    const entry = hooksConfig.hooks[event].find(
+      (e) => e.hooks?.some((h) => h.command?.includes(script))
+    );
+    assert.ok(entry, `should have ${script} ${event} entry`);
+    const alts = entry.matcher.split('|');
+    assert.ok(
+      alts.includes('NotebookEdit'),
+      `${script} matcher "${entry.matcher}" must include NotebookEdit so notebook ` +
+      'edits are dispatched to the hook (matchers are exact tool-name matches)'
+    );
+    assert.ok(alts.includes('Edit') && alts.includes('Write'), 'must still cover Edit and Write');
+  });
+}

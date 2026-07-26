@@ -174,7 +174,7 @@ sequenceDiagram
 | 2-3 active requests | Use all, sorted by date desc |
 | >3 active requests | Use top 3 by date desc, note `[N additional requests omitted]` |
 
-**Active request**: Status not in `[Completed, Done, Superseded]`（與 `feature-context-resolution.md:82` 一致）。
+**Active request**: Status not in `[Completed, Done, Superseded, Archived]`（與 `feature-context-resolution.md:82` 一致）。
 
 **PR links fallback order**: request doc `## References` → git log `Merge pull request` patterns → `[No PR links found]`。
 

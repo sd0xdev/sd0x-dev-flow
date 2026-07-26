@@ -6,7 +6,7 @@
 
 > 給 Claude Code 的 harness 層。
 
-**AI 跳不過的品質關卡。** [Claude Code](https://claude.com/claude-code) 的 AI Agent Harness Engineering reference implementation — hook 強制雙 review、能在 context compaction 後續存的 state-machine gates，以及在關鍵處 fail-closed 的安全防線。
+**AI 跳不過的品質關卡。** [Claude Code](https://claude.com/claude-code) 的 AI Agent Harness Engineering reference implementation — hook 強制的 review gate、能在 context compaction 後續存的 state-machine gates，以及在關鍵處 fail-closed 的安全防線。
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — 僅佔 Claude context window 的 ~4%
@@ -28,7 +28,7 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 | 4 | **Lifecycle interceptors** | 5 種 hook 事件分派到 8 支腳本:PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/)(8 支腳本)+ [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 95 個公開 skill 中有 86 個宣告 `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 層防線:pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
-| 7 | **Generator-evaluator split** | 雙 review:每個 review 循環都以並行方式分派 Codex(主要)+ Claude(次要) | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Dual Review Mode) |
+| 7 | **Generator-evaluator split** | Codex 審查 Claude 寫的東西,自行研究 repo——絕不餵結論要它確認 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Review Dispatch) |
 | 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + 收斂平台期偵測 | [`rules/auto-loop.md`](rules/auto-loop.md)(exit conditions 與 strategic reset) |
 | 9 | **Human-in-the-loop safety gates** | 對破壞性操作使用 `/dev/tty` 確認 + `AskUserQuestion` | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 被糾正 → 記錄 lesson → 重複 3 次以上後提升為 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
@@ -40,7 +40,7 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 | 沒有護欄時 | 有 sd0x-dev-flow |
 |---|---|
 | Context 過長時 AI 跳過 review | **Hook 強制**：stop-guard 阻止未完成的 review |
-| 單一 reviewer 遺漏問題 | **雙 Reviewer 分派**：Codex + 次要 reviewer 並行 |
+| 自我審查等於蓋橡皮圖章 | **獨立 reviewer**：Codex 自行研究 repo，需要深度時再 opt-in `--dual` |
 | 「已修正」卻沒有重新驗證 | **Auto-loop**：修正 → 重新 review → 通過 → 繼續 |
 | Review 狀態在 compact 後遺失 | **狀態追蹤**：SessionStart hook 重新注入 |
 
@@ -55,7 +55,7 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 /project-setup
 ```
 
-一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 14 條 rules + 9 個 hooks。
+一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 14 條 rules + 8 個 hooks。
 
 使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
 
@@ -73,34 +73,27 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-loop 引擎**自動執行品質關卡——程式碼編輯後，review 指令會分派**雙 Reviewer 並行審查**（Codex MCP + 次要 reviewer 同步進行）。Findings 會去重、severity 正規化，並彙整為單一 gate。在 strict 模式下，Hooks 強制 fail-closed 語意：彙整 gate 未完成時，stop-guard 會阻止停止。詳見 [docs/hooks.md](docs/hooks.md)。
+**Auto-loop 引擎**自動執行品質關卡——程式碼編輯後，review 指令會在同一則回覆內分派 **Codex**。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。在 strict 模式下，Hooks 強制 fail-closed 語意：gate 未完成時，stop-guard 會阻止停止。第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。詳見 [docs/hooks.md](docs/hooks.md)。
 
 <details>
-<summary>詳細：雙 Reviewer 時序圖</summary>
+<summary>詳細：Review Loop 時序圖</summary>
 
 ```mermaid
 sequenceDiagram
     participant D as Developer
     participant C as Claude
     participant X as Codex MCP
-    participant T as Secondary Reviewer
     participant H as Hooks
 
     D->>C: Edit code
     H->>H: Track file change
-    C->>H: emit-review-gate PENDING
-    par Dual Review
-        C->>X: Codex review (sandbox)
-    and
-        C->>T: Task(code-reviewer)
-    end
-    X-->>C: Findings (primary)
-    T-->>C: Findings (secondary)
-    C->>C: Aggregate + dedup + gate
-    C->>H: emit-review-gate READY/BLOCKED
+    C->>X: Codex review (sandbox, researches repo itself)
+    X-->>C: Findings + gate sentinel
+    H->>H: Parse sentinel into code_review.passed
+    C->>C: Gate on the tier's blocking severity
 
-    alt Issues found
-        C->>C: Fix all issues
+    alt Blocking findings
+        C->>C: Fix them (sub-threshold: log and move on)
         C->>X: --continue threadId
         X-->>C: Re-verify
     end
@@ -113,16 +106,19 @@ sequenceDiagram
 
 </details>
 
-## 功能亮點：雙 Reviewer 架構
+## 功能亮點：分檔 Review
 
-v2.0 預設平行分派兩個獨立 reviewer，支援降級 fallback 模式：
+預設只有一位 reviewer——Codex。**tier** 決定一項改動要多嚴格，以及一個 finding 要多嚴重才會重開 loop：
 
-| Reviewer | 角色 | 降級策略 |
-|----------|------|----------|
-| Codex MCP | 主要（sandbox，完整 diff） | 不可用時退回單 reviewer 模式 |
-| 次要（pr-review-toolkit） | 信心分數制審查 | strict-reviewer → 單 reviewer 模式 |
+| Tier | 適用 | Blocking | 輪次上限 |
+|------|------|----------|----------|
+| `fast` | 文件、設定、低風險小改 | P0 | 3 |
+| `standard` **（預設）** | 一般功能與 bug fix | P0、P1 | 5 |
+| `thorough` | 安全性、資料完整性、release、public API | P0、P1、P2 | 10 |
 
-Findings 會**嚴重度正規化**（P0-Nit）、**去重**（file + issue key，±5 行容差），並**標記來源**（`codex` | `toolkit` | `both`）。
+**80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`，帶 TTL 持久化，下次 session 不會重複被提），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
+
+第二位 reviewer 走 `/codex-review-branch --dual`，**不加旗標就不啟用**——它讓每輪的 token 與時間成本翻倍，值得花在 release 或安全審查上，不值得花在日常修正。啟用 `--dual` 時，findings 會做嚴重度正規化、去重（file + issue key，±5 行容差）與來源標記。
 
 Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blocked。
 
@@ -131,7 +127,7 @@ Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blo
 | 能力 | sd0x-dev-flow | gstack | 通用 prompts |
 |---|---|---|---|
 | 強制 review 關卡 | Hook + 行為層 | 僅建議 | 無 |
-| 雙 Reviewer | Codex + 次要（並行） | 單一 /review | 無 |
+| 獨立 reviewer | Codex 自行研究；`--dual` opt-in | 單一 /review | 無 |
 | 自動修正迴圈 | 修正 → 重新 review → 通過 | 手動 | 無 |
 | 多 Agent 研究 | /deep-research（3 agents） | 無 | 無 |
 | 對抗式驗證 | Nash 均衡辯論 | 無 | 無 |
@@ -167,7 +163,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**需求**：Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（選用 — `/codex-*` skill 需要；未安裝時退回單 reviewer 模式）
+**需求**：Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝，但 `/codex-*` review gate 必須有——Codex 本身就是那位唯一的 reviewer，未安裝時 review 會直接輸出 `⛔ Blocked` + `⚠️ Need Human`，沒有可降級的對象）
 
 ## Workflow Tracks
 
@@ -249,9 +245,9 @@ flowchart TD
 |------|------|------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |
+| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小的 Context 佔用
@@ -419,7 +415,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## Rules & Hooks
 
-14 條 rules（常駐載入的慣例）+ 9 個 hooks（自動化護欄）。
+14 條 rules（常駐載入的慣例）+ 8 個 hooks（自動化護欄）。
 
 > **客製化**：編輯 `auto-loop-project.md` 可覆寫專案的 auto-loop 行為。Plugin 更新不會衝突 — 詳見 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 

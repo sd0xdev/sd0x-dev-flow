@@ -6,13 +6,41 @@
  *
  * Merges Phase A classification with Codex debate result.
  * Applies --override flags, runs 6 deterministic checks + under-coverage check,
- * selects gate sentinel (always ✅ Mergeable or ⛔ Needs revision; ⚠️ Need Human is narrative only).
+ * selects gate sentinel (always AUDIT_CLEAR or AUDIT_REVISE; ⚠️ Need Human is narrative only).
  *
  * CLI:
  *   node consolidate.js --phase-a <file> --debate <file> --preflight <file> --overrides "<id>:<rationale>[;...]" --depth <d> --output <file>
  */
 
 const fs = require('fs');
+
+/**
+ * Gate sentinels — deliberately NOT the doc-review vocabulary.
+ *
+ * These used to be doc review's own `Mergeable` / `Needs revision` pair, on the reasoning (1-requirements
+ * FR-7 / NFR-5) that reusing doc review's words bought auto-loop compatibility. It did not. This
+ * skill assembles its report locally and emits it as the model's own message, so it is never a
+ * reviewer tool output and `post-tool-review-state.sh` — provenance-bound on both the Bash side
+ * (COMMAND must be `codex-review-doc`/`review-spec`) and the MCP side (prompt AND output must both
+ * carry the doc-review header) — cannot record a verdict from it. The revised FR-10 says exactly
+ * this. So the shared vocabulary bought no state; what it did buy was a COLLISION.
+ *
+ * stop-guard.sh's transcript fallback (used whenever there is no readable state file) is
+ * position-blind: it greps the conversation for a doc verdict and, separately, for a doc-review
+ * command name. This skill's report supplied the verdict, and the token `/codex-review-doc` is
+ * present in its own SKILL.md routing table, its references/review-loop.md, and preflight.js's
+ * advisory — all of which land in the transcript BEFORE the report, so even verdict/command
+ * ordering does not separate them. A necessity audit could therefore satisfy the doc gate that a
+ * real doc review is supposed to satisfy.
+ *
+ * Namespacing the sentinel is the same fix `✅ Plan Ready` / `⛔ Plan Blocked` already applies to
+ * the plan plane. The wording is chosen to miss EVERY stop-guard pattern, including the coarse
+ * `⛔.*(Block|Needs revision|Must fix)` recency scan — hence `Revise` rather than the near-miss
+ * `Audit Needs revision`, which that `.*` would still have caught. Pinned by
+ * test/skills/necessity-audit/stop-guard-isolation.test.js against the real hook.
+ */
+const AUDIT_CLEAR = '✅ Audit Clear';
+const AUDIT_REVISE = '⛔ Audit Revise';
 
 const STRICTER = { Keep: 0, Review: 1, Cut: 2 };
 const STANCE_RE = /\b(Challenge|Defend|Accept|Reject|Concede)\w*/i;
@@ -154,7 +182,7 @@ function selectGate(elements, checks, underCovered) {
     const failed = Object.entries(checks).filter(([, v]) => !v).map(([k]) => k);
     narrative.push(`⚠️ Need Human: deterministic checks failed: ${failed.join(', ')}`);
     if (underCovered.length > 0) narrative.push(`⚠️ Need Human: dimensions under-covered in debate: ${underCovered.join(', ')}`);
-    return { gate: '⛔ Needs revision', narrative };
+    return { gate: AUDIT_REVISE, narrative };
   }
   const cutElements = elements.filter(e => e.final === 'Cut');
   const overriddenCut = cutElements.filter(e => e.user_override);
@@ -163,7 +191,7 @@ function selectGate(elements, checks, underCovered) {
   if (unOverriddenCut.length > 0) {
     narrative.push(`⛔ ${unOverriddenCut.length} elements flagged for removal`);
     if (underCovered.length > 0) narrative.push(`⚠️ Need Human: dimensions under-covered in debate: ${underCovered.join(', ')}`);
-    return { gate: '⛔ Needs revision', narrative };
+    return { gate: AUDIT_REVISE, narrative };
   }
 
   if (overriddenCut.length > 0) {
@@ -172,7 +200,7 @@ function selectGate(elements, checks, underCovered) {
   if (underCovered.length > 0) {
     narrative.push(`⚠️ Need Human: dimensions under-covered in debate: ${underCovered.join(', ')}`);
   }
-  return { gate: '✅ Mergeable', narrative };
+  return { gate: AUDIT_CLEAR, narrative };
 }
 
 function consolidate({ phaseA, debate, preflight, overrides, depth }) {
@@ -221,7 +249,7 @@ function buildSuggestedNext(elements, gate) {
     suggestions.push(`Revise Cut elements: ${cutUnoverridden.map(e => e.id).join(', ')}`);
     suggestions.push('Or re-run with `--override <id>:<rationale>` to keep with justification');
   }
-  if (gate === '✅ Mergeable' && elements.some(e => e.final === 'Review')) {
+  if (gate === AUDIT_CLEAR && elements.some(e => e.final === 'Review')) {
     suggestions.push('Consider `/simplify` on Review elements for optional cleanup');
   }
   return suggestions;
@@ -268,4 +296,6 @@ module.exports = {
   STANCE_RE,
   ROUND_REF_RE,
   DIM_NAMES,
+  AUDIT_CLEAR,
+  AUDIT_REVISE,
 };

@@ -171,3 +171,18 @@ test('verify full mode skips integration without --integration arg', () => {
   assert.equal(intStep.status, 'skip');
   assert.match(intStep.reason, /file not specified/);
 });
+
+test('verify zero runnable scripts → PASS with all steps skipped', () => {
+  // Intentional divergence from precommit-runner: /verify is a test-run loop,
+  // not a merge gate. "No tests to run" means "nothing to verify" → don't block
+  // the loop, so all-skip is a pass here. precommit-runner is a gate, so its
+  // all-skip is the fail-closed ⚠️ NO CHECKS RUN state instead (see
+  // precommit-runner.test.js 'zero runnable scripts → distinct ⚠️ NO CHECKS RUN').
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+
+  const { summary } = runVerify(dir, ['--mode', 'fast']);
+  assert.equal(summary.overallPass, true);
+  assert.ok(summary.steps.length > 0, 'skips must be recorded, not dropped');
+  assert.ok(summary.steps.every(step => step.status === 'skip'));
+});

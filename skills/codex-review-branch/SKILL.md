@@ -21,6 +21,16 @@ See `@skills/codex-code-review/SKILL.md`
 | Scope | Full branch (all commits since base) |
 | Pre-checks | None |
 | Prompt template | `@skills/codex-code-review/references/codex-prompt-branch.md` |
+| Reviewers | Codex alone. `--dual` adds a secondary reviewer — **off unless the flag is passed** |
+| Tier | `thorough` (this is the depth variant — P0/P1/P2 block, round cap 10) |
+
+## Flags
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--dual` | off | Adds a second reviewer in parallel (see parent skill Step 3). Emits `emit-review-gate.sh PENDING`, sets `review_mode=dual`, and **forces stop-guard into `strict` for the rest of the session** — a second opinion that can block. Use for releases, security-sensitive changes, and public API surfaces. |
+
+`--dual` is the only code-review entry point where two reviewers run. `/codex-review-fast` and `/codex-review-doc` are single-reviewer by design and offer no such flag: the cost of the second opinion is only worth paying where the change warrants it, and this is that variant. `/plan-review --dual` is the plan-mode counterpart — same opt-in shape, same default of off, a different loop.
 
 ## Trigger
 

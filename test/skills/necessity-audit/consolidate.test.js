@@ -15,6 +15,8 @@ const {
   STANCE_RE,
   ROUND_REF_RE,
   DIM_NAMES,
+  AUDIT_CLEAR,
+  AUDIT_REVISE,
 } = require('../../../scripts/skills/necessity-audit/consolidate');
 
 function makeElement(overrides = {}) {
@@ -203,7 +205,7 @@ test('selectGate — Cut with no override → ⛔', () => {
   const elements = [makeElement({ final: 'Cut' })];
   const checks = { rounds_ok: true, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, []);
-  assert.equal(gate, '⛔ Needs revision');
+  assert.equal(gate, AUDIT_REVISE);
   assert.ok(narrative.some(n => n.includes('flagged for removal')));
 });
 
@@ -211,7 +213,7 @@ test('selectGate — All Cut with override → ✅ with narrative', () => {
   const elements = [makeElement({ final: 'Cut', user_override: { kept_reason: 'needed', timestamp: '2026-04-20' } })];
   const checks = { rounds_ok: true, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, []);
-  assert.equal(gate, '✅ Mergeable');
+  assert.equal(gate, AUDIT_CLEAR);
   assert.ok(narrative.some(n => n.includes('kept via --override')));
 });
 
@@ -219,7 +221,7 @@ test('selectGate — Deterministic fail → ⛔ with Need Human narrative', () =
   const elements = [makeElement()];
   const checks = { rounds_ok: false, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, []);
-  assert.equal(gate, '⛔ Needs revision');
+  assert.equal(gate, AUDIT_REVISE);
   assert.ok(narrative.some(n => n.includes('⚠️ Need Human')));
   assert.ok(narrative.some(n => n.includes('rounds_ok')));
 });
@@ -228,7 +230,7 @@ test('selectGate — No Cut, no under-cover → ✅', () => {
   const elements = [makeElement({ final: 'Keep' })];
   const checks = { rounds_ok: true, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, []);
-  assert.equal(gate, '✅ Mergeable');
+  assert.equal(gate, AUDIT_CLEAR);
   assert.equal(narrative.length, 0);
 });
 
@@ -236,7 +238,7 @@ test('selectGate — No Cut but dim under-covered → ✅ with narrative', () =>
   const elements = [makeElement({ final: 'Keep' })];
   const checks = { rounds_ok: true, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, [3]);
-  assert.equal(gate, '✅ Mergeable');
+  assert.equal(gate, AUDIT_CLEAR);
   assert.ok(narrative.some(n => n.includes('under-covered')));
 });
 
@@ -246,7 +248,7 @@ test('consolidate — end-to-end with all-good inputs', () => {
   const preflight = makePreflight();
   const report = consolidate({ phaseA, debate, preflight, overrides: '', depth: 'normal' });
   assert.equal(report.schema_version, 1);
-  assert.equal(report.gate, '✅ Mergeable');
+  assert.equal(report.gate, AUDIT_CLEAR);
   assert.equal(report.debate.threadId, debate.threadId);
   assert.equal(report.debate.skill_invocation, 'codex-brainstorm');
 });
@@ -256,7 +258,7 @@ test('consolidate — deep depth without equilibrium → ⛔', () => {
   const debate = makeDebate({ equilibriumReached: false });
   const preflight = makePreflight({ depth: 'deep' });
   const report = consolidate({ phaseA, debate, preflight, overrides: '', depth: 'deep' });
-  assert.equal(report.gate, '⛔ Needs revision');
+  assert.equal(report.gate, AUDIT_REVISE);
   assert.equal(report.deterministic_checks.equilibrium_required_met, false);
 });
 
@@ -362,7 +364,7 @@ test('selectGate — failed check AND under-covered both surface in narrative', 
   const elements = [makeElement({ id: 'FR-1', final: 'Keep' })];
   const checks = { rounds_ok: false, has_evidence_citation: true, has_explicit_stance: true, has_threadId: true, equilibrium_required_met: true };
   const { gate, narrative } = selectGate(elements, checks, [4, 5]);
-  assert.equal(gate, '⛔ Needs revision');
+  assert.equal(gate, AUDIT_REVISE);
   assert.ok(narrative.some(n => n.includes('deterministic checks failed')));
   assert.ok(narrative.some(n => n.includes('under-covered')), 'under-covered line must not be dropped');
 });

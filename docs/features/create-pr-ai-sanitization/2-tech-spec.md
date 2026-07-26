@@ -13,20 +13,20 @@
 
 | Module | 可復用部分 |
 | ------ | ---------- |
-| `scripts/commit-msg-guard.sh:19-23` | Canonical forbidden patterns（3 組 POSIX ERE） |
-| `skills/smart-commit/SKILL.md:290-305` | AI trailer sanitization flow、`--ai-co-author` narrow whitelist |
+| `scripts/commit-msg-guard.sh` | Canonical forbidden patterns（3 組 ERE + `\b` 字界） |
+| `skills/smart-commit/SKILL.md`（AI Attribution Sanitization 節） | AI trailer sanitization flow、`--ai-co-author` narrow whitelist |
 | `skills/smart-commit/references/execute-mode.md` | `validate_msg()` 實作、post-commit detection |
 | `skills/create-pr/SKILL.md` | 現有 PR 建立/更新 workflow（Step 1-7） |
 
 ### Canonical Forbidden Patterns
 
-來源：`scripts/commit-msg-guard.sh:19-23`（POSIX ERE, case-insensitive）
+來源：`scripts/commit-msg-guard.sh`（ERE, case-insensitive — 僅 `AI` 加 `\b` 字界，避免在 `-i` 下誤中 "maintainer"、"domain" 等一般字詞；`GPT`/`OpenAI` 刻意不加字界，以匹配 `ChatGPT`/`GPT-4`）
 
 | Pattern Category | Regex |
 |-----------------|-------|
 | Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
 ### Files Requiring Changes
 
@@ -94,7 +94,7 @@ sequenceDiagram
 # 1. Fetch actual published content
 gh pr view <number> --json title,body --template '{{.title}}{{"\n"}}{{.body}}'
 
-# 2. Scan for forbidden patterns (same 3 POSIX ERE from commit-msg-guard.sh)
+# 2. Scan for forbidden patterns (same 3 ERE + \b patterns from commit-msg-guard.sh)
 
 # 3. If leak detected — auto-remediate (single attempt):
 #    Title (safe escaping via printf):
@@ -151,7 +151,7 @@ gh pr view <number> --json title,body --template '{{.title}}{{"\n"}}{{.body}}'
 
 | Dependency | Status |
 |-----------|--------|
-| `scripts/commit-msg-guard.sh` 的 3 組 POSIX ERE pattern | 已存在，穩定 |
+| `scripts/commit-msg-guard.sh` 的 3 組 ERE + `\b` pattern | 已存在，穩定 |
 | `gh` CLI 安裝 | `/create-pr` 已假設存在 |
 | SKILL.md 現有 Step 1-7 workflow | 穩定，僅插入新步驟 |
 

@@ -1,77 +1,37 @@
 # Fix All Issues Rule ⚠️ CRITICAL
 
-**Fix every issue found, no skipping allowed**
+**Every blocking issue gets fixed. "Unrelated", "pre-existing", "no impact", "later" are not reasons.**
 
-## Core Principles
+This rule bans *excuses*. It does not decide what counts as blocking — `auto-loop.md` § Tiers does that.
 
-| Principle          | Description                                                        |
-| ------------------ | ------------------------------------------------------------------ |
-| **Zero tolerance** | Every discovered issue must be fixed                               |
-| **No skipping**    | Cannot skip with excuses like "unrelated", "no impact", "fix later"|
-| **Find root cause**| Don't just fix the surface; find the root cause                    |
-| **Fix immediately**| Fix the moment it's found; don't defer                             |
+## What fixing means
 
-## Applicable Scenarios
+Fix the root cause, not the symptom, and fix it when you find it rather than queueing it. A fix you cannot explain in these terms is not finished:
 
-| Scenario                       | Action         |
-| ------------------------------ | -------------- |
-| Issue found during development | ✅ Fix now     |
-| Test failure discovered        | ✅ Fix now     |
-| Lint/TypeCheck errors          | ✅ Fix now     |
-| Code Review flagged issue      | ✅ Fix now     |
-| Issue noticed in passing       | ✅ Fix now     |
-| "Unrelated" issue              | ✅ Fix now     |
+| | |
+|---|---|
+| **What** | The specific symptom |
+| **Why** | The root cause, not the surface one |
+| **How** | The change you made |
+| **Prevention** | What would catch this class next time |
 
-## Prohibited Behaviors
+## Exceptions
 
-```
-❌ "This issue is unrelated to the current task, skipping"
-❌ "This is a pre-existing issue, not handling"
-❌ "This error doesn't affect the main flow"
-❌ "Fix it later"
-❌ "Known issue, ignoring"
-```
+| Exception | Condition |
+|-----------|-----------|
+| User asks to skip | They said so explicitly |
+| Beyond current scope | Needs architecture-level change — report and log it, do not silently drop it |
+| Third-party library | Cannot modify; document the workaround |
+| Below the tier's blocking severity | The gate already passed. Log `[NIT_DEFERRED]` and proceed — see `auto-loop.md` § Sub-Threshold Findings for the two that are still fixed on the spot |
+| Dismiss verified via `/seek-verdict` | Codex independently confirmed NON_ACTIONABLE by blind verification. P2/Nit automated (confidence ≥ 0.80/0.70, evidence ≥ 2/1); P0/P1 needs human confirmation (`DISMISS_CANDIDATE` + user confirm). Thresholds: `skills/seek-verdict/references/policy-mapping.md`. Logged via `[DISMISS_VERDICT]` |
+| Skill is analysis-only | The skill declares read-only / analysis-only / plan mode; findings go in the report, not into edits. Logged via `[ANALYSIS_ONLY_DEFERRED]` |
 
-## Correct Behaviors
-
-```
-✅ "Found issue X, fixing..."
-✅ "Test failed, analyzing cause: Y, fixing..."
-✅ "Also found error Z, fixing it as well"
-✅ "Lint reported 3 errors, fixing all"
-```
-
-## Root Cause Analysis Requirements
-
-When fixing, must answer:
-
-1. **What** — The specific symptom of the issue
-2. **Why** — The root cause (not the surface cause)
-3. **How to fix** — The fix approach
-4. **Prevent recurrence** — How to avoid the same type of issue
-
-## Exceptions (Only)
-
-| Exception                  | Condition                                           |
-| -------------------------- | --------------------------------------------------- |
-| User explicitly asks to skip | User says "don't worry about this"                |
-| Beyond current scope       | Requires architecture-level changes; report and log |
-| Third-party library issue  | Cannot modify; document workaround                  |
-| Nit persists after AI fix  | AI attempted fix, Codex still reports same Nit (possible false-positive); logged via `[NIT_DEFERRED]` |
-| Finding dismiss verified via `/seek-verdict` | Codex independently confirmed NON_ACTIONABLE via blind verification. P2/Nit: automated (confidence >= 0.80/0.70 + evidence >= 2/1). P0/P1: requires human confirmation (`DISMISS_CANDIDATE` + user confirm). See `skills/seek-verdict/references/policy-mapping.md` for full thresholds; logged via `[DISMISS_VERDICT]` |
-| Skill analysis-only mode | Skill defines read-only / analysis-only / plan mode constraint; issues recorded in report, not auto-fixed; logged via `[ANALYSIS_ONLY_DEFERRED]` |
+Each of these leaves a record. None of them is "I decided it didn't matter."
 
 ## Precedence
 
-When auto-loop's P2/Nit Quality Sweep results in unresolved P2 after batch-fix + re-review, follow `auto-loop.md` `⚠️ Need Human` exit condition. Zero tolerance applies to the fix attempt; the stop decision belongs to auto-loop.
+Zero tolerance applies to what the tier calls **blocking** — those get fixed, no exceptions for "not my code". Findings below that line are deferred with a `[NIT_DEFERRED]` log, which is a recording, not a skip: `/codex-review-branch` picks them up when the change is next reviewed at depth.
 
-## Relationship to Other Rules
+This rule has never meant "every remark from a reviewer must be actioned before you may stop". Reading it that way is what turned a passing `✅ Ready` gate into another round of work.
 
-This rule takes priority over task scope constraints:
-
-```
-Issue found -> Fix -> Continue original task
-              ↑
-    Don't ask "should I fix it?"
-    Don't say "unrelated to the task"
-```
+When a blocking finding survives repeated fix → re-review cycles, take `auto-loop.md`'s `⚠️ Need Human` exit. Zero tolerance governs the fix *attempt*; the stop decision belongs to auto-loop.

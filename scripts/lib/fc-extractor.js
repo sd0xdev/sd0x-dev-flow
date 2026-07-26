@@ -3,7 +3,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const CLOSED_REQUEST_STATUS = new Set(['Completed', 'Done', 'Superseded', 'Archived']);
+// Status parsing and the closed/open taxonomy live in ONE module, because three consumers had
+// grown three incompatible readings of the same field — see scripts/lib/request-status.js.
+const {
+  parseRequestStatus,
+  isClosedRequestStatus,
+  CLOSED_REQUEST_STATUS,
+} = require('./request-status');
 
 const AC_DOMAIN_KEYWORDS = {
   security: [
@@ -179,28 +185,6 @@ function classifyAcDomains(text) {
   return matched;
 }
 
-// Support both conventions observed in existing request docs:
-//   blockquote:  `> **Status**: Active`
-//   heading:     `## Status: Completed`
-// Match is case-insensitive on the word "Status" to absorb minor variants.
-const STATUS_BLOCKQUOTE_RE = /^>\s*\*\*status\*\*\s*:\s*(.+?)\s*$/im;
-const STATUS_HEADING_RE = /^#{1,6}\s*status\s*:\s*(.+?)\s*$/im;
-
-/**
- * Parse Status metadata from the head of a request doc. Scans only the first
- * 30 lines and tries both blockquote and heading conventions.
- *
- * @param {string} source
- * @returns {string|null}
- */
-function parseRequestStatus(source) {
-  if (!source) return null;
-  const head = source.split('\n').slice(0, 30).join('\n');
-  const bq = head.match(STATUS_BLOCKQUOTE_RE);
-  if (bq) return bq[1].trim();
-  const hd = head.match(STATUS_HEADING_RE);
-  return hd ? hd[1].trim() : null;
-}
 
 /**
  * List open-status request docs under a directory. A request is "open" if its
@@ -227,7 +211,7 @@ function filterOpenRequests(requestsDir) {
     let content;
     try { content = fs.readFileSync(abs, 'utf8'); } catch { continue; }
     const status = parseRequestStatus(content);
-    if (status == null || !CLOSED_REQUEST_STATUS.has(status)) {
+    if (!isClosedRequestStatus(status)) {
       open.push(abs);
     }
   }

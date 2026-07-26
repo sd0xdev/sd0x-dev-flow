@@ -254,6 +254,45 @@ function checkTaskEntitlement(body, fm) {
   };
 }
 
+function checkSkillEntitlement(body, fm) {
+  if (!fm) return { pass: true };
+  // Match the call SYNTAX `Skill(` with NO space — a bare "/codex-review-doc" mention
+  // in prose is ambiguous (may be a main-loop handoff, not an in-skill invocation), and
+  // (critically) `Skill (` WITH a space is ordinary prose, not a call: e.g. a heading
+  // like "# Codex Architect Skill (Third Brain)" would otherwise emit a false finding.
+  // A real Skill() dispatch is always written `Skill("name")` with no intervening space.
+  // SCOPE (deliberate): this checks only the call SYNTAX. A skill that describes dispatching
+  // another skill in PROSE ("then invoke /foo") without the `Skill(` token is out of scope —
+  // keying on bare skill-name mentions would false-fire on every handoff reference. Syntactic
+  // dispatch is the enforceable signal; prose-only intent is left to review.
+  //
+  // DIVERGENCE FROM SIBLINGS, deliberate: the Agent/Task checks use `/\bAgent\s*\(/` and
+  // `/\bTask\s*\(/`, tolerating whitespace before the paren. This one does NOT, and must not — a
+  // heading such as `# Codex Architect Skill (Third Brain)` matches `\bSkill\s*\(` and emits a
+  // false finding, which is exactly the regression the no-space form fixed. Do not "unify" these
+  // three regexes on consistency grounds; the asymmetry is the fix.
+  const mentions = /\bSkill\(/.test(body);
+  if (!mentions) return { pass: true };
+  const tools = (fm['allowed-tools'] || '').replace(/^["']|["']$/g, '');
+  // TOKENIZED, not a word-boundary regex. `\bSkill\b` matched things that grant nothing of the
+  // sort, because `(`, `-` and `:` are all non-word characters and therefore all supply the
+  // boundary: `Bash(Skill:*)` is permission to run a shell COMMAND named `Skill`, and
+  // `Some-Tool-Skill` is a different tool entirely. `allowed-tools` is a comma-separated list of
+  // tool entries, so comparing whole entries is the check the format actually supports.
+  // `Skill(...)` is accepted because a scoped entitlement still names this tool.
+  const granted = tools
+    .split(',')
+    .map((t) => t.trim())
+    .some((t) => t === 'Skill' || t.startsWith('Skill('));
+  if (granted) return { pass: true };
+  return {
+    pass: false,
+    severity: 'P2',
+    message: 'Body describes Skill() dispatch but allowed-tools lacks Skill',
+    fix: 'Add Skill to allowed-tools in SKILL.md',
+  };
+}
+
 function checkCrossSkillRefPaths(skillName, skillDir, body) {
   // Same regex as skills-schema.test.js — group 1 captures @skills/<name>/ prefix
   const refPattern = /`?(@skills\/[^/]+\/)?@?(?:\.\/)?references\/([^`\s)]+\.md)`?/g;
@@ -326,6 +365,7 @@ function lintSkill(skillName, skillDir) {
   findings.push({ check: 'line-count', ...checkLineCount(content) });
   findings.push({ check: 'agent-entitlement', ...checkAgentEntitlement(body, fm) });
   findings.push({ check: 'task-entitlement', ...checkTaskEntitlement(body, fm) });
+  findings.push({ check: 'skill-entitlement', ...checkSkillEntitlement(body, fm) });
   findings.push({ check: 'cross-skill-ref-path', ...checkCrossSkillRefPaths(skillName, skillDir, body) });
 
   return { name: skillName, path: skillPath, fm, body, findings };
@@ -590,6 +630,7 @@ if (require.main === module) {
     bodyAfterFrontmatter,
     checkAgentEntitlement,
     checkTaskEntitlement,
+    checkSkillEntitlement,
     checkCrossSkillRefPaths,
     detectInvalidAgentRefs,
     detectAgentToolsSyntax,

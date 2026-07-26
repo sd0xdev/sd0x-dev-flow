@@ -2,7 +2,8 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc — parent feature folder has no `1-requirements.md` (direct execution-phase fix).
 > **Created**: 2026-04-17
-> **Status**: Candidate Complete (all AC covered by evidence; commit 5abc462 landed --interval wiring, subsequent session extended regression suite to 11 tests)
+> **Status**: Candidate Complete
+> **Note**: all AC covered by evidence; commit 5abc462 landed --interval wiring, subsequent session extended regression suite to 11 tests
 > **Priority**: P2
 > **Tech Spec**: Pending (no separate spec required — small UX fix; implement directly from research findings)
 > **Parent request**: [`2026-04-13-fix-watch-ci-fork-monitor-incompatibility.md`](./2026-04-13-fix-watch-ci-fork-monitor-incompatibility.md) (same feature thread — Monitor streaming UX follow-up)

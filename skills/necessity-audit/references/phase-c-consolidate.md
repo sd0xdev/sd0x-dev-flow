@@ -46,14 +46,14 @@ node scripts/skills/necessity-audit/consolidate.js \
 
 | Condition | Gate | Narrative includes |
 |-----------|------|-------------------|
-| Any check fails | `⛔ Needs revision` | `⚠️ Need Human: deterministic checks failed: <list>` + under-covered if any |
-| Checks pass + un-overridden Cut exists | `⛔ Needs revision` | `⛔ N elements flagged for removal` + under-covered if any |
-| Checks pass + only overridden Cut | `✅ Mergeable` | `ℹ️ N elements kept via --override` + under-covered if any |
-| All clean | `✅ Mergeable` | (empty or Review-sweep suggestion) |
+| Any check fails | `⛔ Audit Revise` | `⚠️ Need Human: deterministic checks failed: <list>` + under-covered if any |
+| Checks pass + un-overridden Cut exists | `⛔ Audit Revise` | `⛔ N elements flagged for removal` + under-covered if any |
+| Checks pass + only overridden Cut | `✅ Audit Clear` | `ℹ️ N elements kept via --override` + under-covered if any |
+| All clean | `✅ Audit Clear` | (empty or Review-sweep suggestion) |
 
-Narrative may contain `⚠️ Need Human` lines — these are advisory. The gate sentinel is always `✅ Mergeable` or `⛔ Needs revision` (hook-parseable).
+Narrative may contain `⚠️ Need Human` lines — these are advisory. The gate sentinel is always `✅ Audit Clear` or `⛔ Audit Revise`. Neither is hook-parsed: they are behaviour-layer markers, and they deliberately avoid the doc-review vocabulary so that an audit report cannot stand in for a doc review (see `AUDIT_CLEAR` / `AUDIT_REVISE` in `scripts/skills/necessity-audit/consolidate.js`).
 
 ## Suggested-next
 
 - Un-overridden Cut → `Revise Cut elements: <ids>` + override hint
-- `✅ Mergeable` + any Review → `Consider /simplify on Review elements`
+- `✅ Audit Clear` + any Review → `Consider /simplify on Review elements`

@@ -6,7 +6,7 @@
 
 > Claude Code のための harness レイヤー。
 
-**AI がスキップできない品質ゲート。** [Claude Code](https://claude.com/claude-code) のための AI Agent Harness Engineering の reference implementation — Hook 強制のデュアルレビュー、context compaction を乗り越える state machine ゲート、そして本当に必要な箇所での fail-closed な安全性。
+**AI がスキップできない品質ゲート。** [Claude Code](https://claude.com/claude-code) のための AI Agent Harness Engineering の reference implementation — Hook 強制のレビューゲート、context compaction を乗り越える state machine ゲート、そして本当に必要な箇所での fail-closed な安全性。
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — Claude の context window のわずか ~4%
@@ -28,7 +28,7 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 | 4 | **Lifecycle interceptors** | 5 種類の hook event を 8 本のスクリプトへディスパッチ: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 95 個の公開 skill のうち 86 個が `allowed-tools` を宣言 |
 | 6 | **Defense-in-depth safety** | 5 層構成: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
-| 7 | **Generator-evaluator split** | デュアルレビュー: Codex (primary) + Claude (secondary) を各レビューサイクルで並列ディスパッチ | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Dual Review Mode) |
+| 7 | **Generator-evaluator split** | Codex が Claude の書いたコードをレビュー。リポジトリを自力で調査し、結論を渡されて追認することはない | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + 収束プラトー検出 | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
 | 9 | **Human-in-the-loop safety gates** | 破壊的操作に対する `/dev/tty` 確認 + `AskUserQuestion` | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 是正 → lesson として記録 → 3 回以上の再発で rule に昇格 | [`rules/self-improvement.md`](rules/self-improvement.md) |
@@ -40,7 +40,7 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 | ガードレールなし | sd0x-dev-flow あり |
 |---|---|
 | コンテキストが長いと AI がレビューをスキップ | **Hook 強制**: stop-guard が未完了レビューをブロック |
-| 単一レビューアーが問題を見落とす | **デュアルディスパッチ**: Codex + セカンダリが並列実行 |
+| 自己レビューは追認にしかならない | **独立レビューアー**: Codex がリポジトリを自力で調査。深く見たいときだけ `--dual` をオプトイン |
 | 「修正済み」なのに再検証なし | **Auto-loop**: 修正 → 再レビュー → パス → 続行 |
 | compact 後にレビュー状態が消失 | **状態追跡**: SessionStart hook が再注入 |
 
@@ -55,7 +55,7 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 /project-setup
 ```
 
-1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには14ルール + 9フックが含まれます。
+1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには14ルール + 8フックが含まれます。
 
 `--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
 
@@ -73,34 +73,27 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、レビューコマンドが**デュアルレビュー**（Codex MCP + セカンダリレビューアーを並列実行）をディスパッチします。Findings は重複排除・重要度正規化後、単一ゲートに集約されます。strict モードでは、Hooks が fail-closed を強制：集約ゲートが未完了なら stop-guard がブロックします。詳細は [docs/hooks.md](docs/hooks.md) を参照。
+**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、レビューコマンドが同じ応答内で **Codex** をディスパッチします。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る Findings は記録するだけで、ループは次に進み、追加のラウンドは開きません。strict モードでは、Hooks が fail-closed を強制：ゲートが未完了なら stop-guard がブロックします。2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。詳細は [docs/hooks.md](docs/hooks.md) を参照。
 
 <details>
-<summary>詳細：デュアルレビュー シーケンス図</summary>
+<summary>詳細：レビューループ シーケンス図</summary>
 
 ```mermaid
 sequenceDiagram
     participant D as Developer
     participant C as Claude
     participant X as Codex MCP
-    participant T as Secondary Reviewer
     participant H as Hooks
 
     D->>C: Edit code
     H->>H: Track file change
-    C->>H: emit-review-gate PENDING
-    par Dual Review
-        C->>X: Codex review (sandbox)
-    and
-        C->>T: Task(code-reviewer)
-    end
-    X-->>C: Findings (primary)
-    T-->>C: Findings (secondary)
-    C->>C: Aggregate + dedup + gate
-    C->>H: emit-review-gate READY/BLOCKED
+    C->>X: Codex review (sandbox, researches repo itself)
+    X-->>C: Findings + gate sentinel
+    H->>H: Parse sentinel into code_review.passed
+    C->>C: Gate on the tier's blocking severity
 
-    alt Issues found
-        C->>C: Fix all issues
+    alt Blocking findings
+        C->>C: Fix them (sub-threshold: log and move on)
         C->>X: --continue threadId
         X-->>C: Re-verify
     end
@@ -113,16 +106,19 @@ sequenceDiagram
 
 </details>
 
-## 機能スポットライト：デュアルレビューアーキテクチャ
+## 機能スポットライト：ティア別レビュー
 
-v2.0 では2つの独立したレビューアーを並列でディスパッチします — 単一障害点ゼロ：
+レビューアーはデフォルトで Codex 1 人だけです。**tier** が、その変更にどれだけの厳格さを与えるか、そして findings がどれだけ重ければループを再開するかを決めます：
 
-| レビューアー | 役割 | フォールバック |
-|-------------|------|---------------|
-| Codex MCP | デフォルトでデュアルレビュー、フォールバックモードをサポート | 利用不可時はシングルレビューモードにフォールバック |
-| セカンダリ（pr-review-toolkit） | 信頼度スコアリングレビュー | strict-reviewer → シングルモード |
+| Tier | 対象 | Blocking | ラウンド上限 |
+|------|------|----------|-------------|
+| `fast` | ドキュメント、設定、低リスクな小変更 | P0 | 3 |
+| `standard` **（デフォルト）** | 通常の機能開発とバグ修正 | P0、P1 | 5 |
+| `thorough` | セキュリティ、データ整合性、リリース、公開 API | P0、P1、P2 | 10 |
 
-Findings は**重要度正規化**（P0-Nit）、**重複排除**（ファイル + issue キー、±5 行許容）、**ソース帰属**（`codex` | `toolkit` | `both`）されます。
+**80 点で合格です。** tier の blocking 閾値を下回る findings は記録され（`[NIT_DEFERRED]`。TTL 付きで永続化されるため、次のセッションで蒸し返されません）、ループはそのまま `/precommit` へ進みます — 追加の修正パスも、追加のレビューラウンドもありません。これらは次に `/codex-review-branch` で深くレビューする際に拾われます。
+
+2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、**フラグを渡さない限り無効**です — 1 ラウンドあたりのトークンと実時間のコストが倍になるため、リリースやセキュリティレビューには見合っても、通常の修正には見合いません。`--dual` 使用時、findings は重要度正規化、重複排除（ファイル + issue キー、±5 行許容）、ソース帰属が行われます。
 
 ゲート：`✅ Ready` または `⛔ Blocked` — strict モードでは、未完了ゲート = ブロック。
 
@@ -131,7 +127,7 @@ Findings は**重要度正規化**（P0-Nit）、**重複排除**（ファイル
 | 機能 | sd0x-dev-flow | gstack | 汎用プロンプト |
 |---|---|---|---|
 | 強制レビューゲート | Hook + 動作レイヤー | 提案のみ | なし |
-| デュアルレビューアー | Codex + セカンダリ（並列） | 単一 /review | なし |
+| 独立レビューアー | Codex が自力で調査。`--dual` はオプトイン | 単一 /review | なし |
 | 自動修正ループ | 修正 → 再レビュー → パス | 手動 | なし |
 | マルチエージェントリサーチ | /deep-research（3 エージェント） | なし | なし |
 | 敵対的検証 | ナッシュ均衡ディベート | なし | なし |
@@ -167,7 +163,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | `/codex-setup init` | Codex CLI | AGENTS.md カーネル + git フック |
 <!-- END:INSTALL-COVERAGE -->
 
-**必要環境**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（オプション — `/codex-*` スキルに必要；未インストール時はシングルレビューモードにフォールバック）
+**必要環境**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（プラグインのインストール自体は不要ですが、`/codex-*` のレビューゲートには必須です — Codex がその唯一のレビューアーなので、未インストール時はフォールバックせず `⛔ Blocked` + `⚠️ Need Human` を出します）
 
 ## ワークフロートラック
 
@@ -249,9 +245,9 @@ flowchart TD
 |----------|-----|-----|
 | スキル | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | エージェント | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| フック | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| フック | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | ルール | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| スクリプト | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |
+| スクリプト | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小の Context 使用量
@@ -419,7 +415,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 
 ## ルール & フック
 
-14 ルール（常時読み込みの規約）+ 9 フック（自動ガードレール）。
+14 ルール（常時読み込みの規約）+ 8 フック（自動ガードレール）。
 
 > **カスタマイズ**：`auto-loop-project.md` を編集してプロジェクトの auto-loop 動作をオーバーライドできます。プラグイン更新と競合しません — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 参照。
 

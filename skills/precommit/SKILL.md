@@ -35,8 +35,9 @@ Run pre-commit checks: **lint:fix -> build -> test**
 Use Glob to check if `.claude/scripts/precommit-runner.js` exists in the project root.
 
 - **Found** → run: `node .claude/scripts/precommit-runner.js --mode full --tail 80`
-  - If runner succeeds, use its output and skip to the Output section.
-  - If runner **fails**, treat as a real precommit failure (do not silently fallback).
+  - If runner emits `## Overall: ✅ PASS`, use its output and skip to the Output section.
+  - If runner emits `## Overall: ⚠️ NO CHECKS RUN` (host repo has no matching `package.json` scripts), do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection so the project's real checks (ruff/pytest, cargo, go test, …) run. This is fail-closed: an all-skip run never satisfies the gate on its own.
+  - If runner **fails** (`## Overall: ❌ FAIL`), treat as a real precommit failure (do not silently fallback).
 - **NOT found** → **Auto-install attempt** (see precommit-fast for identical auto-install logic), then fallback to Step 2.
 
 ### Step 2: Fallback (no runner script)
@@ -82,7 +83,7 @@ After lint:fix completes, run `git diff --name-only` to capture auto-fixed files
 
 - <files or "(none)">
 
-## Overall: ✅ PASS / ❌ FAIL
+## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN (only when no runnable script AND no ecosystem check exists — needs human)
 
 ## Checklist
 

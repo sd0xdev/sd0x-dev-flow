@@ -18,8 +18,12 @@
 
 ## Merge Gate
 
-- **Ready**: No P0/P1; P2/Nit sweep policy applies before precommit
-- **Blocked**: Has P0/P1, needs fix
+The gate is decided by the **tier's blocking severity** (see `@rules/auto-loop.md` § Tiers): `fast` blocks on P0, `standard` (the default) on P0/P1, `thorough` on P0/P1/P2.
+
+- **Ready**: No finding at or above the tier's blocking severity
+- **Blocked**: At least one such finding, needs fix
+
+Findings below that line are **sub-threshold** — reported, not blocking. See `@rules/auto-loop.md` § Sub-Threshold Findings for what to do with them.
 
 ## Codex Independent Research (Required)
 
@@ -45,26 +49,36 @@ Codex **must** perform its own research, not rely only on provided diff/context:
 When review result is Blocked:
 
 1. Remember the `threadId`
-2. Fix P0/P1 issues
+2. Fix every finding at or above the tier's blocking severity (`${BLOCKING}`) — sub-threshold ones are logged, not fixed
 3. Re-review using `--continue <threadId>`
 4. Repeat until Ready
 
-## P2/Nit Post-Ready Sweep
+## Sub-Threshold Findings
 
-When review returns Ready with P2/Nit findings, auto-loop triggers a quality sweep:
+When review returns Ready with findings **below** the tier's blocking severity, they do **not** re-open the loop. Log them and move on:
 
-1. **Batch-fix** all P2/Nit items (1 attempt)
-2. **Re-review** using `--continue <threadId>` with P2/Nit verification
-3. **Evaluate**: unresolved P2 → ⚠️ Need Human; unresolved Nit → exempt with `[NIT_DEFERRED]` log; all resolved → `/precommit`
+```
+[NIT_DEFERRED] file:line | issue | reason: sub-threshold-<severity> | <ISO8601>
+```
 
-### P2/Nit Judgment
+That tag and field order are **hook-parsed** (`post-tool-review-state.sh` → `.claude_nit_history.json`, TTL-deduplicated across sessions). Field 2 is the issue text, field 3 is the reason — putting the severity in field 2 mis-files the entry, and any other tag is not read at all.
+
+**The line has to come out of the reviewer's output, not your prose.** The parse runs on the review tool's result, so `${BLOCKING}`-derived deferrals are produced by Codex under the `### Deferred Findings` section of the prompt templates. A line you type yourself reads fine to a human and persists nothing.
+
+Then proceed to `/precommit`. Two exceptions where fixing anyway is right (per `@rules/auto-loop.md` § Sub-Threshold Findings): the fix is one line in a file already open, or the finding is a mis-assigned security / data-integrity issue that should have been P0/P1.
+
+There is no batch-fix-then-re-review sweep. It cost a full extra review round per cycle to chase findings the tier had already declared non-blocking.
+
+### Finding Identity
+
+Used when comparing findings across rounds (to tell a persisting issue from a new one):
 
 | Step | Description |
 |------|-------------|
-| Parse | Extract P2/Nit findings from Codex output (tag-based `[P2]`/`[Nit]` or section-based `#### P2`/`#### Nit`) |
+| Parse | Extract findings from Codex output (tag-based `[P2]`/`[Nit]` or section-based `#### P2`/`#### Nit`) |
 | Identity | Key = `file + canonicalized issue text` (line number approximate, may shift after fix) |
 | Dedupe | Same key across reviews counts as 1 item |
-| False-positive | Same key persists after fix → mark `possible-false-positive` |
+| False-positive | Same key persists after a genuine fix → treat as `possible-false-positive`, log and defer |
 
 ### Re-review Prompt Template
 
@@ -81,12 +95,13 @@ ${GIT_DIFF}
 \`\`\`
 
 Please verify:
-1. Have previous P0/P1 issues been correctly fixed?
-2. Did fixes introduce new issues?
-3. Update Merge Gate status
-4. For P2/Nit items from previous review: are they resolved? List any remaining P2/Nit with status.`,
+1. Have the previously identified blocking issues been correctly fixed?
+2. Did the fixes introduce new issues?
+3. Update Merge Gate status`,
 });
 ```
+
+> The re-review deliberately does **not** ask for a status roll-call of sub-threshold findings. They were already logged as `[NIT_DEFERRED]` and are not what the loop is converging on; asking re-surfaces them and buys another round.
 
 ## Dismiss Verdict Format
 
@@ -116,7 +131,7 @@ When a finding is verified via `/seek-verdict`, output:
 - [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> [source: codex|toolkit|both]
 ```
 
-> Note: `[source: ...]` tag is required in dual review mode. In single-reviewer mode it may be omitted.
+> Note: `[source: ...]` is required under `--dual` and omitted in single-reviewer mode, which is the default.
 
 ## AC Coverage Format (Spec-Driven Review)
 
@@ -132,18 +147,18 @@ When `SPEC_CHECKLIST` is injected (feature has request doc with ACs), review out
 
 ## Gate Sentinels
 
-Hook gate is emitted via `bash scripts/emit-review-gate.sh READY|BLOCKED` (outputs `REVIEW_GATE=<value>`, consumed by `post-tool-review-state.sh`).
-
-Text sentinels below are for **behavior-layer** (auto-loop) and **stop-guard** visual confirmation:
-
 - `✅ Ready` — Passed (code review)
 - `⛔ Blocked` — Failed (code review)
 
-> Note: Always emit both: (1) `emit-review-gate.sh` for hook state, (2) text sentinel for behavior layer.
+**In the default single-reviewer mode these sentinels are the whole gate.** They ride in the reviewer's own output, which `post-tool-review-state.sh` parses into `code_review.passed`. Do **not** run `scripts/emit-review-gate.sh`: it sets `review_mode=dual` and arms the aggregate plane, which forces stop-guard into `strict` for the rest of the session on behalf of a review that only ever had one reviewer.
 
-## Dual Reviewer Aggregation
+**Under `/codex-review-branch --dual` only**, additionally run `bash scripts/emit-review-gate.sh PENDING` before dispatch and `... READY|BLOCKED` after aggregation (it outputs `REVIEW_GATE=<value>`, consumed by the same hook). There the emitter is the point — it is what makes an incomplete aggregate fail closed.
 
-When `review_mode=dual`, two reviewers run in parallel. This section defines how to merge their results.
+## Dual Reviewer Aggregation (opt-in)
+
+**This whole section applies only under `/codex-review-branch --dual`.** The default everywhere is a single reviewer (Codex), in which case `review_mode` stays `"single"`, the aggregate plane stays dormant, and none of the mapping, deduplication or degradation logic below runs — Codex's findings are the output as-is.
+
+When `--dual` is passed, `review_mode=dual` and two reviewers run in parallel. This section defines how to merge their results.
 
 ### Severity Mapping (toolkit → standard)
 
@@ -174,8 +189,10 @@ When `review_mode=dual`, two reviewers run in parallel. This section defines how
 |----------|----------|------------|--------|
 | Codex ✅ + Secondary ✅ | Union aggregation | `codex+toolkit` | Full dual findings |
 | Codex ✅ + Secondary ❌ | Codex-only + degradation warning | `codex-only` | `⚠️ Secondary reviewer unavailable` |
-| Codex ❌ + Secondary ✅ | Secondary-only + degradation warning | `toolkit-only` | `⚠️ Codex MCP unavailable` |
+| Codex ❌ + Secondary ✅ | `⛔ Blocked` + `⚠️ Need Human`; report the secondary's findings as advisory | `none` | `⚠️ Codex MCP unavailable — secondary cannot carry the gate` |
 | Both ❌ | `⛔ Blocked` + `⚠️ Need Human` | `none` | Both reviewers failed |
+
+**Codex failing never degrades to a passing gate**, in either mode. It is the gate everywhere — `--dual` adds a second set of eyes, not a second authority — so a secondary-only result is advisory findings plus `⚠️ Need Human`, matching what the READMEs say happens when Codex is absent. The row above used to read `toolkit-only`, which let a review pass on a reviewer the rest of this skill calls non-authoritative.
 
 ### Source Attribution
 
@@ -189,11 +206,13 @@ Every finding includes a source tag:
 
 Output format: `- [P0] file:line issue → fix [source: both]`
 
-### Review Loop (Dual Mode)
+### Review Loop (under `--dual`)
 
 | Reviewer | Loop Behavior |
 |----------|---------------|
 | Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context |
-| Secondary | Re-dispatched every iteration (fresh context). Always dispatched in v1 (no skip exception). |
+| Secondary | Re-dispatched every iteration (fresh context), for as long as `--dual` stays in effect for this review session |
 
 Codex gate is authoritative for timing. Secondary runs non-blocking in background. Aggregation reconciled at pre-precommit checkpoint. Any code edit resets the review cycle — both reviewers must re-run.
+
+Without `--dual` the loop is just Codex: `--continue <threadId>` on the same thread until the gate passes. There is no secondary to reconcile and no pre-precommit checkpoint to wait on.

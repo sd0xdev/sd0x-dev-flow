@@ -83,7 +83,7 @@ test('full precommit with all scripts passes', () => {
   );
 });
 
-test('missing lint:fix still passes with fewer steps', () => {
+test('missing lint:fix still passes, recorded as explicit skip', () => {
   const pkg = {
     name: 'temp',
     version: '1.0.0',
@@ -96,7 +96,13 @@ test('missing lint:fix still passes with fewer steps', () => {
 
   const { summary } = runPrecommit(dir, 'fast');
   assert.equal(summary.overallPass, true);
-  assert.deepEqual(summary.steps.map(step => step.name), ['test_unit']);
+  assert.deepEqual(
+    summary.steps.map(step => step.name),
+    ['lint_fix', 'test_unit']
+  );
+  const lintStep = summary.steps.find(step => step.name === 'lint_fix');
+  assert.equal(lintStep.status, 'skip');
+  assert.equal(lintStep.reason, 'script missing');
 });
 
 test('fallback to test script when test:unit missing', () => {
@@ -113,7 +119,42 @@ test('fallback to test script when test:unit missing', () => {
   const { stdout, summary } = runPrecommit(dir, 'fast');
   assert.match(stdout, /test: using "test" \(fast mode\)/);
   assert.equal(summary.overallPass, true);
-  assert.deepEqual(summary.steps.map(step => step.name), ['test_unit']);
+  assert.deepEqual(
+    summary.steps.map(step => step.name),
+    ['lint_fix', 'test_unit']
+  );
+  const ran = summary.steps.find(step => step.name === 'test_unit');
+  assert.equal(ran.status, undefined, 'test_unit actually ran (not a skip)');
+});
+
+test('zero runnable scripts → distinct ⚠️ NO CHECKS RUN sentinel, not ✅ PASS', () => {
+  // A repo with no lint:fix/build/test scripts must NOT mint ✅ PASS (that
+  // false-greens the merge gate and bypasses the skill's ecosystem fallback)
+  // nor ❌ FAIL (that wedges the strict stop gate). It gets a third state that
+  // matches neither the hooks' pass grep (^## Overall: ✅ PASS) nor their fail
+  // grep, so precommit stays unrecorded (fail-closed) and SKILL.md Step 1 falls
+  // through to ecosystem detection.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+
+  const { stdout, summary } = runPrecommit(dir, 'full');
+  assert.equal(summary.overallPass, false, 'all-skip is not a verified pass');
+  assert.ok(summary.steps.length > 0, 'skips must be recorded, not dropped');
+  assert.ok(summary.steps.every(step => step.status === 'skip'));
+  assert.match(stdout, /## Overall: ⚠️ NO CHECKS RUN/);
+  assert.doesNotMatch(stdout, /## Overall: ✅ PASS/, 'must not prefix-match the pass sentinel');
+  assert.doesNotMatch(stdout, /❌ FAIL/, 'must not read as a hard failure (would wedge)');
+});
+
+test('mix of skipped + passing steps → ✅ PASS (skips ignored, real step ran)', () => {
+  // The all-skip guard must not regress the normal case: if at least one real
+  // step runs and passes, skips are ignored and the gate passes.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { test: 'node -e "process.exit(0)"' } };
+  const dir = createTempRepo(pkg);
+
+  const { stdout, summary } = runPrecommit(dir, 'full');
+  assert.equal(summary.overallPass, true);
+  assert.match(stdout, /## Overall: ✅ PASS/);
 });
 
 test('build failure makes overallPass false', () => {

@@ -86,15 +86,15 @@ Format: `<type>: [<TICKET>] <concise summary>`
 - Use imperative mood in bullet points
 - Omit Ticket section if no ticket ID or `{ISSUE_TRACKER_URL}` not configured
 
-**Forbidden patterns** (POSIX ERE, case-insensitive — canonical source: `scripts/commit-msg-guard.sh:19-23`):
+**Forbidden patterns** (case-insensitive ERE with `\b` word boundaries — canonical source: `scripts/commit-msg-guard.sh`):
 
 | Pattern Category | Regex |
 |-----------------|-------|
 | Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
-> **Note**: `\|` in the table above is Markdown table escaping. Actual POSIX ERE uses unescaped `|`.
+> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. Only `AI` is `\b`-bounded — it prevents bare `AI` from matching inside ordinary words ("maintainer", "domain") under `-i`. `GPT` and `OpenAI` are intentionally left unbounded so they still match inside `ChatGPT` / `GPT-4` (no English word contains "gpt").
 
 ### 4b. AI Content Sanitization
 
@@ -228,7 +228,7 @@ After `gh pr create` or `gh pr edit` completes in `--execute` mode, verify the p
 gh pr view <number> --json title,body --template '{{.title}}{{"\n"}}{{.body}}'
 ```
 
-**Step 2**: Scan for forbidden patterns (same 3 POSIX ERE from Step 4b).
+**Step 2**: Scan for forbidden patterns (same 3 `ERE + \b` patterns from Step 4b).
 
 **Step 3**: If leak detected — **auto-remediate** (single attempt, using pre-sanitized snapshot from Step 4b):
 

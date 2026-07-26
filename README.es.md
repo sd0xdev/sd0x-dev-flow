@@ -6,7 +6,7 @@
 
 > La capa harness para Claude Code.
 
-**Gates de calidad que la IA no puede saltarse.** Una reference implementation de AI Agent Harness Engineering para [Claude Code](https://claude.com/claude-code) — dual review forzado por hooks, gates de state-machine que sobreviven a la compactación del contexto y seguridad fail-closed donde importa.
+**Gates de calidad que la IA no puede saltarse.** Una reference implementation de AI Agent Harness Engineering para [Claude Code](https://claude.com/claude-code) — gates de review forzados por hooks, gates de state-machine que sobreviven a la compactación del contexto y seguridad fail-closed donde importa.
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — ~4% de la ventana de context de Claude
@@ -28,7 +28,7 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 | 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 86 de 95 skills públicas declaran `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 capas: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
-| 7 | **Generator-evaluator split** | Dual review: Codex (primario) + Claude (secundario) despachados en paralelo en cada ciclo de review | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Dual Review Mode) |
+| 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + detección de convergence plateau | [`rules/auto-loop.md`](rules/auto-loop.md) (condiciones de salida + strategic reset) |
 | 9 | **Human-in-the-loop safety gates** | Confirmación por `/dev/tty` + `AskUserQuestion` para operaciones destructivas | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Corrección → registrar lesson → promover a regla tras 3+ recurrencias | [`rules/self-improvement.md`](rules/self-improvement.md) |
@@ -40,7 +40,7 @@ La mayoría de proyectos de harness cubren 2–4 de estos subproblemas. sd0x-dev
 | Sin barreras de seguridad | Con sd0x-dev-flow |
 |---|---|
 | La IA salta el review cuando el contexto es largo | **Forzado por Hook**: stop-guard bloquea reviews incompletos |
-| Un solo reviewer pierde problemas | **Dual dispatch**: Codex + secundario en paralelo |
+| La autorrevisión solo sella lo ya hecho | **Reviewer independiente**: Codex investiga el repositorio por su cuenta; `--dual` opcional cuando hace falta profundidad |
 | "Arreglado" sin re-verificación | **Auto-loop**: fix → re-review → pass → continuar |
 | Estado de review perdido tras compact | **Seguimiento de estado**: SessionStart hook re-inyecta |
 
@@ -55,7 +55,7 @@ La mayoría de proyectos de harness cubren 2–4 de estos subproblemas. sd0x-dev
 /project-setup
 ```
 
-Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 14 rules + 9 hooks.
+Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 14 rules + 8 hooks.
 
 Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
 
@@ -73,34 +73,27 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-El **motor auto-loop** aplica quality gates automáticamente — tras ediciones de código, el comando de review despacha **dual review** (Codex MCP + reviewer secundario en paralelo) en la misma respuesta. Los hallazgos se deduplican, normalizan por severidad y agregan en un único gate. En modo strict, los hooks aplican semántica fail-closed: si el gate agregado está incompleto, stop-guard bloquea. Ver [docs/hooks.md](docs/hooks.md) para detalles.
+El **motor auto-loop** aplica quality gates automáticamente — tras ediciones de código, el comando de review despacha **Codex** en la misma respuesta. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de ese umbral se registran y el bucle continúa, sin abrir otra ronda. En modo strict, los hooks aplican semántica fail-closed: si el gate está incompleto, stop-guard bloquea. Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado. Ver [docs/hooks.md](docs/hooks.md) para detalles.
 
 <details>
-<summary>Detalle: Diagrama de secuencia del dual-review</summary>
+<summary>Detalle: Diagrama de secuencia del bucle de review</summary>
 
 ```mermaid
 sequenceDiagram
     participant D as Developer
     participant C as Claude
     participant X as Codex MCP
-    participant T as Secondary Reviewer
     participant H as Hooks
 
     D->>C: Edit code
     H->>H: Track file change
-    C->>H: emit-review-gate PENDING
-    par Dual Review
-        C->>X: Codex review (sandbox)
-    and
-        C->>T: Task(code-reviewer)
-    end
-    X-->>C: Findings (primary)
-    T-->>C: Findings (secondary)
-    C->>C: Aggregate + dedup + gate
-    C->>H: emit-review-gate READY/BLOCKED
+    C->>X: Codex review (sandbox, researches repo itself)
+    X-->>C: Findings + gate sentinel
+    H->>H: Parse sentinel into code_review.passed
+    C->>C: Gate on the tier's blocking severity
 
-    alt Issues found
-        C->>C: Fix all issues
+    alt Blocking findings
+        C->>C: Fix them (sub-threshold: log and move on)
         C->>X: --continue threadId
         X-->>C: Re-verify
     end
@@ -113,16 +106,19 @@ sequenceDiagram
 
 </details>
 
-## Funcionalidad destacada: Arquitectura Dual-Reviewer
+## Funcionalidad destacada: Review por tiers
 
-v2.0 despacha dos reviewers independientes en paralelo — Dual-review por defecto con modos de fallback degradado:
+Un solo reviewer — Codex — por defecto en todas partes. El **tier** decide cuánto rigor recibe un cambio, y qué tan grave debe ser un hallazgo para reabrir el bucle:
 
-| Reviewer | Rol | Fallback |
-|----------|-----|----------|
-| Codex MCP | Primario (sandbox, diff completo) | Modo single-reviewer si no está disponible |
-| Secundario (pr-review-toolkit) | Review con puntuación de confianza | strict-reviewer → modo single |
+| Tier | Para | Bloquea en | Tope de rondas |
+|------|------|-----------|----------------|
+| `fast` | Documentación, configuración, ediciones pequeñas de bajo riesgo | P0 | 3 |
+| `standard` **(por defecto)** | Funcionalidades y correcciones ordinarias | P0, P1 | 5 |
+| `thorough` | Seguridad, integridad de datos, releases, API pública | P0, P1, P2 | 10 |
 
-Los hallazgos se **normalizan por severidad** (P0-Nit), **deduplican** (archivo + clave de issue, tolerancia ±5 líneas) y se **atribuyen por fuente** (`codex` | `toolkit` | `both`).
+**80 es nota de aprobado.** Los hallazgos por debajo del umbral de bloqueo del tier se registran (`[NIT_DEFERRED]`, persistido con TTL para que no se vuelvan a plantear en la siguiente sesión) y el bucle avanza a `/precommit` — sin pasada extra de correcciones ni ronda extra de review. `/codex-review-branch` los retoma cuando el cambio se revise en profundidad.
+
+Un segundo reviewer está disponible vía `/codex-review-branch --dual` y está **desactivado salvo que se pase el flag** — duplica el coste en tokens y en tiempo de cada ronda, algo que vale la pena en un release o una revisión de seguridad, no en una corrección corriente. Bajo `--dual`, los hallazgos se normalizan por severidad, se deduplican (archivo + clave de issue, tolerancia ±5 líneas) y se atribuyen por fuente.
 
 Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloqueado.
 
@@ -131,7 +127,7 @@ Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloquead
 | Capacidad | sd0x-dev-flow | gstack | Prompts genéricos |
 |---|---|---|---|
 | Gates de review forzados | Hook + capa de comportamiento | Solo sugerencia | Ninguno |
-| Dual-reviewer | Codex + secundario (paralelo) | Un solo /review | Ninguno |
+| Reviewer independiente | Codex, autoinvestiga; `--dual` opcional | Un solo /review | Ninguno |
 | Bucle de auto-fix | Fix → re-review → pass | Manual | Ninguno |
 | Investigación multi-agente | /deep-research (3 agentes) | Ninguno | Ninguno |
 | Validación adversarial | Debate equilibrio Nash | Ninguno | Ninguno |
@@ -167,7 +163,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requisitos**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (opcional — los skills `/codex-*` lo requieren; sin él, se usa modo single-reviewer)
+**Requisitos**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
 
 ## Tracks de workflow
 
@@ -249,9 +245,9 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 |-----------|----------|----------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |
+| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Mínimo consumo de context
@@ -419,7 +415,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 ## Reglas & Hooks
 
-14 reglas (convenciones siempre cargadas) + 9 hooks (guardrails automatizados).
+14 reglas (convenciones siempre cargadas) + 8 hooks (guardrails automatizados).
 
 > **Personalización**: Edita `auto-loop-project.md` para sobrescribir el comportamiento de auto-loop por proyecto. Las actualizaciones del plugin no conflictuarán — ver [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 

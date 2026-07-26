@@ -8,6 +8,17 @@
 | `.md` docs | `/codex-review-doc` | `/codex-review-fast` |
 | Comments only | - | All |
 
+> **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
+>
+> | Setting | Without it |
+> |---------|-----------|
+> | `PRECOMMIT_REQUIRE_FULL=1` | a passing `mode: fast` (or an unrecorded mode) satisfies the gate |
+> | `STOP_GUARD_MODE=strict` | the default `warn` mode prints the missing step to stderr and **still exits 0** |
+>
+> With both set, the flag is honoured in **both** of stop-guard's modes: from `precommit.mode` when a state file exists, and from the invoked command name (`/precommit` vs `/precommit-fast`) in the transcript fallback. The fallback arm ships with the same change as this note — before it, the flag was state-file-only, so a session without a readable state file (the degraded path where an unproven verdict is least affordable) silently accepted the fast gate. Verify rather than assume: `grep -c PRECOMMIT_REQUIRE_FULL hooks/stop-guard.sh` should report 4, and a checkout predating this change reports 0.
+>
+> Even with both, the flag gates the **command variant**, not the stages that ran: a repo with no build script records `full` with no typecheck behind it. See `docs/features/precommit-tiering/2-tech-spec.md` §6.
+
 Before PR: `/pr-review`
 
 ## Workflow
@@ -25,12 +36,17 @@ After editing code or docs, you **MUST** run the review command **in the same re
 |------------------|----------------|--------------|
 | code files | `/codex-review-fast` | `/precommit` |
 | `.md` docs | `/codex-review-doc` | (done) |
-| Review found issues | Fix all → re-run same review | — |
+| Review found **blocking** issues | Fix all → re-run same review | — |
+| Review found **sub-threshold** issues | Log `[NIT_DEFERRED]`, do not re-review | continue to the "Then on pass" column |
+
+One reviewer — Codex. `/codex-review-fast` and `/codex-review-doc` do not launch a secondary; `/codex-review-branch --dual` is the only code-review entry point where two reviewers run, and it is off unless the flag is passed. (`/plan-review --dual` is the plan-mode equivalent, also off by default.)
+
+What counts as blocking comes from the **tier** (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). Unset means `standard`. **80 is a passing grade** — reach for `thorough` when the change is security, data integrity, a release, or public API, not by default.
 
 **Declaring ≠ Executing**: Saying "should run review" without invoking the Skill tool is a violation.
 **Summary ≠ Completion**: Outputting a table then stopping is a violation.
 
-Full spec: @rules/auto-loop.md
+Full spec: @rules/auto-loop.md (§ Tiers, § Sub-Threshold Findings)
 
 ## Test Requirements
 
@@ -51,6 +67,8 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/feasibility-study` | Feasibility analysis | Requirements |
 | `/tech-spec` | Generate tech spec | Design |
 | `/review-spec` | Review tech spec | Design |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop | Planning |
+| `/orchestrate` | Agent-driven workflow planning + read-only fanout (report-only v1) | Planning |
 | `/deep-analyze` | Deep analysis + roadmap | Design |
 | `/architecture` | Architecture design + 3-architecture.md | Design |
 | `/project-brief` | PM/CTO executive summary | Design |
@@ -139,7 +157,7 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 ## Development Rules
 
 1. **Reference existing code** -- find similar files first, keep style consistent
-2. **Test command** -- `node --test test/**/*.test.js`
+2. **Test command** -- `npm test`（`node --test $(find test -name '*.test.js')` — npm scripts 走 `/bin/sh`，`**` glob 不展開巢狀目錄，勿用 `test/**/*.test.js`）
 3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`). Forbidden patterns in commit messages **and PR title/body** (canonical source: `scripts/commit-msg-guard.sh`): Co-Authored-By AI, Generated-by tags, emoji robot tags. Commits: install `commit-msg-guard.sh` via `/install-scripts`. PRs: `/create-pr` Step 4b enforces sanitization automatically.
 4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)
 

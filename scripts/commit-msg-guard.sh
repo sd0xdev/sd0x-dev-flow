@@ -16,11 +16,18 @@ if [ "${ALLOW_AI_COAUTHOR:-}" = "1" ]; then
   exit 0
 fi
 
-# Forbidden patterns (case-insensitive, POSIX ERE)
+# Forbidden patterns (case-insensitive ERE). Only `AI` needs a \b word boundary:
+# under -i it false-positives inside ordinary words ("maintainer"/"domain"/
+# "detailed"/"explain" all contain "ai"). `GPT` stays UNbounded on purpose — no
+# ordinary word contains "gpt", and the unbounded form is what catches ChatGPT,
+# GPT-4 and GPT4 (a \b after "GPT" would miss all three). OpenAI/ChatGPT-family
+# strings are the most common AI trailers, so every pattern also lists OpenAI
+# and relies on unbounded GPT to cover ChatGPT. Verified on BSD and GNU grep;
+# POSIX [[:<:]] is not portable.
 PATTERNS=(
   'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)'
-  'Generated (by|with).*(Claude|Claude Code|AI|GPT|Copilot)'
-  '🤖.*(Claude|AI|GPT)'
+  'Generated (by|with).*(Claude|\bAI\b|GPT|OpenAI|Copilot)'
+  '🤖.*(Claude|\bAI\b|GPT|OpenAI)'
 )
 
 FOUND=""

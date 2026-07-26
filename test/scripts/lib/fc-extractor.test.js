@@ -2,7 +2,7 @@
 
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = require('node:fs');
+const { mkdtempSync, writeFileSync, mkdirSync, rmSync, readdirSync, readFileSync, existsSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 
@@ -427,4 +427,126 @@ test('extractItems accepts explicit includedRequests override', () => {
   assert.equal(acs[0].text, 'Something completed');
   assert.equal(requestsIncluded.length, 1);
   assert.match(requestsIncluded[0], /2026-01-02-done\.md$/);
+});
+
+// --- Real repo request docs must parse to a BARE status token ---
+
+test('every request doc in this repo parses to a bare Status token, not an annotated one', () => {
+  // `parseRequestStatus()` returns the WHOLE trailing string, and `filterOpenRequests()` tests
+  // exact membership in CLOSED_REQUEST_STATUS. So an author-friendly annotation on the Status line
+  // — `> **Status**: Completed（… 見下方 Superseded）` — silently REOPENS a closed request: the
+  // value no longer equals `Completed`, so `/create-request --scan` and feature-context resolution
+  // start treating a finished 2026-03-06 request as live work. It shipped exactly that way and the
+  // whole suite stayed green, because nothing read the real docs.
+  //
+  // Annotations belong on their own line (`> **Note**: …`), which no parser reads.
+  const featuresDir = join(__dirname, '../../../docs/features');
+  if (!existsSync(featuresDir)) return;
+
+  const docs = [];
+  for (const feature of readdirSync(featuresDir)) {
+    const requestsDir = join(featuresDir, feature, 'requests');
+    if (!existsSync(requestsDir)) continue;
+    for (const f of readdirSync(requestsDir)) {
+      if (f.endsWith('.md')) docs.push(join(requestsDir, f));
+    }
+  }
+  assert.ok(docs.length > 0, 'expected at least one request doc to check');
+
+  // A CHARACTER-CLASS rule cannot express this. `/^[A-Za-z][A-Za-z -]*$/` was the first attempt and
+  // it admits `Completed superseded below` — ASCII prose that is exactly the annotation the rule
+  // exists to reject, and that `CLOSED_REQUEST_STATUS.has()` still answers `false` for. The real
+  // constraint is membership, not spelling: the consumer compares by equality, so a Status is
+  // correct only if it IS one of the values some consumer recognises. Anything else is a typo or
+  // an annotation, and the two are indistinguishable from here — both break the same consumer.
+  const KNOWN_OPEN_STATUS = new Set(['Pending', 'In Progress', 'Candidate Complete', 'Spec Complete']);
+  const known = new Set([...CLOSED_REQUEST_STATUS, ...KNOWN_OPEN_STATUS]);
+
+  // `status === null` is NOT skipped. It used to be, described as "a documented, separately-handled
+  // case" — but five real docs were landing there for a parser reason, not an authoring one: they
+  // use the table form `| Status | **Completed** |`, which this module could not read until
+  // 2026-07-26. `filterOpenRequests()` maps null and not-closed to the SAME answer (open), so the
+  // skip walked past exactly the docs whose status was being silently discarded. If a doc genuinely
+  // has no Status, that is worth failing on too — it is indistinguishable from a parser gap here.
+  const offenders = [];
+  const unparsed = [];
+  for (const doc of docs) {
+    const status = parseRequestStatus(readFileSync(doc, 'utf8'));
+    const rel = doc.slice(doc.indexOf('docs/'));
+    if (status === null) { unparsed.push(rel); continue; }
+    if (!known.has(status)) {
+      offenders.push(`${rel} -> ${JSON.stringify(status)}`);
+    }
+  }
+  assert.deepEqual(
+    unparsed, [],
+    'every request doc must expose a Status this module can read (blockquote / heading / table row) '
+      + '— an unreadable one is treated as OPEN forever'
+  );
+  assert.deepEqual(
+    offenders, [],
+    'Status must be exactly one of ' + [...known].sort().join(' / ')
+      + '. Move commentary to its own `> **Note**:` line; if a genuinely new status is intended, '
+      + 'add it here AND to whichever consumer must recognise it.'
+  );
+});
+
+test('the bare-token rule rejects ASCII annotations, not just non-ASCII ones', () => {
+  // Pins the gap the character-class version had. Both of these are "letters, spaces and hyphens",
+  // and both leave `filterOpenRequests()` treating a finished request as live work.
+  const charClass = /^[A-Za-z][A-Za-z -]*$/;
+  const KNOWN_OPEN_STATUS = new Set(['Pending', 'In Progress', 'Candidate Complete', 'Spec Complete']);
+  const known = new Set([...CLOSED_REQUEST_STATUS, ...KNOWN_OPEN_STATUS]);
+
+  for (const annotated of ['Completed superseded below', 'Done - see note', 'Completed（見下方）']) {
+    assert.equal(CLOSED_REQUEST_STATUS.has(annotated), false, `${annotated} is not closed`);
+    assert.equal(known.has(annotated), false, `${annotated} must be rejected by the membership rule`);
+  }
+  assert.equal(charClass.test('Completed superseded below'), true,
+    'the character class admits it — which is why membership, not spelling, is the rule');
+});
+
+test('an annotated Status is not recognised as closed (the failure mode above, pinned)', () => {
+  // Guards the *reason* the test above exists: if CLOSED_REQUEST_STATUS ever gained fuzzy
+  // matching, the bare-token rule would become arbitrary style policing rather than a correctness
+  // constraint, and this assertion would go red to say so.
+  const annotated = parseRequestStatus('> **Status**: Completed（見下方 Superseded）\n');
+  assert.equal(annotated, 'Completed（見下方 Superseded）');
+  assert.equal(CLOSED_REQUEST_STATUS.has(annotated), false);
+  assert.equal(CLOSED_REQUEST_STATUS.has(parseRequestStatus('> **Status**: Completed\n')), true);
+});
+
+test('parseRequestStatus reads the table form, unwrapping bold', () => {
+  // `skills/next-step/scripts/analyze.js` and `skills/create-request/SKILL.md` have always parsed
+  // this shape; this module was the outlier. The bold variant must yield the bare token — asterisks
+  // would fail the exact-match membership test in CLOSED_REQUEST_STATUS just like an annotation.
+  assert.equal(parseRequestStatus('# T\n\n| Field | Value |\n| Status | **Completed** |\n'), 'Completed');
+  assert.equal(parseRequestStatus('# T\n\n| Status | Pending |\n'), 'Pending');
+  assert.equal(parseRequestStatus('# T\n\n| status | Done |\n'), 'Done', 'case-insensitive like the other forms');
+  assert.equal(CLOSED_REQUEST_STATUS.has(parseRequestStatus('| Status | **Completed** |\n')), true);
+
+  // Precedence: the blockquote form wins when both are present, matching the existing order.
+  assert.equal(
+    parseRequestStatus('> **Status**: Pending\n\n| Status | **Completed** |\n'), 'Pending'
+  );
+  // The 30-line head window still applies to the new form.
+  assert.equal(parseRequestStatus('# T\n' + '\n'.repeat(40) + '| Status | **Done** |\n'), null);
+});
+
+test('the Status bare-token rule is documented where authors actually look', () => {
+  // The rule was enforced by a test before it was written down anywhere. A convention discoverable
+  // only by failing a test after the fact is a convention that will keep being violated — the
+  // template is what an author copies, so the escape hatch has to be in it.
+  const templatePath = join(__dirname, '../../../skills/create-request/references/template.md');
+  const skillPath = join(__dirname, '../../../skills/create-request/SKILL.md');
+
+  const template = readFileSync(templatePath, 'utf8');
+  assert.match(template, /> \*\*Note\*\*:/, 'the template metadata block must offer a Note line');
+  assert.match(template, /bare token/i, 'and state the bare-token rule for Status');
+
+  assert.match(
+    readFileSync(skillPath, 'utf8'),
+    /\|\s*`Note`[^|]*\|[^|]*Status/,
+    'Phase 4 Auto-Update Items must list Note as the home for Status commentary'
+  );
 });

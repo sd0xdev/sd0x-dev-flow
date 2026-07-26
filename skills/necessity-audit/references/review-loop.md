@@ -35,6 +35,6 @@ The skill is stateless with respect to continuation: no state file is written by
 
 | State | Action |
 |-------|--------|
-| Gate flips to `✅ Mergeable` | Continue to next lifecycle step (e.g., `/codex-review-doc`) |
+| Gate flips to `✅ Audit Clear` | Continue to next lifecycle step (e.g., `/codex-review-doc`) |
 | Gate still `⛔` after 3 continues | `⚠️ Need Human` — surface to user, stop auto-loop |
 | User overrides all Cut | Gate flips; log `user_override` entries in report |

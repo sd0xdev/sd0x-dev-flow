@@ -146,9 +146,50 @@ function stripAnsi(s) {
 /**
  * For test steps: suppress individual PASS lines, keep FAIL + summary.
  * This prevents 50+ "PASS test/..." lines from flooding the context.
+ *
+ * Two ecosystems are handled:
+ *  - jest-shaped: `PASS test/…` / `FAIL test/…` / `Tests:` summary (rules below).
+ *  - TAP (node:test): `ok N - name` passing points, `# Subtest:` headers, and a
+ *    per-test `--- / duration_ms: / ...` YAML block. node:test emits one such block
+ *    PER PASSING TEST, so on a large suite (2000+ tests) an unfiltered stream is
+ *    400KB+ — it floods the context this filter exists to protect AND overruns the
+ *    host's tool-output persistence threshold, which truncates the runner's trailing
+ *    `## Overall:` verdict and breaks precommit state recording. The TAP rules are
+ *    matched on the whitespace-TRIMMED content so NESTED subtests (indented `ok`/
+ *    `not ok`) are handled without blanket-suppressing indented failure diagnostics.
+ *
+ * This filter governs the LIVE STREAM only and is content-unaware: inside a FAILING
+ * test's diagnostic body, a line that happens to start `ok <n>`/`---`/`...`/`duration_ms:`
+ * is still suppressed from the stream. That is cosmetic — on failure the runner reprints
+ * the full, UNFILTERED log tail (runStep) and the log file is written verbatim, so the
+ * failure tail (not this stream) is the authoritative diagnostic. The gate verdict itself
+ * derives from child EXIT CODES and the runner's own `## Overall:` line, neither of which
+ * is routed through this filter.
  */
 function testStdoutFilter(line) {
   const clean = stripAnsi(line);
+  // TAP (node:test) noise suppression — evaluated first so a passing test whose
+  // NAME contains "Error"/"FAIL" is still suppressed, while a failing `not ok`
+  // (even nested/indented) is always kept.
+  // Trim leading indentation (nested subtests) AND a single trailing CR, so a
+  // CRLF-emitting test command matches identically to an LF one — runStep splits
+  // on '\n' and leaves the '\r', which would otherwise defeat the exact `---`/`...`
+  // matches and re-open the per-test flood on CRLF hosts.
+  const tap = clean.replace(/^\s+/, '').replace(/\r$/, '');
+  if (/^not ok\b/.test(tap)) return true; // TAP failure point — always show (nested too)
+  // Suppress a real TAP test-point (`ok <number>`) only. A non-TAP line that merely
+  // begins with "ok " (e.g. `ok diagnostic: database unavailable`) is NOT a test point
+  // and must stay visible.
+  if (/^ok\s+\d+\b/.test(tap)) return false; // TAP passing test-point — suppress
+  if (tap.startsWith('# Subtest:')) return false; // per-test header, redundant with ok/not ok
+  // node:test `spec` reporter passing line: `✔ <name> (1.234ms)`, indented for nested subtests.
+  // Only the TAP `ok <n>` form was suppressed, so a project whose test command sets
+  // `--test-reporter=spec` (or a Node version that defaults to spec on a TTY) floods the tail with
+  // one line per PASSING test — exactly the noise this filter exists to remove, and enough of it to
+  // push the actual failure out of the captured window. The failing counterpart `✖` is deliberately
+  // NOT matched here; it falls through to the `✕|✖` always-show rule below.
+  if (/^✔[\s(]/.test(tap)) return false;
+  if (tap === '---' || tap === '...' || tap.startsWith('duration_ms:')) return false; // per-test YAML framing noise
   // Always show: FAIL, summary, errors, warnings
   if (/^\s*FAIL\s/.test(clean)) return true;
   if (/^Tests?:\s/.test(clean)) return true;

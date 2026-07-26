@@ -151,21 +151,41 @@ function getDescription(skill, descriptions) {
   return descriptions[name] || skill.command;
 }
 
-function buildHeroCount({ publicCount, bundledCount }) {
-  return `${bundledCount} bundled · ${publicCount} public skills · 15 agents — ~4% of Claude's context window`;
+// Count on-disk assets so the "What's included" table can never drift from
+// reality (the 5 locale READMEs once carried a stale "9 hooks / 13 scripts").
+// Examples stay hand-curated; only the numeric counts are derived here.
+function diskCounts() {
+  const countExt = (dir, exts) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(path.join(ROOT, dir));
+    } catch {
+      return 0;
+    }
+    return entries.filter(f => exts.some(e => f.endsWith(e))).length;
+  };
+  return {
+    hooks: countExt('hooks', ['.sh']),
+    scripts: countExt('scripts', ['.sh', '.js']),
+    agents: countExt('agents', ['.md']),
+    rules: countExt('rules', ['.md']),
+  };
 }
 
-function buildWhatsIncludedCount({ publicCount, bundledCount }) {
+function buildHeroCount({ publicCount, bundledCount, disk }) {
+  return `${bundledCount} bundled · ${publicCount} public skills · ${disk.agents} agents — ~4% of Claude's context window`;
+}
+
+function buildWhatsIncludedCount({ publicCount, bundledCount, disk }) {
   // Full table (header+separator+all rows) to avoid HTML comment breaking table
   return [
     '| Category | Count | Examples |',
     '|----------|-------|---------|',
     `| Skills | ${publicCount} public (${bundledCount} bundled) | \`/project-setup\`, \`/codex-review-fast\`, \`/verify\`, \`/smart-commit\`, \`/deep-research\` |`,
-    '| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |',
-    '| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |',
-    '| Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |',
-    // Static counts — update when adding/removing scripts
-    '| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |',
+    `| Agents | ${disk.agents} | strict-reviewer, verify-app, coverage-analyst, architecture-designer |`,
+    `| Hooks | ${disk.hooks} | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |`,
+    `| Rules | ${disk.rules} | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |`,
+    `| Scripts | ${disk.scripts} | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |`,
   ].join('\n');
 }
 
@@ -269,7 +289,11 @@ function main() {
 
   const publicSkills = getPublicSkills(catalog);
   const publicCount = publicSkills.length;
-  // Count tracked skill dirs (what actually ships to plugin users).
+  // Count tracked + untracked-but-not-ignored skill dirs (what ships to plugin
+  // users once the worktree is committed). --others --exclude-standard keeps
+  // newly added (not yet staged) skills in the count while still excluding
+  // gitignored junk dirs — otherwise the README undercounts in the window
+  // between adding a skill and committing it, and ships stale after commit.
   // Falls back to filesystem when git is unavailable (e.g. unpacked tarball)
   // or when ls-files returns no entries (e.g. sparse checkout excluding skills/).
   // `git ls-files` always emits POSIX path separators, so `split('/')` is safe
@@ -278,7 +302,7 @@ function main() {
   try {
     const out = execFileSync(
       'git',
-      ['ls-files', '--cached', 'skills/'],
+      ['ls-files', '--cached', '--others', '--exclude-standard', 'skills/'],
       { encoding: 'utf8', cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }
     );
     const dirSet = new Set(
@@ -299,7 +323,7 @@ function main() {
         }
       }).length;
   }
-  const counts = { publicCount, bundledCount };
+  const counts = { publicCount, bundledCount, disk: diskCounts() };
 
   // Build blocks
   const blocks = {

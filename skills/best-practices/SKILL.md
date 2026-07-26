@@ -1,7 +1,7 @@
 ---
 name: best-practices
 description: "Industry best practices conformance audit with mandatory adversarial debate. Produces audit artifact: verdict (OK/WARN/FAIL) + gap roadmap + debate proof. Use when: auditing current implementation against industry standards, checking compliance with best practices, benchmarking implementation quality, verifying a codebase meets a standard. Not for: broad research/discovery without audit target (use /deep-research), code review (use /codex-review), architecture design (use /codex-architect)."
-allowed-tools: Read, Grep, Glob, WebSearch, WebFetch, mcp__codex__codex, mcp__codex__codex-reply, Agent
+allowed-tools: Read, Grep, Glob, WebSearch, WebFetch, Agent, Skill
 ---
 
 # Best Practices Audit
@@ -140,9 +140,9 @@ Print effective scope in the Phase 2 output header.
 
 ### Phase 3: Adversarial Debate (Cannot Be Skipped)
 
-Invoke `/codex-brainstorm` via Skill tool (always available as a Claude Code built-in; no `allowed-tools` declaration needed). See [debate-guide.md](references/debate-guide.md) for debate topic template, constraints, and completion criteria.
+Invoke `/codex-brainstorm` via Skill tool (`Skill` is pre-approved in this skill's `allowed-tools` to avoid a permission prompt; per Claude Code, omitting it would not remove availability but could trigger a normal permission check). See [debate-guide.md](references/debate-guide.md) for debate topic template, constraints, and completion criteria.
 
-> **Phase 3 must use `/codex-brainstorm` (Skill tool). Raw `mcp__codex__codex` calls for debate are invalid.** The MCP tools in `allowed-tools` exist because `/codex-brainstorm` uses them internally — they are not for direct Phase 3 debate invocation.
+> **Phase 3 must use `/codex-brainstorm` (Skill tool). Raw `mcp__codex__codex` calls for debate are invalid.** This is a **normative routing rule backed by a least-pre-approval posture** — not a capability boundary. `mcp__codex__codex` / `mcp__codex__codex-reply` are **not** in this skill's `allowed-tools`, which *removes pre-approval* and narrows the declared surface; consistent with line 140 above and with `skills/orchestrate/SKILL.md`, an omitted tool remains reachable through the normal permission flow. What the removal buys is that the forbidden call is no longer silently pre-authorized, so taking it requires stepping outside this skill's declared surface. A sub-skill invoked through the Skill tool carries its own `allowed-tools` — `/codex-brainstorm` declares both MCP tools itself and does its own orchestration — so pre-approving them here was never needed for that inheritance either way.
 >
 > **Phase 4 is blocked until Phase 3 is complete.**
 

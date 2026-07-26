@@ -164,7 +164,7 @@ If incomplete info, ask:
 **Auto-detection logic** (when no explicit path):
 
 1. Resolve feature context using 5-level cascade (`node scripts/resolve-feature-cli.js`)
-2. Scan `docs/features/<key>/requests/*.md` for incomplete requests (Status not in `[Completed, Done, Superseded]`)
+2. Scan `docs/features/<key>/requests/*.md` for incomplete requests (Status not in `[Completed, Done, Superseded, Archived]` — the closed set is defined once in `scripts/lib/request-status.js`; keep this list identical to `CLOSED_REQUEST_STATUS`)
 3. If exactly 1 active request → auto-select
 4. If multiple active requests → AskUserQuestion with numbered list
 5. If 0 active requests → offer to create new via create mode
@@ -244,6 +244,7 @@ Agent({
 | `Progress` table      | Update each phase status based on git changes |
 | `Acceptance Criteria` | Check checkboxes based on implementation/test results |
 | `Progress.Note`       | Add latest commit message summary         |
+| `Note` (metadata)     | Commentary about the Status belongs here, **never appended to the `Status` line** — `Status` is compared by exact equality against a closed-status set, so any annotation reopens the request. See `references/template.md` |
 
 ### Update Mode: Interaction
 
@@ -262,7 +263,7 @@ If confirmation needed, ask:
 ```
 Phase 1: Discover  -> Glob docs/features/*/requests/*.md (exclude archived/)
 Phase 2: Parse     -> Extract Status, Priority, Created, AC progress from each doc
-Phase 3: Filter    -> Keep incomplete (Status ≠ Completed, Done, Superseded)
+Phase 3: Filter    -> Keep incomplete (Status ∉ CLOSED_REQUEST_STATUS: Completed, Done, Superseded, Archived)
 Phase 4: Report    -> Group by status, sort by priority then date, output markdown
 ```
 
@@ -297,6 +298,7 @@ Support two metadata formats (try in order, use first match):
 | Completed | Done | No |
 | Done | Done | No |
 | Superseded | Done | No |
+| Archived | Done | No |
 | In Progress / In Development / In Dev | Active | Yes |
 | Candidate Complete | Active (needs verification) | Yes — group after In Progress |
 | Pending | Backlog | Yes |

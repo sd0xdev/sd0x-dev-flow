@@ -13,11 +13,13 @@ cat <<'EOF' > "$TMPFILE"
 <sanitized commit message from Step 5b>
 EOF
 
-# 2. Runtime validation (POSIX ERE — canonical patterns from scripts/commit-msg-guard.sh)
+# 2. Runtime validation (ERE + \b word boundary — canonical patterns from scripts/commit-msg-guard.sh)
 AI_CO_AUTHOR="${AI_CO_AUTHOR:-0}"  # set to 1 when --ai-co-author passed
 
 validate_msg() {
   local tmpfile="$1"
+  # Only AI is \b-bounded (keeps bare AI out of "maintainer"/"domain" under -i);
+  # GPT/OpenAI stay unbounded to still catch ChatGPT/GPT-4. Canonical source: scripts/commit-msg-guard.sh
   if [ "$AI_CO_AUTHOR" = "1" ]; then
     # Strip the one allowed line, then check for remaining AI patterns
     grep -Eiv '^Co-Authored-By: Claude <noreply@anthropic\.com>$' "$tmpfile" | \
@@ -25,8 +27,8 @@ validate_msg() {
   else
     grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
   fi
-  grep -Ei 'Generated (by|with).*(Claude|Claude Code|AI|GPT|Copilot)' "$tmpfile" && return 1
-  grep -Ei '🤖.*(Claude|AI|GPT)' "$tmpfile" && return 1
+  grep -Ei 'Generated (by|with).*(Claude|\bAI\b|GPT|OpenAI|Copilot)' "$tmpfile" && return 1
+  grep -Ei '🤖.*(Claude|\bAI\b|GPT|OpenAI)' "$tmpfile" && return 1
   return 0
 }
 

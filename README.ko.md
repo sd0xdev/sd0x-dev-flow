@@ -6,7 +6,7 @@
 
 > Claude Code를 위한 harness 레이어.
 
-**AI가 건너뛸 수 없는 품질 게이트.** [Claude Code](https://claude.com/claude-code)를 위한 AI Agent Harness Engineering의 reference implementation — hook 강제 듀얼 리뷰, context 압축 이후에도 유지되는 state machine 게이트, 그리고 정말 중요한 지점의 fail-closed 안전장치.
+**AI가 건너뛸 수 없는 품질 게이트.** [Claude Code](https://claude.com/claude-code)를 위한 AI Agent Harness Engineering의 reference implementation — hook 강제 리뷰 게이트, context 압축 이후에도 유지되는 state machine 게이트, 그리고 정말 중요한 지점의 fail-closed 안전장치.
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — Claude context window의 ~4%만 사용
@@ -28,7 +28,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 | 4 | **Lifecycle interceptor** | 5가지 hook event type을 8개 스크립트로 디스패치: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8개 스크립트) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 95개 skill 중 86개가 `allowed-tools`를 선언 |
 | 6 | **Defense-in-depth 안전장치** | 5개 레이어: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed 마커 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
-| 7 | **Generator-evaluator 분리** | 듀얼 리뷰: 모든 리뷰 사이클에서 Codex(주)와 Claude(보조)를 병렬로 디스패치 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Dual Review Mode) |
+| 7 | **Generator-evaluator 분리** | Codex가 Claude의 결과물을 리뷰하며 저장소를 직접 조사 — 결론을 건네받아 승인만 하는 일은 없음 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **점진적 진행 추적** | `iteration_history.current_round` + `max_rounds` + 수렴 plateau 감지 | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
 | 9 | **Human-in-the-loop 안전 게이트** | 파괴적 작업에 대한 `/dev/tty` 확인 + `AskUserQuestion` | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **자기 개선 루프** | 지적 → lesson 기록 → 3회 이상 재발 시 rule로 승격 | [`rules/self-improvement.md`](rules/self-improvement.md) |
@@ -40,7 +40,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 | 가드레일 없을 때 | sd0x-dev-flow 사용 시 |
 |---|---|
 | 컨텍스트가 길면 AI가 리뷰를 건너뜀 | **Hook 강제**: stop-guard가 미완료 리뷰를 차단 |
-| 단일 리뷰어가 문제를 놓침 | **듀얼 디스패치**: Codex + 보조 리뷰어 병렬 실행 |
+| 자체 리뷰는 거수기가 됨 | **독립 리뷰어**: Codex가 저장소를 직접 조사, 깊이가 필요할 때만 `--dual` 옵트인 |
 | "수정 완료"인데 재검증 없음 | **Auto-loop**: 수정 → 재리뷰 → 통과 → 계속 |
 | compact 후 리뷰 상태 소실 | **상태 추적**: SessionStart hook이 재주입 |
 
@@ -55,7 +55,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 /project-setup
 ```
 
-하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치합니다. 전체 플러그인에는 14개 Rules + 9개 Hooks가 포함됩니다.
+하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치합니다. 전체 플러그인에는 14개 Rules + 8개 Hooks가 포함됩니다.
 
 `--lite`로 CLAUDE.md만 설정 (Rules/Hooks 스킵).
 
@@ -73,34 +73,27 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-Loop 엔진**이 품질 Gate를 자동으로 적용합니다. 코드 편집 후 리뷰 명령어가 **듀얼 리뷰**(Codex MCP + 보조 리뷰어 병렬 실행)를 디스패치합니다. Findings는 중복 제거, 심각도 정규화 후 단일 gate로 집계됩니다. strict 모드에서 Hooks는 fail-closed를 강제합니다: 집계 gate가 미완료이면 stop-guard가 차단합니다. 자세한 내용은 [docs/hooks.md](docs/hooks.md) 참조.
+**Auto-Loop 엔진**이 품질 Gate를 자동으로 적용합니다. 코드 편집 후 리뷰 명령어가 같은 응답 안에서 **Codex**를 디스패치합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 그대로 진행하며, 라운드를 새로 열지 않습니다. strict 모드에서 Hooks는 fail-closed를 강제합니다: gate가 미완료이면 stop-guard가 차단합니다. 두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 기본값은 비활성입니다. 자세한 내용은 [docs/hooks.md](docs/hooks.md) 참조.
 
 <details>
-<summary>상세: 듀얼 리뷰 시퀀스 다이어그램</summary>
+<summary>상세: 리뷰 루프 시퀀스 다이어그램</summary>
 
 ```mermaid
 sequenceDiagram
     participant D as Developer
     participant C as Claude
     participant X as Codex MCP
-    participant T as Secondary Reviewer
     participant H as Hooks
 
     D->>C: Edit code
     H->>H: Track file change
-    C->>H: emit-review-gate PENDING
-    par Dual Review
-        C->>X: Codex review (sandbox)
-    and
-        C->>T: Task(code-reviewer)
-    end
-    X-->>C: Findings (primary)
-    T-->>C: Findings (secondary)
-    C->>C: Aggregate + dedup + gate
-    C->>H: emit-review-gate READY/BLOCKED
+    C->>X: Codex review (sandbox, researches repo itself)
+    X-->>C: Findings + gate sentinel
+    H->>H: Parse sentinel into code_review.passed
+    C->>C: Gate on the tier's blocking severity
 
-    alt Issues found
-        C->>C: Fix all issues
+    alt Blocking findings
+        C->>C: Fix them (sub-threshold: log and move on)
         C->>X: --continue threadId
         X-->>C: Re-verify
     end
@@ -113,16 +106,19 @@ sequenceDiagram
 
 </details>
 
-## 기능 하이라이트: 듀얼 리뷰어 아키텍처
+## 기능 하이라이트: 티어별 리뷰
 
-v2.0은 두 개의 독립적인 리뷰어를 병렬로 디스패치합니다 — 단일 장애점 제로:
+기본 리뷰어는 Codex 하나뿐입니다. **tier**가 해당 변경에 얼마만큼의 엄격함을 적용할지, 그리고 finding이 얼마나 심각해야 루프를 다시 여는지를 결정합니다:
 
-| 리뷰어 | 역할 | 폴백 |
-|--------|------|------|
-| Codex MCP | 기본적으로 듀얼 리뷰, 저하 폴백 모드 지원 | 사용 불가 시 싱글 리뷰어 모드로 폴백 |
-| 보조 (pr-review-toolkit) | 신뢰도 스코어링 리뷰 | strict-reviewer → 싱글 모드 |
+| Tier | 대상 | Blocking | 라운드 상한 |
+|------|------|----------|------------|
+| `fast` | 문서, 설정, 위험이 낮은 소규모 편집 | P0 | 3 |
+| `standard` **(기본값)** | 일반적인 기능 개발과 버그 수정 | P0, P1 | 5 |
+| `thorough` | 보안, 데이터 무결성, 릴리스, 공개 API | P0, P1, P2 | 10 |
 
-Findings는 **심각도 정규화** (P0-Nit), **중복 제거** (파일 + 이슈 키, ±5줄 허용), **소스 귀속** (`codex` | `toolkit` | `both`)됩니다.
+**80점이면 합격입니다.** tier의 blocking 기준 아래 findings는 기록되고(`[NIT_DEFERRED]` — TTL과 함께 저장되어 다음 세션에서 다시 제기되지 않습니다) 루프는 곧바로 `/precommit`으로 진행합니다. 추가 수정 패스도, 추가 리뷰 라운드도 없습니다. 이 항목들은 다음에 `/codex-review-branch`로 깊이 리뷰할 때 다시 다뤄집니다.
+
+두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 **플래그를 넘기지 않으면 비활성**입니다 — 라운드당 토큰과 실제 소요 시간이 두 배가 되므로 릴리스나 보안 리뷰에는 값어치를 하지만 일상적인 수정에는 그렇지 않습니다. `--dual`에서는 findings에 심각도 정규화, 중복 제거(파일 + 이슈 키, ±5줄 허용), 소스 귀속이 적용됩니다.
 
 Gate: `✅ Ready` 또는 `⛔ Blocked` — strict 모드에서, 미완료 gate = blocked.
 
@@ -131,7 +127,7 @@ Gate: `✅ Ready` 또는 `⛔ Blocked` — strict 모드에서, 미완료 gate =
 | 기능 | sd0x-dev-flow | gstack | 일반 프롬프트 |
 |---|---|---|---|
 | 강제 리뷰 게이트 | Hook + 동작 레이어 | 제안만 | 없음 |
-| 듀얼 리뷰어 | Codex + 보조 (병렬) | 단일 /review | 없음 |
+| 독립 리뷰어 | Codex가 직접 조사; `--dual` 옵트인 | 단일 /review | 없음 |
 | 자동 수정 루프 | 수정 → 재리뷰 → 통과 | 수동 | 없음 |
 | 멀티 에이전트 리서치 | /deep-research (3 에이전트) | 없음 | 없음 |
 | 적대적 검증 | 내시 균형 디베이트 | 없음 | 없음 |
@@ -167,7 +163,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | `/codex-setup init` | Codex CLI | AGENTS.md 커널 + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**요구 사항**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（선택 — `/codex-*` skill에 필요; 미설치 시 싱글 리뷰어 모드로 폴백）
+**요구 사항**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)(플러그인 설치 자체에는 선택이지만 `/codex-*` 리뷰 게이트에는 필수 — Codex가 바로 그 유일한 리뷰어이므로, 미설치 시 폴백하지 않고 `⛔ Blocked` + `⚠️ Need Human`을 냅니다)
 
 ## 워크플로 트랙
 
@@ -249,9 +245,9 @@ flowchart TD
 |----------|------|------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 9 | pre-edit-guard, auto-format, review state tracking, stop guard, namespace hint, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 13 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, utils (shared lib), emit-review-gate, build-codex-artifacts, resolve-feature (CLI + shell), feature-resolver, readme-catalog |
+| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 최소한의 Context 사용량
@@ -419,7 +415,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 
 ## 규칙 & Hook
 
-14개 규칙 (상시 로드 컨벤션) + 9개 Hook (자동 가드레일).
+14개 규칙 (상시 로드 컨벤션) + 8개 Hook (자동 가드레일).
 
 > **커스터마이징**: `auto-loop-project.md`를 편집하여 프로젝트별 auto-loop 동작을 오버라이드할 수 있습니다. 플러그인 업데이트와 충돌하지 않습니다 — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 참조.
 

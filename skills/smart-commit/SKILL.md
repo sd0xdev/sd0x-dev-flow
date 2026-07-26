@@ -235,7 +235,7 @@ If no changes → report "No uncommitted changes" and stop.
 After collecting changes and applying exclusion/scope rules above, filter by session commit scope:
 
 1. Read `.claude_review_state.json` field `session_commit_scope`
-2. Validate `session_commit_scope.session_id` matches current session
+2. Validate `session_commit_scope.session_id` matches the state file's root `session_id` (internal consistency — the root value is kept current by the session-init hook, so a mismatch means the scope is stale from an earlier session)
 3. If `--all` flag passed, or scope is unavailable/invalid → skip filtering (legacy behavior)
 4. Otherwise, classify remaining files:
 
@@ -320,14 +320,14 @@ git diff --cached -- <files> # staged
 
 Scan the generated message for forbidden patterns and **strip them silently** unless `--ai-co-author` was explicitly passed:
 
-| Forbidden Pattern | Regex (POSIX ERE, `grep -Ei`) |
+| Forbidden Pattern | Regex (ERE with `\b`, `grep -Ei`) |
 |-------------------|------|
 | Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (by\|with).*(Claude\|Claude Code\|AI\|GPT\|Copilot)` |
-| Emoji robot tag | `🤖.*(Claude\|AI\|GPT)` |
+| Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
+| Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 
-> **Note**: `\|` in the table above is Markdown table escaping. Actual POSIX ERE uses unescaped `|`.
-> **Canonical regex source**: `scripts/commit-msg-guard.sh` (POSIX ERE, `grep -Ei`)
+> **Note**: `\|` in the table above is Markdown table escaping. Actual ERE uses unescaped `|`. Only `AI` is `\b`-bounded — it keeps bare `AI` from matching inside ordinary words ("maintainer", "domain") under `-i`. `GPT` and `OpenAI` are intentionally left unbounded so they still match inside `ChatGPT` / `GPT-4` (no English word contains "gpt").
+> **Canonical regex source**: `scripts/commit-msg-guard.sh` (ERE, `grep -Ei`)
 
 If any pattern matches and `--ai-co-author` was **not** passed → remove the matching line(s) from the message before output/execute.
 

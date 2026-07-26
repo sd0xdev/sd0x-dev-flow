@@ -4,9 +4,20 @@
 
 | Change Type | Must Run | Can Skip |
 |-------------|----------|----------|
-| code files | `/codex-review-fast` -> `/precommit-fast` | - |
+| code files | `/codex-review-fast` -> `/precommit` | - |
 | `.md` docs | `/codex-review-doc` | `/codex-review-fast` |
 | Comments only | - | All |
+
+> **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
+>
+> | Setting | Without it |
+> |---------|-----------|
+> | `PRECOMMIT_REQUIRE_FULL=1` | a passing `mode: fast` (or an unrecorded mode) satisfies the gate |
+> | `STOP_GUARD_MODE=strict` | the default `warn` mode prints the missing step to stderr and **still exits 0** |
+>
+> With both set, the flag is honoured in both of stop-guard's modes: from `precommit.mode` when `.claude_review_state.json` exists, and from the invoked command name (`/precommit` vs `/precommit-fast`) when it falls back to reading the transcript.
+>
+> Even with both, the flag gates the **command variant**, not the stages that ran: `/precommit` resolves lint / build / test from whatever your manifest actually defines, so a repo with no build script records `full` with no build behind it. The gate proves which command was invoked; it cannot prove which stages existed to run. `/precommit` prints the resolved stages — read them rather than assuming.
 
 Before PR: `/pr-review`
 
@@ -23,14 +34,19 @@ After editing code or docs, you **MUST** run the review command **in the same re
 
 | After editing... | Immediately run | Then on pass |
 |------------------|----------------|--------------|
-| code files | `/codex-review-fast` | `/precommit-fast` |
+| code files | `/codex-review-fast` | `/precommit` |
 | `.md` docs | `/codex-review-doc` | (done) |
-| Review found issues | Fix all -> re-run same review | - |
+| Review found **blocking** issues | Fix all -> re-run same review | - |
+| Review found **sub-threshold** issues | Log `[NIT_DEFERRED]`, do not re-review | continue to the "Then on pass" column |
+
+One reviewer -- Codex. `/codex-review-fast` and `/codex-review-doc` do not launch a secondary; `/codex-review-branch --dual` is the only code-review entry point where two reviewers run, and it is off unless the flag is passed. (`/plan-review --dual` is the plan-mode equivalent, also off by default.)
+
+What counts as blocking comes from the **tier** (`fast` P0 / `standard` P0+P1 / `thorough` P0+P1+P2). Unset means `standard`. **80 is a passing grade** -- reach for `thorough` when the change is security, data integrity, a release, or public API, not by default.
 
 **Declaring != Executing**: Saying "should run review" without invoking the Skill tool is a violation.
 **Summary != Completion**: Outputting a table then stopping is a violation.
 
-Full spec: @rules/auto-loop.md
+Full spec: @rules/auto-loop.md (§ Tiers, § Sub-Threshold Findings)
 
 ## Test Requirements
 
@@ -99,6 +115,8 @@ Coverage: happy path + error handling + edge cases (null, empty, extremes)
 | `/feasibility-study` | Feasibility analysis | Requirements |
 | `/tech-spec` | Generate tech spec | Design |
 | `/review-spec` | Review tech spec | Design |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop | Planning |
+| `/orchestrate` | Agent-driven workflow planning + read-only fanout (report-only v1) | Planning |
 | `/deep-analyze` | Deep analysis + roadmap | Design |
 | `/architecture` | Architecture design + 3-architecture.md | Design |
 | `/project-brief` | PM/CTO executive summary | Design |

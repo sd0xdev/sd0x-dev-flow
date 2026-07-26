@@ -170,7 +170,7 @@ END { print p0+0, p1+0, p2+0, nit+0 }
 
 | 問題 | 位置 | Fix |
 |---|---|---|
-| 每次 edit 同步呼叫 `npx prettier` cold-start 200-500ms | `npx prettier` 實際執行點為 `hooks/post-edit-format.sh` 單一 `npx prettier` 呼叫行（實作 PR 以 `grep -n 'npx prettier' hooks/post-edit-format.sh` 取得最新行號） | (a) TMPDIR 快取 prettier 檢測結果 TTL 1h：`$TMPDIR/.claude_prettier_$(pwd_hash)`；(b) prettier 以 `&` 背景執行（state write 不依賴它） |
+| 每次 edit 同步做 prettier 偵測（config 探測 + binary 解析）並同步執行 prettier；npx cold-start 已於先前變更移除（`post-edit-format.sh` 現要求已安裝 binary：`node_modules/.bin/prettier` 或 PATH，config-only repo 不再 fallback 到 `npx prettier`） | `hooks/post-edit-format.sh` 的 prettier 偵測/執行區塊（`prettier_bin` 解析 + 呼叫；以 `grep -n 'prettier_bin' hooks/post-edit-format.sh` 定位） | (a) TMPDIR 快取 prettier 偵測結果 TTL 1h：`$TMPDIR/.claude_prettier_$(pwd_hash)`；(b) prettier 以 `&` 背景執行（state write 不依賴它） |
 
 **Target**: 平均 hook 執行時間 <50ms（預留 50% margin 到 100ms 官方目標）。
 

@@ -2,7 +2,8 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Follow-up fix for regression introduced by `2026-04-10-watch-ci-monitor-tool-migration.md`.
 > **Created**: 2026-04-13
-> **Status**: In Progress (8/9 AC verified by code/test evidence; AC #5 — live CI verdict delivery — remains unchecked and requires user execution post-merge to close)
+> **Status**: In Progress
+> **Note**: 8/9 AC verified by code/test evidence; AC #5 — live CI verdict delivery — remains unchecked and requires user execution post-merge to close
 > **Priority**: P1
 > **Tech Spec**: Pending (implement directly from research findings; create if scope expands)
 > **Parent request**: [`2026-04-10-watch-ci-monitor-tool-migration.md`](./2026-04-10-watch-ci-monitor-tool-migration.md)
