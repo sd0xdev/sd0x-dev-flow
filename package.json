@@ -1,7 +1,7 @@
 {
   "name": "sd0x-dev-flow",
-  "version": "3.0.12",
-  "description": "Harness engineering for Claude Code — hook-enforced dual review, state-machine gates, and fail-closed safety where it counts.",
+  "version": "4.0.0",
+  "description": "Harness engineering for Claude Code — hook-enforced review gates, state-machine gates, and fail-closed safety where it counts.",
   "license": "MIT",
   "scripts": {
     "test": "node --test $(find test -name '*.test.js')",
