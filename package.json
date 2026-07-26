@@ -23,6 +23,7 @@
     "agents/",
     "hooks/",
     "rules/",
+    "docs/skill-catalog.yml",
     "CLAUDE.md",
     "CLAUDE.template.md"
   ]

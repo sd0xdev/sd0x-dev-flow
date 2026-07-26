@@ -199,6 +199,15 @@ if (query && query.includes('[$key]') && vars.key) {
   data[vars.key].passed = vars.passed;
   data[vars.key].last_run = vars.now;
   data.updated_at = vars.now;
+  // Convergence reset (terminal gate passed) — mirrors the real jq filter.
+  // An EXHAUSTED budget is never refunded: otherwise a run that burned the whole
+  // cap and then happened to pass would erase the evidence before stop-guard reads it.
+  if (vars.passed === true && (vars.key === 'precommit' || vars.key === 'doc_review')
+      && data.iteration_history
+      && (data.iteration_history.current_round || 0) < (data.iteration_history.max_rounds || 10)) {
+    data.iteration_history.current_round = 0;
+    data.iteration_history.findings_by_round = [];
+  }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
 }

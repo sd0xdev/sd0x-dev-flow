@@ -9,6 +9,7 @@ const { tmpdir } = require('node:os');
 const {
   checkAgentEntitlement,
   checkTaskEntitlement,
+  checkSkillEntitlement,
   checkCrossSkillRefPaths,
   detectInvalidAgentRefs,
   detectAgentToolsSyntax,
@@ -88,6 +89,84 @@ describe('checkTaskEntitlement', () => {
     const fm = { 'allowed-tools': 'Read' };
     const result = checkTaskEntitlement(body, fm);
     assert.equal(result.pass, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkSkillEntitlement
+// ---------------------------------------------------------------------------
+
+describe('checkSkillEntitlement', () => {
+  test('when body has Skill() and allowed-tools has Skill -> pass', () => {
+    const body = 'Then Skill("codex-brainstorm", plan challenge)';
+    const fm = { 'allowed-tools': 'Read, Grep, Task, Skill' };
+    const result = checkSkillEntitlement(body, fm);
+    assert.equal(result.pass, true);
+  });
+
+  test('when body has Skill() but allowed-tools lacks Skill -> P2', () => {
+    const body = 'Then Skill("codex-brainstorm", plan challenge)';
+    const fm = { 'allowed-tools': 'Read, Grep, Task' };
+    const result = checkSkillEntitlement(body, fm);
+    assert.equal(result.pass, false);
+    assert.equal(result.severity, 'P2');
+  });
+
+  test('when body mentions /codex-review-doc in prose only -> pass (no Skill() call)', () => {
+    const body = 'Write 報告 → /codex-review-doc 接手 (main-loop handoff)';
+    const fm = { 'allowed-tools': 'Read, Grep, Task' };
+    const result = checkSkillEntitlement(body, fm);
+    assert.equal(result.pass, true);
+  });
+
+  test('when body has SkillCreate (not Skill dispatch) -> pass', () => {
+    const body = 'Use SkillCreate helper — not the Skill tool';
+    const fm = { 'allowed-tools': 'Read, Grep' };
+    const result = checkSkillEntitlement(body, fm);
+    assert.equal(result.pass, true);
+  });
+
+  test('when body has prose "Skill (" with a space (a heading, not a call) -> pass (no false positive)', () => {
+    // Real dispatch is always `Skill("name")` with no space. A heading like
+    // "# Codex Architect Skill (Third Brain)" must NOT be treated as a Skill() call.
+    const body = '# Codex Architect Skill (Third Brain)\n\nConsult Codex for architecture advice.';
+    const fm = { 'allowed-tools': 'Read, Grep, Bash(codex:*)' };
+    const result = checkSkillEntitlement(body, fm);
+    assert.equal(result.pass, true, 'prose "Skill (" with a space is not a dispatch call');
+  });
+
+  test('when fm is null -> pass', () => {
+    const body = 'Skill("codex-brainstorm")';
+    const result = checkSkillEntitlement(body, null);
+    assert.equal(result.pass, true);
+  });
+
+  test('allowed-tools is matched as a whole ENTRY, not by word boundary or substring', () => {
+    // The entitlement side used `/\bSkill\b/.test(tools)`, which is weaker than it reads. Every
+    // punctuation character that appears in this format — `(`, `-`, `:` — is a NON-word character
+    // and therefore supplies the boundary itself, so the regex accepted entries that grant nothing
+    // of the sort. `Bash(Skill:*)` is permission to run a shell command named `Skill`;
+    // `Some-Tool-Skill` is a different tool. `allowed-tools` is a comma-separated list, so the
+    // check has to compare entries, not scan text.
+    const body = 'Then Skill("codex-brainstorm")';
+    const denied = [
+      'Read, SkillRunner',
+      'Read, MySkill',
+      'Read, Skills',
+      'Bash(Skill:*)',              // a Bash grant, not a Skill grant — `\bSkill\b` matched it
+      'Read, Some-Tool-Skill',      // hyphens are non-word characters, so both boundaries held
+      'Read, Skill-Runner',
+    ];
+    for (const tools of denied) {
+      const r = checkSkillEntitlement(body, { 'allowed-tools': tools });
+      assert.equal(r.pass, false, `${JSON.stringify(tools)} must NOT grant the Skill entitlement`);
+    }
+    // The complement: a genuine grant must still be recognised wherever it sits in the list, and
+    // whatever surrounds it. Without these, "deny everything" would pass the above.
+    for (const tools of ['Skill', 'Read, Skill', 'Read, Skill, Grep', 'Skill, Read', 'Read,  Skill ']) {
+      const r = checkSkillEntitlement(body, { 'allowed-tools': tools });
+      assert.equal(r.pass, true, `${JSON.stringify(tools)} MUST grant the Skill entitlement`);
+    }
   });
 });
 

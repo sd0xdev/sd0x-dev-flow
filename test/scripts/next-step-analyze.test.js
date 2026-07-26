@@ -3,8 +3,12 @@ const assert = require('node:assert/strict');
 const {
   mkdtempSync,
   writeFileSync,
+  readFileSync,
+  existsSync,
   mkdirSync,
   rmSync,
+  symlinkSync,
+  chmodSync,
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
@@ -12,6 +16,9 @@ const { execFileSync } = require('node:child_process');
 
 const scriptPath = resolve(__dirname, '../../skills/next-step/scripts/analyze.js');
 const tempDirs = [];
+// Paths a test made unreadable to deny the script an open/list. `rmSync` cannot recurse into a
+// 0000 directory, so permissions must be restored BEFORE the temp-dir sweep or the dir leaks.
+const chmodRestore = [];
 
 function createTempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'sd0x-ns-'));
@@ -39,12 +46,95 @@ function writeReviewState(dir, overrides = {}) {
   writeFileSync(join(dir, '.claude_review_state.json'), JSON.stringify(state, null, 2));
 }
 
-function runAnalyze(dir, extraArgs = []) {
+// Preloaded into the analyze child process by the determinism tests, so directory enumeration is
+// handed back reversed no matter what the host filesystem would have returned. See the helper.
+const READDIR_DESCENDING = resolve(__dirname, 'helpers/readdir-descending.js');
+
+// The audit file lives OUTSIDE the repo under test on purpose: an untracked file inside it dirties
+// the worktree, and `feature-complete` — the gate the backlog tests depend on — never fires on a
+// dirty tree. The observation would silently destroy the thing being observed.
+function makeAuditPath() {
+  const dir = mkdtempSync(join(tmpdir(), 'sd0x-ns-audit-'));
+  tempDirs.push(dir);
+  return join(dir, 'readdir.log');
+}
+
+// Proof that the analyze child went THROUGH the patched API for the directories that matter. The
+// preload working in a probe process is a different claim: a refactor to `fs.promises.readdir`,
+// `opendirSync`, or a `readdirSync` captured before the preload ran bypasses the patch entirely,
+// and every determinism test below would go back to asserting whatever the filesystem returned —
+// green, and measuring nothing.
+/**
+ * The 1-based line of the first `readdirSync` call after `anchorRe` in analyze.js.
+ *
+ * DERIVED from the source rather than written down, because the number is only useful if it still
+ * points at the same CALL after the file moves. A literal would drift into pointing at a different
+ * one, which is worse than not checking at all.
+ */
+function readdirSiteAfter(anchorRe, within = 5) {
+  const lines = readFileSync(scriptPath, 'utf8').split('\n');
+  const start = lines.findIndex((l) => anchorRe.test(l));
+  assert.ok(start >= 0, `no line in analyze.js matches ${anchorRe} — the call-site anchor has drifted`);
+  // Bounded, and that bound is the whole point. An unbounded forward scan does not fail when the
+  // anchored call disappears — it silently RETARGETS to the next `readdirSync` in the file, which
+  // here is the unrelated ac-incomplete scan of the same directory, so the attribution assertion
+  // then passes by pointing at exactly the call it was written to exclude. Measured: refactoring
+  // the anchored scan to `opendirSync` left the test green. Failing to find the call within a few
+  // lines of its own explanatory comment IS the signal that it moved or went away.
+  for (let i = start; i < Math.min(lines.length, start + within); i += 1) {
+    if (/readdirSync\(/.test(lines[i])) return i + 1;
+  }
+  assert.fail(
+    `no readdirSync call within ${within} lines of ${anchorRe} in analyze.js — the scan it pins has moved or changed API`
+  );
+}
+
+/**
+ * Each entry is a directory suffix, or `{ suffix, atLine }` to also pin WHICH call read it.
+ *
+ * The suffix alone is presence, not attribution, and for `requests/` directories the difference is
+ * load-bearing: analyze.js enumerates the same one from two heuristics, so a test meaning to pin the
+ * order-sensitive scan was equally satisfied by the unrelated later one — including in the scenario
+ * the audit exists to exclude, where the order-sensitive scan has been refactored to an API this
+ * preload does not patch. `atLine` closes that by comparing against the call site the preload
+ * records from its own stack.
+ */
+function assertIntercepted(auditPath, expected) {
+  const rows = (existsSync(auditPath) ? readFileSync(auditPath, 'utf8').split('\n').filter(Boolean) : [])
+    .map((l) => {
+      const [dir, site = ''] = l.split('\t');
+      return { dir, site };
+    });
+  for (const entry of expected) {
+    const { suffix, atLine } = typeof entry === 'string' ? { suffix: entry } : entry;
+    const hits = rows.filter((r) => r.dir.endsWith(suffix));
+    assert.ok(
+      hits.length > 0,
+      `the analyze child must have enumerated ${suffix} through the patched readdirSync; intercepted: ${JSON.stringify(rows)}`
+    );
+    if (atLine !== undefined) {
+      assert.ok(
+        hits.some((r) => new RegExp(`analyze\\.js:${atLine}:`).test(r.site)),
+        `${suffix} must have been enumerated by the call at analyze.js:${atLine}, not merely by some other call; ` +
+          `saw ${JSON.stringify(hits.map((h) => h.site))}`
+      );
+    }
+  }
+}
+
+function runAnalyze(dir, extraArgs = [], { descendingReaddir = false, auditPath } = {}) {
+  const env = { ...process.env };
+  if (descendingReaddir) {
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require "${READDIR_DESCENDING}"`.trim();
+    // When given, the preload logs every directory it intercepted IN THIS CHILD. That is the only
+    // evidence that the script actually went through the patched API rather than around it.
+    if (auditPath) env.READDIR_DESCENDING_AUDIT = auditPath;
+  }
   try {
     const stdout = execFileSync('node', [scriptPath, '--json', ...extraArgs], {
       cwd: dir,
       encoding: 'utf8',
-      env: { ...process.env },
+      env,
     });
     return { output: JSON.parse(stdout), exitCode: 0 };
   } catch (err) {
@@ -77,6 +167,9 @@ function stageFile(dir, filePath, content) {
 }
 
 after(() => {
+  for (const p of chmodRestore) {
+    try { chmodSync(p, 0o755); } catch { /* already gone */ }
+  }
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -648,7 +741,7 @@ test('feature-complete — P3 when all gates pass + no sync issues', () => {
   writeFileSync(join(dir, 'docs', 'features', 'complete-test', '2-tech-spec.md'), '# Spec');
   writeFileSync(
     join(dir, 'docs', 'features', 'complete-test', 'requests', '2026-01-01-test.md'),
-    '| Status | **Complete** |\n\n- [x] Done'
+    '| Status | **Completed** |\n\n- [x] Done'
   );
   // Clean worktree (all changes committed) + all gates passed
   execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
@@ -736,7 +829,7 @@ test('backlog context — lists incomplete features when feature_complete', () =
   writeFileSync(join(dir, 'docs', 'features', 'backlog-test', '2-tech-spec.md'), '# Spec');
   writeFileSync(
     join(dir, 'docs', 'features', 'backlog-test', 'requests', '2026-01-01-done.md'),
-    '| Status | **Complete** |\n\n- [x] Done'
+    '| Status | **Completed** |\n\n- [x] Done'
   );
   // Another feature: incomplete
   mkdirSync(join(dir, 'docs', 'features', 'other-feature', 'requests'), { recursive: true });
@@ -773,6 +866,194 @@ test('backlog context — lists incomplete features when feature_complete', () =
   const incomplete = output.backlog.incomplete_features.find(f => f.key === 'other-feature');
   assert.ok(incomplete, 'other-feature should be listed as incomplete');
   assert.equal(incomplete.unchecked_ac, 2);
+});
+
+test('backlog headline reports the COUNT of incomplete features, not the display limit', () => {
+  // `incomplete_features` is truncated to 5 for display, and the headline printed that array's
+  // length — so 21 incomplete features out of 30 rendered as "5/30 incomplete". The number a
+  // reader uses to decide whether a backlog exists at all was capped at the size of the list
+  // under it, silently and always in the direction of looking finished.
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/backlog-count'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'backlog-count', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'backlog-count', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'backlog-count', 'requests', '2026-01-01-done.md'),
+    '| Status | **Completed** |\n\n- [x] Done'
+  );
+  // EIGHT incomplete features — more than the display limit of 5, which is the whole point.
+  const INCOMPLETE = 8;
+  for (let i = 0; i < INCOMPLETE; i += 1) {
+    const key = `pending-feature-${String(i).padStart(2, '0')}`;
+    mkdirSync(join(dir, 'docs', 'features', key, 'requests'), { recursive: true });
+    writeFileSync(
+      join(dir, 'docs', 'features', key, 'requests', '2026-01-01-pending.md'),
+      '| Status | **Pending** |\n\n- [ ] Todo'
+    );
+  }
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'all'], { cwd: dir, stdio: 'ignore' });
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'], { cwd: dir, stdio: 'ignore' });
+
+  const auditPath = makeAuditPath();
+  const { output } = runAnalyze(dir, [], { descendingReaddir: true, auditPath });
+  // The sort under test is over the FEATURE directory listing, so that is the enumeration that must
+  // have been intercepted.
+  assertIntercepted(auditPath, [join('docs', 'features')]);
+  assert.ok(output.backlog, 'backlog should exist when feature_complete');
+  assert.equal(output.backlog.total_features, INCOMPLETE + 1);
+  assert.equal(output.backlog.incomplete_count, INCOMPLETE, 'the true count must survive truncation');
+  assert.equal(output.backlog.incomplete_features.length, 5, 'the displayed list is still capped');
+  // WHICH five are shown is decided by the sort — `readdirSync` order otherwise makes the visible
+  // slice filesystem-dependent, so two machines report different backlogs for the same repo.
+  assert.deepEqual(
+    output.backlog.incomplete_features.map(f => f.key),
+    ['pending-feature-00', 'pending-feature-01', 'pending-feature-02', 'pending-feature-03', 'pending-feature-04'],
+    'the truncated slice must be the lexicographically first five, not whatever the filesystem returned'
+  );
+
+  // The rendered headline is what a human actually reads — assert on it, not just the JSON.
+  // The script exits non-zero when findings exist, so read stdout off the error the same way
+  // `runAnalyze` does; a bare execFileSync would throw on an ordinary, expected outcome.
+  let md;
+  try {
+    md = execFileSync('node', [scriptPath, '--markdown'], { cwd: dir, encoding: 'utf8' });
+  } catch (err) {
+    md = (err.stdout || '').toString();
+  }
+  assert.match(md, new RegExp(`### Backlog \\(${INCOMPLETE}/${INCOMPLETE + 1} incomplete\\)`),
+    `headline must report ${INCOMPLETE}, not the display limit:\n${md}`);
+  assert.match(md, /Showing the first 5 of 8/, 'truncation must be stated, not silent');
+});
+
+test('backlog reports the SORTED-first open request status when a feature has several', () => {
+  // `buildBacklogContext` keeps `openRequests[0].status` for the feature, so with two open requests
+  // carrying DIFFERENT statuses the one reported is decided by the inner scan's order. That scan is
+  // a separate `.sort()` from the feature-directory sort — pinning the latter says nothing about it,
+  // and reversing it left the whole suite green.
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/multi-open'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'multi-open', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'multi-open', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'multi-open', 'requests', '2026-01-01-done.md'),
+    '| Status | **Completed** |\n\n- [x] Done'
+  );
+  // A SECOND feature with two open requests whose statuses differ, so which one is picked shows.
+  const other = join(dir, 'docs', 'features', 'zz-two-open', 'requests');
+  mkdirSync(other, { recursive: true });
+  writeFileSync(join(other, '2026-09-09-later.md'), '| Status | **Blocked** |\n\n- [ ] Todo');
+  writeFileSync(join(other, '2026-01-01-earlier.md'), '| Status | **Pending** |\n\n- [ ] Todo');
+
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'all'], { cwd: dir, stdio: 'ignore' });
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'], { cwd: dir, stdio: 'ignore' });
+
+  const auditPath = makeAuditPath();
+  const { output } = runAnalyze(dir, [], { descendingReaddir: true, auditPath });
+  // The sort under test here is the INNER request scan, a different `.sort()` from the feature-dir
+  // one — so the request directory itself is what must have gone through the patched API.
+  assertIntercepted(auditPath, [join('zz-two-open', 'requests')]);
+  assert.ok(output.backlog, 'backlog should exist when feature_complete');
+  const f = output.backlog.incomplete_features.find(x => x.key === 'zz-two-open');
+  assert.ok(f, 'the two-open-request feature must be listed');
+  assert.equal(f.open_requests, 2, 'both requests are open — non-vacuity for the choice below');
+  assert.equal(
+    f.status,
+    'Pending',
+    'the sorted-FIRST open request (2026-01-01-earlier) decides the reported status, not filesystem order'
+  );
+});
+
+test('CONTROL: the injected enumeration order really does reach the child process', () => {
+  // The three `descendingReaddir` tests — two ABOVE this one, one below — rely on the preload
+  // actually reversing what the script sees. (Stated as a direction rather than "the three below",
+  // which was wrong and would let someone delete a covered test believing it was uncovered.) If
+  // the preload silently failed to load — a moved helper, a NODE_OPTIONS the runtime declined, a
+  // typo in the flag — every one of them would go back to asserting whatever the filesystem
+  // returned, which is precisely the vacuity being fixed. That failure is invisible: the tests
+  // still pass. So the injection is pinned directly, with a probe that reads the order the way the
+  // script does.
+  const dir = createTempRepo();
+  const probeDir = join(dir, 'probe');
+  mkdirSync(probeDir, { recursive: true });
+  for (const name of ['a.md', 'b.md', 'c.md']) writeFileSync(join(probeDir, name), '');
+  // Both call shapes, because the preload handles them with DIFFERENT code. `analyze.js` uses the
+  // plain form for the scans these tests target and `{ withFileTypes: true }` at :135, so the
+  // helper's Dirent branch is live production behaviour — but no test reached it: mutating that
+  // branch to return a constant left this file at 49/49. An untested branch inside the very helper
+  // that makes the other tests non-vacuous is the same vacuity one level down.
+  const probe = join(dir, 'probe.js');
+  writeFileSync(
+    probe,
+    "const fs = require('node:fs');\n"
+      + "const plain = fs.readdirSync(process.argv[2]).join(',');\n"
+      + "const dirents = fs.readdirSync(process.argv[2], { withFileTypes: true }).map((e) => e.name).join(',');\n"
+      + 'process.stdout.write(`${plain}\\n${dirents}`);'
+  );
+
+  const readBoth = (env) => execFileSync('node', [probe, probeDir], { encoding: 'utf8', env }).split('\n');
+  const [plain] = readBoth({ ...process.env });
+  const [injected, injectedDirents] = readBoth({
+    ...process.env,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS || ''} --require "${READDIR_DESCENDING}"`.trim(),
+  });
+
+  assert.equal(injected, 'c.md,b.md,a.md', 'the preload must hand back strictly descending names');
+  assert.equal(injectedDirents, 'c.md,b.md,a.md', 'and must sort Dirent entries by name, not by their String() form');
+  assert.notEqual(injected, plain.split(',').sort().join(','), 'and that must differ from ascending order');
+});
+
+test('request-stale names a DETERMINISTIC request when several are open', () => {
+  // The loop `break`s on the first open request, so without a sort the file named in the
+  // suggestion is whichever `readdirSync` happened to return first — different machines, different
+  // advice, same repo. `buildBacklogContext` sorted its scan; this one did not.
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/stale-order'], { cwd: dir, stdio: 'ignore' });
+  const reqDir = join(dir, 'docs', 'features', 'stale-order', 'requests');
+  mkdirSync(reqDir, { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'stale-order', '2-tech-spec.md'), '# Spec');
+  // Enumeration order is INJECTED (`descendingReaddir`), not inferred from creation order. Creating
+  // the files in reverse was the original attempt and it proved nothing: no filesystem promises to
+  // hand entries back in the order they were made, so on a machine that returns them ascending an
+  // implementation with no `.sort()` at all was accidentally right.
+  for (const name of ['2026-03-03-third.md', '2026-02-02-second.md', '2026-01-01-first.md']) {
+    writeFileSync(join(reqDir, name), '| Status | **Pending** |\n\n- [ ] Todo');
+  }
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'all'], { cwd: dir, stdio: 'ignore' });
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+
+  const auditPath = makeAuditPath();
+  const { output } = runAnalyze(dir, [], { descendingReaddir: true, auditPath });
+  // Pinned to the request-stale scan SPECIFICALLY. `runHeuristics` enumerates this same directory
+  // again for the ac-incomplete heuristic further down, so a bare presence check is satisfied by
+  // that unrelated call — including after the scan under test has been moved to an unpatched API,
+  // which is the one thing the audit exists to rule out.
+  assertIntercepted(auditPath, [{
+    suffix: join('stale-order', 'requests'),
+    atLine: readdirSiteAfter(/is decided by `readdirSync` order/),
+  }]);
+  const f = output.findings.find(x => x.id === 'request-stale');
+  assert.ok(f, 'request-stale should fire with three open requests');
+  assert.match(f.message, /2026-01-01-first\.md/, `the FIRST request in sorted order must be named, got: ${f && f.message}`);
+  assert.match(f.suggestion, /2026-01-01-first\.md/, 'the suggestion must name the same file as the message');
 });
 
 // ---------------------------------------------------------------------------
@@ -833,6 +1114,308 @@ test('request-stale — parses blockquote status format (> **Status**: Pending)'
 });
 
 // ---------------------------------------------------------------------------
+// Regression: an UNRECOGNISED request Status must not read as finished work
+// ---------------------------------------------------------------------------
+test('feature-complete does NOT fire on an unrecognised request Status', () => {
+  // analyze.js used to decide openness from a POSITIVE list of four values
+  // (pending / in development / in progress / nearly complete). Anything outside it — including
+  // `Candidate Complete`, the third most common value in this repo's 125 request docs, and
+  // `Spec Complete` — counted as finished, so feature-complete could fire with open requests
+  // outstanding. scripts/lib/request-status.js inverts that: closure requires exact membership in
+  // a short closed set, and anything else is open.
+  //
+  // `Complete` (no trailing d) is the exact value three fixtures in this file used to carry. It
+  // appears nowhere in the real corpus, and under the old list it silently meant "done"; under the
+  // new one it means "nobody has defined this, so do not claim the work is finished". This test
+  // pins that direction — without it, quietly adding `Complete` to CLOSED_REQUEST_STATUS to make
+  // a fixture green would reintroduce exactly the class of bug the module was written to remove.
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/unknown-status'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'unknown-status', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'unknown-status', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'unknown-status', 'requests', '2026-01-01-test.md'),
+    '| Status | **Blocked On Review** |\n\n- [x] Done'
+  );
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  assert.ok(
+    output.findings.find(f => f.id === 'request-stale'),
+    'the open request must be REPORTED, not merely counted — asserting only the absence of '
+      + 'feature-complete would also pass if the whole request-stale branch stopped running'
+  );
+  assert.ok(
+    !output.findings.find(f => f.id === 'feature-complete'),
+    'an open request with a status nobody has defined must keep feature-complete from firing'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Test 32b/32c: a Status that cannot be READ is still an open request
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a repo whose single request doc has the given body, with every gate passed and a clean
+ * worktree — the exact state in which `feature-complete` is allowed to fire.
+ */
+function repoWithRequestBody(branch, key, body) {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', branch], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', key, 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', key, '2-tech-spec.md'), '# Spec');
+  writeFileSync(join(dir, 'docs', 'features', key, 'requests', '2026-01-01-test.md'), body);
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  return dir;
+}
+
+// A repo whose feature has one CLOSED request, plus whatever `plant` adds to `requests/` before
+// the commit. The closed request is what makes the control meaningful: without it the feature has
+// no requests at all, which is a different state from "every request reads as done".
+// `plant` runs BEFORE the commit — the worktree must end clean, or `feature-complete` never fires
+// and every assertion below is vacuous. `postCommit` is for setup git itself cannot survive, i.e.
+// making a file unreadable: `git add .` fails outright on a 0000 file.
+function repoWithPlantedRequest(branch, key, plant, postCommit) {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', branch], { cwd: dir, stdio: 'ignore' });
+  const reqDir = join(dir, 'docs', 'features', key, 'requests');
+  mkdirSync(reqDir, { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', key, '2-tech-spec.md'), '# Spec');
+  writeFileSync(join(reqDir, '2026-01-01-done.md'), '| Status | **Completed** |\n\n- [x] Done');
+  if (plant) plant(reqDir, dir);
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  if (postCommit) postCommit(reqDir, dir);
+  return dir;
+}
+
+const AS_ROOT = process.getuid && process.getuid() === 0;
+
+test('CONTROL: a feature whose only request is Completed IS declared complete', () => {
+  // The baseline every "must not be complete" assertion below is measured against. Without it a
+  // change that stopped emitting `feature-complete` entirely would leave those tests green.
+  const dir = repoWithPlantedRequest('feat/readable-done', 'readable-done', null);
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.findings.find(f => f.id === 'feature-complete'), 'control: the closed request must permit completion');
+  assert.ok(!output.findings.find(f => f.id === 'request-stale'), 'control: nothing here is open');
+});
+
+test('an UNREADABLE request is open — a broken symlink must not read as a closed request', () => {
+  // Openness is defined NEGATIVELY: a request counts as closed only when its Status is one of the
+  // known closed values. "Cannot be read" is therefore the same statement as "has no Status" —
+  // both mean the work cannot be confirmed done. The per-file `catch` skipped it silently instead,
+  // which is precisely the fail-open the `if (status)` guard was removed to close, reintroduced one
+  // level down. It also needs no unusual document: a dangling symlink in `requests/` is enough, and
+  // git stores those, so a clone can arrive already in this state.
+  const dir = repoWithPlantedRequest('feat/broken-link', 'broken-link', (reqDir) => {
+    symlinkSync('2026-01-01-missing.md', join(reqDir, '2026-06-06-dangling.md'));
+  });
+
+  const { output } = runAnalyze(dir);
+  const stale = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(stale, 'an unreadable request must be reported as open');
+  assert.match(stale.message, /2026-06-06-dangling\.md/, 'the finding must name the file that could not be read');
+  assert.match(stale.message, /counts as open/, 'the message must state the rule being applied');
+  assert.ok(
+    !output.findings.find(f => f.id === 'feature-complete'),
+    'a feature with an unreadable request must not be declared complete'
+  );
+});
+
+test('a permission-denied request is open too', {
+  skip: AS_ROOT ? 'running as root: chmod 000 is not enforced' : false,
+}, () => {
+  // The same rule via the other failure mode. Kept separate from the broken-symlink case because
+  // they arrive through different `readFileSync` errors (EACCES vs ENOENT) and a fix that keyed on
+  // one error code would pass only one of these.
+  // Committed readable, then locked: `git add .` cannot read a 0000 file, and the worktree has to
+  // end clean for `feature-complete` to be reachable at all. The Status inside deliberately says
+  // `Completed`, so if the file could be opened it would read as CLOSED and produce no finding.
+  // The finding therefore comes from the failure to open and from nothing else.
+  const dir = repoWithPlantedRequest('feat/no-perm', 'no-perm', (reqDir) => {
+    writeFileSync(join(reqDir, '2026-06-06-locked.md'), '| Status | **Completed** |\n');
+  }, (reqDir) => {
+    const p = join(reqDir, '2026-06-06-locked.md');
+    chmodSync(p, 0o000);
+    chmodRestore.push(p);
+  });
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.findings.find(f => f.id === 'request-stale'), 'a request that cannot be opened must read as open');
+  assert.ok(!output.findings.find(f => f.id === 'feature-complete'));
+});
+
+test('a requests DIRECTORY that cannot be listed is open — not "no requests"', {
+  skip: AS_ROOT ? 'running as root: chmod 000 is not enforced' : false,
+}, () => {
+  // The enumeration failure covers every request at once, so reading it as the empty case is the
+  // largest version of the same fail-open. `has_requests` already established the directory
+  // exists, which is what separates this from a genuine ENOENT.
+  const dir = repoWithPlantedRequest('feat/no-list', 'no-list', null);
+  chmodSync(join(dir, 'docs', 'features', 'no-list', 'requests'), 0o000);
+  chmodRestore.push(join(dir, 'docs', 'features', 'no-list', 'requests'));
+
+  const { output } = runAnalyze(dir);
+  const stale = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(stale, 'an unlistable requests directory must not read as an empty one');
+  assert.match(stale.message, /could not be listed/, 'the message must name the actual failure');
+  assert.ok(!output.findings.find(f => f.id === 'feature-complete'));
+});
+
+test('the BACKLOG counts a feature whose only request is unreadable', () => {
+  // buildBacklogContext wrapped the whole per-feature loop in one `try`, so an unreadable request
+  // both vanished itself AND took every request after it in sorted order with it. A feature whose
+  // only request was a dangling symlink therefore disappeared from the backlog entirely — the one
+  // list a reader uses to decide what is left to do.
+  // Planted before the commit: an untracked directory makes the worktree dirty, `feature-complete`
+  // then never fires, and the backlog is only built in that phase — so the test would assert
+  // nothing at all.
+  const dir = repoWithPlantedRequest('feat/backlog-unreadable', 'backlog-unreadable', (_reqDir, root) => {
+    const otherReq = join(root, 'docs', 'features', 'other-broken', 'requests');
+    mkdirSync(otherReq, { recursive: true });
+    symlinkSync('nowhere.md', join(otherReq, '2026-01-01-dangling.md'));
+  });
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.backlog, 'the current feature must be complete so the backlog is built');
+  const entry = output.backlog.incomplete_features.find(f => f.key === 'other-broken');
+  assert.ok(entry, 'a feature whose only request is unreadable must still appear in the backlog');
+  assert.equal(entry.open_requests, 1, 'the unreadable request must be counted as one open request');
+  assert.equal(entry.status, null, 'an unreadable request has no status to report');
+});
+
+test('a request with NO Status field is open — request-stale fires, feature-complete does not', () => {
+  // `request-status.js` defines a missing Status as open: "no Status field" and "Status says
+  // nothing closed" are the same statement about whether the work is finished. analyze.js used to
+  // guard the predicate with `if (status)`, which made ABSENCE — the one value that can never be in
+  // the closed set — the only value incapable of producing a finding. The negative taxonomy was
+  // fully in place and this case still fell through it.
+  const dir = repoWithRequestBody('feat/no-status', 'no-status', '# Request\n\nSome prose.\n\n- [x] Done');
+
+  const { output } = runAnalyze(dir);
+  const stale = output.findings.find(f => f.id === 'request-stale');
+  assert.ok(stale, 'an unlabelled request must be reported as open');
+  assert.match(stale.message, /no readable Status field/, 'the message must name the actual reason');
+  assert.ok(
+    !output.findings.find(f => f.id === 'feature-complete'),
+    'a feature with an unlabelled request must not be declared complete'
+  );
+});
+
+test('a Status BELOW the parser window is open — the doc reads Pending, the parser sees nothing', () => {
+  // The window is what makes the case above reachable rather than hypothetical. `HEAD_LINES = 30`
+  // was measured against this repo's corpus, where nothing sits lower — but analyze.js ships to
+  // host projects with their own templates. Here the human-visible Status says `Pending`; the
+  // parser returns null. If null were treated as closed, the tool would contradict the document it
+  // just read, and it would do so silently.
+  const filler = Array.from({ length: 34 }, (_, i) => `Line ${i + 1} of preamble.`).join('\n');
+  const dir = repoWithRequestBody(
+    'feat/deep-status', 'deep-status',
+    `# Request\n\n${filler}\n\n| Status | **Pending** |\n\n- [x] Done`
+  );
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.findings.find(f => f.id === 'request-stale'), 'a Status below the window must still read as open');
+  assert.ok(
+    !output.findings.find(f => f.id === 'feature-complete'),
+    'the parser failing to SEE a Status must never be read as the request being closed'
+  );
+});
+
+test('backlog lists a feature whose only request has no readable Status', () => {
+  // The backlog builder had the same defect in a second form: `status != null && isOpen(status)`,
+  // so a feature with an unlabelled request was omitted entirely unless it also happened to have
+  // unchecked AC. Both consumers of the shared contract now let null flow into the predicate.
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/backlog-null'], { cwd: dir, stdio: 'ignore' });
+
+  // The feature under test: all AC checked, so unchecked_ac cannot be what puts it in the backlog.
+  mkdirSync(join(dir, 'docs', 'features', 'zz-unlabelled', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'zz-unlabelled', 'requests', '2026-01-01-a.md'), '# R\n\n- [x] Done');
+
+  // The current feature, closed, so feature_complete is reached and `backlog` is populated.
+  mkdirSync(join(dir, 'docs', 'features', 'backlog-null', 'requests'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'backlog-null', '2-tech-spec.md'), '# Spec');
+  writeFileSync(
+    join(dir, 'docs', 'features', 'backlog-null', 'requests', '2026-01-01-test.md'),
+    '| Status | **Completed** |\n\n- [x] Done'
+  );
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync(
+    'git',
+    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' }
+  );
+
+  const { output } = runAnalyze(dir);
+  assert.ok(output.backlog, 'precondition: the backlog is only built at phase feature_complete');
+  const entry = output.backlog.incomplete_features.find(f => f.key === 'zz-unlabelled');
+  assert.ok(entry, 'a feature whose request carries no Status must appear in the backlog');
+  assert.equal(entry.unchecked_ac, 0, 'and it must be there for the STATUS, not for unchecked AC');
+  assert.equal(entry.open_requests, 1);
+  assert.equal(entry.status, null);
+});
+
+// ---------------------------------------------------------------------------
 // Test 33: ac-incomplete blocks feature-complete
 // ---------------------------------------------------------------------------
 test('feature-complete blocked by ac-incomplete — no feature-complete when unchecked AC', () => {
@@ -842,7 +1425,7 @@ test('feature-complete blocked by ac-incomplete — no feature-complete when unc
   writeFileSync(join(dir, 'docs', 'features', 'ac-block', '2-tech-spec.md'), '# Spec');
   writeFileSync(
     join(dir, 'docs', 'features', 'ac-block', 'requests', '2026-01-01-test.md'),
-    '| Status | **Complete** |\n\n- [x] Done\n- [ ] Not done yet'
+    '| Status | **Completed** |\n\n- [x] Done\n- [ ] Not done yet'
   );
   // Clean worktree + all gates passed
   execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });

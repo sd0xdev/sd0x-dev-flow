@@ -8,6 +8,17 @@
 | `.md` docs | `/codex-review-doc` | `/codex-review-fast` |
 | Comments only | - | All |
 
+> **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
+>
+> | Setting | Without it |
+> |---------|-----------|
+> | `PRECOMMIT_REQUIRE_FULL=1` | a passing `mode: fast` (or an unrecorded mode) satisfies the gate |
+> | `STOP_GUARD_MODE=strict` | the default `warn` mode prints the missing step to stderr and **still exits 0** |
+>
+> With both set, the flag is honoured in **both** of stop-guard's modes: from `precommit.mode` when a state file exists, and from the invoked command name (`/precommit` vs `/precommit-fast`) in the transcript fallback. The fallback arm ships with the same change as this note — before it, the flag was state-file-only, so a session without a readable state file (the degraded path where an unproven verdict is least affordable) silently accepted the fast gate. Verify rather than assume: `grep -c PRECOMMIT_REQUIRE_FULL hooks/stop-guard.sh` should report 4, and a checkout predating this change reports 0.
+>
+> Even with both, the flag gates the **command variant**, not the stages that ran: a repo with no build script records `full` with no typecheck behind it. See `docs/features/precommit-tiering/2-tech-spec.md` §6.
+
 Before PR: `/pr-review`
 
 ## Workflow

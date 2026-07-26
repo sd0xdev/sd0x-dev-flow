@@ -1,7 +1,7 @@
 ---
 name: deep-research
 description: "Universal multi-source research orchestration. Use for any research/investigate/analyze request needing synthesis across web, codebase, and community evidence — especially broad, mixed, or ambiguous intent. Triggers on: 'research this', 'deep research', 'investigate', 'analyze from multiple angles', 'comprehensive analysis', 'explore this topic', 'study', 'survey the landscape', 'look into', 'understand deeply', '了解', '調查', '分析', '研究'. When intent is clearly single-dimension (code-only tracing, checklist-style compliance audit, or bounded option-ranking), dispatcher may prefer a narrower skill. Otherwise route here. Supports low/medium/high budget tiers."
-allowed-tools: Read, Grep, Glob, Bash, Write, WebSearch, WebFetch, Agent
+allowed-tools: Read, Grep, Glob, Bash, Write, WebSearch, WebFetch, Agent, Skill
 ---
 
 # Deep Research — Multi-Agent Research Orchestration

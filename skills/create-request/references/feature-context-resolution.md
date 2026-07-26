@@ -74,7 +74,7 @@ When a skill resolves a feature context, use filesystem state to decide create v
 | `docs/features/<key>/requests/*.md` (0 active) | No | Create new request | None |
 | `docs/features/<key>/` directory | No | Create directory + target file | Gate confirmation |
 
-**Active request**: Status not in `[Completed, Done, Superseded]`.
+**Active request**: Status not in `[Completed, Done, Superseded, Archived]` — i.e. not a member of `CLOSED_REQUEST_STATUS` in `scripts/lib/request-status.js`, which is the single definition all consumers compare against.
 
 ## Cross-Link Invariants
 

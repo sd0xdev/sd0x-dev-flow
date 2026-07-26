@@ -64,6 +64,12 @@ The document path is provided above. You **must** read the document content and 
 
 ## Output Format
 
+Your report **must** begin with the literal line \`## Document Review\`. The state hook uses that
+header to tell a document review apart from a code or security review; a report without it is
+recorded as no verdict at all, and the review has to be run again.
+
+## Document Review
+
 ### Review Summary
 
 | Dimension              | Rating (1-5⭐) | Notes |

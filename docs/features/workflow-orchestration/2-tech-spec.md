@@ -56,6 +56,7 @@
 | `skills/orchestrate/scripts/validate-plan.js` | **New** | Plan lint = v1 admission controller（deny-by-default + gate 完備性 + why 必填 + v1 禁 mutating 執行） |
 | `skills/orchestrate/scripts/run-verify.js` | **New** | pre/post 無變更驗證（snapshot / compare） |
 | `skills/orchestrate/references/admission-allowlist.json` | **New** | Fanout-eligible 名單（curated，deny-by-default） |
+| `skills/orchestrate/scripts/prune-runs.js` | **New** | FIFO 保留策略的可執行實作（`<run-id>.json` 與同名目錄一起算、一起刪；containment：root 須為真實 `.claude_workflows` 目錄、非 symlink，認不得的檔名保留並回報）。散文規則無從執行，所以 FIFO 有一支可執行的實作。**但這不是能力邊界，是規範路徑**：`allowed-tools` 雖未預先核可 `Bash(rm:*)`，卻預先核可了 `Bash(node:*)`，而那同樣涵蓋 `node -e 'fs.rmSync(…)'`——任何呼叫端都能繞過本腳本刪除任意路徑，沒有任何機制強制它走這裡。腳本內部的 containment（root 須為真實 `.claude_workflows` 目錄、非 symlink、每次刪除前重驗 root identity）在**走這條路時**是紮實的；要求走這條路則靠 review，不靠權限。真正的能力邊界需要 command-specific 的權限或 wrapper（v2） |
 | `.gitignore` | **Modify** | 加 `.claude_workflows/` |
 | `docs/skill-catalog.yml` / CLAUDE quick-ref ×3 | **Modify** | `/orchestrate` 登錄（planning category） |
 | `test/scripts/orchestrate-*.test.js` + `test/skills/orchestrate.test.js` | **New** | §6 測試映射 |
@@ -69,7 +70,7 @@
 | `Bash` 改檔不設 change flag | fanout worker 即使 allowlisted 仍可能經 Bash 改檔 → **pre/post 驗證是硬後盾**（雙層防禦） |
 | stop-guard 預設 warn | v1 report-only 不依賴 strict；mutating 編排（v2）才需 strict preflight |
 | DW（`Workflow` 工具）為付費 research preview | DW 為可選 backend；不可用時退回 background `Agent`（≤3 並行），admission 同一套 |
-| compaction 後 `post-compact-auto-loop.sh` 不知 workflow 狀態 | run-state 落盤 + `--resume <run-id>`；hook 整合列 v2 OQ |
+| compaction 後 `post-compact-auto-loop.sh` 不知 workflow 狀態 | run-state 寫入磁碟 + `--resume <run-id>`；hook 整合列 v2 OQ |
 
 ### 2.4 已驗證事實（撰寫時 spot-check，引用符號語意為準）
 
@@ -78,7 +79,7 @@
 | `post-edit-format.sh` code 分類 regex 不含 `.json`/`.yml`；doc 分類僅 `.md`/`.mdx` | ✅ 已驗證（兩段分類 regex） |
 | `stop-guard.sh` reconciliation 用 bounded `-uall`（untracked 未 gitignore 會讓 worktree 永不乾淨） | ✅ 已驗證 |
 | `agents/performance-optimizer.md` `tools: Read, Grep, Glob`；`coverage-analyst` 含 `Bash(find:*)`；`git-investigator` 含 `Bash(git:*)` | ✅ 已驗證（frontmatter） |
-| `.gitignore` 目前**無** `.claude_workflows/`（W4.4 為 hard precondition） | ✅ 已驗證 |
+| ~~`.gitignore` 目前**無** `.claude_workflows/`（W4.4 為 hard precondition）~~ | ⛔ **已過期**：W4.4 已完成，`.gitignore:10` 現含 `.claude_workflows/`。此列記錄的是撰寫當下的前置條件，非現況 |
 | skill script 測試慣例 `test/scripts/<skill>-<script>.test.js` | ✅ 已驗證（`next-step-analyze.test.js`） |
 
 ## 3. Technical Solution
@@ -91,11 +92,11 @@ flowchart TB
         I[意圖 + 約束 + budget] --> PC[plan-context.js<br/>確定性輸入組裝]
         PC --> SNAP1[run-verify.js snapshot<br/>baseline——先於任何 agent 派發]
         SNAP1 --> PL[Planner agent（Explore，<br/>admission 約束）背景派發]
-        PL --> CMP1[run-verify.js compare<br/>planning 後立即驗，drift → fail-closed]
+        PL --> CMP1[run-verify.js compare --baseline-sha256<br/>planning 後立即驗，drift → fail-closed]
         CMP1 --> VP[validate-plan.js<br/>admission + gate lint]
         VP --> PV[Plan preview<br/>AskUserQuestion 核可]
         PV -->|approve + --execute| FO[Read-only fanout<br/>Workflow 工具 或 Agent ≤3]
-        FO --> SNAP2[run-verify.js compare<br/>同一 baseline，fail-closed]
+        FO --> SNAP2[run-verify.js compare --baseline-sha256<br/>同一 baseline 與 digest，fail-closed]
         SNAP2 -->|無變更| RPT[主 session Write 報告]
         SNAP2 -->|有變更| NH["⚠️ Need Human（fail-closed）"]
         RPT --> DG{doc review gate<br/>詳見 §3.4}
@@ -141,10 +142,16 @@ flowchart TB
                                                 // done 的唯一路徑：報告之 /codex-review-doc 回 ✅ Mergeable；
                                                 // ⛔ / degraded / 無法判定 → needs_human（不得標 done）
   "baseline": {                                 // run-verify.js snapshot 輸出（欄位集 = T3 檢查項，缺一不可）
+    "schema_version": 4,                        // 記錄本身的版本，非 repo 狀態：compare 對它做
+                                                //「不相等即硬性拒絕」，不列入 drift 比對
     "head": "3be3372…", "branch": "main",
     "porcelain_sha256": "ab12…",                // git status --porcelain -uall 的 hash（狀態+路徑面）
     "tracked_diff_sha256": "9a8b…",             // git diff HEAD --binary 的 hash（已 dirty tracked 檔的內容面）
+    "tracked_modes_sha256": "b7e1…",            // tracked 檔案與其祖先目錄的 mode（`st.mode & 0o7777`）——git 只記錄 exec bit，`chmod 666` 檔案／`chmod 777` 目錄在 porcelain 與 diff 都是 byte-identical，此面補上其餘權限位
     "untracked_content_sha256": "7c6d…",        // untracked（--exclude-standard）檔案 path+blob hash 的 hash（內容面）
+    "untracked_dirs_sha256": "c8f2…",           // untracked（非 ignored）目錄節點的存在性 + mode（ls-files --others --directory）——`porcelain -uall` 不列目錄、檔案層列舉只給葉節點，故空目錄的建立／刪除／chmod 原本三面皆盲；排除規則同 ignored_dirs
+    "ignored_content_sha256": "5e4f…",          // gitignored 檔案（.env、產出物…）內容的 hash——porcelain 與 ls-files --exclude-standard 皆盲；排除 harness/control/safety 面與 node_modules/。**node_modules 不在 `IGNORED_EXCLUDE_PREFIXES` 裡**（那會讓一個名為 `node_modules` 的普通 ignored *檔案* 走到 directory 分支而被誤排除，即已記錄的 iter-21 fail-open）；實際靠三個機制：`isControlPlaneIgnored` 的 depth-anchored 分支、git 層的 `IGNORE_EXCLUDE_PATHSPECS`、以及只作用於目錄節點的 `isNodeModulesDirNode`
+    "ignored_dirs_sha256": "3a2b…",             // ignored 目錄節點的存在性 + mode（ls-files --directory）——補上「空目錄」這個內容 hash 看不見的維度；同樣排除 build/dist/.venv（**僅 top-level**，`isVolumeExcludedDir` 是 root-anchored；巢狀如 `packages/*/dist/` 是已記錄的殘餘）與 node_modules（**任意深度**，`**/node_modules/**` + `isNodeModulesDirNode`）
     "refs_sha256": "cd34…",                     // git for-each-ref 全 refs 的 hash（tag/ref 面）
     "local_config_sha256": "ef56…",             // git config --list --local 的 hash
     "git_internals_sha256": "a1b2…",            // .git/hooks/*（內容+執行位）+ .git/info/exclude 的 hash（porcelain/ls-files 皆盲的 .git 內部面）
@@ -162,20 +169,24 @@ flowchart TB
 | 設計點 | 理由 |
 |--------|------|
 | `Write` 工具寫入（非 Bash heredoc） | `.json` 不觸發 change flag（§2.1 驗證）；保留 transcript 可見性；不違 Bash-mutation 顧慮（這是主 session 受監看的工具呼叫） |
-| 一 run 一檔，FIFO 保留最近 10 個 run 檔 | 可重入（NFR-6）；舊 run 可查（NFR-2）；skill 負責清理（超過 10 個刪最舊） |
-| 落盤前過 `security-redact.js` **完整 contract**：`scanHighConfidence` truthy → **abort fail-closed**（不落盤、run 標 `needs_human`、提示改寫意圖）；medium → mask 後落盤 | 意圖/完成定義為自由文字，可能含貼上的 secret（R8）；沿 plan-review 既有 redaction 語意，禁用 medium-mask-only 弱化版 |
+| 一 run 一檔，FIFO 保留最近 10 個 run | 可重入（NFR-6）；舊 run 可查（NFR-2）；清理走 `scripts/prune-runs.js`（`<run-id>.json` + 同名目錄成對計數與刪除，超過 10 個刪最舊） |
+| 寫入磁碟前過 `security-redact.js` **完整 contract**：`scanHighConfidence` truthy → **abort fail-closed**（不寫檔、run 標 `needs_human`、提示改寫意圖）；medium → mask 後寫入 | 意圖/完成定義為自由文字，可能含貼上的 secret（R8）；沿 plan-review 既有 redaction 語意，禁用 medium-mask-only 弱化版 |
 | `steps_status` 與 `plan` 分離 | resume 時 plan 不可變、status 可變——重跑冪等（read-only worker 無副作用） |
 | 無任何 safety 欄位 | 兩平面分離的 schema 級保證——review/precommit 狀態**只**存在 safety plane |
 
-### 3.3 API Design（3 個 scripts + 1 個 skill）
+### 3.3 API Design（4 個 scripts + 1 個 skill）
 
 #### T1 — `plan-context.js`（確定性輸入組裝，Signal 1/5 的自動化錨點）
 
 ```
-node skills/orchestrate/scripts/plan-context.js [--budget S|M|L] [--catalog <path>] [--agents-dir <path>] [--allowlist <path>]
+node skills/orchestrate/scripts/plan-context.js --out <path> [--budget S|M|L] [--catalog <path>] [--agents-dir <path>] [--allowlist <path>]
 ```
 
-| 輸出欄位（stdout JSON） | 內容 | 來源 |
+`--out` 為**必要**：封包寫入指定路徑，stdout 只回摘要（~0.5 KB）。舊的「整包走 stdout」契約已淘汰——內嵌封包會在主 session 造成 ~81 KB × 2 的雙份注入（Bash 結果一份 + planner prompt 一份，且前者留存整段對話）。`--out` 寫入失敗即 exit 1（fail-closed），不得退回 stdout。
+
+**stdout 摘要欄位**：`schema_version` / `context_path` / `bytes` / `sha256` / `budget` / `admission` / `counts`。其中 `sha256` 是封包內容的 digest，必須原樣傳給 `validate-plan.js --context-sha256`（見 T2）。
+
+| 封包欄位（寫入 `--out` 檔案） | 內容 | 來源 |
 |------------------------|------|------|
 | `skill_candidates[]` | `{command, category, featured, public, use_when?, description}` 全 catalog 條目；`use_when` 選填，缺漏時以 SKILL.md frontmatter `description` 補位（同 `generate-readme-catalog.js` 讀取模式） | `docs/skill-catalog.yml` + `skills/*/SKILL.md`（**執行期讀取** → 新 skill 自動納入，FR-11/SC-5） |
 | `agent_candidates[]` | `{name, tools, fanout_eligible, deny_reason?}` | `agents/*.md` frontmatter + allowlist 比對 |
@@ -216,8 +227,12 @@ Planner agent 輸出的計畫必須符合此 schema（`references/plan-schema.md
 ```
 
 ```
-node skills/orchestrate/scripts/validate-plan.js --plan <path|stdin> --context <plan-context 輸出>
+node skills/orchestrate/scripts/validate-plan.js --plan <path|-> --context <封包路徑> --context-sha256 <摘要的 sha256>
 ```
+
+`--context-sha256` 為**無條件必要**參數（含 `--context -`），省略即 exit 1。理由：封包落在 `.claude_workflows/`，而 `run-verify.js` 刻意把該路徑排除在 drift 偵測之外、且具 Bash 能力的 planner 可寫入該檔——沒有 digest 綁定，planner 可以竄改 `admission.allowlist`（繞過 A1）或捏造 `skill_candidates`（繞過 A4），交出與竄改後封包一致的 plan，然後乾淨通過驗證且無任何 drift 紀錄。digest 由 `plan-context.js` 在組裝當下算出，經摘要走**主 session**（planner 觸及不到的通道）傳遞。
+
+> 早期版本豁免 `--context -`，理由是「由 plan-context.js 在行程內管線傳入、全程不落地」。該前提不成立：`plan-context.js` 強制要求 `--out` 且沒有任何 stdout 封包分支，根本無法餵管線，所以 `--context -` 唯一到得了的路徑是 `cat <已落在 .claude_workflows/ 的檔案>`——與檔案路徑同一個 planner 可寫表面，卻把完整性檢查關掉。改為無條件要求，與 `run-verify.js --baseline-sha256`（含 `--baseline -`）一致：綁定成立與否取決於 digest 走的通道 worker 碰不碰得到，而不是位元組從哪個 fd 進來。
 
 | Lint 規則（全部 fail-closed，違反 → exit 1 + 規則代碼） | 對應需求 |
 |--------------------------------------------------------|---------|
@@ -235,9 +250,13 @@ node skills/orchestrate/scripts/validate-plan.js --plan <path|stdin> --context <
 #### T3 — `run-verify.js`（無變更驗證，SC-2 硬後盾）
 
 ```
-node skills/orchestrate/scripts/run-verify.js snapshot            # stdout: baseline JSON
-node skills/orchestrate/scripts/run-verify.js compare --baseline <path|stdin>   # exit 0 = 無變更；exit 1 = 列出 drift 欄位
+node skills/orchestrate/scripts/run-verify.js snapshot            # stdout: baseline JSON；stderr: baseline_sha256=<hex>
+node skills/orchestrate/scripts/run-verify.js compare --baseline <path|-> --baseline-sha256 <hex>   # exit 0 = 無變更；exit 1 = drift 或 digest 不符
 ```
+
+**`--baseline-sha256` 為必要**。少了它，compare 證明的只是「我拿到的這份檔案與 repo 相符」——worker 在改動後重跑一次 `snapshot`，產出的檔案逐欄位完全吻合，drift 遂讀成 `ok: true`，SC-2 無變更證明形同虛設。digest 對 raw bytes 取，且在 parse 之前比對：替換要擋在身分層，不是形狀層。
+
+信任邊界（如實陳述，不誇大）：digest 由主 session 在**任何派發之前**從 snapshot 的 stderr 取得、也由主 session 傳回 compare，fanout worker 全程接觸不到，因此擋得住 worker 平面的 baseline 替換。它**擋不住**已被接管的主 session——該層沒有任何機制擋得住，因為 `--baseline` 與 `--baseline-sha256` 兩個參數都由它決定。與 `plan-context.js --context-sha256` 同一條信任鏈。
 
 | 檢查項 | 抓得到的 bypass | 超越 `git status --porcelain` 之處 |
 |--------|----------------|-----------------------------------|
@@ -254,7 +273,7 @@ node skills/orchestrate/scripts/run-verify.js compare --baseline <path|stdin>   
 
 **Dirty-baseline 政策**：v1 **支援 dirty 起點**（本 repo 常態為開發中 dirty）——比對語意是「**無新 drift**」（snapshot 時的 porcelain/content/refs/config hash 與 compare 時逐項相等），非「必須 clean start」。既有 dirty 檔不阻擋 run；任何**新增**變化（hash 改變，含已 dirty 檔的內容再變動）即 fail-closed。
 
-Compare 失敗（任一 drift）→ skill 標 run `failed` + 輸出 `⚠️ Need Human`（附 drift 欄位與修復指引），**不寫報告、不嘗試自動回復**（回復本身是 mutation）。宣告式外部副作用（如 Jira）：v1 fanout worker 名單無外部寫入工具，故「宣告外部副作用 = ∅」即為驗證（名單變更時須重審此假設——寫入 allowlist 檔的 review 義務）。**已知不在 v1 驗證範圍**：(1) repo 之外的檔案系統寫入（如 `~/.claude/`）——由 allowlist 縮窄 + worker prompt 契約管理；(2) `git update-index --assume-unchanged` / `--skip-worktree` 令 tracked 檔的內容編輯對 porcelain 與 `diff HEAD` 皆隱形（digest 未 hash `.git/index`）。兩者正面偵測列 v2 OQ（v2 須納入 stat-independent 的 index digest）。（註：packed-refs 之 ref 改指向/增刪已由 `refs_sha256` 的 `for-each-ref` 覆蓋，非缺口。）
+Compare 失敗（任一 drift）→ skill 標 run `failed` + 輸出 `⚠️ Need Human`（附 drift 欄位與修復指引），**不寫報告、不嘗試自動回復**（回復本身是 mutation）。宣告式外部副作用（如 Jira）：v1 fanout worker 名單**未宣告**任何外部寫入工具（無 MCP 寫入類、無 `WebFetch` POST 類），但這不等於外部副作用為 ∅——`Explore` 具備通用 `Bash`，足以呼叫已驗證的 CLI（`gh`、`aws`、`kubectl`、`curl`）或 `node -e` 發出網路請求而變更遠端系統，**而 `run-verify.js` 只觀測本地 repo 狀態，對遠端副作用完全無感**。因此正確的敘述是：外部副作用**未被驗證**，屬需宣告與審核的殘餘風險，不是已證明為零。要真正關上，需把 fanout worker 跑在停用網路的沙箱、或把具通用 Bash 的 worker 移出可執行 admission（v2 OQ）。**其他已知不在 v1 驗證範圍**：(1) repo 之外的檔案系統寫入（如 `~/.claude/`）——由 allowlist 縮窄 + worker prompt 契約管理；(2) `git update-index --assume-unchanged` / `--skip-worktree` 令 tracked 檔的內容編輯對 porcelain 與 `diff HEAD` 皆隱形（digest 未 hash `.git/index`）。兩者正面偵測列 v2 OQ（v2 須納入 stat-independent 的 index digest）。（註：packed-refs 之 ref 改指向/增刪已由 `refs_sha256` 的 `for-each-ref` 覆蓋，非缺口。）
 
 #### T4 — `/orchestrate` skill 介面
 
@@ -266,8 +285,30 @@ Compare 失敗（任一 drift）→ skill 標 run `failed` + 輸出 `⚠️ Need
 |------|------|
 | （無 flag）/ `--dry-run` | 規劃 + 預覽即止（plan preview = 預設交付物，FR-3） |
 | `--execute` | 預覽 + **AskUserQuestion 核可後**執行 read-only fanout → verify → 報告（NFR-1 human gate；核可不可被 session 快取假定） |
-| `--resume <run-id>` | 讀 run-state → 以**原 baseline** compare：無 drift → 續跑 `pending` 步驟（read-only 冪等，NFR-6）；**有 drift → run 標 `needs_human` 並停**（fail-closed——中斷期間的變化無法歸因，不得重拍 baseline 洗白；要繼續只能開新 run = 新 baseline + 新核可） |
+| `--resume <run-id>` | 讀 run-state → 以**原 baseline** compare：無 drift → 續跑 `pending` 步驟（read-only 冪等，NFR-6）；**有 drift → run 標 `needs_human` 並停**（fail-closed——中斷期間的變化無法歸因，不得重拍 baseline 洗白；要繼續只能開新 run = 新 baseline + 新核可）。**前提：主 session 仍持有原 `baseline_sha256`**——否則不可 resume，見下方「Resume 與 digest 綁定」 |
 | `--backend` | 強制 fanout 後端；預設 auto（`Workflow` 工具可用則用，否則 background `Agent` ≤3 並行——admission 同一套，feasibility「所有後端一律 deny-by-default」） |
+
+#### Resume 與 digest 綁定（限制，非設計缺口）
+
+`compare` 無條件要求 `--baseline-sha256`，而該 digest 只在 `snapshot` 的 **stderr** 出現一次；run-state 存的是 baseline **物件本身**，不存它的 digest——這是刻意的。run-state 落在 `.claude_workflows/`，與 baseline 同一個控制面；把 digest 存在旁邊，等於讓攻擊者同時改兩個檔案就能自洽，綁定退化成「跟我手上這份檔案比對」，正是 `--baseline-sha256` 要擋的東西。
+
+因此 digest 的唯一保存處是**主 session 的對話脈絡**（worker 碰不到的通道）。由此得出可 resume 的條件：
+
+| 情境 | 可否 resume |
+|------|------------|
+| 同一 session，脈絡中仍有 `baseline_sha256=<hex>` | ✅ 照上表流程 |
+| 中斷、compaction 後脈絡遺失、或換 session | ❌ **不可 resume**。開新 run（新 snapshot + 新 digest + 新核可） |
+
+不提供「從 run-state 重算 digest」的路徑：重算的對象是可寫檔案本身，任何被替換的 baseline 都會自洽通過，等於把 worker-resistant 綁定整個拿掉。
+
+**Resume 需要兩樣東西，不是一樣**——只留 digest 不足以 resume：
+
+| 需保存 | 保存在哪 | 為什麼不能省 |
+|--------|----------|--------------|
+| `baseline_sha256`（hex） | **主 session 脈絡**（壓縮前明確寫進 summary，見 `@rules/context-management.md` Compact Preservation，該清單已列此項） | worker 碰不到的通道；存進 `.claude_workflows/` 就退化成自洽比對 |
+| baseline 的**原始位元組** | `snapshot` 的 stdout **原樣落成檔案**（例如 `.claude_workflows/<run-id>/baseline.json`），compare 時以 `--baseline <該檔>` 餵回 | `compare` 是**先對 raw bytes 取 digest、後 parse**（`run-verify.js`：「Digest the raw bytes BEFORE parsing」），所以只差空白／鍵序的兩份 JSON 就是不同 baseline |
+
+**run-state 裡那個巢狀 `baseline` 物件不能拿來 resume**：它是 parse 後再序列化的產物，無法還原 `snapshot` 當初輸出的那串位元組，餵回去必定 digest mismatch（fail-closed，方向正確但等同不可 resume）。因此 v1 的 resume 前提精確地說是「**digest 在脈絡裡 + 原始 baseline 檔案還在**」，兩者缺一即只能開新 run。v2 若要讓 resume 更耐用，選項是定義一個 canonical 序列化並讓 snapshot/compare 兩端都走它——但那會削弱「byte-exact 才算同一份」這個目前最強的綁定，屬取捨而非純改進。
 
 **Plan preview 範例**（兩種任務形狀的對照）：
 
@@ -286,13 +327,13 @@ sequenceDiagram
     participant P as Planner agent（admission 約束的 read-only 背景）
     participant W as Fanout workers（read-only）
     U->>C: /orchestrate "意圖" --execute
-    C->>S: plan-context.js --budget M
-    S-->>C: 候選 + 信號 + admission（或 fail-closed exit 1）
+    C->>S: plan-context.js --budget M --out .claude_workflows/<run-id>/plan-context.json
+    S-->>C: 摘要（context_path / bytes / sha256 / budget / admission / counts）（或 fail-closed exit 1）
     C->>S: run-verify.js snapshot → baseline（**先於任何 agent 派發**）
-    C->>P: 背景派發（**planner = `Explore`**（allowlist 內唯一具研究能力者）；prompt = references/planner-prompt.md + context JSON）
+    C->>P: 背景派發（**planner = `Explore`**（allowlist 內唯一具研究能力者）；prompt = references/planner-prompt.md + context **封包路徑**；planner 自行讀檔，不內嵌 JSON）
     P-->>C: plan JSON（隨 repo 狀態推導，含 why/gates/收斂）
-    C->>S: run-verify.js compare --baseline（**planning 後立即驗**；drift → fail-closed，不進 preview）
-    C->>S: validate-plan.js（admission + gate lint）
+    C->>S: run-verify.js compare --baseline --baseline-sha256（**planning 後立即驗**；drift 或 digest 不符 → fail-closed，不進 preview）
+    C->>S: validate-plan.js --context-sha256 <摘要 sha256>（admission + gate lint + 封包完整性）
     alt lint 失敗
         C->>P: 帶規則代碼重規劃（≤1 次，FR-9）
         P-->>C: 修正後 plan
@@ -306,7 +347,7 @@ sequenceDiagram
         W-->>C: findings（context packet 過濾，沿 deep-explore 模式）
         C->>C: 完整性 gate：done_criteria 未滿足且 round < max_rounds → 下一輪
     end
-    C->>S: run-verify.js compare --baseline
+    C->>S: run-verify.js compare --baseline --baseline-sha256
     alt drift 偵測
         S-->>C: exit 1 + drift 欄位
         C->>U: ⚠️ Need Human（run 標 failed，不寫報告）
@@ -329,18 +370,18 @@ sequenceDiagram
 
 | 規則 | 內容 |
 |------|------|
-| 輸入 | plan-context JSON（候選 + 信號）+ 意圖 + plan schema。**不含**Claude 預擬的步驟（planner 獨立推導，否則 FR-2 的「agent 動態推導」變 rubber stamp） |
+| 輸入 | plan-context 封包的**路徑**（候選 + 信號；planner 自行 Read，見 `references/planner-prompt.md`）+ 意圖 + plan schema。**不含**Claude 預擬的步驟（planner 獨立推導，否則 FR-2 的「agent 動態推導」變 rubber stamp） |
 | 輸出 | 純 plan JSON（schema §3.3 T2），每步附 `why` |
 | 狀態感知要求 | 必須引用 `repo_signals` 解釋取捨（如「`2-tech-spec.md` 已存在 → 跳過 `/tech-spec`」）——Signal 1 的可追溯證據 |
 | 邊界 | 不得規劃 allowlist 外的 fanout；mutating 構想一律 `proposed-manual` |
 
 **輸出隔離契約**（鏡射 plan-review 的 namespace 教訓）：`/orchestrate` 自身輸出**禁止**出現 `## Gate:`、bare `✅ Ready` / `✅ Mergeable` / `⛔ Blocked` / `✅ All Pass`；run 總結使用 `## Orchestrate Run Summary` + `[ORCHESTRATE_RUN] run_id=… status=…` 結構行（純行為層標記，無 hook 解析——v1 不新增 hook）。報告寫入後的 doc gate sentinel 由 `/codex-review-doc` 自己輸出（合法路徑）。
 
-**Admission allowlist v1**（`references/admission-allowlist.json`，curated + 每項理由；**收窄原則：驗證面必須 ⊇ 攻擊面，否則不進名單**）：
+**Admission allowlist v1**（`references/admission-allowlist.json`，curated + 每項理由；**收窄原則：驗證面必須 ⊇ 攻擊面，否則不進名單——`Explore` 是這條原則的已知例外**，其通用 `Bash` 的攻擊面含遠端與 repo 外寫入，而驗證面只有本地 repo。它之所以仍在名單內，是因為 `/deep-explore` 早已以同樣暴露在跑，屬 repo 已接受的既有風險而非本功能新增；這是明知的取捨，不是符合原則）：
 
 | Entry | 類型 | 理由 | 殘餘風險（由 T3 pre/post 驗證兜底） |
 |-------|------|------|-------------------------------------|
-| `Explore` | built-in agent | harness 定義排除 Edit/Write/NotebookEdit；**deep-explore 既有 fanout baseline**（repo 已接受的暴露，非新增攻擊面）；**兼任 planner**（名單內唯一具研究能力者，§3.4） | 有 Bash → 理論可改檔/改 git；由 prompt read-only 契約 + T3 全項 git-scoped 檢查（porcelain+content hashes/refs/config/worktree/stash）正面攔截；repo 外寫入不在 v1 驗證面（v2 OQ） |
+| `Explore` | built-in agent | harness 定義排除 Edit/Write/NotebookEdit；**deep-explore 既有 fanout baseline**（repo 已接受的暴露，非新增攻擊面）；**兼任 planner**（名單內唯一具研究能力者，§3.4） | 有 Bash → 理論可改檔/改 git；由 prompt read-only 契約 + T3 全項 git-scoped 檢查（porcelain+content hashes/refs/config/worktree/stash）正面攔截。**驗證不到**：repo 外檔案寫入、以及經由已驗證 CLI／網路呼叫造成的**遠端**副作用——後者 T3 完全無感，只靠 prompt 契約（v2 OQ：網路停用沙箱或移出可執行 admission） |
 | `performance-optimizer` | repo agent | `tools: Read, Grep, Glob` 純讀 | 無 |
 
 **v1 明確排除**（🔴 教訓）：`coverage-analyst`（`Bash(find:*)` 含 `-exec`/`-delete` 寫面）與 `git-investigator`（`Bash(git:*)` 含 tag/config/ref 等寫操作，原 HEAD/branch/stash 檢查蓋不住——T3 已補 refs/config hash，但 deny-by-default 精神下「新增暴露 + 無既有 fanout 先例」不足以換取收益）→ fanout-denied；歷史考古類步驟以 `main-skill`（主 session 跑 `/git-investigate`）或 `proposed-manual` 形式入計畫。其餘 13 repo agents + 全部 skills 一律 fanout-denied（可作 `main-skill` / `proposed-manual` 步驟出現於計畫，但不得作 fanout worker）。**Allowlist 檔案本身受測試鎖定**：每 repo-agent entry 的 frontmatter `tools` 與宣告理由一致，名單變更必過 review + 重審 T3 驗證面涵蓋性。
@@ -353,10 +394,10 @@ sequenceDiagram
 | R2 | Allowlisted worker（含 planner）經 Bash 改檔/改 git metadata（change flag 抓不到） | Low | High | **雙層**：admission 收窄至 Explore + performance-optimizer（驗證面 ⊇ 攻擊面原則）+ T3 pre/post 驗證正面攔截（HEAD/branch/porcelain-uall/**tracked+untracked content hash**/**refs/local-config**/worktree/stash）；snapshot **先於任何 agent 派發**；planning 後 + execute 後各 compare 一次；drift → fail-closed 不寫報告 |
 | R3 | run-state 與 safety state 混淆（兩平面分歧） | Low | High | schema 級分離（run-state 無 safety 欄位）+ orchestrator 只讀 safety plane + 測試斷言 run 過程 `.claude_review_state.json` 不被 skill 寫入 |
 | R4 | DW preview API 變動 / 不可用 | Medium | Low | backend 可插拔；預設 fallback background `Agent` ≤3（feasibility Backup B = C 去 DW，執行後端互換） |
-| R5 | compaction 中斷 run（post-compact hook 不知 workflow 狀態） | Medium | Medium | run-state 落盤 + `--resume`；read-only 步驟冪等可重跑；hook 級 resume 整合列 v2 OQ |
+| R5 | compaction 中斷 run（post-compact hook 不知 workflow 狀態） | Medium | Medium | run-state 寫入磁碟 + `--resume`；read-only 步驟冪等可重跑；hook 級 resume 整合列 v2 OQ |
 | R6 | 計畫品質不如人腦編排（採用阻力） | Medium | Low | preview = 預設交付物（人可改可棄）；`why` 必填提供可審視性；pilot 量測後迭代 planner prompt |
 | R7 | sentinel 污染（orchestrate 輸出誤觸 hook 解析） | Low | High | 輸出隔離契約 + S1 lint + skill 結構測試 grep 禁字 |
-| R8 | run-state 檔累積 / 洩漏敏感意圖 | Low | Medium | FIFO 10 檔清理；gitignore；意圖文字過 `security-redact.js` **完整 contract**（high-confidence → abort 不落盤 + `needs_human`；medium → mask）——禁 medium-mask-only 弱化版 |
+| R8 | run-state 檔累積 / 洩漏敏感意圖 | Low | Medium | FIFO 10 檔清理；gitignore；意圖文字過 `security-redact.js` **完整 contract**（high-confidence → abort 不寫檔 + `needs_human`；medium → mask）——禁 medium-mask-only 弱化版 |
 
 **Dependencies**：
 
@@ -384,6 +425,7 @@ sequenceDiagram
 | W4.2 | `references/planner-prompt.md`（獨立推導契約）+ `plan-schema.md` + `execution-policy.md` | W4.1 | M | 引用存在 + prompt 含「不含 Claude 預擬步驟」+ schema 與 validate-plan 規則一致性 spot-check |
 | W4.3 | `admission-allowlist.json`（2 entries + 理由 + 排除名單記錄） | W4.1 | S | 每 repo-agent entry 的 frontmatter `tools` 與理由一致（**allowlist-frontmatter 鎖定測試**）；斷言 `coverage-analyst`/`git-investigator` 不在名單 |
 | W4.4 | `.gitignore` 加 `.claude_workflows/`（**hard precondition：先於 W4.1 任何 run-state 寫入路徑合入**） | — | S | `git check-ignore .claude_workflows/foo.json` 斷言 |
+| W4.5 | `scripts/prune-runs.js`：FIFO 保留的可執行實作 + SKILL.md 改為指名該指令 | W4.1 | S | `test/scripts/orchestrate-prune-runs.test.js`：`.json` 與同名目錄成對刪除、僅存其一仍計數、排序依 run-id 而非 mtime、`--dry-run` 不刪、非 `.claude_workflows` root／symlink root 拒絕、認不得檔名保留 |
 | **W5** | **登錄 + 文件 + ticket** | W4 | S | |
 | W5.1 | `docs/skill-catalog.yml`（planning category）+ CLAUDE quick-ref ×3 | W4 | S | skills-schema / claude-md-coverage 既有測試 |
 | W5.2 | request ticket（`/create-request`） | W4 | S | — |

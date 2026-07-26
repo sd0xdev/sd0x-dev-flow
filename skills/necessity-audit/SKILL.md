@@ -1,7 +1,7 @@
 ---
 name: necessity-audit
 description: "Necessity audit for over-designed spec elements. Use when: auditing lifecycle spec (1-requirements / 2-tech-spec / 3-architecture) for YAGNI/KISS violations, challenging necessity of FRs/NFRs/abstractions/configs via Codex adversarial debate. Not for: FP reasoning validity (use /codex-review-spec), completeness check (use /feature-completeness), detail review (use /codex-review-doc), or code-level simplification (use /simplify)."
-allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(node:*), Bash(wc:*), Bash(mktemp:*), Bash(rm:*), mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), mcp__codex__codex-reply, Skill
 ---
 
 # Necessity Audit
@@ -18,7 +18,7 @@ allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(node:*), Bash(wc:*), B
 | 2 | Phase B **must** invoke `/codex-brainstorm` via Skill tool — raw `mcp__codex__codex` for debate is invalid | Audit invalid |
 | 3 | Phase C report **must** include non-empty `debate.threadId` | Report rejected |
 | 4 | Phase C report **must** include `Debate Conclusion` referencing specific rounds (not blank / placeholder) | Report rejected |
-| 5 | Output **must** start with `## Document Review` header and end with `✅ Mergeable` OR `⛔ Needs revision` sentinel | Auto-loop cannot parse |
+| 5 | Output **must** start with `## Necessity Audit` header and end with `✅ Audit Clear` OR `⛔ Audit Revise` sentinel | Auto-loop cannot parse |
 
 ## Trigger
 
@@ -60,15 +60,43 @@ Phase 0 preflight → Phase A classify → Phase B Codex debate → Phase C cons
 
 ### Phase 0: Preflight (executable)
 
+> **Scratch directory — read this before running any step.** Each Bash invocation is a **fresh
+> shell**: a variable assigned in one step does not exist in the next. Do **not** write
+> `TMPDIR=$(mktemp -d)` and then reference `$TMPDIR` later — on macOS `TMPDIR` is an *ambient*
+> variable already pointing at the shared temp root (`/var/folders/…/T/`), so later steps silently
+> read and write there, and the final `rm -rf $TMPDIR` would target that shared root.
+>
+> Instead: run `mktemp -d` **once**, read the path it prints, and **substitute that literal
+> absolute path** into every later command. The placeholder `<AUDIT_TMP_DIR>` below marks each
+> substitution site. Never name the variable `TMPDIR`.
+
 ```bash
-TMPDIR=$(mktemp -d)
+mktemp -d
+# → e.g. /var/folders/ab/cd1234/T/tmp.XyZ123 — reuse this literal path below as <AUDIT_TMP_DIR>
+```
+
+Immediately **claim** it. The claim mints a one-time capability token and stores it in a marker
+inside the directory; the cleanup step requires that exact token back. This is what binds the
+delete to *this* run's directory rather than to any directory that merely looks like one — or to
+another concurrent audit's directory, which also carries a valid marker:
+
+```bash
+node scripts/skills/necessity-audit/cleanup.js --claim "<AUDIT_TMP_DIR>"
+# → token=3f9c…  (48 hex chars) — reuse this literal token in Phase 4 as <AUDIT_TOKEN>
+```
+
+Read the `token=` line it prints and carry that literal value to the cleanup step, the same way you
+carry the directory path. Like `<AUDIT_TMP_DIR>`, it cannot be held in a shell variable — each Bash
+invocation is a fresh shell.
+
+```bash
 node scripts/skills/necessity-audit/preflight.js \
   --path <path> --depth <depth> \
   [--skip-preflight] [--include-feasibility] \
-  --output $TMPDIR/preflight.json
+  --output "<AUDIT_TMP_DIR>/preflight.json"
 ```
 
-Non-zero exit = hard block. Read `$TMPDIR/preflight.json` to continue.
+Non-zero exit = hard block. Read `<AUDIT_TMP_DIR>/preflight.json` to continue.
 
 ### Phase A: Claude classify (LLM)
 
@@ -76,40 +104,40 @@ Read target file with Read tool. Apply `references/phase-a-classify.md` template
 
 Extract elements (FR / NFR / Component / Abstraction / Extensibility / Config), score each against active dimensions only (depth=brief → dims 1-3; normal/deep → dims 1-6), assign initial Keep/Review/Cut.
 
-Write result: `Write` tool → `$TMPDIR/phase-a.json` with schema `{ elements: ClassifiedElement[] }` (only `claude.*` fields populated).
+Write result: `Write` tool → `<AUDIT_TMP_DIR>/phase-a.json` with schema `{ elements: ClassifiedElement[] }` (only `claude.*` fields populated).
 
 ### Phase B: Codex debate (Skill invocation)
 
 ```bash
 node scripts/skills/necessity-audit/debate-topic.js build \
-  --preflight $TMPDIR/preflight.json \
-  --output $TMPDIR/topic.txt
+  --preflight "<AUDIT_TMP_DIR>/preflight.json" \
+  --output "<AUDIT_TMP_DIR>/topic.txt"
 ```
 
 Read topic, invoke:
 
 ```
-Skill("codex-brainstorm", <contents of $TMPDIR/topic.txt>)
+Skill("codex-brainstorm", <contents of <AUDIT_TMP_DIR>/topic.txt>)
 ```
 
-Write raw response: `Write` tool → `$TMPDIR/debate.txt`.
+Write raw response: `Write` tool → `<AUDIT_TMP_DIR>/debate.txt`.
 
 ```bash
 node scripts/skills/necessity-audit/debate-topic.js parse \
-  --input $TMPDIR/debate.txt \
-  --output $TMPDIR/debate.json
+  --input "<AUDIT_TMP_DIR>/debate.txt" \
+  --output "<AUDIT_TMP_DIR>/debate.json"
 ```
 
 ### Phase C: Consolidate (executable)
 
 ```bash
 node scripts/skills/necessity-audit/consolidate.js \
-  --phase-a $TMPDIR/phase-a.json \
-  --debate $TMPDIR/debate.json \
-  --preflight $TMPDIR/preflight.json \
+  --phase-a "<AUDIT_TMP_DIR>/phase-a.json" \
+  --debate "<AUDIT_TMP_DIR>/debate.json" \
+  --preflight "<AUDIT_TMP_DIR>/preflight.json" \
   --overrides "<id>:<rationale>[;...]" \
   --depth <depth> \
-  --output $TMPDIR/report.json
+  --output "<AUDIT_TMP_DIR>/report.json"
 ```
 
 Applies 6 deterministic checks, under-coverage check, `--override` handling, gate selection.
@@ -118,23 +146,42 @@ Applies 6 deterministic checks, under-coverage check, `--override` handling, gat
 
 ```bash
 node scripts/skills/necessity-audit/report.js \
-  --input $TMPDIR/report.json \
+  --input "<AUDIT_TMP_DIR>/report.json" \
   --format markdown \
-  --output $TMPDIR/report.md
+  --output "<AUDIT_TMP_DIR>/report.md"
 
 node scripts/skills/necessity-audit/redact.js \
-  --input $TMPDIR/report.md \
-  --output $TMPDIR/report.final.md
+  --input "<AUDIT_TMP_DIR>/report.md" \
+  --output "<AUDIT_TMP_DIR>/report.final.md"
 ```
 
-Read `$TMPDIR/report.final.md` and emit as final user-visible message. Cleanup: `rm -rf $TMPDIR`.
+Read `<AUDIT_TMP_DIR>/report.final.md` and emit as final user-visible message.
+
+Cleanup. The path condition is **enforced by the script, not by this paragraph**. It refuses
+(exit 1, deleting nothing) on an unsubstituted placeholder, a relative path, a symlink, a
+non-directory, the filesystem root, anything that is not a direct child of this process's temp root
+— in particular the shared temp root itself, the path an ambient-`TMPDIR` mistake produces — any
+directory carrying no `--claim` marker, and, decisively, **any directory whose marker was minted
+with a different token**. That last check is what rules out a substitution naming a *different*,
+equally valid-looking scratch directory: shape is common to all of them and so is the marker, since
+every concurrent audit claims its own — only the token is unique to this run. Removal is idempotent,
+so re-running after a partial failure is safe:
+
+```bash
+node scripts/skills/necessity-audit/cleanup.js --dir "<AUDIT_TMP_DIR>" --token "<AUDIT_TOKEN>"
+```
+
+Before running it, **re-read the path** you are substituting and confirm it is the exact absolute
+path Phase 0 printed. The guard refuses a wrong one, but a refusal is a stalled cleanup — getting
+the substitution right is still your job. If the guard does refuse, do not work around it with a
+manual `rm`: fix the substitution.
 
 ## Output Format + Gate Selection
 
 Output header, sections, sentinel: see `references/output-template.md` (normative).
 Gate-selection decision table + narrative rules: see `references/phase-c-consolidate.md`.
 
-Invariant: `⚠️ Need Human` NEVER appears as the final gate — only as a narrative line above the `✅ Mergeable` / `⛔ Needs revision` sentinel.
+Invariant: `⚠️ Need Human` NEVER appears as the final gate — only as a narrative line above the `✅ Audit Clear` / `⛔ Audit Revise` sentinel.
 
 ## Review Loop (`--continue`)
 
@@ -155,8 +202,9 @@ After user revises the spec, re-run with `--continue <threadId>` to reuse the Co
 - [ ] Phase B used `Skill("codex-brainstorm")`, not raw `mcp__codex__codex`
 - [ ] Report contains non-empty `debate.threadId`
 - [ ] Report contains non-empty Debate Conclusion
-- [ ] Output starts with `## Document Review` header
-- [ ] Output ends with `✅ Mergeable` OR `⛔ Needs revision` sentinel
+- [ ] Output starts with `## Necessity Audit` header
+- [ ] Output ends with `✅ Audit Clear` OR `⛔ Audit Revise` sentinel
+- [ ] Output contains NO doc-review gate sentinel (the `Mergeable` / `Needs revision` pair) anywhere — an audit must not be mistakable for a doc review
 - [ ] `⚠️ Need Human` never used as gate (only as narrative)
 - [ ] Redaction applied before emission
 
@@ -173,5 +221,5 @@ Input: /necessity-audit docs/features/foo/1-requirements.md --depth brief --skip
 Action: Only challenge dims 1-3; skip state advisory; emit [PREFLIGHT SKIPPED] banner
 
 Input: /necessity-audit docs/features/foo/2-tech-spec.md --override FR-12:"needed for Q3 rollout"
-Action: FR-12 kept with justification; final gate ✅ Mergeable if no other Cut items remain
+Action: FR-12 kept with justification; final gate ✅ Audit Clear if no other Cut items remain
 ```

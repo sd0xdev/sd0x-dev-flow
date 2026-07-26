@@ -25,7 +25,7 @@
 | planning 後 compare drift | 停，不進 preview | `failed` |
 | `validate-plan.js` 違規 | 帶規則代碼重規劃 ≤1 次；仍敗 → 停 | `needs_human` |
 | 使用者拒絕 preview | 停（plan 留存於輸出供手動採用） | `aborted` |
-| 高信度 secret 於意圖/完成定義 | 不落盤 run-state，提示改寫 | `needs_human` |
+| 高信度 secret 於意圖/完成定義 | 不寫入 run-state，提示改寫 | `needs_human` |
 | worker 失敗 | 重規劃 ≤1 次（FR-9）；仍敗 → 停 | `needs_human` |
 | execute 後 compare drift | 停，**不寫報告、不自動回復**（回復本身是 mutation） | `failed` |
 | 報告 doc review 回 blocked/degraded/無法判定 | 停，報告不得視為完成交付 | `needs_human` |

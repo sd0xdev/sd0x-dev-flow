@@ -12,13 +12,19 @@
  * never emits partial candidates.
  *
  * Usage:
- *   node skills/orchestrate/scripts/plan-context.js [--budget S|M|L]
+ *   node skills/orchestrate/scripts/plan-context.js --out <path> [--budget S|M|L]
  *     [--repo <path>] [--catalog <path>] [--skills-dir <path>]
  *     [--agents-dir <path>] [--allowlist <path>]
+ *
+ * `--out` is REQUIRED. The packet is ~81 KB at tier M and the main session would hold it twice
+ * (tool result + the copy that persists for the rest of the conversation), which is the entire
+ * cost this script exists to avoid — so there is no stdout mode to fall back to. stdout carries
+ * only the summary: the packet path, its byte count, and the sha256 that binds it.
  */
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 const { execFileSync } = require('node:child_process');
 
 const BUDGET_TIERS = {
@@ -32,6 +38,40 @@ function fail(msg) {
   process.exit(1);
 }
 
+// Walk every component from repoRoot down to dirname(outPath), creating missing
+// directories and rejecting any existing component that is a symlink. `mkdirSync`
+// with `recursive: true` happily traverses a planted symlink — a repo shipping
+// `.claude_workflows -> /etc` would have the packet written outside the tree
+// entirely, and since run-verify excludes that directory the write leaves no drift.
+function assertContainedWritePath(outPath, repoRoot) {
+  const rel = path.relative(repoRoot, outPath);
+  if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) {
+    fail(`--out "${outPath}" resolves outside the repo root "${repoRoot}" — refusing to write`);
+  }
+  const parts = rel.split(path.sep).slice(0, -1);
+  let cursor = repoRoot;
+  for (const part of parts) {
+    cursor = path.join(cursor, part);
+    let st;
+    try {
+      st = fs.lstatSync(cursor);
+    } catch {
+      try {
+        fs.mkdirSync(cursor);
+      } catch (err) {
+        fail(`cannot create context packet directory "${cursor}": ${err.message}`);
+      }
+      continue;
+    }
+    if (st.isSymbolicLink()) {
+      fail(`--out path component "${cursor}" is a symlink — refusing to follow it`);
+    }
+    if (!st.isDirectory()) {
+      fail(`--out path component "${cursor}" exists and is not a directory`);
+    }
+  }
+}
+
 function parseArgs(argv) {
   const args = { budget: 'M' };
   for (let i = 0; i < argv.length; i += 1) {
@@ -42,6 +82,7 @@ function parseArgs(argv) {
       return argv[i];
     };
     if (a === '--budget') args.budget = next();
+    else if (a === '--out') args.out = next();
     else if (a === '--repo') args.repo = next();
     else if (a === '--catalog') args.catalog = next();
     else if (a === '--skills-dir') args.skillsDir = next();
@@ -50,6 +91,12 @@ function parseArgs(argv) {
     else fail(`unknown flag: ${a}`);
   }
   if (!BUDGET_TIERS[args.budget]) fail(`invalid --budget "${args.budget}" (expected S|M|L)`);
+  // Fail closed rather than fall back. The old no-`--out` branch printed the WHOLE packet to
+  // stdout, which every caller (SKILL.md, planner-prompt.md, the tech spec) already forbids and
+  // which reintroduces the ~81 KB × 2 main-context cost the flag was added to remove. A silent
+  // fallback is worse than an error precisely because the run still succeeds: nothing surfaces
+  // the regression except the token bill.
+  if (!args.out) fail('--out <path> is required (the packet is written to disk; stdout carries only the summary)');
   return args;
 }
 
@@ -193,8 +240,22 @@ function loadAllowlist(allowlistPath, agents) {
 
 // ── Repo signals ──
 
+// Config-injection guard — same reasoning as run-verify.js's GIT_SAFE_CONFIG, and needed here
+// MORE urgently, not less. `core.fsmonitor = <program>` is a repo-local setting that git EXECUTES
+// on `status`, and `status --porcelain -uall` is called below. This script runs BEFORE
+// `run-verify.js snapshot` in the documented order (see skills/orchestrate/SKILL.md Workflow), so
+// a program that fires here mutates the repo while the baseline does not yet exist — the mutation
+// is then folded INTO the baseline and every later compare reads clean. That is strictly worse
+// than the same injection against the verifier, which at least drifts.
+//
+// `-c` wins over repo-local config and the setting defaults to unset, so on an honest repo this
+// changes nothing. `rev-parse` does not consult fsmonitor, but the override is applied to every
+// invocation rather than only the one that needs it: an exception list is a future footgun the
+// moment someone adds a fourth call.
+const GIT_SAFE_CONFIG = ['-c', 'core.fsmonitor=false'];
+
 function git(repo, cliArgs) {
-  return execFileSync('git', ['-C', repo, ...cliArgs], { encoding: 'utf8' }).trimEnd();
+  return execFileSync('git', ['-C', repo, ...GIT_SAFE_CONFIG, ...cliArgs], { encoding: 'utf8' }).trimEnd();
 }
 
 function loadRepoSignals(repo) {
@@ -222,17 +283,94 @@ function loadRepoSignals(repo) {
   return { branch, head, dirty_files_count: dirtyCount, features };
 }
 
+// Resolve the plugin root that carries the bundled metadata (docs/skill-catalog.yml, skills/,
+// agents/, orchestrate references/). These are the SAME regardless of which repo is being
+// orchestrated, so they come from the PLUGIN, never from --repo or a dir the target controls.
+//
+// SECURITY — a resolution that TRUSTS the wrong root loads that root's admission-allowlist, and
+// a hostile target repo could then allowlist an Edit/Write agent and mark it fanout-eligible,
+// defeating the report-only / deny-by-default guarantee. So we NEVER search arbitrary ancestors
+// for a lone catalog: a discovery walkup would reach the TARGET repo (or a parent of it — the
+// user's projects/home dir) and a repo that merely ships `docs/skill-catalog.yml` (a COMMON
+// convention) would be mistaken for the bundle. A candidate is trusted ONLY when it carries the
+// FULL, distinctive plugin signature (docs/skill-catalog.yml + skills/orchestrate/ + agents/),
+// which a casual or partial plant does not satisfy.
+//
+// Resolution order:
+//   1. CLAUDE_PLUGIN_ROOT — the authoritative, HARNESS-owned signal Claude Code injects for
+//      plugin execution (never target-controlled). Trusted only if it looks like the bundle.
+//   2. Fixed three-levels-up relative to THIS script's physical location (scripts → orchestrate
+//      → skills → root). Correct for the in-repo plugin AND npm-install layouts, trusted only if
+//      it looks like the bundle — so the /install-scripts FLATTENED layout (three-up = parent of
+//      the target repo) is NOT mistaken for the plugin and instead falls through to fail-closed.
+//   3. Neither signal is a full bundle → return a SENTINEL subpath (with no catalog) so main()
+//      fail-closes on the missing catalog with a clear message. Deliberately NOT `fixed` itself:
+//      in the flattened layout `fixed` is the parent-of-repo, and a PARTIAL plant there (a lone
+//      docs/skill-catalog.yml, without skills/orchestrate/ + agents/) would satisfy main()'s
+//      weaker "catalog exists" check → fail-open. (Overridable via --catalog / --skills-dir / --agents-dir.)
+// RESIDUAL (documented): a full fake bundle deliberately planted at EXACTLY parent-of-repo in
+// the flattened+env-unset case would still be trusted by step 2 — but that requires the attacker
+// to already own the filesystem around the repo, and CLAUDE_PLUGIN_ROOT (step 1) is the intended
+// path for that layout.
+function resolvePluginRoot() {
+  // `statSync`, not `lstatSync` — deliberate, and the one place in this file that follows symlinks
+  // on purpose (the traversal guard above uses `lstatSync` precisely because it must not).
+  // A symlinked bundle is an ordinary install shape: a dev checkout linked into the plugins
+  // directory presents `skills/orchestrate` and `agents` as symlinks, and refusing those would
+  // break working setups. It buys no safety either: an attacker who can plant a symlink at
+  // parent-of-repo can plant a real directory there just as easily, which is the RESIDUAL above
+  // rather than a new hole. The asymmetry is the point, not an oversight.
+  const looksLikeBundle = (dir) => {
+    try {
+      return (
+        fs.statSync(path.join(dir, 'docs', 'skill-catalog.yml')).isFile()
+        && fs.statSync(path.join(dir, 'skills', 'orchestrate')).isDirectory()
+        && fs.statSync(path.join(dir, 'agents')).isDirectory()
+      );
+    } catch {
+      return false;
+    }
+  };
+  const envRoot = process.env.CLAUDE_PLUGIN_ROOT ? path.resolve(process.env.CLAUDE_PLUGIN_ROOT) : null;
+  if (envRoot && looksLikeBundle(envRoot)) return envRoot;
+  const fixed = path.resolve(__dirname, '..', '..', '..');
+  if (looksLikeBundle(fixed)) return fixed;
+  // Neither signal carries the FULL plugin signature. Returning `fixed` here would be fail-OPEN: in
+  // the flattened /install-scripts layout `fixed` is the parent-of-repo, so a PARTIAL plant there
+  // (a lone docs/skill-catalog.yml + allowlist, WITHOUT skills/orchestrate/ + agents/) would still
+  // satisfy main()'s weaker "catalog exists" check and be loaded — the exact deny-by-default bypass
+  // the full-signature gate exists to prevent. Return a sentinel subpath that provably holds no
+  // catalog so main() fail-closes on "catalog missing" regardless of what is planted at `fixed` (a
+  // legitimate flattened layout has no catalog at parent-of-repo either, so it already fail-closed
+  // here — only the PLANTED case changes, from loaded to rejected). Override via --catalog.
+  return path.join(fixed, '.sd0x-no-plugin-bundle');
+}
+
 // ── Main ──
 
 function main() {
   const args = parseArgs(process.argv.slice(2));
-  // Default --repo to cwd (consistent with run-verify.js); a __dirname walkup
-  // would resolve to <project>/.claude under the installed-copy layout.
+  // --repo defaults to cwd: repo *signals* (branch, dirty files, features) must come
+  // from the TARGET repository the user is orchestrating, not the plugin. A __dirname
+  // walkup here would wrongly resolve to the installed plugin dir.
   const repo = path.resolve(args.repo || process.cwd());
-  const catalogPath = path.resolve(args.catalog || path.join(repo, 'docs', 'skill-catalog.yml'));
-  const skillsDir = path.resolve(args.skillsDir || path.join(repo, 'skills'));
-  const agentsDir = path.resolve(args.agentsDir || path.join(repo, 'agents'));
-  const allowlistPath = path.resolve(args.allowlist || path.join(__dirname, '..', 'references', 'admission-allowlist.json'));
+  // The skill catalog, skills/, and agents/ are plugin METADATA bundled WITH this script —
+  // they define the workflow vocabulary the planner composes and are the same regardless of
+  // which repo is being orchestrated. resolvePluginRoot() (above) finds the bundle via
+  // CLAUDE_PLUGIN_ROOT → fixed three-up, each trusted ONLY when it carries the full plugin
+  // signature, so a target-repo-owned (or repo-adjacent) catalog is never mistaken for the
+  // bundle and the /install-scripts flattened layout fail-closes rather than trusting --repo.
+  // Defaulting to <repo>/... broke every consumer repo: the target repo has no
+  // docs/skill-catalog.yml, so the default invocation exited on "catalog missing".
+  // (docs/skill-catalog.yml is shipped via package.json "files" so it is present under the
+  // plugin root in npm-install layout too.)
+  const pluginRoot = resolvePluginRoot();
+  const catalogPath = path.resolve(args.catalog || path.join(pluginRoot, 'docs', 'skill-catalog.yml'));
+  const skillsDir = path.resolve(args.skillsDir || path.join(pluginRoot, 'skills'));
+  const agentsDir = path.resolve(args.agentsDir || path.join(pluginRoot, 'agents'));
+  const allowlistPath = path.resolve(
+    args.allowlist || path.join(pluginRoot, 'skills', 'orchestrate', 'references', 'admission-allowlist.json'),
+  );
 
   let catalogText;
   try {
@@ -298,7 +436,49 @@ function main() {
       `assembled context ${Buffer.byteLength(serialized, 'utf8')} bytes exceeds tier ${args.budget} cap ${output.budget.max_context_bytes} — raise --budget or narrow scope (sources: catalog=${skillCandidates.length} entries, agents=${agentCandidates.length}, features=${output.repo_signals.features.length})`
     );
   }
-  process.stdout.write(`${serialized}\n`);
+  // `--out` writes the packet to disk and prints only a summary. The full packet is
+  // planner input, but without this the main session pays for it TWICE — once as the
+  // Bash tool result, once embedded in the planner prompt (~40K tokens per invocation
+  // at tier M, and the main-session copy persists for the rest of the conversation).
+  // The planner reads the path instead; `Explore` has Read. Fail-closed: an unwritable
+  // path aborts rather than silently falling back to stdout, which would reintroduce
+  // the double-injection the flag exists to prevent.
+  // `args.out` is guaranteed by parseArgs — there is deliberately no stdout-packet branch.
+  {
+    const outPath = path.resolve(args.out);
+    const payload = `${serialized}\n`;
+    assertContainedWritePath(outPath, path.resolve(repo));
+    try {
+      // 'wx' = exclusive create: fails if anything already occupies the path, including a
+      // planted symlink. Combined with the component walk above this keeps the write inside
+      // the repo. Run ids are unique, so refusing to overwrite costs nothing.
+      fs.writeFileSync(outPath, payload, { encoding: 'utf8', flag: 'wx' });
+    } catch (err) {
+      fail(`cannot write context packet to "${outPath}": ${err.message}`);
+    }
+    // The packet lands on a surface the planner can both read and write, and `run-verify.js`
+    // deliberately excludes that surface from drift detection. Without an integrity binding a
+    // Bash-capable planner could append itself a denied agent to `admission.allowlist` (or a
+    // fabricated entry to `skill_candidates`), return a plan matching the doctored packet, and
+    // sail through validate-plan's A1/A4 with no drift recorded. The digest is computed here,
+    // travels via the summary (main session, outside planner reach), and validate-plan
+    // re-hashes the file before trusting a single field of it.
+    const sha256 = crypto.createHash('sha256').update(payload, 'utf8').digest('hex');
+    const summary = {
+      schema_version: 1,
+      context_path: outPath,
+      bytes: Buffer.byteLength(serialized, 'utf8'),
+      sha256,
+      budget: output.budget,
+      admission: output.admission,
+      counts: {
+        skill_candidates: skillCandidates.length,
+        agent_candidates: agentCandidates.length,
+        repo_features: output.repo_signals.features.length,
+      },
+    };
+    process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+  }
 }
 
 main();

@@ -41,10 +41,14 @@ const args = process.argv.slice(2);
 let query, file;
 const vars = {};
 let hasExitFlag = false;
+let hasSlurpFlag = false;
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
   if (arg === '-r') continue;
   if (arg === '-e') { hasExitFlag = true; continue; }
+  // \`-s\` (slurp) must be CONSUMED, not fall through to the positional branch below — otherwise
+  // it is captured as the query and the real filter is captured as a filename.
+  if (arg === '-s') { hasSlurpFlag = true; continue; }
   if (arg === '--arg') { vars[args[i + 1]] = args[i + 2]; i += 2; continue; }
   if (arg === '--argjson') {
     const key = args[i + 1];
@@ -76,6 +80,34 @@ function out(v) {
 // Pure READ queries (use // fallback operator, never mutate state)
 // Must come FIRST so they're not accidentally matched by loose write-handlers.
 // =============================================================================
+// stop-guard.sh's fail-closed state guard. Real jq reads a STREAM of top-level values; the
+// slurped form rejects anything that is not exactly ONE object. Without this branch the query
+// fell through to the '' + exit-0 default, i.e. the guard silently never fired here.
+function parseJqStream(text) {
+  if (text.trim() === '') return [];
+  try { return [JSON.parse(text)]; } catch {}
+  const vals = [];
+  for (const line of text.split('\\n')) {
+    if (line.trim() === '') continue;
+    try { vals.push(JSON.parse(line)); } catch { return null; }
+  }
+  return vals.length ? vals : null;
+}
+// Narrowly matched: this stub is SHARED by three hooks, and post-tool-review-state.sh's
+// tool_output-normalising filter also contains \`== "object"\`. A loose substring match
+// swallowed it and broke every aggregate-gate write test. Only the two state-guard filter
+// texts (current slurped form + the pre-fix unslurped one, so a revert is still detectable)
+// route here.
+if (query && (query === 'type == "object"' || query.includes('length == 1 and (.[0]|type) == "object"'))) {
+  const vals = parseJqStream(input);
+  if (vals === null) process.exit(2);
+  const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+  const ok = hasSlurpFlag && query.includes('length == 1')
+    ? vals.length === 1 && isObject(vals[0])
+    : vals.length > 0 && isObject(vals[vals.length - 1]);
+  process.stdout.write(ok ? 'true' : 'false');
+  process.exit(hasExitFlag ? (ok ? 0 : 1) : 0);
+}
 if (query === '.tool_name // empty') { process.stdout.write(data.tool_name || ''); process.exit(0); }
 if (query === '.tool_input // empty') {
   if (data.tool_input === undefined || data.tool_input === null) process.stdout.write('');
@@ -100,6 +132,28 @@ if (query === '.precommit.passed // false') { out(asBool(data.precommit && data.
 if (query === '.review_mode // "single"') { out(data.review_mode || 'single'); process.exit(0); }
 if (query === '.aggregate_gate.executed // false') { out(asBool((data.aggregate_gate || {}).executed)); process.exit(0); }
 if (query === '.aggregate_gate.gate // empty') { out((data.aggregate_gate || {}).gate || ''); process.exit(0); }
+// Bounded-integer validation of the iteration counters, done INSIDE jq by stop-guard.sh so no
+// untrusted string reaches bash arithmetic. Kept in sync with the identical branch in
+// stop-guard.test.js. Without it this stub falls through to the '' default, ITER_PARSED reads
+// empty, and EVERY state here is reported as "counters corrupt" — which silently broke T7/T9
+// and made T8 pass for the wrong reason.
+if (query && query.includes('.iteration_history as $ih')) {
+  const raw = data && typeof data === 'object' ? data.iteration_history : undefined;
+  // null/absent ONLY takes the defaults path. A boolean false must NOT: jq's alternative operator
+  // would have swallowed it, which is exactly the hole the production filter was rewritten to close.
+  const norm = raw === undefined || raw === null ? {} : raw;
+  const isObj = norm !== null && typeof norm === 'object' && !Array.isArray(norm);
+  if (!isObj) { process.stdout.write('corrupt'); process.exit(0); }
+  const pick = (v, d) => (v === undefined || v === null ? d : v);
+  const r = pick(norm.current_round, 0);
+  const m = pick(norm.max_rounds, 10);
+  const bad =
+    typeof r !== 'number' || typeof m !== 'number' ||
+    !Number.isInteger(r) || !Number.isInteger(m) ||
+    r < 0 || r > 100000 || m < 1 || m > 100000;
+  process.stdout.write(bad ? 'corrupt' : r + ' ' + m);
+  process.exit(0);
+}
 if (query === '.iteration_history.current_round // 0') { out(String(((data.iteration_history || {}).current_round) || 0)); process.exit(0); }
 if (query === '.iteration_history.max_rounds // 10') { out(String(((data.iteration_history || {}).max_rounds) || 10)); process.exit(0); }
 if (query === '.transcript_path // empty') { out(data.transcript_path || ''); process.exit(0); }
@@ -257,6 +311,15 @@ if (query && query.includes('[$key]') && vars.key) {
   data[vars.key].passed = vars.passed;
   data[vars.key].last_run = vars.now;
   data.updated_at = vars.now;
+  // Convergence reset (terminal gate passed) — mirrors the real jq filter.
+  // An EXHAUSTED budget is never refunded: otherwise a run that burned the whole
+  // cap and then happened to pass would erase the evidence before stop-guard reads it.
+  if (vars.passed === true && (vars.key === 'precommit' || vars.key === 'doc_review')
+      && data.iteration_history
+      && (data.iteration_history.current_round || 0) < (data.iteration_history.max_rounds || 10)) {
+    data.iteration_history.current_round = 0;
+    data.iteration_history.findings_by_round = [];
+  }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
 }
@@ -447,7 +510,13 @@ test('T5: /precommit pass sets review_phase → idle', () => {
   assert.equal(state.review_phase, 'idle');
 });
 
-test('T6: MCP precommit ✅ PASS sets review_phase → idle', () => {
+test('T6: MCP `## Overall: ✅ PASS` leaves review_phase at precommit_pending (MCP is not a precommit producer)', () => {
+  // Inverted from the original T6, which asserted the MCP path could close the precommit phase.
+  // That branch was removed: precommit runs over Bash (`skills/precommit/SKILL.md:4` allowed-tools,
+  // `:37` `node .claude/scripts/precommit-runner.js`) or as the Skill's own output, so a verdict
+  // line inside an MCP response is always QUOTED text — codex reading a build log, reviewing the
+  // runner, or citing `skills/precommit/SKILL.md:86`. Honouring it let one codex message advance
+  // the phase to idle with no checks run. The phase must stay pending until the real producer reports.
   const workDir = makeTempDir('sd0x-rp-t6-');
   const binDir = setupStubBin();
   writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify({
@@ -467,7 +536,8 @@ test('T6: MCP precommit ✅ PASS sets review_phase → idle', () => {
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
-  assert.equal(state.review_phase, 'idle');
+  assert.equal(state.review_phase, 'precommit_pending', 'a quoted PASS must not close the precommit phase');
+  assert.equal(state.precommit.passed, false, 'and must not record a passing precommit verdict');
 });
 
 // --- stop-guard phase-aware hint ---

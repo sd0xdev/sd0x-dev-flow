@@ -36,6 +36,33 @@ fi
 
 STATE_FILE=".claude_review_state.json"
 
+# Sidecar evidence lives in TWO places: the shared `.blocked` file and per-event emergency markers
+# named `.blocked.event.*` ALONGSIDE it. The second plane exists because clearers rewrite the shared
+# file wholesale,
+# which raced the setter's unserialized last-resort append; per-event markers are created and
+# retired under disjoint names so nothing can erase them. See `_sidecar_emergency_mark` in
+# hooks/post-edit-format.sh. A bare `-f "${STATE_FILE}.blocked"` therefore no longer answers "is
+# there evidence" — and in its NEGATIVE form it gates reminder injection, so missing a marker is
+# fail-open.
+SIDECAR_EVENT_PREFIX="${STATE_FILE}.blocked.event."
+
+# `-f` follows symlinks; a link planted at a marker name would otherwise count as evidence of a
+# lost verdict. See the long note in post-tool-review-state.sh for why these are sibling FILES
+# rather than entries in a `.blocked.d/` directory (that layout was a path-traversal delete).
+_sidecar_is_marker() {
+  [[ -f "$1" && ! -L "$1" ]]
+}
+_sidecar_any() {
+  _sidecar_is_marker "${STATE_FILE}.blocked" && return 0
+  local f
+  # An unmatched glob leaves the literal pattern, which the regular-file test rejects — no
+  # `nullglob` dependency. A symlink at a marker name is not evidence either; see _sidecar_is_marker.
+  for f in "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$f" && return 0
+  done
+  return 1
+}
+
 # Consume stdin (required by hook protocol)
 cat > /dev/null
 
@@ -51,7 +78,7 @@ DOC_PASSED=$(jq -r '.doc_review.passed // false' "$STATE_FILE" 2>/dev/null || ec
 PRE_PASSED=$(jq -r '.precommit.passed // false' "$STATE_FILE" 2>/dev/null || echo "false")
 
 # === Sidecar fail-closed marker ===
-if [[ -f "${STATE_FILE}.blocked" ]]; then
+if _sidecar_any; then
   CODE_PASSED="false"
   DOC_PASSED="false"
   PRE_PASSED="false"
@@ -66,11 +93,31 @@ fi
 # avoids walking a large untracked tree on every skill completion when no review is pending.
 # Bound git with timeout/gtimeout (cross-platform); -uall can be costly on big trees.
 # Skip when sidecar present — would undo fail-closed HAS_* forcing.
-if [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) && ! -f "${STATE_FILE}.blocked" ]]; then
-  if command -v timeout &>/dev/null; then
-    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
-  elif command -v gtimeout &>/dev/null; then
-    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+if [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) ]] && ! _sidecar_any; then
+  if command -v timeout &>/dev/null || command -v gtimeout &>/dev/null || command -v perl &>/dev/null; then
+    # Capture stderr + force LC_ALL=C: `git status` exits 0 but only WARNS on stderr and OMITS a
+    # subtree it could not open (unreadable dir). A stderr-discarding, ambient-locale probe would miss
+    # a reviewable file under such a dir and wrongly downgrade the flag (fail-open, iter-20 P1 class).
+    # On any directory-omission warning (or mktemp failure) mark UNAVAILABLE → skip downgrade → hold.
+    _psa_err="$(mktemp 2>/dev/null || echo '')"
+    if [[ -z "$_psa_err" ]]; then
+      GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+    else
+      if command -v timeout &>/dev/null; then
+        GIT_PORCELAIN=$(LC_ALL=C timeout 5 git status --porcelain -uall 2>"$_psa_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      elif command -v gtimeout &>/dev/null; then
+        GIT_PORCELAIN=$(LC_ALL=C gtimeout 5 git status --porcelain -uall 2>"$_psa_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      else
+        # Stock macOS ships neither timeout nor gtimeout. perl's alarm+exec bounds the -uall walk
+        # identically (the timer survives exec; SIGALRM's default action kills git → non-zero exit
+        # → UNAVAILABLE), mirroring session-init.sh's _capture_baseline. Without this tier the
+        # reconciliation NEVER ran on such hosts, so a stale has_*_change flag survived a revert or
+        # an external commit and kept re-requesting a review with nothing left to review.
+        GIT_PORCELAIN=$(LC_ALL=C perl -e 'alarm 5; exec @ARGV or exit 127' git status --porcelain -uall 2>"$_psa_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      fi
+      grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_psa_err" && GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      rm -f "$_psa_err"
+    fi
   else
     # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
     GIT_PORCELAIN="__GIT_UNAVAILABLE__"

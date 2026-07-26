@@ -4,9 +4,20 @@
 
 | Change Type | Must Run | Can Skip |
 |-------------|----------|----------|
-| code files | `/codex-review-fast` -> `/precommit-fast` | - |
+| code files | `/codex-review-fast` -> `/precommit` | - |
 | `.md` docs | `/codex-review-doc` | `/codex-review-fast` |
 | Comments only | - | All |
+
+> **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
+>
+> | Setting | Without it |
+> |---------|-----------|
+> | `PRECOMMIT_REQUIRE_FULL=1` | a passing `mode: fast` (or an unrecorded mode) satisfies the gate |
+> | `STOP_GUARD_MODE=strict` | the default `warn` mode prints the missing step to stderr and **still exits 0** |
+>
+> With both set, the flag is honoured in both of stop-guard's modes: from `precommit.mode` when `.claude_review_state.json` exists, and from the invoked command name (`/precommit` vs `/precommit-fast`) when it falls back to reading the transcript.
+>
+> Even with both, the flag gates the **command variant**, not the stages that ran: `/precommit` resolves lint / build / test from whatever your manifest actually defines, so a repo with no build script records `full` with no build behind it. The gate proves which command was invoked; it cannot prove which stages existed to run. `/precommit` prints the resolved stages — read them rather than assuming.
 
 Before PR: `/pr-review`
 
@@ -23,7 +34,7 @@ After editing code or docs, you **MUST** run the review command **in the same re
 
 | After editing... | Immediately run | Then on pass |
 |------------------|----------------|--------------|
-| code files | `/codex-review-fast` | `/precommit-fast` |
+| code files | `/codex-review-fast` | `/precommit` |
 | `.md` docs | `/codex-review-doc` | (done) |
 | Review found issues | Fix all -> re-run same review | - |
 

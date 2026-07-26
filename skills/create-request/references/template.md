@@ -2,12 +2,19 @@
 
 ## Request Document Template
 
+> **`Status` must stay a bare token.** `parseRequestStatus()` returns the WHOLE trailing string and
+> `CLOSED_REQUEST_STATUS` compares by exact equality, so `> **Status**: Completed（見下方 Superseded）`
+> is not `Completed` — the request silently reopens for `/create-request --scan`, feature-context
+> resolution, and every other consumer. Put commentary on the `> **Note**:` line, which no parser
+> reads. Enforced by `test/scripts/lib/fc-extractor.test.js`.
+
 ```markdown
 # {Title}
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc — for that see `../1-requirements.md` if present (created via `/req-analyze`).
 > **Created**: {YYYY-MM-DD}
 > **Status**: Pending
+> **Note**: {optional — any commentary about the Status goes HERE, never on the Status line}
 > **Priority**: {P0|P1|P2}
 > **Tech Spec**: [Link](../2-tech-spec.md) <- Technical detail (primary source)
 > **Requirements**: [Link](../1-requirements.md) <- Feature-level problem-space rationale (include this line ONLY IF `../1-requirements.md` exists — omit otherwise to avoid dead links)

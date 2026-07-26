@@ -173,3 +173,38 @@ test('rules/auto-loop-project.md has Plan Review opt-in sections', () => {
   assert.match(content, /^## Plan Review$/m, 'should have ## Plan Review section');
   assert.match(content, /^## Plan Review Max Rounds$/m, 'should have ## Plan Review Max Rounds section');
 });
+
+// --- Heredoc delimiter randomization (secondary review iter-21 P2) ---
+// The delimiter randomization is a real command-injection fix: a quoted heredoc stops shell
+// INTERPOLATION of plan text, but not TERMINATION — a plan line reading exactly `PLAN_EOF` ends
+// the here-document early and everything after it is executed as shell under this skill's `Bash`
+// permission. Plan text is routinely drafted from untrusted material (issue bodies, PR
+// descriptions, pasted logs), so that is arbitrary execution driven by attacker-supplied prose.
+//
+// The skill's own rationale is that "a fixed delimiter makes the attack a copy-paste" — which is
+// precisely what shipping a concrete literal in the example did. A model that copies the example
+// rather than generating a suffix gets the fixed delimiter back, and the mitigation reads as
+// applied while being absent.
+
+test('plan-review SKILL.md ships NO concrete heredoc delimiter literal', () => {
+  const content = readFileSync(skillPath, 'utf8');
+  const concrete = [...content.matchAll(/PLAN_EOF_([A-Za-z0-9]+)/g)].map((m) => m[1]);
+  assert.deepEqual(
+    concrete,
+    [],
+    `the example must use a placeholder, not a copyable value (found: ${concrete.join(', ')})`
+  );
+});
+
+test('plan-review SKILL.md renders the delimiter as a generated placeholder', () => {
+  const content = readFileSync(skillPath, 'utf8');
+  assert.match(content, /PLAN_EOF_<random-hex>/, 'the example must read as a slot to fill');
+});
+
+test('plan-review SKILL.md still mandates generate-and-collision-check', () => {
+  // Guards the other direction: removing the literal must not quietly remove the requirement.
+  const content = readFileSync(skillPath, 'utf8');
+  assert.match(content, /freshly randomized per invocation/i);
+  assert.match(content, /collision/i, 'the collision re-check must remain mandated');
+  assert.match(content, /≥8 hex chars|>=8 hex chars/, 'the suffix length floor must remain stated');
+});

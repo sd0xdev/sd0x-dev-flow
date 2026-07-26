@@ -20,6 +20,7 @@ const _pluginRoot = (() => {
 
 const { runCapture, gitRepoRoot, gitShortHead, qualifyCommand } = require(path.join(_pluginRoot, 'scripts', 'lib', 'utils'));
 const { resolveFeatureContext: _resolveFeature } = require(path.join(_pluginRoot, 'scripts', 'lib', 'feature-resolver'));
+const { parseRequestStatus, isOpenRequestStatus, HEAD_LINES } = require(path.join(_pluginRoot, 'scripts', 'lib', 'request-status'));
 
 // ---------------------------------------------------------------------------
 // File classification config (language-agnostic)
@@ -49,8 +50,16 @@ const MAX_FINDINGS = Number(argVal('--max-findings')) || 8;
 const FORMAT = process.argv.includes('--markdown') ? 'markdown' : 'json';
 const FEATURE_KEY = argVal('--feature');
 
-// Shared incomplete status taxonomy — used by request-stale, backlog, feature-complete
-const INCOMPLETE_STATUSES = ['pending', 'in development', 'in progress', 'nearly complete'];
+// Openness comes from scripts/lib/request-status.js, which defines it NEGATIVELY: closed is a
+// short exhaustive set, everything else is open.
+//
+// This file used to keep its own POSITIVE list of four lowercase substrings. Measured against
+// the repo's 125 request docs it missed `Candidate Complete` (20 docs — the third most common
+// value) and `Spec Complete` (1), while `In Development` and `Nearly Complete` matched nothing
+// at all. So `request-stale` was blind to 21 open requests, and `feature-complete` — which
+// fires only when no request-stale finding exists — could declare a feature done with those
+// still outstanding. Adding the two missing strings would have left the next new status to be
+// forgotten the same way; deriving from the closed set cannot go stale in that direction.
 
 // ---------------------------------------------------------------------------
 // Input collection (4 git commands + 1 file read)
@@ -197,17 +206,6 @@ function resolveFeatureContext(root, branch, changedPaths) {
   return _resolveFeature(root, branch, changedPaths, { featureKey: FEATURE_KEY });
 }
 
-// ---------------------------------------------------------------------------
-// Request status parsing
-// ---------------------------------------------------------------------------
-function parseRequestStatus(content) {
-  // Table format: | Status | **Value** | or | Status | Value |
-  const m = content.match(/^\|\s*Status\s*\|\s*\*\*(.+?)\*\*\s*\|/m)
-           || content.match(/^\|\s*Status\s*\|\s*(.+?)\s*\|/m)
-           // Blockquote format: > **Status**: Value
-           || content.match(/^>\s*\*\*Status\*\*:\s*(.+)$/m);
-  return m ? m[1].trim() : null;
-}
 
 // ---------------------------------------------------------------------------
 // Phase detection
@@ -292,18 +290,43 @@ function buildBacklogContext(root) {
   } catch { return result; }
 
   result.total_features = dirs.length;
+  // `readdirSync` order is filesystem-dependent, and the `slice(0, 5)` below turns that into which
+  // features a user is shown. Sorting makes the report reproducible across machines and reruns.
+  dirs.sort();
 
   for (const key of dirs) {
     const reqDir = path.join(docsBase, key, 'requests');
-    let status = null;
+    // A feature is incomplete if ANY of its requests is still open. The previous shape kept one
+    // `status` per feature and let each file overwrite the last, so with two requests — one
+    // `Completed`, one `Pending` — whichever the filesystem happened to return second decided
+    // whether the feature appeared at all. It also guarded with `status != null`, which discarded
+    // exactly the case `request-status.js` defines as open (see the comment at the request-stale
+    // finding); openness is therefore evaluated per file, with `null` flowing into the predicate.
+    //
+    // "No request docs at all" is a different statement from "a request with no Status", and only
+    // the latter is an open request — so the loop, not the initial value, is what can mark a
+    // feature open.
+    const openRequests = [];
     let uncheckedAc = 0;
     let totalAc = 0;
     try {
-      const reqFiles = fs.readdirSync(reqDir).filter(f => f.endsWith('.md'));
+      const reqFiles = fs.readdirSync(reqDir).filter(f => f.endsWith('.md')).sort();
       for (const rf of reqFiles) {
-        const content = fs.readFileSync(path.join(reqDir, rf), 'utf8');
+        let content;
+        try {
+          content = fs.readFileSync(path.join(reqDir, rf), 'utf8');
+        } catch {
+          // UNREADABLE IS OPEN. Same rule as a missing Status field: both are the statement "this
+          // cannot be confirmed done", and openness here is defined negatively for exactly that
+          // reason. Letting the failure reach the outer catch was worse than mis-classifying the
+          // one file — that catch wraps the WHOLE loop, so the first unreadable request silently
+          // dropped every request after it in sorted order too, and a feature whose only request
+          // was unreadable (a broken symlink is enough) disappeared from the backlog entirely.
+          openRequests.push({ file: rf, status: null });
+          continue;
+        }
         const s = parseRequestStatus(content);
-        if (s) status = s;
+        if (isOpenRequestStatus(s)) openRequests.push({ file: rf, status: s });
         const checked = (content.match(/- \[x\]/gi) || []).length;
         const unchecked = (content.match(/- \[ \]/g) || []).length;
         totalAc += checked + unchecked;
@@ -311,15 +334,27 @@ function buildBacklogContext(root) {
       }
     } catch { /* no requests dir */ }
 
-    // Include if status suggests incomplete or has unchecked AC
-    const isIncomplete = (status && INCOMPLETE_STATUSES.some(s => status.toLowerCase().includes(s.toLowerCase()))) || uncheckedAc > 0;
-    if (isIncomplete) {
-      result.incomplete_features.push({ key, status, unchecked_ac: uncheckedAc, total_ac: totalAc });
+    if (openRequests.length > 0 || uncheckedAc > 0) {
+      result.incomplete_features.push({
+        key,
+        // The first open request in sorted order — deterministic, and null when the feature is
+        // listed only because of unchecked AC.
+        status: openRequests.length > 0 ? openRequests[0].status : null,
+        open_requests: openRequests.length,
+        unchecked_ac: uncheckedAc,
+        total_ac: totalAc,
+      });
     }
   }
 
-  // Top 5
-  result.incomplete_features = result.incomplete_features.slice(0, 5);
+  // The TRUE count, captured before truncation. The renderer printed
+  // `incomplete_features.length` as the headline number, which after this slice is the LIMIT, not
+  // the count: a repo with 21 incomplete features out of 30 reported "5/30 incomplete". The
+  // understatement is silent and points the wrong way — it makes a backlog look four times smaller
+  // than it is, in the one line a reader uses to decide whether there is a backlog at all.
+  result.incomplete_count = result.incomplete_features.length;
+  result.incomplete_shown_limit = 5;
+  result.incomplete_features = result.incomplete_features.slice(0, result.incomplete_shown_limit);
   return result;
 }
 
@@ -550,29 +585,67 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     }
   }
 
-  // 14. request-stale: precommit passed + request status matches INCOMPLETE_STATUSES
+  // 14. request-stale: precommit passed + the request is still open (see request-status.js)
   if (reviewState && gates.precommit.passed && featureCtx && featureCtx.key && featureCtx.has_requests) {
     const reqDir = path.join(root, featureCtx.docs_path, 'requests');
     try {
-      const reqFiles = fs.readdirSync(reqDir).filter(f => f.endsWith('.md'));
+      // `.sort()` because the loop `break`s on the FIRST open request: without it, WHICH request
+      // the user is told to update is decided by `readdirSync` order, i.e. by the filesystem. Two
+      // runs on two machines name two different files for the same repo state. `buildBacklogContext`
+      // already sorts its own request scan for exactly this reason; this one had been left out.
+      const reqFiles = fs.readdirSync(reqDir).filter(f => f.endsWith('.md')).sort();
       for (const rf of reqFiles) {
         try {
           const content = fs.readFileSync(path.join(reqDir, rf), 'utf8');
           const status = parseRequestStatus(content);
-          if (status) {
-            if (INCOMPLETE_STATUSES.some(s => status.toLowerCase().includes(s.toLowerCase()))) {
-              findings.push({
-                id: 'request-stale',
-                priority: 'P1',
-                message: `Request "${rf}" status is "${status}" but precommit has passed`,
-                suggestion: `/create-request --update ${featureCtx.docs_path}/requests/${rf}`,
-              });
-              break; // one finding is enough
-            }
+          // Unconditionally — `null` is an INPUT to this predicate, not a reason to skip it.
+          // `request-status.js` defines openness negatively for a reason: "no Status field" and
+          // "Status says nothing closed" are the same statement about whether the work is done.
+          // Guarding with `if (status)` restored the positive-list behaviour the module replaced,
+          // because it made the one value that is never in the closed set — absence — the only one
+          // that could not produce a finding, and `feature-complete` fires precisely when no
+          // `request-stale` finding exists. The window makes this reachable rather than theoretical:
+          // `parseRequestStatus` reads only the first HEAD_LINES, so a Status pushed below that line
+          // parses as null in a doc that visibly says "Pending".
+          if (isOpenRequestStatus(status)) {
+            findings.push({
+              id: 'request-stale',
+              priority: 'P1',
+              message: status
+                ? `Request "${rf}" status is "${status}" but precommit has passed`
+                : `Request "${rf}" carries no readable Status field (checked the first ${HEAD_LINES} lines) but precommit has passed — an unlabelled request counts as open`,
+              suggestion: `/create-request --update ${featureCtx.docs_path}/requests/${rf}`,
+            });
+            break; // one finding is enough
           }
-        } catch { /* skip unreadable file */ }
+        } catch (err) {
+          // UNREADABLE IS OPEN — the same statement as an absent Status field, and the last path
+          // by which `feature-complete` could still fire over a request nobody could read. That is
+          // the exact fail-open the `if (status)` guard above was removed to close; skipping here
+          // reopened it one level down, and unlike the guard it needs no unusual document to
+          // trigger — a broken symlink in `requests/` is enough.
+          findings.push({
+            id: 'request-stale',
+            priority: 'P1',
+            message: `Request "${rf}" could not be read (${err.code || err.message}) — an unverifiable request counts as open`,
+            suggestion: `/create-request --update ${featureCtx.docs_path}/requests/${rf}`,
+          });
+          break;
+        }
       }
-    } catch { /* no requests dir */ }
+    } catch (err) {
+      // `has_requests` said this directory exists, so failing to ENUMERATE it is not "no requests
+      // dir" — it is the same unverifiable state as an unreadable file, covering every request at
+      // once. ENOENT is the one genuinely empty answer and stays silent.
+      if (err.code !== 'ENOENT') {
+        findings.push({
+          id: 'request-stale',
+          priority: 'P1',
+          message: `Request directory "${featureCtx.docs_path}/requests" could not be listed (${err.code || err.message}) — no request can be confirmed closed`,
+          suggestion: `Check permissions on ${featureCtx.docs_path}/requests`,
+        });
+      }
+    }
   }
 
   // 15. ac-incomplete: request has unchecked acceptance criteria
@@ -587,7 +660,14 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
           const content = fs.readFileSync(path.join(reqDir, rf), 'utf8');
           totalChecked += (content.match(/- \[x\]/gi) || []).length;
           totalUnchecked += (content.match(/- \[ \]/g) || []).length;
-        } catch { /* skip */ }
+        } catch {
+          // Skipping is safe HERE, and only because of the finding above. An unreadable request
+          // makes these counts wrong, but it cannot let `feature-complete` fire: finding 14 runs
+          // under a strictly weaker condition than finding 16 (it adds only `has_requests`, which
+          // must hold for any request to be unreadable at all), so the same file has already
+          // raised a P1 `request-stale`. Emitting a second finding for it would be duplicate noise,
+          // not extra safety.
+        }
       }
       if (totalUnchecked > 0) {
         const total = totalChecked + totalUnchecked;
@@ -730,10 +810,27 @@ function formatMarkdown(output) {
 
   // Backlog
   if (output.backlog && output.backlog.incomplete_features.length > 0) {
-    lines.push(`### Backlog (${output.backlog.incomplete_features.length}/${output.backlog.total_features} incomplete)`);
+    // `incomplete_count` is the count; `incomplete_features.length` is what fits on screen. The
+    // `??` keeps a backlog object produced by an older analyze.js readable rather than printing
+    // `undefined`, and falls back to the same wrong-but-bounded number it used to print.
+    const shown = output.backlog.incomplete_features.length;
+    const total = output.backlog.incomplete_count ?? shown;
+    lines.push(`### Backlog (${total}/${output.backlog.total_features} incomplete)`);
     lines.push('');
+    if (total > shown) {
+      // Silent truncation reads as "that is all of them". Say what was dropped.
+      lines.push(`_Showing the first ${shown} of ${total}, in sorted order._`);
+      lines.push('');
+    }
     for (const f of output.backlog.incomplete_features) {
-      lines.push(`- **${f.key}** — status: ${f.status || 'unknown'}, unchecked AC: ${f.unchecked_ac}`);
+      // `unknown` conflated two different facts. A feature listed only for unchecked AC has no open
+      // request to report a status FOR, while one whose request carries no readable Status field is
+      // open precisely BECAUSE the field is missing — reporting both as "unknown" hid which.
+      let status;
+      if (f.status) status = f.status;
+      else if (f.open_requests > 0) status = 'no Status field (counts as open)';
+      else status = 'closed';
+      lines.push(`- **${f.key}** — status: ${status}, unchecked AC: ${f.unchecked_ac}`);
     }
     lines.push('');
   }

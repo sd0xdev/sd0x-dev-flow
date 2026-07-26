@@ -2,7 +2,7 @@
 
 > **Doc class**: Lifecycle — Phase 2 tech spec (per `@rules/docs-numbering.md`).
 > **Created**: 2026-04-20
-> **Updated**: 2026-04-20
+> **Updated**: 2026-07-25
 > **Requirements**: [1-requirements.md](./1-requirements.md)
 > **Skill name**: `necessity-audit`
 
@@ -13,25 +13,28 @@
 - **Scope (in)**: `1-/2-/3-/4-*.md` spec 審核；Codex debate via `/codex-brainstorm`；code 作為 evidence（條件性）。
 - **Scope (out)**: 自動刪減（只建議）；code 層抽象審核（交給 `/simplify`）；跨 feature portfolio；預設排除 `0-feasibility-study.md`（`--include-feasibility` override）。
 
-## Implementation Status (2026-04-20)
+## Implementation Status (2026-07-25)
 
 | Phase / Artifact | Status |
 |-----------------|--------|
 | SKILL.md (thin entry) | ✅ Implemented (`skills/necessity-audit/SKILL.md`) |
-| `references/*.md` (6 reference files) | ✅ Implemented |
+| `references/*.md` (7 reference files) | ✅ Implemented |
 | `preflight.js` (Phase 0) | ✅ Implemented |
 | `debate-topic.js` (Phase B build/parse) | ✅ Implemented |
 | `consolidate.js` (Phase C) | ✅ Implemented |
 | `report.js` (Markdown/JSON assembler) | ✅ Implemented |
 | `redact.js` (NFR-11 pre-emit filter) | ✅ Implemented |
-| `elements.js` (Phase A extraction helper) | 🚧 Planned (currently Phase A runs inline in SKILL.md / LLM) |
-| `classify.js` (Phase A rubric scoring) | 🚧 Planned |
+| `cleanup.js` (scratch-dir removal, capability-token guarded) | ✅ Implemented (`scripts/skills/necessity-audit/cleanup.js`) — replaces the removed bare `Bash(rm:*)`; `--claim` mints a 24-byte token into a marker file, `--dir … --token …` removes only on constant-time token match |
+| `elements.js` (Phase A extraction helper) | ⚠️ **Implemented but NOT wired** (`scripts/skills/necessity-audit/elements.js`) — exists and is unit/integration tested, but the live SKILL.md workflow runs Phase A inline in the LLM and never invokes it |
+| `classify.js` (Phase A rubric scoring) | ⚠️ **Implemented but NOT wired** — same status as `elements.js` |
 | Unit tests (preflight / consolidate / debate-topic / redact / report) | ✅ Implemented |
-| `elements.test.js` / `classify.test.js` | 🚧 Planned (extract with Phase B modules) |
-| `integration.test.js` + fixture `test/fixtures/necessity-audit/` | 🚧 Planned |
-| Performance timing evidence (NFR-8) | 🚧 Planned (deferred to T17) |
+| `elements.test.js` / `classify.test.js` | ✅ Implemented |
+| `cleanup.test.js` (token mint / match / mismatch / containment refusal) | ✅ Implemented |
+| `integration.test.js` + fixture `test/fixtures/necessity-audit/` | ✅ Implemented (white-box, in-process; drives `extractElements → classifyAll → parseDebateResponse → consolidate → buildMarkdown`) |
+| `skill-contract.test.js` (SKILL.md scratch-dir protocol) | ✅ Implemented |
+| Performance timing evidence (NFR-8) | 🚧 Planned — **no work item yet**. It was listed as "deferred to T17", but T17 is the dependency-injected MCP/Skill boundary integration test and contains no performance work; a task must be added before this can be tracked as scheduled |
 
-Unchecked wording like "implemented", "verified", "emitted" in later sections refers to the target state after the Planned items land. Cross-reference this table when auditing doc-code consistency.
+**"Implemented" vs "wired"** — the distinction matters when auditing this feature. `elements.js` / `classify.js` are production-quality, exercised by CI, and are the executable reference for the Phase A rubric; they are simply not on the live path, because SKILL.md asks the model to classify inline. Treat them as a white-box specification of Phase A that CI keeps honest, not as dead code and not as shipped behaviour. Wording like "implemented", "verified", "emitted" in later sections refers to the target state after the remaining Planned items land. Cross-reference this table when auditing doc-code consistency.
 
 ## 2. Existing Code Analysis
 
@@ -43,8 +46,8 @@ Unchecked wording like "implemented", "verified", "emitted" in later sections re
 | `skills/best-practices/references/output-templates.md` | Phase 4 schema（Debate threadId / Conclusion 欄位規則）| 報告 schema 參考 |
 | `skills/doc-review/references/codex-prompt-doc.md` | Codex doc prompt 模板（`${FILE_PATH}` 變數、獨立研究區塊）| Phase C verdict `--continue` 直呼時的 prompt 起點 |
 | `skills/doc-review/references/review-loop-doc.md` | `mcp__codex__codex-reply` 契約 | FR-8 實作範本 |
-| `hooks/post-tool-review-state.sh` | MCP output 檢測 `## Document Review` + sentinel → 寫 `doc_review.passed` | FR-10 輸出格式貼合條件 |
-| `hooks/stop-guard.sh` | state 主路徑 + transcript fallback 雙層 gate 檢測 | Sentinel 雙重相容 |
+| `hooks/post-tool-review-state.sh` | MCP output 檢測 `## Document Review` + sentinel → 寫 `doc_review.passed`。**本 skill 不走這條**：報告由 `report.js` 在本地組裝、以模型自身訊息輸出，不是 Codex MCP 的 tool output（§3.9b） | 讀懂 sentinel 格式的來源，非本 skill 的寫入路徑 |
+| `hooks/stop-guard.sh` | state 主路徑 + transcript fallback 雙層 gate 檢測 | 兩層都不會被本 skill 的 sentinel 滿足；state 路徑靠 provenance，transcript fallback 靠 sentinel 命名空間隔離（§3.9b） |
 | `skills/codex-review-doc/SKILL.md` | Doc review thin-entry 入口 | FR-13 optional advisory source（**state-read only**，不 nested-invoke） |
 | `scripts/security-redact.js` | 既有 executable redaction utility | NFR-11 `redact.js` 重用 high-confidence patterns |
 
@@ -52,7 +55,7 @@ Unchecked wording like "implemented", "verified", "emitted" in later sections re
 
 ```
 skills/necessity-audit/
-├── SKILL.md                          ✅ Thin entry, ≤200 lines
+├── SKILL.md                          ✅ Thin entry (224 lines — over the 200 target, see NFR-7 deviation below)
 └── references/
     ├── phase-a-classify.md           ✅ Claude 分類 prompt
     ├── phase-b-debate-topic.md       ✅ codex-brainstorm topic builder
@@ -64,8 +67,8 @@ skills/necessity-audit/
 
 scripts/skills/necessity-audit/        # Executable orchestration layer (testable)
 ├── preflight.js                      ✅ Phase 0: path validation + realpath containment + doc-kind + line count + dirty-tree + greenfield detection
-├── elements.js                       🚧 Phase A helper: extract FR/NFR/Component/Abstraction/Config from spec AST
-├── classify.js                       🚧 Phase A scoring: dim rubric → Keep/Review/Cut (depth-filtered)
+├── elements.js                       ⚠️ Phase A helper: extract FR/NFR/Component/Abstraction/Config from spec AST (exists + tested; not invoked by SKILL.md)
+├── classify.js                       ⚠️ Phase A scoring: dim rubric → Keep/Review/Cut (depth-filtered) (exists + tested; not invoked by SKILL.md)
 ├── debate-topic.js                   ✅ Phase B: build debate topic (depth-filtered dimension list)
 ├── consolidate.js                    ✅ Phase C: merge Claude+Codex, apply overrides, deterministic checks, gate selection
 ├── redact.js                         ✅ NFR-11 redaction filter (reuses scripts/security-redact.js + adds audit-specific patterns)
@@ -77,20 +80,21 @@ test/skills/necessity-audit/          # node:test unit + integration
 ├── consolidate.test.js                ✅
 ├── redact.test.js                     ✅
 ├── report.test.js                     ✅
-├── elements.test.js                   🚧
-├── classify.test.js                   🚧
-└── integration.test.js                🚧 Phase A→B→C with mocked Codex boundary
+├── elements.test.js                   ✅
+├── classify.test.js                   ✅
+├── skill-contract.test.js             ✅ SKILL.md scratch-dir protocol (prose contract, no other coverage)
+└── integration.test.js                ✅ Phase A→B→C in-process against a STATIC fixture (no boundary is mocked — see §7 note)
 
-test/fixtures/necessity-audit/         🚧 (canonical fixture path; directory + content added in T18)
-├── sample-over-designed-spec.md       🚧 hand-crafted spec with known Cut items
-└── mock-debate-response.txt           🚧 Codex-style response with per-element verdicts
+test/fixtures/necessity-audit/         ✅
+├── sample-over-designed-spec.md       ✅ hand-crafted spec with known Cut items
+└── mock-debate-response.txt           ✅ Codex-style response with per-element verdicts
 ```
 
 **Rationale for executable module split** (resolves Codex review P0 #7-#8):
 - SKILL.md instructions are not deterministically testable — they describe Claude behavior
 - `scripts/skills/necessity-audit/*.js` holds all verifiable logic (path validation, gate selection, redaction, depth mapping)
 - SKILL.md delegates via `Bash` (`node scripts/skills/necessity-audit/<module>.js <args>`) following `scripts/lib/feature-resolver.js` + `scripts/security-redact.js` precedent
-- Tests run via `node --test test/skills/necessity-audit/**/*.test.js`, mocking the MCP boundary via injected function (same as existing patterns)
+- Tests run via `node --test test/skills/necessity-audit/**/*.test.js`. **No MCP boundary is mocked**: the suite calls the deterministic functions directly and feeds `parseDebateResponse` a checked-in Codex-style transcript (`test/fixtures/necessity-audit/mock-debate-response.txt`), so nothing is injected and no boundary is crossed. The `mcpInvoker` / `skillInvoker` injection this line used to describe is design intent from Open Q8, not shipped — see the §7 Integration table for which rows depend on it
 
 ## 3. Technical Solution
 
@@ -120,26 +124,33 @@ flowchart TD
     C --> C1[Cross-reference Phase A vs Codex verdicts]
     C1 --> C2[NFR-10 deterministic checks + deep-equilibrium check]
     C2 --> C3[Apply user --override flags]
-    C3 --> C4[Gate selection: always ✅ Mergeable OR ⛔ Needs revision]
+    C3 --> C4[Gate selection: always ✅ Audit Clear OR ⛔ Audit Revise]
 
     C4 --> R[Output report via report.js]
     R --> R2[redact.js pre-emit filter]
-    R2 --> R1["## Document Review header + sentinel tail"]
-    R1 --> H[hooks detect → state update → auto-loop]
+    R2 --> R1["## Necessity Audit header + sentinel tail"]
+    R1 --> H["auto-loop (behaviour layer)<br/>NO hook state write — §3.9b"]
+    H -.durable verdict wanted.-> HD["explicit handoff:<br/>/codex-review-doc on the edited spec"]
 
-    C2 -.deterministic fail.-> NH["Emit ⚠️ Need Human NARRATIVE before sentinel; sentinel = ⛔ Needs revision"]
+    C2 -.deterministic fail.-> NH["Emit ⚠️ Need Human NARRATIVE before sentinel; sentinel = ⛔ Audit Revise"]
     NH --> R
 ```
 
 ### 3.2 Module Layout & SKILL.md Contract
 
-**SKILL.md responsibilities** (normative, thin entry ≤200 lines):
-- Frontmatter: `name`, `description`, `allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(wc:*), mcp__codex__codex, mcp__codex__codex-reply` (no `Skill` — built-in; `Bash(node:*)` required for §3.10 scripts bridge)
+**SKILL.md responsibilities** (normative, thin entry — 200-line target, **currently 224**; see the NFR-7 deviation note in §3.10):
+- Frontmatter: `name`, `description`, `allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), mcp__codex__codex-reply, Skill`（`Bash(rm:*)` 已移除——刪除改走 `cleanup.js`，不再有裸 `rm`）
+  - `Skill` **is** declared: Non-Negotiable Rule 2 requires Phase B to run the debate through `/codex-brainstorm` via the Skill tool; a raw `mcp__codex__codex` debate is an invalid audit. (An earlier draft of this spec said "no `Skill` — built-in"; the implemented frontmatter is normative.)
+  - `Write` is used for the **scratch files the model itself produces** — `phase-a.json` (Phase A classification) and `debate.txt` (raw Codex response). The report files (`report.json` / `report.md` / `report.final.md`) are written by the Node modules, not by the `Write` tool.
+  - `Bash(mktemp:*)` creates the scratch dir; removal goes through `cleanup.js` under `Bash(node:*)`, which is also the §3.10 scripts bridge.
+  - **Removed for least privilege** (2026-07-25): `Bash(git:*)`, `Bash(wc:*)`, `mcp__codex__codex`. The dirty-tree warning and every other git read happen **inside** `preflight.js` via `execFileSync('git', …)`, which needs only `Bash(node:*)`; the line-count precheck is `fs.readFileSync` in the same module, not `wc`. Raw `mcp__codex__codex` is no longer **pre-approved** — Non-Negotiable Rule 2 requires the Phase B debate to go through `Skill("codex-brainstorm")`, and a raw MCP debate is defined as an invalid audit. `allowed-tools` is a pre-approval list, not a deny list (`skills/orchestrate/SKILL.md`), so removal narrows the declared surface rather than making the call impossible; the prohibition is normative and the frontmatter is what stops it being authorized by default.
+  - `mcp__codex__codex-reply` remains: it is the Phase C `--continue` verdict loop (FR-8).
+  - **Scratch-dir hazard**: do not write `TMPDIR=$(mktemp -d)` and dereference `$TMPDIR` later. Each Bash invocation is a fresh shell, and `TMPDIR` is ambient on macOS — the variable would resolve to the shared per-user temp root, and a closing `rm -rf` would target it. SKILL.md substitutes a literal path (`<AUDIT_TMP_DIR>`) and delegates the delete to `scripts/skills/necessity-audit/cleanup.js`, which **executes** the conditions rather than stating them: absolute path, `tmp.*` leaf, direct child of the temp root, not a symlink, and carrying the `--claim` marker written at creation. The marker is the part shape checks cannot supply — every concurrent process's scratch dir has the same shape. Pinned by `test/skills/necessity-audit/cleanup.test.js` + `skill-contract.test.js`.
 - Non-Negotiable Rules table（對齊 `/best-practices` 結構）
 - Trigger / When NOT to Use / Commands
 - Workflow 概覽（mermaid 或 phase table）
 - Args table + `--depth` / `--continue` / `--skip-preflight` / `--include-feasibility` / `--override` / `--output`
-- Output format contract（`## Document Review` header + sentinel）
+- Output format contract（`## Necessity Audit` header + sentinel）
 - References 目錄索引
 - Verification checklist
 
@@ -151,7 +162,7 @@ flowchart TD
 | 2 | Phase B **必須**經 `Skill("codex-brainstorm", ...)`；裸 `mcp__codex__codex` 用於辯論視為 invalid | Audit invalid |
 | 3 | Phase C 報告**必須**包含非空 `debate.threadId` | Report rejected |
 | 4 | Phase C 報告**必須**包含引用具體 rounds 的 `Debate Conclusion`（不得空值 / placeholder）| Report rejected |
-| 5 | 輸出必須以 `## Document Review` 開頭、以 `✅ Mergeable` 或 `⛔ Needs revision` 結尾（FR-10）| Auto-loop 無法識別 |
+| 5 | 輸出必須以 `## Necessity Audit` 開頭、以 `✅ Audit Clear` 或 `⛔ Audit Revise` 結尾（FR-10）| Auto-loop 無法識別 |
 
 ### 3.3 Data Model
 
@@ -226,7 +237,7 @@ interface AuditReport {
   };
   under_covered_dimensions: Dimension[];   // active dims not mentioned in debate.conclusion or rounds_text
   narrative: string[];              // advisory lines (e.g., "⚠️ Need Human: ...", "ℹ️ N elements kept via --override")
-  gate: '✅ Mergeable' | '⛔ Needs revision';  // sentinel ONLY; Need Human is narrative above, not gate itself
+  gate: '✅ Audit Clear' | '⛔ Audit Revise';  // sentinel ONLY; Need Human is narrative above, not gate itself
   suggested_next: string[];         // e.g., ["/simplify skills/foo/", "Manual revision of FR-5"]
 }
 ```
@@ -234,7 +245,7 @@ interface AuditReport {
 #### 3.3.3 State File Interaction
 
 - **Read**: `.claude_review_state.json` 的 `doc_review.passed`（FR-13 pre-flight optional advisory，非強制）
-- **Write**: None directly — hooks handle `doc_review` state when our MCP output is parsed
+- **Write**: None — 且**沒有任何 hook 會代寫**。本 skill 的報告不經過 MCP tool output，兩條 doc-review 路由都收不到（§3.9b）。此處先前寫「hooks handle `doc_review` state when our MCP output is parsed」，與 §3.9b 直接矛盾，已更正
 
 ### 3.4 Public Interface (CLI Contract)
 
@@ -243,7 +254,7 @@ interface AuditReport {
 | `<path>` | Yes | — | Target spec path (absolute or repo-relative) |
 | `--depth brief\|normal\|deep` | No | `normal` | FR-11 depth mapping |
 | `--continue <threadId>` | No | — | Resume Phase C verdict loop via `mcp__codex__codex-reply` |
-| `--skip-preflight` | No | `false` | Skip FR-13 inline `/codex-review-doc` check |
+| `--skip-preflight` | No | `false` | Suppress the FR-13 **state-read** doc-review advisory (`.claude_review_state.json`) and emit a `[PREFLIGHT SKIPPED]` banner. There is no inline `/codex-review-doc` invocation to skip — that nesting was removed (see FR-13 pivot rationale). Does **not** suppress the dirty-tree warning, which still runs. |
 | `--include-feasibility` | No | `false` | Allow `0-feasibility-study.md` as target (FR-1 override) |
 | `--override <element-id>:<rationale>` | No (repeatable) | — | Mark Cut element as Kept with justification (Q8 resolved) |
 | `--output markdown\|json` | No | `markdown` | FR-12 output format |
@@ -256,7 +267,7 @@ interface AuditReport {
 |-------|---------------------------------------------------------|-------------------------|
 | `brief` | Dims 1-3 only (Necessity Now / Abstraction Justification / Extensibility Speculation) | Any termination accepted (Nash / convergence / max-rounds) |
 | `normal` | All 6 dimensions | Any termination accepted (default) |
-| `deep` | All 6 dimensions | **Nash equilibrium required** — if debate ends via convergence or max-rounds, emit `⚠️ Need Human` narrative and `⛔ Needs revision` gate |
+| `deep` | All 6 dimensions | **Nash equilibrium required** — if debate ends via convergence or max-rounds, emit `⚠️ Need Human` narrative and `⛔ Audit Revise` gate |
 
 Rounds observed are reported in `AuditReport.debate.rounds` for audit trail but not used as gate input.
 
@@ -302,7 +313,7 @@ Rounds observed are reported in `AuditReport.debate.rounds` for audit trail but 
 4. **Line-count check** (FR-13): `wc -l <abs_path>` ≥ 50 else hard block with message
 5. **Doc-review advisory** (FR-13, revised — **no nested Skill invocation**):
 
-   > **Pivot rationale**: Nested `Skill("codex-review-doc", path)` would trigger `post-tool-review-state.sh` state writes during an outer audit run, and `check_passed()` does not recognize `✅ Mergeable` (only `## Gate: ✅` / `✅ All Pass`). Nesting creates state-write races. Instead: **session-level advisory only** (cannot confirm target-binding because state schema lacks `last_file`).
+   > **Pivot rationale**: Nested `Skill("codex-review-doc", path)` would trigger `post-tool-review-state.sh` state writes during an outer audit run, creating state-write races. Instead: **session-level advisory only** (cannot confirm target-binding because state schema lacks `last_file`). The original text carried a second reason — that `check_passed()` "does not recognize `✅ Mergeable` (only `## Gate: ✅` / `✅ All Pass`)" — which stopped being true on 2026-07-25, when `check_passed()` was narrowed to the review-plane sentinels (`✅ Ready` / `✅ Mergeable` / `## Gate: ✅`) and `✅ All Pass` was dropped as behaviour-layer prose. The state-write race is the reason that survives.
 
    - Read `.claude_review_state.json` `doc_review` field (best-effort; non-existent file is OK)
    - If `doc_review.passed === true` AND `doc_review.last_run` is after target file's `git log -1 --format=%ct` → **silent continue** (session-level hint that **a** recent doc review passed; **not** a guarantee it was this file)
@@ -404,7 +415,7 @@ Capture from Skill response: `threadId`, `rounds`, `equilibrium_reached`, debate
    - If Codex and Claude agree → `final = both`
    - If disagree → `final = stricter` (Keep→Review→Cut is strict direction); record both rationales
 2. **Apply `--override`**: for each overridden element, set `final = Keep`, record `user_override`
-3. **NFR-10 deterministic checks — 6 conditions** (all must pass for debate validity; any failure → emit `⚠️ Need Human` narrative + `⛔ Needs revision` gate):
+3. **NFR-10 deterministic checks — 6 conditions** (all must pass for debate validity; any failure → emit `⚠️ Need Human` narrative + `⛔ Audit Revise` gate):
 
    ```javascript
    rounds_ok                    = debate.rounds ≥ 2            // minimum for meaningful debate (3 is codex-brainstorm min; <2 indicates error)
@@ -415,19 +426,19 @@ Capture from Skill response: `threadId`, `rounds`, `equilibrium_reached`, debate
    conclusion_references_rounds = /\b(?:round\s+\d+|R\d+)\b/i.test(debate.conclusion)            // SKILL.md Rule #4 enforcement
    ```
 
-   Empty findings with **all 6 checks** pass = legitimate `✅ Mergeable`. Note: `equilibrium_required_met` is trivially true for `brief` / `normal` (no equilibrium required); only `deep` depth forces it false when debate ended via convergence or max-rounds. `conclusion_references_rounds` enforces SKILL.md Rule #4 (Debate Conclusion must reference specific rounds, not blank/placeholder).
+   Empty findings with **all 6 checks** pass = legitimate `✅ Audit Clear`. Note: `equilibrium_required_met` is trivially true for `brief` / `normal` (no equilibrium required); only `deep` depth forces it false when debate ended via convergence or max-rounds. `conclusion_references_rounds` enforces SKILL.md Rule #4 (Debate Conclusion must reference specific rounds, not blank/placeholder).
 4. **Active-dimension coverage check** (single-debate mitigation; **separate from NFR-10 deterministic block** — failure is advisory, not gate-fatal): for each active dimension, verify ≥1 challenge exchange mentions it (regex on `debate.conclusion + debate.rounds_text`). Under-covered dims populate `AuditReport.under_covered_dimensions[]` and emit `⚠️ Need Human` narrative line; gate is still decided by Cut-count rule below (coverage issues do NOT force `⛔`).
-5. **Gate selection** (sentinel always ✅ or ⛔ for hook compatibility per `hooks/post-tool-review-state.sh:641`; `⚠️ Need Human` is narrative only):
+5. **Gate selection** (sentinel always ✅ or ⛔ so the **behaviour-layer** auto-loop has a determinate verdict — **not** because a hook will record it. Neither doc-review route in `hooks/post-tool-review-state.sh` fires for this skill, see §3.9b; the sentinel vocabulary is borrowed for readability and auto-loop consistency only. `⚠️ Need Human` is narrative only):
 
    | Condition | Narrative line | Final sentinel |
    |-----------|----------------|---------------|
-   | Any of 6 deterministic checks fails (includes `equilibrium_required_met` for deep, `conclusion_references_rounds` always) | `⚠️ Need Human: <reason>` | `⛔ Needs revision` |
-   | Cut count == 0 AND no dimension under-covered AND checks pass | — | `✅ Mergeable` |
-   | All Cut elements have `user_override` AND checks pass | `ℹ️ N elements kept via --override with rationale` | `✅ Mergeable` |
-   | ≥1 Cut without override | `⛔ N elements flagged for removal` | `⛔ Needs revision` |
-   | Dim under-covered but Cut count == 0 | `⚠️ Need Human: dim X under-covered in debate` | `✅ Mergeable` (advisory) |
+   | Any of 6 deterministic checks fails (includes `equilibrium_required_met` for deep, `conclusion_references_rounds` always) | `⚠️ Need Human: <reason>` | `⛔ Audit Revise` |
+   | Cut count == 0 AND no dimension under-covered AND checks pass | — | `✅ Audit Clear` |
+   | All Cut elements have `user_override` AND checks pass | `ℹ️ N elements kept via --override with rationale` | `✅ Audit Clear` |
+   | ≥1 Cut without override | `⛔ N elements flagged for removal` | `⛔ Audit Revise` |
+   | Dim under-covered but Cut count == 0 | `⚠️ Need Human: dim X under-covered in debate` | `✅ Audit Clear` (advisory) |
 
-   **Rationale**: `stop-guard.sh` state-read path + transcript-parsing fallback both expect `✅ Mergeable` / `⛔ Needs revision`. A final gate of `⚠️ Need Human` would leave auto-loop indeterminate. Therefore `⚠️ Need Human` is always a **narrative annotation** above the sentinel, never the sentinel itself.
+   **Rationale**: a final gate of `⚠️ Need Human` would leave the **behaviour-layer** auto-loop indeterminate, so `⚠️ Need Human` is always a **narrative annotation** above the sentinel, never the sentinel itself. This is *not* a hook-compatibility requirement: neither `stop-guard.sh` path is reached by this skill's output (§3.9b). The vocabulary is deliberately the skill's own (`✅ Audit Clear` / `⛔ Audit Revise`) rather than doc review's — see §3.9b for the collision that sharing it caused in the transcript fallback.
 6. **Dimension aggregate severity**: `High` if ≥2 Cut in dim; `Med` if 1 Cut or ≥2 Review; `Low` if ≥1 Review; `Clean` otherwise; `Skipped` if inactive per depth
 
 ### 3.6 Prompt Templates (references/ contents)
@@ -476,7 +487,7 @@ References file `references/redaction-rules.md` documents the pattern list for r
 ### 3.7 Output Report Format (Markdown)
 
 ```markdown
-## Document Review
+## Necessity Audit
 
 **Target**: `docs/features/<key>/2-tech-spec.md`
 **Feature**: `<key>` (greenfield: false)
@@ -513,7 +524,7 @@ References file `references/redaction-rules.md` documents the pattern list for r
 - **Rounds**: 3 · **Equilibrium**: ✅
 - **Conclusion**: Round 2 established that FR-12's configurability has no named consumer; round 3 confirmed after Claude's defensive argument failed. See threadId for full trace.
 
-### Deterministic Checks (NFR-10)
+### Deterministic Checks (NFR-10 — all **six**)
 
 | Check | Result |
 |-------|--------|
@@ -522,6 +533,7 @@ References file `references/redaction-rules.md` documents the pattern list for r
 | Codex evidence citations ≥ 1 | ✅ |
 | Codex stance keywords present | ✅ |
 | threadId non-empty | ✅ |
+| conclusion references specific rounds (SKILL.md Rule #4) | ✅ |
 
 ### Suggested Next
 
@@ -530,7 +542,7 @@ References file `references/redaction-rules.md` documents the pattern list for r
 
 ### Gate
 
-⛔ Needs revision
+⛔ Audit Revise
 ```
 
 ### 3.8 Integration Points
@@ -542,8 +554,26 @@ References file `references/redaction-rules.md` documents the pattern list for r
 | `mcp__codex__codex-reply` for Phase C loop | Direct MCP call with `--continue <threadId>`; `sandbox: 'read-only'`, `approval-policy: 'never'` (per NFR-3) | Invalid threadId → user-visible error, no state write |
 | `scripts/lib/feature-resolver.js` | `require()` from `scripts/skills/necessity-audit/preflight.js`; input MUST be repo-relative (see §3.5 Phase 0.2) | Unresolved key → `⚠️ Need Human` narrative |
 | `scripts/security-redact.js` | `require()` from `scripts/skills/necessity-audit/redact.js`; reuse high-confidence patterns | Non-fatal: medium-confidence pattern mask; high-confidence AbortError throws |
-| `hooks/post-tool-review-state.sh` | Emit `## Document Review` + `✅`/`⛔` sentinel → hook parses MCP output (line 641) | Malformed output → hook no-op (safe) |
-| `hooks/stop-guard.sh` | State-read primary path; transcript sentinel as fallback safety-net | Two-layer defense consistent with existing doc review pattern |
+| `hooks/post-tool-review-state.sh` | **No automatic integration.** See §3.9b — the report is behaviour-layer only | n/a — nothing is written to `doc_review` |
+| `hooks/stop-guard.sh` | Neither path is satisfied by this skill's sentinel — see §3.9b, including the transcript-fallback analysis | n/a — the doc gate still asks for `/codex-review-doc` |
+
+### 3.9b Hook Integration: none (behaviour-layer only)
+
+The audit report is **not** parsed into `.claude_review_state.json` by any hook, and this spec must not be read as claiming otherwise. Both doc-review routes in `hooks/post-tool-review-state.sh` are provenance-bound and neither can see this report:
+
+| Route | Fires when | Why `/necessity-audit` misses it |
+|-------|-----------|----------------------------------|
+| Bash / Skill route | The invoked command matches `^/?(sd0x-dev-flow:)?(codex-review-doc\|review-spec)` | `/necessity-audit` is not in that alternation |
+| MCP route | `TOOL_NAME` is `mcp__codex__codex` / `mcp__codex__codex-reply` **and** the tool output carries `## Document Review` + a sentinel | The outer report is assembled locally by `report.js` and emitted as the model's own message — it is never a Codex MCP tool output. The *inner* debate does go through MCP, but it carries no `## Document Review` header |
+
+Consequences, stated plainly:
+
+- The `## Necessity Audit` header + `✅ Audit Clear` / `⛔ Audit Revise` sentinel in the audit report are **behaviour-layer** markers. They drive Claude's auto-loop, not `doc_review.passed`.
+- An `✅ Audit Clear` from this skill does **not** satisfy the Stop-hook doc gate. If a durable verdict is wanted, hand off explicitly: act on the audit findings, then run `/codex-review-doc` on the edited spec.
+- **Including stop-guard's transcript fallback** — but only since 2026-07-26, and not for the reason this section used to give. The claim here was that the fallback "first requires the doc-review COMMAND to appear (`/codex-review-doc` or `/review-spec`), and `/necessity-audit` matches neither". That defence never held: the fallback greps the whole conversation, and the token `/codex-review-doc` is present in this skill's own SKILL.md routing table, in `references/review-loop.md`, and in `preflight.js`'s advisory. All of them reach the transcript **before** the report, so the verdict/invocation pairing added at the same time does not separate them either. Measured against the real hook with the then-current sources: a doc edit + this skill's SKILL.md + a report ending `✅ Mergeable` returned `{"ok":true,"reason":"All steps completed"}` at exit 0, with no doc review having run.
+- **The fix was to stop sharing the vocabulary**, the same namespacing `✅ Plan Ready` / `⛔ Plan Blocked` already applies to the plan plane. Sharing bought nothing — no hook records this skill's verdict either way (rows above) — while costing a collision on the one path that greps rather than routes. `Revise` rather than `Needs revision` is deliberate: stop-guard's coarse recency scan is `⛔.*(Block|Needs revision|Must fix)`, whose `.*` would still have matched a near-miss like `⛔ Audit Needs revision` and turned every blocking audit into a spurious "Review not passed" on an unrelated doc gate. Both directions are pinned end-to-end against the real hook in `test/skills/necessity-audit/stop-guard-isolation.test.js`, together with the invariant that no audit surface reaching the transcript may contain a doc-review sentinel at all.
+
+**Why not simply add a `necessity-audit` route to the hook?** The existing alternation is a provenance control: a route exists so that an *independent reviewer* verdict becomes durable. `/necessity-audit` assembles its own sentinel from its own consolidation logic, so routing it would let a skill bank a doc-review pass on its own say-so. That is the trust boundary the alternation defends, and widening it is out of scope for this feature.
 
 ### 3.9a FR-9 `When NOT to Use` Matrix (SKILL.md embedded content)
 
@@ -582,61 +612,85 @@ Trace row added to Appendix A for FR-9 compliance verification.
 ### 3.10 SKILL.md ↔ scripts/ Bridge
 
 SKILL.md delegates deterministic logic to `scripts/skills/necessity-audit/` modules via `Bash`. This pattern:
-- Keeps SKILL.md thin (≤200 lines; NFR-7)
+- Keeps SKILL.md thin (NFR-7; 200-line target)
 - Makes all gate/classification/redaction logic unit-testable
 - Matches existing precedent (`scripts/lib/feature-resolver.js`, `scripts/security-redact.js`)
 
-**Invocation flow** (SKILL.md pseudocode; all intermediate artifacts pass via **temp files** under `${TMPDIR}/necessity-audit-<pid>/` to avoid shell-escape issues with multi-line content):
+> **NFR-7 deviation (2026-07-25)**: SKILL.md is **224 lines**, 24 over the target. The target was set as a peer baseline against `/best-practices` (195 lines, still accurate), but it is not an ecosystem invariant — `plan-review` is 233 and `codex-code-review` is 290. The overage is not prompt bulk: all seven prompt/rubric/template assets are already in `references/`. It is the scratch-directory cleanup contract added when bare `Bash(rm:*)` was removed — the token-substitution warning has to sit inline, immediately before the `cleanup.js` invocation the model is about to run, because moving it to `references/` would put it where the model is not reading at the moment it acts. **Status: accepted deviation, not a resolved AC.** Signal-10 in the requirements measures ≤ 200 and currently fails; either trim to the target or amend NFR-7 deliberately — do not silently widen the number.
+
+**Invocation flow** (SKILL.md pseudocode; all intermediate artifacts pass via **temp files** inside a single `mktemp -d` workspace, to avoid shell-escape issues with multi-line content):
 
 ```
-SETUP: Create temp workspace:
-  Bash: mktemp -d  →  TMPDIR
+SETUP: Create temp workspace and CLAIM it:
+  Bash: mktemp -d
+  → read the printed absolute path and substitute it as <AUDIT_TMP_DIR> below.
+    Do NOT assign it to a shell variable: the next Bash call is a different shell, and the
+    name TMPDIR is already set in the ambient environment on macOS.
+  Bash: node scripts/skills/necessity-audit/cleanup.js --claim "<AUDIT_TMP_DIR>"
+  → prints `token=<48 hex chars>`. Substitute it as <AUDIT_TOKEN> in the CLEANUP step.
+    The claim is what makes the later delete safe: every concurrent process's scratch dir has
+    the same SHAPE (absolute, `tmp.*`, direct child of the temp root, not a symlink), so shape
+    checks alone cannot tell this directory from someone else's. The token can.
 
 1. PREFLIGHT:
-   Bash: node scripts/skills/necessity-audit/preflight.js --path <path> --depth <d> [--skip-preflight] [--include-feasibility] --output $TMPDIR/preflight.json
+   Bash: node scripts/skills/necessity-audit/preflight.js --path <path> --depth <d> [--skip-preflight] [--include-feasibility] --output <AUDIT_TMP_DIR>/preflight.json
    Exit: 0 = OK, non-zero = hard block (line count, invalid path, invalid doc kind, feature unresolved)
    Output JSON: { absPath, relPath, featureKey, docKind, greenfield, activeDimensions, skipPreflight, banners[], warnings[] }
-   Claude reads $TMPDIR/preflight.json; aborts if exit != 0.
+   Claude reads <AUDIT_TMP_DIR>/preflight.json; aborts if exit != 0.
 
 2. PHASE A (LLM, no subprocess):
    Claude reads <absPath> using Read tool.
    Claude fills ${TARGET_PATH}, ${DOC_KIND}, ${ACTIVE_DIMENSIONS}, ${GREENFIELD} into references/phase-a-classify.md template.
-   Claude classifies elements and writes result as JSON to $TMPDIR/phase-a.json (via Write tool).
+   Claude classifies elements and writes result as JSON to <AUDIT_TMP_DIR>/phase-a.json (via Write tool).
    Schema: { elements: ClassifiedElement[] } — only `claude.*` fields populated.
 
 3. BUILD DEBATE TOPIC:
-   Bash: node scripts/skills/necessity-audit/debate-topic.js build --preflight $TMPDIR/preflight.json --output $TMPDIR/topic.txt
-   Topic string written to $TMPDIR/topic.txt (no stdin/stdout string passing).
+   Bash: node scripts/skills/necessity-audit/debate-topic.js build --preflight <AUDIT_TMP_DIR>/preflight.json --output <AUDIT_TMP_DIR>/topic.txt
+   Topic string written to <AUDIT_TMP_DIR>/topic.txt (no stdin/stdout string passing).
 
 4. INVOKE DEBATE:
-   Claude reads $TMPDIR/topic.txt.
+   Claude reads <AUDIT_TMP_DIR>/topic.txt.
    Claude routes by mode:
    - **Initial run** (no `--continue`): `Skill("codex-brainstorm", <topic contents>)` — drives Phase B debate
    - **Loop run** (`--continue <threadId>`): `mcp__codex__codex-reply` with the cached thread id — drives Phase C verdict recheck only (see `references/review-loop.md`)
-   Claude writes the raw debate response to $TMPDIR/debate.txt (via Write tool).
+   Claude writes the raw debate response to <AUDIT_TMP_DIR>/debate.txt (via Write tool).
 
 5. PARSE DEBATE:
-   Bash: node scripts/skills/necessity-audit/debate-topic.js parse --input $TMPDIR/debate.txt --output $TMPDIR/debate.json
+   Bash: node scripts/skills/necessity-audit/debate-topic.js parse --input <AUDIT_TMP_DIR>/debate.txt --output <AUDIT_TMP_DIR>/debate.json
    Output JSON: { threadId, rounds, equilibriumReached, conclusion, evidenceCitations[], roundsText }
 
 6. CONSOLIDATE:
-   Bash: node scripts/skills/necessity-audit/consolidate.js --phase-a $TMPDIR/phase-a.json --debate $TMPDIR/debate.json --preflight $TMPDIR/preflight.json --overrides "<id>:<rationale>[;...]" --depth <d> --output $TMPDIR/report.json
+   Bash: node scripts/skills/necessity-audit/consolidate.js --phase-a <AUDIT_TMP_DIR>/phase-a.json --debate <AUDIT_TMP_DIR>/debate.json --preflight <AUDIT_TMP_DIR>/preflight.json --overrides "<id>:<rationale>[;...]" --depth <d> --output <AUDIT_TMP_DIR>/report.json
    Output JSON: full AuditReport schema (§3.3.2).
 
 7. ASSEMBLE REPORT:
-   Bash: node scripts/skills/necessity-audit/report.js --input $TMPDIR/report.json --format markdown --output $TMPDIR/report.md
+   Bash: node scripts/skills/necessity-audit/report.js --input <AUDIT_TMP_DIR>/report.json --format markdown --output <AUDIT_TMP_DIR>/report.md
    Markdown assembled per references/output-template.md.
 
 8. REDACT:
-   Bash: node scripts/skills/necessity-audit/redact.js --input $TMPDIR/report.md --output $TMPDIR/report.final.md
+   Bash: node scripts/skills/necessity-audit/redact.js --input <AUDIT_TMP_DIR>/report.md --output <AUDIT_TMP_DIR>/report.final.md
    Pre-emit secret/PII filter.
 
 9. EMIT:
-   Claude reads $TMPDIR/report.final.md and emits its contents as final user-visible message.
-   Final message contains `## Document Review` header + ✅/⛔ sentinel for hook parsing.
+   Claude reads <AUDIT_TMP_DIR>/report.final.md and emits its contents as final user-visible message.
+   Final message contains `## Necessity Audit` header + ✅/⛔ sentinel. These are BEHAVIOUR-LAYER
+   markers only — no hook parses them, and they are namespaced away from doc review's so the
+   transcript fallback cannot credit them either (see §3.9b).
 
-CLEANUP: Claude deletes $TMPDIR via Bash: rm -rf $TMPDIR.
+CLEANUP: Claude removes the scratch dir through the guard (never a bare rm):
+   Bash: node scripts/skills/necessity-audit/cleanup.js --dir "<AUDIT_TMP_DIR>" --token "<AUDIT_TOKEN>"
+   `--token` is REQUIRED — the CLI rejects a `--dir`-only call. The pseudocode previously omitted
+   both the claim and the token, so following it literally produced a non-zero exit and left the
+   scratch dir (and its report, which may quote spec content) behind on every run.
 ```
+
+> **Scratch-dir contract**: `<AUDIT_TMP_DIR>` is a placeholder for the literal absolute path printed
+> by a single `mktemp -d`, substituted into each command. It is NOT a shell variable — shell state
+> does not survive between Bash tool invocations, and the name `TMPDIR` in particular is ambient on
+> macOS. Every use is double-quoted. The directory is **claimed** immediately after creation and the
+> delete refuses any unclaimed directory, so a substitution naming a *different* valid-looking
+> scratch dir is rejected instead of honoured. See `test/skills/necessity-audit/cleanup.test.js`
+> and `test/skills/necessity-audit/skill-contract.test.js`.
 
 **CLI contract summary**:
 
@@ -644,6 +698,8 @@ CLEANUP: Claude deletes $TMPDIR via Bash: rm -rf $TMPDIR.
 |--------|--------|---------|-----------|
 | preflight.js | `--path`, `--depth`, `--skip-preflight?`, `--include-feasibility?`, `--output <file>` | JSON written to `--output` path | 0 = OK, 1 = invalid path, 2 = short file, 3 = invalid doc kind, 4 = feature unresolved |
 | debate-topic.js `build` | `--preflight <file>`, `--output <file>` | Topic string written to `--output` | 0/1 |
+| cleanup.js `--claim` | `--claim <path>` — the path is the value FOLLOWING `--claim`, not a separate `--dir` flag; `--claim --dir <path>` makes the parser take the literal string `--dir` as the path and refuse it as non-absolute | `token=<48 hex>` on stdout; marker written inside the dir | 0 = claimed, 1 = refused |
+| cleanup.js (delete) | `--dir <path>`, `--token <48 hex>` (**required**) | — | 0 = removed, 1 = refused (shape / marker / token / identity) |
 | debate-topic.js `parse` | `--input <file>`, `--output <file>` | Parsed JSON written to `--output` | 0/1 |
 | consolidate.js | `--phase-a <file>`, `--debate <file>`, `--preflight <file>`, `--overrides <str>?`, `--depth <d>`, `--output <file>` | Full AuditReport JSON written to `--output` | 0/1 |
 | report.js | `--input <file>`, `--format markdown\|json`, `--output <file>` | Formatted report written to `--output` | 0/1 |
@@ -655,12 +711,12 @@ CLEANUP: Claude deletes $TMPDIR via Bash: rm -rf $TMPDIR.
 
 | Risk | Severity | Mitigation |
 |------|----------|-----------|
-| Nested `Skill()` invocation may conflict with outer auto-loop state | Med | Pre-flight only reads sentinel; does not trigger our own state writes (hooks handle both) |
+| Nested `Skill()` invocation may conflict with outer auto-loop state | Med | Pre-flight only **reads** state; this skill triggers **no** state write, and no hook writes one on its behalf (§3.9b). A durable verdict requires an explicit `/codex-review-doc` handoff |
 | Codex debate drifts from necessity to reasoning (overlap with `/codex-review-spec`) | Med | Topic template explicitly says "necessity only; do not challenge reasoning"; dimension rubric enforces scope |
 | 6 dimensions produce N^6 element combos → report bloat | Low | Element-level classification with `primary_dimension` only (not cross-product) |
 | Greenfield detection false positive (feature key matches unrelated code) | Med | `git grep` restricted to non-docs/non-md; fallback manual via `--skip-preflight` awareness; document in release notes |
 | User abuses `--override` to bypass all Cut items | Low | Override rationale is logged in report; downstream reviewer sees pattern |
-| `/codex-brainstorm` max rounds = 5 (not controllable); `--depth deep` requires Nash equilibrium | Med | Per-FR-11 revision: if debate ends via convergence or max-rounds instead of equilibrium, Phase C emits `⚠️ Need Human` narrative + `⛔ Needs revision`; user can retry or lower depth |
+| `/codex-brainstorm` max rounds = 5 (not controllable); `--depth deep` requires Nash equilibrium | Med | Per-FR-11 revision: if debate ends via convergence or max-rounds instead of equilibrium, Phase C emits `⚠️ Need Human` narrative + `⛔ Audit Revise`; user can retry or lower depth |
 | Codex MCP unavailable (offline) | Med | NFR-9 hard fail with guidance; Claude-only fallback deferred (see Open Q3) |
 | Secret redaction regex miss (novel secret format) | Med | v1 best-effort; review quarterly; pair with `@rules/security.md` audit |
 
@@ -702,7 +758,7 @@ Trackable tickets (each ≤1 day; one ticket = one `requests/YYYY-MM-DD-*.md`):
 | T14 | `--include-feasibility` flag + doc-kind gate override + `[OVERRIDE: feasibility included]` banner | T8 | XS |
 | T15 | `report.js` `--format json` serializer (FR-12 Could) | T6 | S |
 | T16 | Unit tests: path validation (5 cases), greenfield detection, depth→activeDimensions mapping, redaction filter, `--override` merging, gate selection (5 cases — matches §6 unit table), deterministic checks (all 6 conditions) | T6-T14 | L |
-| T17 | Integration tests via **dependency-injected mock MCP/Skill boundary**: full Phase A→B→C mock, advisory state-read, `--continue` routing, hook state update via fixture subprocess | T16 | L |
+| T17 | Integration tests via **dependency-injected mock MCP/Skill boundary**: full Phase A→B→C mock, advisory state-read, `--continue` routing, hook NON-integration via fixture subprocess (assert no `doc_review` write) | T16 | L | **未實作** — 現有 `integration.test.js` 是 white-box、直接以 fixture 餵 module exports，未注入或 mock `Skill()` / MCP invoker |
 | T18 | E2E test against `test/fixtures/necessity-audit/sample-over-designed-spec.md` (hand-crafted fixture with known Cut items) — **NOT** this skill's own tech-spec, to avoid meta-loop | T17 | M |
 | T19 | Register skill in `docs/skill-catalog.yml` + `/update-readme` + `/readme-i18n-sync` | T18 | S |
 | T20 | `CLAUDE.md` command reference row insertion | T19 | XS |
@@ -723,37 +779,38 @@ Per `@rules/testing.md` three-layer pyramid.
 | preflight.js | Depth → activeDimensions | `brief→[1,2,3]`, `normal→[1..6]`, `deep→[1..6]` |
 | preflight.js | Doc-kind gate | `0-feasibility-study.md` rejected without flag; accepted with `--include-feasibility` |
 | preflight.js | State-read advisory | Present+fresh → silent; missing/stale → advisory line; `--skip-preflight` → `[PREFLIGHT SKIPPED]` banner |
-| consolidate.js | Gate selection — 5 cases | No Cut → ✅ Mergeable; all Cut overridden → ✅ Mergeable + narrative; Cut without override → ⛔; deterministic fail → ⛔ + ⚠️ narrative; under-covered dim + no Cut → ✅ + ⚠️ narrative |
-| consolidate.js | NFR-10 checks | rounds<2 / no evidence / no stance / empty threadId / deep-no-equilibrium — each triggers `⚠️ Need Human` narrative + `⛔` sentinel |
+| consolidate.js | Gate selection — 5 cases | No Cut → ✅ Audit Clear; all Cut overridden → ✅ Audit Clear + narrative; Cut without override → ⛔; deterministic fail → ⛔ + ⚠️ narrative; under-covered dim + no Cut → ✅ + ⚠️ narrative |
+| consolidate.js | NFR-10 checks | rounds<2 / no evidence / no stance / empty threadId / deep-no-equilibrium / conclusion-without-round-reference — each triggers `⚠️ Need Human` narrative + `⛔` sentinel (6 conditions, matching §3.5) |
 | consolidate.js | `--override` merging | Overridden elements get `user_override` field; counted in narrative |
 | consolidate.js | Under-covered dim | Active dim not mentioned in conclusion → enters `under_covered_dimensions[]`; warning emitted |
 | redact.js | Redaction filter | AWS key, token, PEM key, 0x-64-hex, email masked; high-confidence secret → exit 2 AbortError |
-| report.js | Output MCP format | Response contains `## Document Review` header + one of `✅ Mergeable` / `⛔ Needs revision` at tail |
+| report.js | Markdown report format | Report contains `## Necessity Audit` header + one of `✅ Audit Clear` / `⛔ Audit Revise` at tail, and NO doc-review sentinel anywhere (`stop-guard-isolation.test.js`) |
 | debate-topic.js | No-feed check | Output topic does NOT contain `claude.classification` / Phase A rationale fields |
 | debate-topic.js | Parse response | Valid response → full JSON; missing threadId → explicit null + error code |
 
-### Integration (`test/skills/necessity-audit/integration.test.js`) — 🚧 Planned
+### Integration (`test/skills/necessity-audit/integration.test.js`) — ✅ Implemented
 
-> **Status**: Not yet implemented. File does not exist as of 2026-04-20 (see Implementation Status table at top). The matrix below is the **target design**, to be built in T17; current test coverage is unit-only.
+> **Status**: Implemented as a **white-box, in-process** suite that drives `extractElements → classifyAll → parseDebateResponse → consolidate → buildMarkdown` against `test/fixtures/necessity-audit/`. The matrix below is the target design; rows describing an out-of-process run through the live SKILL.md workflow (`--continue` MCP routing, banner ordering as emitted by the skill) remain **design intent** rather than shipped assertions, because the live path runs Phase A inline in the LLM. See the Implementation Status table at top.
 
-Boundary mocking: scripts modules receive `mcpInvoker` / `skillInvoker` function parameters; tests inject mocks (Open Q8 resolution). MCP boundaries stubbed via Node.js `t.mock` API.
+Boundary mocking — **design intent, not shipped**: the Open Q8 resolution calls for scripts modules to receive `mcpInvoker` / `skillInvoker` function parameters with MCP boundaries stubbed via Node.js `t.mock`. The implemented suite does neither: it invokes the deterministic functions directly against a static fixture and never crosses an MCP or Skill boundary. Rows below that depend on that injection are **Planned / Not covered**, consistent with the white-box status note above.
 
-| Test | Scope |
-|------|-------|
-| Full Phase A→B→C with injected mock `codex-brainstorm` invoker | Happy path; final report schema valid; sentinel = ✅ |
-| State-read advisory — stale state | Warning line in output; skill continues (non-blocking) |
-| `--skip-preflight` + dirty tree | Both banners emitted in order (`[PREFLIGHT SKIPPED]` + `⚠️ Dirty working tree`) |
-| `--continue <threadId>` | Routes to `mcp__codex__codex-reply` (fresh `mcp__codex__codex` not called); threadId preserved in report |
-| `--include-feasibility` on `0-feasibility-study.md` | Accepted; `[OVERRIDE: feasibility included]` banner present |
-| Greenfield spec (fixture with no implementation) | All evidence tagged `[REASONING-ONLY]` |
-| Codex returns empty findings + all 6 checks pass | Sentinel = `✅ Mergeable`; no `⚠️ Need Human` narrative (legit empty pass) |
-| Codex returns rounds < 2 | `⚠️ Need Human` narrative + `⛔ Needs revision` sentinel |
-| `--depth deep` with convergence-but-no-equilibrium | `⚠️ Need Human: deep depth requires Nash equilibrium` narrative + `⛔` sentinel |
-| Hook state update fixture | Feed emit output to `post-tool-review-state.sh` fixture harness → verify `doc_review.passed` correctly toggled |
+| Test | Scope | Status |
+|------|-------|--------|
+| Full Phase A→B→C with injected mock `codex-brainstorm` invoker | Happy path; final report schema valid; sentinel = ✅ | 🚧 Planned as written (no invoker is injected). The **data flow** it targets is covered white-box by `integration.test.js`; the injection is not |
+| State-read advisory — stale state | Warning line in output; skill continues (non-blocking) | ✅ `preflight.test.js` |
+| `--skip-preflight` + dirty tree | Both banners emitted in order (`[PREFLIGHT SKIPPED]` + `⚠️ Dirty working tree`) | ✅ `preflight.test.js` + `report.test.js` |
+| `--continue <threadId>` | Routes to `mcp__codex__codex-reply` (fresh `mcp__codex__codex` not called); threadId preserved in report | 🚧 Planned — needs the invoker injection; nothing in the suite references `codex-reply` |
+| `--include-feasibility` on `0-feasibility-study.md` | Accepted; `[OVERRIDE: feasibility included]` banner present | ✅ `report.test.js` |
+| Greenfield spec (fixture with no implementation) | All evidence tagged `[REASONING-ONLY]` | ✅ `debate-topic.test.js` |
+| Codex returns empty findings + all 6 checks pass | Sentinel = `✅ Audit Clear`; no `⚠️ Need Human` narrative (legit empty pass) | ✅ `consolidate.test.js` |
+| Codex returns rounds < 2 | `⚠️ Need Human` narrative + `⛔ Audit Revise` sentinel | ✅ `consolidate.test.js` |
+| `--depth deep` with convergence-but-no-equilibrium | `⚠️ Need Human: deep depth requires Nash equilibrium` narrative + `⛔` sentinel | ✅ `consolidate.test.js` |
+| Hook NON-integration — `stop-guard.sh` | Compose the real report with the real hook: a passing audit must NOT satisfy the doc gate, a blocking one must NOT revoke a genuine doc pass, plus a reverse control (§3.9b) | ✅ `stop-guard-isolation.test.js` |
+| Hook NON-integration — `post-tool-review-state.sh` | Feed emit output to a fixture harness → verify `doc_review.passed` is **NOT** written (§3.9b). The assertion is the absence of a state change; a test that expected a toggle would have pinned a behaviour the hook has never had | 🚧 Planned — the provenance argument in §3.9b is currently reasoning, not a test |
 
 ### E2E (`test/skills/necessity-audit/*.e2e.test.js`) — 🚧 Planned
 
-> **Status**: Not yet implemented. Files + fixture will be added in T18 (see Implementation Status table).
+> **Status**: Not yet implemented — no `*.e2e.test.js` exists as of 2026-07-25. The **fixture already landed** (`test/fixtures/necessity-audit/sample-over-designed-spec.md` + `mock-debate-response.txt`, currently consumed by the integration suite); only the E2E driver remains, in T18. See the Implementation Status table at top.
 
 | Test | Scope |
 |------|-------|
@@ -815,7 +872,7 @@ Remaining for `/feature-dev`:
 | Phase C gate selection (sentinel always ✅/⛔, narrative ⚠️ Need Human) | FR-7, FR-10 |
 | Phase C user-override | Q8 resolution |
 | --continue via codex-reply | FR-8 |
-| `--depth` rounds mapping | FR-11 |
+| `--depth` → active-dimension + equilibrium-strictness mapping | FR-11 |
 | `--output json` | FR-12 |
 | Output header+sentinel via report.js + redact.js emit | FR-10, NFR-5 (sentinel consistency) |
 | Output redaction (redact.js executable) | NFR-11 |

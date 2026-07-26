@@ -24,7 +24,7 @@ const path = require('node:path');
 const { extractElements } = require('../../../scripts/skills/necessity-audit/elements');
 const { classifyAll } = require('../../../scripts/skills/necessity-audit/classify');
 const { parseDebateResponse } = require('../../../scripts/skills/necessity-audit/debate-topic');
-const { consolidate } = require('../../../scripts/skills/necessity-audit/consolidate');
+const { consolidate, AUDIT_CLEAR, AUDIT_REVISE } = require('../../../scripts/skills/necessity-audit/consolidate');
 const { buildMarkdown } = require('../../../scripts/skills/necessity-audit/report');
 
 const FIXTURE_DIR = path.join(__dirname, '..', '..', 'fixtures', 'necessity-audit');
@@ -101,7 +101,7 @@ test('integration — consolidate applies stricter-of(claude, codex) and emits g
     depth: 'normal',
   });
 
-  assert.equal(report.gate, '⛔ Needs revision', 'un-overridden Cuts must fail the gate');
+  assert.equal(report.gate, AUDIT_REVISE, 'un-overridden Cuts must fail the gate');
   const cutIds = report.elements.filter(e => e.final === 'Cut').map(e => e.id).sort();
   assert.deepEqual(cutIds, ['FR-2', 'FR-3'], 'FR-2 + FR-3 should be final=Cut');
   assert.ok(report.narrative.some(n => /flagged for removal/.test(n)), 'narrative must mention removal count');
@@ -128,7 +128,7 @@ test('integration — all 6 deterministic checks pass against well-formed mock d
   assert.equal(checks.conclusion_references_rounds, true, 'conclusion references "round 1/2/3"');
 });
 
-test('integration — partial --override still ⛔ Needs revision; full --override coverage flips to ✅ Mergeable', () => {
+test('integration — partial --override still ⛔ Audit Revise; full --override coverage flips to ✅ Audit Clear', () => {
   // Guards the override mechanics: overriding ONE of two Cuts must still ⛔.
   // Overriding BOTH should pass.
   const { specContent, debateRaw } = loadFixture();
@@ -142,7 +142,7 @@ test('integration — partial --override still ⛔ Needs revision; full --overri
     overrides: 'FR-2:compliance says keep',
     depth: 'normal',
   });
-  assert.equal(partial.gate, '⛔ Needs revision', 'FR-3 still un-overridden Cut');
+  assert.equal(partial.gate, AUDIT_REVISE, 'FR-3 still un-overridden Cut');
 
   const full = consolidate({
     phaseA: { elements: classified },
@@ -151,7 +151,7 @@ test('integration — partial --override still ⛔ Needs revision; full --overri
     overrides: 'FR-2:compliance says keep; FR-3:benchmark exists in ops repo',
     depth: 'normal',
   });
-  assert.equal(full.gate, '✅ Mergeable', 'all Cuts overridden → Mergeable');
+  assert.equal(full.gate, AUDIT_CLEAR, 'all Cuts overridden → Audit Clear');
   assert.ok(full.narrative.some(n => /kept via --override/.test(n)), 'narrative must cite override count');
 });
 
@@ -168,12 +168,12 @@ test('integration — buildMarkdown produces MCP-conformant report with header +
   });
 
   const md = buildMarkdown(report);
-  assert.match(md, /^## Document Review/m, 'MCP header must be present');
+  assert.match(md, /^## Necessity Audit/m, 'report header must be present');
   assert.match(md, /^### Gate/m, 'gate section present');
   // Gate sentinel should appear as a tail line; check both presence + position (last sentinel is last match)
-  const sentinelMatches = md.match(/✅ Mergeable|⛔ Needs revision/g) || [];
+  const sentinelMatches = md.match(/✅ Audit Clear|⛔ Audit Revise/g) || [];
   assert.ok(sentinelMatches.length >= 1, 'at least one gate sentinel in body');
-  assert.equal(sentinelMatches[sentinelMatches.length - 1], '✅ Mergeable', 'tail sentinel matches report.gate');
+  assert.equal(sentinelMatches[sentinelMatches.length - 1], AUDIT_CLEAR, 'tail sentinel matches report.gate');
 });
 
 test('integration — depth=brief active dims filter drops FR-3 (dim 5) from classification', () => {

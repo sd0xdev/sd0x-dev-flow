@@ -109,6 +109,39 @@ if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then exit 0; fi
 # State file path (needed by the jq-unavailable fail-closed check below)
 STATE_FILE=".claude_review_state.json"
 
+# --- Sidecar readers (both planes) --------------------------------------------------------------
+#
+# The writers keep a SHARED `.blocked` file plus per-event emergency markers named
+# `.blocked.event.*` alongside it (SIBLING FILES, never a `.blocked.d/` directory — see below).
+# The second plane exists because a clearer rewrites the shared file WHOLESALE, which raced the
+# setter's unserialized last-resort append; per-event markers are created and retired under disjoint
+# names, so nothing can erase them. See `_sidecar_emergency_mark` in hooks/post-edit-format.sh.
+#
+# This file is the ENFORCER, so a reader here that consulted only the shared file would let an
+# emergency marker pass unseen — fail-OPEN, and a marker exists only because a blocking verdict was
+# already lost. Every sidecar check below therefore goes through these two helpers, never a bare
+# `-f "${STATE_FILE}.blocked"`.
+SIDECAR_EVENT_PREFIX="${STATE_FILE}.blocked.event."
+
+# `-f` follows symlinks; a link planted at a marker name would otherwise count as evidence of a
+# lost verdict. See the long note in post-tool-review-state.sh for why these are sibling FILES
+# rather than entries in a `.blocked.d/` directory (that layout was a path-traversal delete).
+_sidecar_is_marker() {
+  [[ -f "$1" && ! -L "$1" ]]
+}
+
+_sidecar_any() {
+  _sidecar_is_marker "${STATE_FILE}.blocked" && return 0
+  local f
+  # An unmatched glob leaves the literal pattern, which the regular-file test rejects — no
+  # `nullglob` needed. A symlink at a marker name is not evidence either; see _sidecar_is_marker.
+  for f in "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$f" && return 0
+  done
+  return 1
+}
+
+
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
   # jq is the review-state parser. Without it we cannot read .claude_review_state.json, so a
@@ -129,7 +162,7 @@ if ! command -v jq &> /dev/null; then
   # Sidecar is the race-safe fail-closed marker; the jq-available path forces strict on it
   # (a file-existence check, no jq needed). A missing jq must NOT let it downgrade to warn —
   # block unconditionally, matching the sidecar handler in the state-file block below.
-  if [[ -f "${STATE_FILE}.blocked" ]]; then
+  if _sidecar_any; then
     echo "[Stop Guard] jq unavailable + blocked sidecar — failing closed" >&2
     echo '{"ok":false,"reason":"jq unavailable + blocked sidecar — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
     exit 2
@@ -168,7 +201,7 @@ fi
 # transcript handling so a READABLE transcript cannot route a sidecar-only state into the legacy
 # transcript-parsing allow path (USE_STATE_FILE=false). When the state file IS present, the
 # sidecar handler in the state-file block below takes over.
-if [[ ! -f "$STATE_FILE" && -f "${STATE_FILE}.blocked" ]]; then
+if [[ ! -f "$STATE_FILE" ]] && _sidecar_any; then
   echo "[Stop Guard] Blocked sidecar without state file — failing closed" >&2
   echo '{"ok":false,"reason":"blocked sidecar present without state file — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
   exit 2
@@ -203,34 +236,353 @@ USE_STATE_FILE=false
 
 if [[ -f "$STATE_FILE" ]]; then
   USE_STATE_FILE=true
-  STATE=$(cat "$STATE_FILE" 2>/dev/null || echo "{}")
+  # A present-but-UNREADABLE state file (e.g. chmod 000) must NOT be mapped to "{}" — that
+  # would pass the shape guard below and let every read default false → gate never engages →
+  # fail-OPEN. On any cat failure, leave STATE empty so the empty/whitespace branch of the
+  # corrupt guard forces strict, exactly like a zero-byte file.
+  STATE=$(cat "$STATE_FILE" 2>/dev/null) || STATE=""
 
-  CODE_REVIEW_PASSED=$(echo "$STATE" | jq -r '.code_review.passed // false')
-  DOC_REVIEW_PASSED=$(echo "$STATE" | jq -r '.doc_review.passed // false')
-  PRECOMMIT_PASSED=$(echo "$STATE" | jq -r '.precommit.passed // false')
+  # A readable but EMPTY, UNPARSEABLE, or NON-OBJECT state file must fail CLOSED. Holes:
+  #   1. Unparseable non-empty JSON — the jq reads below run under `set -euo pipefail`;
+  #      a parse error makes jq exit >0 and aborts the hook with a non-0/2 status, which
+  #      Claude Code treats as a NON-blocking hook error → a pending strict/dual gate
+  #      would let the session stop UNREVIEWED (fail-OPEN).
+  #   2. Empty / whitespace-only file — `jq empty` treats empty input as zero JSON values
+  #      and exits 0 (NOT an error), so it would slip past a parse-only check; every
+  #      `.field // false` read then yields "" (no output), leaving HAS_CODE_CHANGE="" so
+  #      the gate never engages → fail-OPEN in warn mode (the project default). A zero-byte
+  #      file shouldn't occur (write-side size guards), but the fail-closed guarantee must
+  #      not depend on that.
+  #   3. Valid but NON-OBJECT JSON (`false`, `123`, `[]`, `"str"`) — this PARSES (so `jq
+  #      empty` would pass it), but the very next read `.code_review.passed` then errors
+  #      ("Cannot index boolean/number/array with string", exit 5) and, under `set -e`,
+  #      aborts the hook with a non-0/2 status → same fail-OPEN as case 1. (`null` reads
+  #      safely via `// false`, but is still meaningless as a review state, so we treat it
+  #      as corrupt too.)
+  #   4. A multi-value JSON STREAM (`{...}\n{...}` — what a concurrent double-write or an
+  #      interrupted `mv` leaves behind). Each top-level value is a legal object, so an
+  #      UNSLURPED `jq -e 'type == "object"'` sets its exit status from the LAST value only
+  #      and PASSES it (verified). Every read below then emits ONE LINE PER VALUE, so
+  #      `HAS_CODE_CHANGE` becomes the literal "true\nfalse" and `[[ ... == "true" ]]` is
+  #      FALSE — the gate never engages and an unreviewed edit stops the session (fail-OPEN).
+  #      `-s` slurps the stream into an array so `length == 1` rejects both 0 values (empty
+  #      input, already caught above) and 2+; `.[0]|type` then applies the object check to
+  #      the single remaining value. Strictly stronger than the unslurped form.
+  #      All four cases → force strict + assume changes exist, exactly like the .blocked
+  #      sidecar. `${STATE//[[:space:]]/}` strips all whitespace; empty result ⇒ empty.
+  STATE_CORRUPT=false
+  if [[ -z "${STATE//[[:space:]]/}" ]] || ! jq -e -s 'length == 1 and (.[0]|type) == "object"' <<< "$STATE" >/dev/null 2>&1; then
+    STATE_CORRUPT=true
+    echo "[Stop Guard] Empty, unparseable, non-object, or multi-value review state — failing closed (strict)" >&2
+    STATE="{}"
+  fi
+
+  # Beyond the top-level object guard: a VALID object can still carry malformed SCALAR fields that
+  # the `// false` / `-r` reads below silently coerce, opening two fail-OPEN holes (Codex iter-14 P2).
+  # (1) has_code_change:[] (or any non-boolean) → `jq -r '.has_code_change // false'` yields a
+  # non-"true" string → reads as "no change" → the review-required path is skipped → the session STOPS
+  # UNREVIEWED despite a real edit. (2) code_review.passed:"true" as a STRING → `jq -r` erases the
+  # string/boolean distinction (both print "true") → a crafted string fakes a passed gate. Neither is
+  # caught by the object guard above or the nested-parent guard below. So strictly TYPE-CHECK the
+  # scalar fields: boolean for has_*_change and *.passed, string for review_phase; null/absent is fine
+  # (the normal default). The `if (parent|type)=="object"` clauses mean a non-object nested parent
+  # (code_review:"oops") is NOT re-flagged here — it stays fail-closed via the `2>/dev/null || echo
+  # false` reads below — so this adds NO behavior change for that case, only closes the malformed-
+  # scalar holes. Any mismatch → STATE_CORRUPT → the same strict + assume-changes posture as the
+  # object guard. jq exits non-zero on mismatch (false under -e) OR on any runtime error → both are
+  # inverted by `! jq -e` into fail-closed.
+  # The DUAL-mode fields are validated the same way (Codex iter-15 P2): review_mode must be a string
+  # (a corrupt `["dual"]` would downgrade dual→single via `.review_mode // "single"` and skip the
+  # dual strict-force → fail-OPEN), and aggregate_gate.executed must be boolean with .gate a string —
+  # a STRING `aggregate_gate.executed:"true"` otherwise reads through `jq -r ... // false` as executed
+  # and, with gate "READY", fakes a passed dual gate → the unreviewed code change stops. Same
+  # object-parent guard so a non-object aggregate_gate stays fail-closed via its own `|| echo` reads.
+  if [[ "$STATE_CORRUPT" != "true" ]] && ! jq -e 'def _tv(t): (.==null) or (type==t); (.has_code_change|_tv("boolean")) and (.has_doc_change|_tv("boolean")) and (.review_phase|_tv("string")) and (.review_mode|_tv("string")) and (if (.code_review|type)=="object" then (.code_review.passed|_tv("boolean")) else true end) and (if (.doc_review|type)=="object" then (.doc_review.passed|_tv("boolean")) else true end) and (if (.precommit|type)=="object" then ((.precommit.passed|_tv("boolean")) and (.precommit.mode|_tv("string"))) else true end) and (if (.aggregate_gate|type)=="object" then ((.aggregate_gate.executed|_tv("boolean")) and (.aggregate_gate.gate|_tv("string"))) else true end)' <<< "$STATE" >/dev/null 2>&1; then
+    STATE_CORRUPT=true
+    echo "[Stop Guard] Review state has malformed field types (non-boolean has_*_change / *.passed / aggregate_gate.executed, or non-string review_phase / review_mode / aggregate_gate.gate) — failing closed (strict)" >&2
+    STATE="{}"
+  fi
+
+  # NESTED reads (.code_review.passed etc.) fail closed on a type mismatch: the
+  # top-level guard above only proves STATE is an object, so a crafted/corrupt
+  # `{"code_review":"oops"}` (parent is a STRING) makes jq raise "Cannot index string
+  # with \"passed\"" → exit 5. `// false` does NOT catch a runtime index error, and
+  # under `set -euo pipefail` a bare `VAR=$(... )` assignment aborts the whole hook with
+  # exit 5 — a non-0/2 status Claude Code treats as a NON-blocking error, so in strict
+  # mode the session stops UNREVIEWED (fail-OPEN) — the exact class the corrupt guard
+  # exists to close. `2>/dev/null || echo false` mirrors the plan_review read below
+  # (line ~311): on any jq error the substitution yields "false" (exit 0), so the read
+  # degrades to the safe default instead of killing the hook. The three top-level reads
+  # (.has_code_change/.has_doc_change/.review_phase) index the guaranteed-object STATE
+  # directly, so they cannot raise an index error and need no guard.
+  CODE_REVIEW_PASSED=$(echo "$STATE" | jq -r '.code_review.passed // false' 2>/dev/null || echo false)
+  DOC_REVIEW_PASSED=$(echo "$STATE" | jq -r '.doc_review.passed // false' 2>/dev/null || echo false)
+  PRECOMMIT_PASSED=$(echo "$STATE" | jq -r '.precommit.passed // false' 2>/dev/null || echo false)
+  # Which precommit variant produced that verdict. The writer only ever emits the closed enum
+  # `full` / `fast` / `unknown`, so anything else in the file is tampered or corrupt: normalize it
+  # to the empty string, which the opt-in gate below treats as unrecorded (fail-closed) and which
+  # cannot carry characters that would break the JSON output.
+  PRECOMMIT_MODE=$(echo "$STATE" | jq -r '.precommit.mode // ""' 2>/dev/null || echo "")
+  case "$PRECOMMIT_MODE" in
+    full|fast|unknown) ;;
+    *) PRECOMMIT_MODE="" ;;
+  esac
   HAS_CODE_CHANGE=$(echo "$STATE" | jq -r '.has_code_change // false')
   HAS_DOC_CHANGE=$(echo "$STATE" | jq -r '.has_doc_change // false')
   REVIEW_PHASE=$(echo "$STATE" | jq -r '.review_phase // "idle"')
 
-  # === Sidecar fail-closed marker (race-safe lock-failure signal) ===
-  if [[ -f "${STATE_FILE}.blocked" ]]; then
+  # Corrupt state → force strict + assume changes, BEFORE the sidecar/dual logic consumes
+  # these values, so a garbage state cannot read as "all passed, nothing to review, stop-OK".
+  # STATE="{}" already made the reads return safe defaults; this pins the fail-closed posture.
+  #
+  # DELIBERATE ASYMMETRY vs the sidecar: the git reconciliation below is NOT skipped for the
+  # corrupt case (only the sidecar skips it). So on a genuinely CLEAN working tree the forced
+  # HAS_*=true is relaxed back to false and the session may stop. That is correct — a clean
+  # tree has nothing to review, and blocking it would WEDGE the session (nothing to fix, yet
+  # cannot stop). The sidecar means a write definitely FAILED (an edit happened but went
+  # unrecorded), so it DOES skip reconciliation and blocks even on a clean tree. Corrupt-state
+  # only knows "the state is unreadable"; once git proves the tree clean there is genuinely
+  # nothing to gate. On a DIRTY tree the forced flags survive reconciliation and the gate holds.
+  if [[ "$STATE_CORRUPT" == "true" ]]; then
     GUARD_MODE="strict"
-    SIDECAR_REASON=$(cat "${STATE_FILE}.blocked" 2>/dev/null || echo "unknown")
-    echo "[Stop Guard] Sidecar blocked marker found (reason: $SIDECAR_REASON)" >&2
-    # Force aggregate gate + doc review to BLOCKED regardless of JSON state
-    DUAL_GATE_PASSED="false"
+    CODE_REVIEW_PASSED="false"
     DOC_REVIEW_PASSED="false"
+    PRECOMMIT_PASSED="false"
+    DUAL_GATE_PASSED="false"
+    # Force change flags true so a corrupt state cannot read as "nothing to review". The
+    # timeout-bounded -uall reconciliation below relaxes these on a clean tree — but that path is
+    # SKIPPED when neither timeout nor gtimeout exists (stock macOS ships neither). Leaving both
+    # flags forced-true there would WEDGE a clean-tree session in strict mode forever: nothing to
+    # fix yet unable to stop, and the corrupt file cannot self-heal (writers see it exists and
+    # their jq updates fail). So when no timeout helper is available, probe cleanliness HERE with a
+    # DEFAULT-mode porcelain — it does NOT do the -uall untracked recursion, so it is bounded
+    # without a timeout helper (the very walk the invariant guards against is -uall's, not this).
+    # CRITICAL: distinguish a SUCCESSFUL-but-empty status (provably clean → relax) from a FAILED
+    # status (corrupt .git/config, not a repo, transient error → empty stdout that is NOT proof of
+    # clean). A bare `[[ -n "$(git status ...)" ]]` conflates the two: a failed status yields "" →
+    # reads as clean → the strict guard releases an unreviewed edit on an unverifiable tree
+    # (fail-OPEN). So gate on the git EXIT STATUS: only a zero-exit empty output relaxes the flags;
+    # a non-zero exit keeps them forced-true (fail closed). When a timeout helper DOES exist, defer
+    # to the richer -uall reconciliation instead.
+    if command -v timeout &>/dev/null || command -v gtimeout &>/dev/null; then
+      HAS_CODE_CHANGE="true"
+      HAS_DOC_CHANGE="true"
+    else
+      # No timeout helper (stock macOS ships neither). Probe with a DEFAULT-mode porcelain — it does
+      # NOT do the -uall untracked recursion, so it is bounded without a timeout helper.
+      # CRITICAL: `git status` exits 0 even when it could not open an UNREADABLE directory — it only
+      # WARNS on stderr and OMITS that subtree. If the sole dirty reviewable file lives under such a
+      # dir, a stderr-discarding probe sees empty stdout → reads "clean" → the strict guard would
+      # release an unreviewed edit (fail-OPEN, Codex iter-19 P2). So capture stderr and treat a
+      # directory-omission warning as unverifiable → hold (fail closed), the same "open directory"
+      # signal run-verify.js rejects. Only a zero-exit, empty-stdout, warning-free probe relaxes.
+      # LC_ALL=C pins the warning to git's untranslated English form the grep below matches — under a
+      # non-English locale (e.g. this project's zh-TW hosts) git localizes it ("警告: 無法開啟目錄…"),
+      # the English-only regex misses it, and an unreviewed edit is released (locale-dependent fail-OPEN).
+      _probe_err="$(mktemp 2>/dev/null || echo '')"
+      if [[ -n "$_probe_err" ]] && _probe=$(LC_ALL=C git status --porcelain 2>"$_probe_err"); then
+        if [[ -n "$_probe" ]] || grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_probe_err"; then
+          HAS_CODE_CHANGE="true"
+          HAS_DOC_CHANGE="true"
+        else
+          HAS_CODE_CHANGE="false"
+          HAS_DOC_CHANGE="false"
+        fi
+      else
+        # mktemp failed OR git status FAILED — the empty substitution is indistinguishable from a
+        # clean tree, so we cannot prove clean → keep the forced flags true (fail closed).
+        HAS_CODE_CHANGE="true"
+        HAS_DOC_CHANGE="true"
+      fi
+      [[ -n "$_probe_err" ]] && rm -f "$_probe_err"
+    fi
+  fi
+
+  # === Sidecar fail-closed marker (race-safe lock-failure signal) ===
+  # The fail-closed GATE VALUES below always apply — a sidecar means this update did not land,
+  # so no verdict in the JSON can be trusted. Whether that also ESCALATES the user's guard mode
+  # depends on the reason, because the two classes are not equivalent:
+  #
+  #   edit_lock_contention:code / edit_lock_contention:doc / lock_failure
+  #                      — TRANSIENT, and this is a CLOSED ALLOWLIST. The state file exists and one
+  #                        write lost a lock RACE — a race that by definition already resolved in
+  #                        someone's favour, so the file's content is a real write, just possibly
+  #                        not ours. Each is retired by the plane that OWNS it —
+  #                        `edit_lock_contention:<plane>` by the next successful EDIT transaction
+  #                        IN THAT SAME PLANE (post-edit-format.sh) and `lock_failure` by the next
+  #                        committed AGGREGATE transition (post-tool-review-state.sh's
+  #                        `update_aggregate_gate`) — or by session start (session-init.sh). The
+  #                        `:code` / `:doc` suffix is what makes the first retirement sound: the
+  #                        marker stands for a lost *code* or lost *doc* invalidation, and a
+  #                        successful edit in the OTHER plane invalidates different gates entirely,
+  #                        so it supersedes nothing. Note post-tool-review-state.sh does NOT
+  #                        clear `edit_lock_contention`: its ownership table names that marker
+  #                        "EDIT plane, never cleared from this file", because a review verdict
+  #                        proves nothing about an edit that may have preceded it. Naming that file
+  #                        as a general retirer of the whole transient class was wrong, and the code
+  #                        briefly implemented the wrong version — a verdict write overwrote the
+  #                        edit-plane marker and then cleared it as its own.
+  #                        Escalating a momentary race to strict silently overrides an
+  #                        explicit `warn` choice and blocks the stop — the exact behavior warn
+  #                        users opted out of. Keep fail-closed values, keep the user's mode.
+  #   everything else    — ESCALATE to strict. This was a denylist naming only `state_init_failed`,
+  #                        which meant every reason the producers added later defaulted to the
+  #                        LENIENT branch — and they added three that are not races at all:
+  #                          state_write_failed     a needed write FAILED mid edit-transaction, so a
+  #                                                 stale PASS may sit over an unreviewed edit
+  #                          verdict_write_failed:<gate>
+  #                                                 a BLOCKING verdict was lost over a prior ✅
+  #                                                 (keyed by gate — see post-tool-review-state.sh)
+  #                          aggregate_write_failed a BLOCKED aggregate transition never committed
+  #                        None self-heals without another successful write, and each describes a
+  #                        state whose recorded verdict is known to be wrong in the UNSAFE
+  #                        direction. `unknown` (unreadable or empty marker) lands here too: an
+  #                        unrecognized marker is unverifiable by definition, and a marker written
+  #                        by a producer this version does not know about must not be treated as
+  #                        SAFER than the ones it does. Default-deny, so adding a reason cannot
+  #                        silently weaken the gate again.
+  SIDECAR_ESCALATE=false
+  if _sidecar_any; then
+    # The marker file holds a SET of reasons, one per LINE — writers append their own instead of
+    # overwriting (post-tool-review-state.sh `_set_own_sidecar`), because a last-writer-wins file
+    # let one plane erase another's evidence and produced an allowed Stop in strict mode. Classify
+    # accordingly: transient only when EVERY line is transient. Reading the file as one blob would
+    # have sent any multi-reason marker to the `*)` branch — safe, but it would report a plain
+    # `edit_lock_contention` + `lock_failure` pair as unverifiable and force strict on users who
+    # chose warn, which is the escalation this allowlist exists to avoid.
+    #
+    # READ IT ONCE, AND LET `cat` DO THE OPENING. `tr '\n' ',' < "$f"` looks equivalent and is not:
+    # the `< "$f"` redirection is performed by the SHELL, so its failure is reported by the shell
+    # before `tr` ever runs and `2>/dev/null` (which redirects tr's stderr) does not suppress it.
+    # Under `set -euo pipefail` that non-zero substitution ABORTS the hook — exit 1 with no JSON on
+    # stdout, which the harness treats as a hook error and ALLOWS the Stop. A sidecar exists only
+    # because a blocking verdict was lost, so that is the worst possible moment to fail open, and it
+    # is the one case this whole block was written to catch. `cat` opens the file itself, so both
+    # `2>/dev/null` and the `||` fallback apply to the open failure — which is what the pre-existing
+    # form did before it was "simplified".
+    #
+    # The same reasoning retires the second open PER SOURCE: the classification loop used to be fed
+    # by `done < "${STATE_FILE}.blocked"`, a second shell-performed redirection with the identical
+    # abort. It now iterates the text already in hand, so each source is opened exactly once and has
+    # exactly one failure path.
+    #
+    # BOTH planes are read here, and deliberately NOT through the writers' `_sidecar_read_all`.
+    # That helper absorbs per-source errors with `|| true` so its callers under `set -e` are not
+    # aborted by an unreadable marker — which is right for them and wrong here, because it would
+    # pin `_SIDECAR_READABLE` to `true` forever and turn the "unreadable marker is unknown, and
+    # unknown default-denies" rule into dead code. The distinction the comment block above draws
+    # between "nothing was written" and "something was written and we cannot see it" only survives
+    # if the read reports its own failure, so the loop keeps that signal per source.
+    _SIDECAR_READABLE=true
+    _SIDECAR_RAW=""
+    # `_sidecar_is_marker`, not a bare `-f`, and the same test `_sidecar_any` uses to decide there
+    # is anything here at all. A bare `-f` follows symlinks, so the two would disagree exactly when
+    # it matters: `_sidecar_any` rejects a planted link and reports "no sidecar", while this loop
+    # would follow it and splice an arbitrary file's bytes into the reason set.
+    if _sidecar_is_marker "${STATE_FILE}.blocked"; then
+      _sc_part=$(cat -- "${STATE_FILE}.blocked" 2>/dev/null) || { _SIDECAR_READABLE=false; _sc_part=""; }
+      _SIDECAR_RAW="$_sc_part"
+    fi
+    for _sc_f in "${SIDECAR_EVENT_PREFIX}"*; do
+      _sidecar_is_marker "$_sc_f" || continue
+      _sc_part=$(cat -- "$_sc_f" 2>/dev/null) || { _SIDECAR_READABLE=false; continue; }
+      _SIDECAR_RAW="${_SIDECAR_RAW}${_SIDECAR_RAW:+$'\n'}${_sc_part}"
+    done
+    # Parameter expansion, NOT `tr | sed` — same reasoning as `_json_safe` below: this whole
+    # branch exists BECAUSE a blocking verdict was lost, and under `set -euo pipefail` a host
+    # whose PATH lacks either helper would abort the hook at 127 with no JSON, which the harness
+    # reads as "no objection". The most fail-closed branch in the file must not depend on an
+    # external binary to render a diagnostic string. Semantics are preserved exactly: replace
+    # every newline, then strip at most ONE trailing comma (what `s/,$//` does).
+    SIDECAR_REASON="${_SIDECAR_RAW//$'\n'/,}"
+    SIDECAR_REASON="${SIDECAR_REASON%,}"
+    [[ -n "$SIDECAR_REASON" ]] || SIDECAR_REASON="unknown"
+    _SIDECAR_ALL_TRANSIENT=true
+    # Seen-counter, NOT just the flag. The loop below can only DEMOTE `_SIDECAR_ALL_TRANSIENT`, so
+    # a marker with zero readable reasons — a zero-byte file, a newline-only file, or one this
+    # process cannot read — would leave the flag at its `true` initializer and take the *transient*
+    # branch. That is the exact opposite of the rule the comment block above states: an empty or
+    # unreadable marker is `unknown`, and unknown must default-deny. The window is real, not
+    # theoretical: `_set_own_sidecar` appends with `>>`, so a writer that creates the file and is
+    # interrupted (or hits ENOSPC) before its reason lands leaves precisely a zero-byte marker —
+    # written *because* a verdict was lost, then classified as the mildest possible state.
+    _SIDECAR_LINES_SEEN=0
+    # `|| [[ -n "$_sc_line" ]]`: a sidecar written without a trailing newline (every pre-set
+    # single-reason file, and any hand-written one) leaves `read` returning non-zero on the LAST
+    # line, which would drop the only reason present and classify the marker as all-transient.
+    while IFS= read -r _sc_line || [[ -n "$_sc_line" ]]; do
+      [[ -n "$_sc_line" ]] || continue
+      _SIDECAR_LINES_SEEN=$((_SIDECAR_LINES_SEEN + 1))
+      case "$_sc_line" in
+        # Keyed by the plane that wrote it (post-edit-format.sh `_EDIT_PLANE`). A BARE
+        # `edit_lock_contention` carries no plane, so this version cannot tell which gate it
+        # stands for — it falls through to `*)` and escalates, consistent with the
+        # unknown-marker rule rather than being grandfathered into the mild branch.
+        edit_lock_contention:code|edit_lock_contention:doc|lock_failure) ;;
+        *) _SIDECAR_ALL_TRANSIENT=false ;;
+      esac
+    done <<< "$_SIDECAR_RAW"
+    # Zero readable reasons — empty file, newline-only file, or one this process cannot open — is
+    # `unknown`, and unknown default-denies. `_SIDECAR_READABLE` is checked as well as the counter
+    # because they are different facts: an unreadable file yields zero lines here, but so does an
+    # empty one, and only the counter would be left to distinguish "nothing was written" from
+    # "something was written and we cannot see it". Both escalate, and saying so twice costs
+    # nothing next to the one that does not.
+    if [[ "$_SIDECAR_LINES_SEEN" -eq 0 || "$_SIDECAR_READABLE" != "true" ]]; then
+      _SIDECAR_ALL_TRANSIENT=false
+    fi
+    if [[ "$_SIDECAR_ALL_TRANSIENT" == "true" ]]; then
+      echo "[Stop Guard] Sidecar blocked marker found (reason: $SIDECAR_REASON) — transient, fail-closed gates in ${GUARD_MODE} mode" >&2
+    else
+      SIDECAR_ESCALATE=true
+      GUARD_MODE="strict"
+      echo "[Stop Guard] Sidecar blocked marker found (reason: $SIDECAR_REASON) — unverifiable state, escalating to strict" >&2
+    fi
+    # Force EVERY gate to BLOCKED regardless of JSON state — the same four the STATE_CORRUPT branch
+    # forces, for the same reason.
+    #
+    # Forcing only the aggregate and doc gates was not merely incomplete; it demanded the WRONG gate
+    # and then made the demand unsatisfiable. A `verdict_write_failed:precommit` marker is written
+    # exactly when a blocking precommit FAIL was lost over a stale `passed=true`, yet precommit was
+    # left standing, so the hook reported "Missing steps: /codex-review-fast". And
+    # `_clear_own_sidecar` (post-tool-review-state.sh) is keyed per gate: only a successful
+    # `precommit` write retires a `:precommit` marker. Running the demanded code review therefore
+    # cleared nothing and the hook re-demanded it on the next Stop — a livelock the user could only
+    # escape by independently guessing that `/precommit` was the gate actually at issue.
+    #
+    # This direction is fail-CLOSED either way; the bug was in WHICH gate it closed.
+    CODE_REVIEW_PASSED="false"
+    DOC_REVIEW_PASSED="false"
+    PRECOMMIT_PASSED="false"
+    DUAL_GATE_PASSED="false"
     # Fail-closed: sidecar means state may be corrupted, assume changes exist
     [[ "$HAS_CODE_CHANGE" != "true" && "$HAS_DOC_CHANGE" != "true" ]] && { HAS_CODE_CHANGE="true"; HAS_DOC_CHANGE="true"; }
   fi
 
   # === Dual mode: prefer aggregate_gate + force strict blocking ===
-  # Skip recompute if sidecar already set DUAL_GATE_PASSED (sidecar is authoritative)
+  # An UNRECOGNIZED review_mode is not a typo to be shrugged off — `"duel"` fails every
+  # `== "dual"` test below, so it silently downgrades dual→single: no strict escalation, and the
+  # aggregate BLOCKED verdict stops being consulted. The type guard above only proved it is a
+  # string. Treat any non-enum value as the SAFE member (dual) rather than the lax default, and
+  # say so, so a corrupted or hand-edited field cannot buy a weaker gate.
   REVIEW_MODE=$(echo "$STATE" | jq -r '.review_mode // "single"')
+  if [[ "$REVIEW_MODE" != "single" && "$REVIEW_MODE" != "dual" ]]; then
+    echo "[Stop Guard] Unrecognized review_mode ($REVIEW_MODE) — treating as dual (fail-closed)" >&2
+    REVIEW_MODE="dual"
+  fi
+  # Mode policy is INDEPENDENT of gate computation: opting into dual review opts into strict
+  # blocking, full stop. Hoisted out of the recompute branch below because that branch is
+  # skipped when the sidecar has already pinned DUAL_GATE_PASSED=false — which used to drop
+  # the dual-mode strict policy on exactly the sessions that most needed it.
+  [[ "$REVIEW_MODE" == "dual" ]] && GUARD_MODE="strict"
+  # Skip recompute if sidecar already set DUAL_GATE_PASSED (sidecar is authoritative)
   if [[ "$REVIEW_MODE" == "dual" && "${DUAL_GATE_PASSED:-}" != "false" ]]; then
-    GUARD_MODE="strict"  # dual mode forces strict blocking
-    AGG_EXECUTED=$(echo "$STATE" | jq -r '.aggregate_gate.executed // false')
-    AGG_GATE=$(echo "$STATE" | jq -r '.aggregate_gate.gate // empty')
+    # Same nested-read fail-closed guard as the .code_review.passed reads above: a
+    # crafted `.aggregate_gate` of a non-object type would exit-5 the hook (fail-OPEN)
+    # without the `2>/dev/null || echo …` fallback. On error AGG_EXECUTED→false and
+    # AGG_GATE→"" (empty ≠ READY) → DUAL_GATE_PASSED stays false (fail-closed).
+    AGG_EXECUTED=$(echo "$STATE" | jq -r '.aggregate_gate.executed // false' 2>/dev/null || echo false)
+    AGG_GATE=$(echo "$STATE" | jq -r '.aggregate_gate.gate // empty' 2>/dev/null || echo "")
     if [[ "$AGG_EXECUTED" == "true" ]]; then
       DUAL_GATE_PASSED=$([[ "$AGG_GATE" == "READY" ]] && echo "true" || echo "false")
     else
@@ -242,8 +594,11 @@ if [[ -f "$STATE_FILE" ]]; then
       echo "[Debug] Dual mode: AGG_EXECUTED=$AGG_EXECUTED, AGG_GATE=$AGG_GATE, DUAL_GATE_PASSED=$DUAL_GATE_PASSED" >&2
     fi
   elif [[ "${DUAL_GATE_PASSED:-}" == "false" ]]; then
-    # Sidecar-forced BLOCKED: propagate to CODE_REVIEW_PASSED
-    GUARD_MODE="strict"
+    # Sidecar-forced BLOCKED: propagate to CODE_REVIEW_PASSED. The gate value is always
+    # forced (the sidecar proves the verdict is untrustworthy); the MODE escalation reuses
+    # the reason classification decided in the sidecar block above, so a transient lock race
+    # cannot re-escalate here after being classified transient there.
+    [[ "${SIDECAR_ESCALATE:-false}" == "true" ]] && GUARD_MODE="strict"
     CODE_REVIEW_PASSED="false"
     if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
       echo "[Debug] Sidecar override: DUAL_GATE_PASSED=false (sidecar authoritative)" >&2
@@ -276,20 +631,63 @@ if [[ -f "$STATE_FILE" ]]; then
   # an unbounded hang. Sidecar present → also skip (would undo the fail-closed HAS_* forcing).
   if [[ "$HAS_CODE_CHANGE" != "true" && "$HAS_DOC_CHANGE" != "true" ]]; then
     GIT_PORCELAIN="__GIT_UNAVAILABLE__"
-  elif [[ -f "${STATE_FILE}.blocked" ]]; then
+  elif _sidecar_any; then
     # Sidecar present → skip stale-state reconciliation (would undo fail-closed HAS_* forcing)
     GIT_PORCELAIN="__GIT_UNAVAILABLE__"
-  elif command -v timeout &>/dev/null; then
-    GIT_PORCELAIN=$(timeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
-  elif command -v gtimeout &>/dev/null; then
-    GIT_PORCELAIN=$(gtimeout 5 git status --porcelain -uall 2>/dev/null) || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+  elif command -v timeout &>/dev/null || command -v gtimeout &>/dev/null || command -v perl &>/dev/null; then
+    # Bounded -uall reconciliation. This is the PRIMARY gate path (runs on every recorded edit), so it
+    # must not fail open on an incomplete listing. `git status` exits 0 even when it could not open an
+    # UNREADABLE dir — it only WARNS on stderr and OMITS that subtree. If the sole dirty reviewable file
+    # lives under it, GIT_PORCELAIN misses it and the ONE-WAY downgrade below clears HAS_*_CHANGE → an
+    # unreviewed edit is released in strict mode (fail-OPEN, iter-20 P1). Capture stderr and, on a
+    # directory-omission warning, mark the listing UNAVAILABLE so the downgrade is skipped (flags
+    # preserved → fail closed). LC_ALL=C pins the warning to git's untranslated English form the regex
+    # matches — a zh-TW host emits "警告: 無法開啟目錄…", which an ambient-locale probe would miss. If
+    # mktemp itself fails we cannot capture stderr → also hold (unverifiable ≠ clean).
+    _recon_err="$(mktemp 2>/dev/null || echo '')"
+    if [[ -z "$_recon_err" ]]; then
+      GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+    else
+      if command -v timeout &>/dev/null; then
+        GIT_PORCELAIN=$(LC_ALL=C timeout 5 git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      elif command -v gtimeout &>/dev/null; then
+        GIT_PORCELAIN=$(LC_ALL=C gtimeout 5 git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      else
+        # Stock macOS ships neither timeout nor gtimeout. perl's alarm+exec bounds the -uall walk
+        # identically (the timer survives exec; SIGALRM's default action kills git → non-zero exit
+        # → UNAVAILABLE), mirroring session-init.sh's _capture_baseline. Without this tier the
+        # PRIMARY reconciliation path never ran on such hosts: a stale has_*_change survived a
+        # revert or external commit and kept the stop gate demanding a review of nothing.
+        GIT_PORCELAIN=$(LC_ALL=C perl -e 'alarm 5; exec @ARGV or exit 127' git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      fi
+      if grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_recon_err"; then
+        GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+      fi
+      rm -f "$_recon_err"
+    fi
   else
     # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
     GIT_PORCELAIN="__GIT_UNAVAILABLE__"
   fi
   if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
-    # Strip porcelain quoting (git quotes filenames with spaces/unicode)
-    GIT_PORCELAIN_CLEAN=$(echo "$GIT_PORCELAIN" | sed 's/^.. "//; s/"$//')
+    # Strip porcelain quoting (git quotes filenames with spaces/unicode).
+    #
+    # Parameter expansion, NOT `sed` — and here the fail-open is worse than the one `_json_safe`
+    # guards against, because it does not need the hook to die to happen. `|| true` on a missing
+    # `sed` yields an EMPTY clean list, which this reconciliation reads as "git sees no matching
+    # files" and uses to downgrade has_code_change true→false: the gate would be cleared by the
+    # absence of a binary. Under bare `set -e` the 127 kills the hook instead — no JSON, stop
+    # allowed. Both directions are fail-open, so the dependency is removed rather than handled.
+    # Semantics preserved exactly: per line, drop a leading `XX "` (2 status chars, space, quote)
+    # when present, then strip at most one trailing quote — unconditionally, as `s/"$//` does.
+    GIT_PORCELAIN_CLEAN=""
+    while IFS= read -r _pline; do
+      if [[ "$_pline" == ??\ \"* ]]; then
+        _pline="${_pline:4}"
+      fi
+      _pline="${_pline%\"}"
+      GIT_PORCELAIN_CLEAN="${GIT_PORCELAIN_CLEAN}${GIT_PORCELAIN_CLEAN:+$'\n'}${_pline}"
+    done <<< "$GIT_PORCELAIN"
     # Stale-state reconciliation is ONE-WAY: only true→false.
     # NOTE: git status above uses -uall (all untracked, incl. files inside newly-created
     # dirs) so a brand-new untracked code/doc file is NOT falsely downgraded true→false.
@@ -337,9 +735,17 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   HAS_DOC_CHANGE=$(echo "$CONVERSATION" | grep -E '\.(md|mdx)"' | grep -E '"(Edit|Write)"' | head -1 || true)
 
   # Check if required commands were executed
-  HAS_CODEX_REVIEW=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?codex-review(-fast|-branch)?($|[[:space:]])' | tail -1 || true)
-  HAS_PRECOMMIT=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?precommit(-fast)?($|[[:space:]])' | tail -1 || true)
-  HAS_REVIEW_DOC=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?codex-review-doc($|[[:space:]])|/(sd0x-dev-flow:)?review-spec($|[[:space:]])' | tail -1 || true)
+  #
+  # The trailing boundary is "not a command-name character", NOT whitespace. `$CONVERSATION` is a
+  # JSONL transcript, where an invocation that is the whole message renders as `"/precommit"` and a
+  # expanded one as `<command-name>/precommit</command-name>` — in both, the next byte is `"` or
+  # `<`, so the old `($|[[:space:]])` matched neither and the fallback concluded the command had
+  # never run. Nothing detected the invocation, MISSING stayed populated, and strict mode wedged on
+  # a session that had in fact passed every gate. The class still excludes `-` and alphanumerics, so
+  # `/codex-review-doc` continues NOT to satisfy the code-review check (see the dedicated test).
+  HAS_CODEX_REVIEW=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?codex-review(-fast|-branch)?($|[^A-Za-z0-9_-])' | tail -1 || true)
+  HAS_PRECOMMIT=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?precommit(-fast)?($|[^A-Za-z0-9_-])' | tail -1 || true)
+  HAS_REVIEW_DOC=$(echo "$CONVERSATION" | grep -oE '/(sd0x-dev-flow:)?codex-review-doc($|[^A-Za-z0-9_-])|/(sd0x-dev-flow:)?review-spec($|[^A-Za-z0-9_-])' | tail -1 || true)
 
   # Check review results (standard sentinel — includes doc review sentinels ✅ Mergeable / ✅ Ready)
   # Plan-review isolation (T4): plan sentinel SUBSTRINGS are stripped FIRST so that
@@ -353,14 +759,169 @@ if [[ "$USE_STATE_FILE" == "false" ]]; then
   _strip_plan_sentinels() {
     sed -e 's/## Plan Review//g' -e 's/✅ Plan Ready//g' -e 's/⛔ Plan Blocked//g' -e 's/⚠️ Plan Needs Human//g'
   }
-  REVIEW_PASSED=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: ✅|✅ All Pass|✅ Mergeable|✅ Ready|Gate.*PASS' | tail -1 || true)
+  # BYTE offset of the LAST match of $1 on stdin, or empty.
+  #
+  # Byte offsets, not line numbers. `$CONVERSATION` is JSONL: one line packs an entire message,
+  # so a line number cannot order two things that share a message — and a slash-command
+  # invocation and the gate its predecessor emitted routinely do. That is not a corner case, it is
+  # the ordinary shape of an auto-loop turn, where the model reports the previous verdict and
+  # announces the next command in one breath. Line granularity therefore had to accept equality
+  # (`>=`), and accepting equality is what let a `/precommit-fast` PASS be credited to a later,
+  # different `/precommit`. Offsets order everything within the stream, so the comparison below
+  # can be strict.
+  _offset_of() {
+    local n
+    n=$(grep -boE "$1" | tail -1 | cut -d: -f1) || true
+    printf '%s' "$n"
+  }
+  # True when a verdict at byte $1 can belong to the invocation at byte $2.
+  #
+  # Strict `>`: a verdict a command produced starts strictly after the command name that produced
+  # it. Equality is unreachable here anyway — the command patterns start with `/` and every
+  # verdict pattern with `#`, `✅` or `⛔`, so no two matches can begin at the same byte — but
+  # writing it strictly keeps the invariant readable instead of leaving `>=` to be re-litigated.
+  _verdict_paired() {
+    [[ -n "$1" && -n "$2" ]] || return 1
+    (( $1 > $2 )) || return 1
+    return 0
+  }
+  # `✅ All Pass` is NOT in this pattern, nor in LAST_REVIEW below. rules/auto-loop.md documents it
+  # as behavior-layer prose for "every gate passed" that no hook reads — and that claim has to be
+  # true everywhere, not just in the per-plane scans. In LAST_REVIEW it was load-bearing in the
+  # wrong direction: `tail -1` takes the LAST matching line, so a message ending in that phrase
+  # out-ranked an earlier `⛔ Blocked` and cleared the coarse BLOCKED_REASON. The additive
+  # per-plane scans below still caught that particular case, so it was not a live bypass — but a
+  # prose phrase the model emits freely should not be able to out-rank a real verdict at all, and
+  # a doc that says "no hook reads it" while two greps do is the kind of gap that is only ever
+  # noticed after it matters. Dropping it can only make a block MORE likely (fail-closed).
+  REVIEW_PASSED=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: ✅|✅ Mergeable|✅ Ready|Gate.*PASS' | tail -1 || true)
   REVIEW_BLOCKED=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: ⛔|⛔.*Block|⛔ Needs revision|⛔ Must fix|Gate.*FAIL' | tail -1 || true)
+
+  # PRESENCE of a verdict, per plane, of EITHER polarity. The MISSING evaluation below used to ask
+  # only "does the command TEXT appear?" — and the command text appears for reasons that prove
+  # nothing ran to completion: a plan or TODO listing the step, a message quoting the workflow
+  # table from CLAUDE.md, or an invocation that errored out before emitting its gate. In all three
+  # the gate was reported SATISFIED, because the separate verdict check only ever sets
+  # BLOCKED_REASON on an explicit ⛔ and an ABSENT verdict is not a ⛔. "Invoked" is not "passed";
+  # unproven must read as missing, exactly as the state-file branch already treats an absent
+  # `code_review.passed`.
+  #
+  # Split PER PLANE. The shared REVIEW_PASSED/REVIEW_BLOCKED pair was used for both gates, so ANY
+  # verdict satisfied EITHER "invoked, no verdict" test: a doc review ending `✅ Mergeable` proved
+  # the CODE review had reported, and vice versa. Concretely — code changed, `/codex-review-fast`
+  # appears in the transcript but errored before emitting anything, a doc review then passes: the
+  # code branch sees a non-empty REVIEW_PASSED (the doc's), emits no MISSING, and the per-plane
+  # BLOCKED scan below finds no code sentinel to block on. The stop is allowed with no code verdict
+  # at all.
+  #
+  # Each plane therefore matches only its OWN sentinels, and the two patterns are kept IDENTICAL to
+  # the per-plane LAST_CODE_VERDICT / LAST_DOC_VERDICT scans further down — the "did it report?"
+  # test and the "what did it report?" test must agree on plane membership, or a verdict could
+  # satisfy one and be invisible to the other.
+  #   code → `## Gate: ✅|⛔`, `✅ Ready`, `⛔ Blocked`, `⛔ Must fix`
+  #   doc  → `✅ Mergeable`, `⛔ Needs revision`
+  # `✅ All Pass` is deliberately in NEITHER: rules/auto-loop.md lists it under Advisory exits as
+  # behavior-layer prose for "every gate passed", not a plane verdict, so letting it stand in for a
+  # missing per-plane report is the same conflation one step removed. Unattributable reads as
+  # missing — the fail-closed direction. It is excluded from the coarse plane-agnostic scans as
+  # well (see REVIEW_PASSED above); no scan in this hook matches it.
+  CODE_VERDICT_SEEN=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: (✅|⛔)|✅ Ready|⛔ Blocked|⛔ Must fix' | tail -1 || true)
+  DOC_VERDICT_SEEN=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '✅ Mergeable|⛔ Needs revision' | tail -1 || true)
+  #
+  # Precommit does need its own, because its sentinel is a different line entirely. Same three
+  # accepted terminators as the LAST_PRECOMMIT scan below (see its comment); hoisted so the MISSING
+  # evaluation can tell "precommit never reported" from "precommit reported FAIL".
+  # Both boundaries are required. The trailing group alone still accepted a narration that ENDS
+  # with the sentinel ("...I'll report ## Overall: ✅ PASS"), which `tail -1` then let override an
+  # earlier real ⛔ FAIL. The leading group demands the sentinel START its line: column 0 in a
+  # plain-text fixture, immediately after a JSON-encoded newline `\n`, or immediately after the
+  # opening `"` of the JSON string — the three shapes a genuine emitted sentinel actually takes.
+  # Prose mentions are preceded by a space or a backtick and no longer match either way round.
+  # Trailing group is `[[:space:]]*` followed by ANY of the three terminators, not `[[:space:]]*$`
+  # OR the other two: a JSON-encoded sentinel with a space before the escape
+  # (`"## Overall: ✅ PASS \n done"`) matched none of the old alternatives. Fail-closed (it read as
+  # "invoked, no verdict"), but the comment above claims to enumerate the shapes a real sentinel
+  # takes, and that was a fourth.
+  _PRECOMMIT_VERDICT_RE='(^|\\n|")## Overall: (✅ PASS|⛔ FAIL|❌ FAIL)([[:space:]]*($|\\n|"))'
+  PRECOMMIT_VERDICT_SEEN=$(echo "$CONVERSATION" | grep -E "$_PRECOMMIT_VERDICT_RE" | tail -1 || true)
+  # Deliberately NOT paired — see the blocking check far below. Pairing answers "did THIS invocation
+  # report?", which is the right question for MISSING and the wrong one for "was anything ever
+  # reported as FAILING". `PRECOMMIT_VERDICT_SEEN` is blanked when pairing fails, and reusing it for
+  # the blocking check made a real `⛔ FAIL` disappear whenever the model narrated the next
+  # `/precommit` after it — the ordinary shape of a failing auto-loop round. The code and doc planes
+  # never had this because their blocking checks re-scan; precommit is kept in step by capturing the
+  # unpaired reading here rather than by re-scanning there, so both readings come from one grep.
+  PRECOMMIT_VERDICT_ANY="$PRECOMMIT_VERDICT_SEEN"
+
+  # === Pair each verdict with the invocation it belongs to ===
+  #
+  # The scans above are position-blind: "does a verdict appear anywhere" and "does the command
+  # appear anywhere" were never related in time. So a transcript reading
+  #   /precommit-fast … ## Overall: ✅ PASS … /precommit
+  # satisfied the gate for the LAST invocation using the FIRST one's verdict — including the
+  # PRECOMMIT_REQUIRE_FULL branch, which reads the variant off that same last invocation. The newer
+  # run, which may have errored before emitting anything or never run at all, inherited an older
+  # run's result. The code and doc planes had the identical shape.
+  #
+  # A verdict now counts only if it is NOT OLDER than the invocation it is being credited to. Each
+  # `-n` scan MUST use the same pattern as its `-o`/`-E` counterpart above; a divergence would pair
+  # a verdict against an invocation neither scan agrees exists.
+  _CODE_CMD_RE='/(sd0x-dev-flow:)?codex-review(-fast|-branch)?($|[^A-Za-z0-9_-])'
+  _PRECOMMIT_CMD_RE='/(sd0x-dev-flow:)?precommit(-fast)?($|[^A-Za-z0-9_-])'
+  _DOC_CMD_RE='/(sd0x-dev-flow:)?codex-review-doc($|[^A-Za-z0-9_-])|/(sd0x-dev-flow:)?review-spec($|[^A-Za-z0-9_-])'
+
+  # ONE canonical byte stream for all six scans. Offsets are only comparable within a single
+  # stream: `_strip_plan_sentinels` DELETES bytes, so an offset measured on the stripped text and
+  # one measured on `$CONVERSATION` are read off different rulers, and the discrepancy grows with
+  # every plan sentinel the session emitted — a verdict would drift "earlier" than the command that
+  # produced it purely because a plan review happened upstream. The command patterns are indifferent
+  # to the stripping (no plan sentinel contains a slash-command name), so putting them on the
+  # stripped stream too costs nothing and makes every offset below mutually comparable.
+  # `|| _PAIR_STREAM=""` — the ONE unguarded consumer of `_strip_plan_sentinels` among eight.
+  # That helper is backed by `sed`, so on a host whose PATH lacks it the pipeline exits 127 and,
+  # under `set -euo pipefail`, a bare assignment aborts the hook with no JSON on stdout — which
+  # the harness reads as "no objection" and lets an unreviewed session stop (fail-OPEN). The
+  # other seven call sites already absorb it with `|| true`; this one did not, purely because it
+  # ends in the helper rather than in a `grep … | tail -1`. Empty is the fail-CLOSED value here:
+  # every `_offset_of` below then yields "", `_verdict_paired` rejects empty operands, so each
+  # gate reads as (invoked, no verdict) and blocks. Detection of the edits themselves scans
+  # `$CONVERSATION`, not this stream, so the requirement to review does not vanish with it.
+  _PAIR_STREAM=$(echo "$CONVERSATION" | _strip_plan_sentinels) || _PAIR_STREAM=""
+
+  _CODE_CMD_AT=$(_offset_of "$_CODE_CMD_RE" <<< "$_PAIR_STREAM")
+  _PRECOMMIT_CMD_AT=$(_offset_of "$_PRECOMMIT_CMD_RE" <<< "$_PAIR_STREAM")
+  _DOC_CMD_AT=$(_offset_of "$_DOC_CMD_RE" <<< "$_PAIR_STREAM")
+  _CODE_VERDICT_AT=$(_offset_of '## Gate: (✅|⛔)|✅ Ready|⛔ Blocked|⛔ Must fix' <<< "$_PAIR_STREAM")
+  _DOC_VERDICT_AT=$(_offset_of '✅ Mergeable|⛔ Needs revision' <<< "$_PAIR_STREAM")
+  _PRECOMMIT_VERDICT_AT=$(_offset_of "$_PRECOMMIT_VERDICT_RE" <<< "$_PAIR_STREAM")
+
+  # Blank the verdict rather than adding a parallel flag, so every downstream `-z` test inherits
+  # the pairing without restating it. An unpaired verdict is indistinguishable from no verdict —
+  # which is exactly what it proves about the invocation being judged.
+  _verdict_paired "$_CODE_VERDICT_AT" "$_CODE_CMD_AT" || CODE_VERDICT_SEEN=""
+  _verdict_paired "$_DOC_VERDICT_AT" "$_DOC_CMD_AT" || DOC_VERDICT_SEEN=""
+  _verdict_paired "$_PRECOMMIT_VERDICT_AT" "$_PRECOMMIT_CMD_AT" || PRECOMMIT_VERDICT_SEEN=""
+
+  # Known over-block (deliberate, fail-closed): the command detectors match PROSE as well as real
+  # invocations, so `/precommit` written in a summary AFTER a passing run moves the invocation line
+  # past the verdict and re-opens the gate. That weakness already existed for mentions BEFORE any
+  # verdict — the "(invoked, no verdict)" branch has always fired on them — so this extends an
+  # accepted rule rather than introducing a new one, and it errs toward re-asking for a review that
+  # already passed instead of skipping one that never ran. Transcript mode is the degraded path
+  # taken only when no state file is readable; the state-file branch pairs by construction, because
+  # a verdict is written into the gate's own subtree by the hook that observed it.
 
   if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
     echo "[Debug] Using transcript parsing mode" >&2
     echo "[Debug] HAS_CODE_CHANGE=${HAS_CODE_CHANGE:0:50}" >&2
     echo "[Debug] HAS_CODEX_REVIEW=$HAS_CODEX_REVIEW" >&2
     echo "[Debug] REVIEW_PASSED=${REVIEW_PASSED:0:50}" >&2
+    # Both polarities, deliberately. `REVIEW_BLOCKED` had no reader at all — it ran a full grep
+    # over the transcript and its result was discarded — which is not merely waste: printing only
+    # the passing side is what makes a SPURIOUS pass invisible while debugging. When a stop is
+    # allowed that should not have been, the useful question is whether a blocking verdict was
+    # ALSO matched and out-ranked, and that is unanswerable from the passing scan alone.
+    echo "[Debug] REVIEW_BLOCKED=${REVIEW_BLOCKED:0:50}" >&2
   fi
 fi
 
@@ -379,6 +940,21 @@ if [[ "$USE_STATE_FILE" == "true" ]]; then
     fi
     if [[ "$PRECOMMIT_PASSED" != "true" ]]; then
       MISSING="$MISSING /precommit"
+    elif [[ "${PRECOMMIT_REQUIRE_FULL:-}" == "1" && "$PRECOMMIT_MODE" != "full" ]]; then
+      # Opt-in: `/precommit-fast` SKIPS the build/typecheck step (precommit-runner.js:167), so on a
+      # project whose required check is the full gate a passing `fast` run is not equivalent — it
+      # banks precommit.passed=true with the typecheck never executed. Off by default NOT because of
+      # this repo's own untracked `.claude/CLAUDE.md` (that only binds local developers) but because
+      # the flag ships to arbitrary host projects, where the fast gate is a documented, supported
+      # choice — defaulting to full-only would block those projects with nothing to configure.
+      # Projects requiring the full gate set PRECOMMIT_REQUIRE_FULL=1. An absent/`unknown` mode (legacy state written before the field
+      # existed, or an unrecognized invocation) also fails here — unproven is not proven.
+      # LIMIT OF THIS CHECK: `mode` records the COMMAND VARIANT, not the stages that ran. A repo with
+      # no build script (the runner logs `⏭️ build (skipped: script missing)`) and any non-Node
+      # ecosystem (which bypasses the runner entirely) both record `full` with no typecheck behind
+      # it. So this gate rejects the reduced variant; it does not certify that a typecheck executed.
+      # post-tool-review-state.sh warns on stderr when it records exactly that divergence.
+      MISSING="$MISSING /precommit(full; last run mode=${PRECOMMIT_MODE:-unrecorded})"
     fi
   fi
   if [[ "$HAS_DOC_CHANGE" == "true" && "$DOC_REVIEW_PASSED" != "true" ]]; then
@@ -393,40 +969,162 @@ else
   if [[ -n "$HAS_CODE_CHANGE" ]]; then
     if [[ -z "$HAS_CODEX_REVIEW" ]]; then
       MISSING="$MISSING /codex-review-fast"
+    elif [[ -z "$CODE_VERDICT_SEEN" ]]; then
+      MISSING="$MISSING /codex-review-fast(invoked, no verdict)"
     fi
     if [[ -z "$HAS_PRECOMMIT" ]]; then
       MISSING="$MISSING /precommit"
+    elif [[ -z "$PRECOMMIT_VERDICT_SEEN" ]]; then
+      MISSING="$MISSING /precommit(invoked, no verdict)"
+    elif [[ "${PRECOMMIT_REQUIRE_FULL:-}" == "1" && "$HAS_PRECOMMIT" == *-fast* ]]; then
+      # The flag was honoured ONLY in state-file mode, so a project that required the full gate got
+      # it enforced with a state file and silently not enforced without one — the fallback is
+      # exactly the degraded path where an unproven verdict is least affordable. The variant is
+      # recoverable here because the detector CAPTURES its match (`/precommit` vs `/precommit-fast`)
+      # and `tail -1` keeps it recency-correct, same rule as the state-file branch's `mode` field.
+      MISSING="$MISSING /precommit(mode=fast, full required)"
     fi
   fi
-  if [[ -n "$HAS_DOC_CHANGE" && -z "$HAS_REVIEW_DOC" ]]; then
-    MISSING="$MISSING /codex-review-doc"
+  if [[ -n "$HAS_DOC_CHANGE" ]]; then
+    if [[ -z "$HAS_REVIEW_DOC" ]]; then
+      MISSING="$MISSING /codex-review-doc"
+    elif [[ -z "$DOC_VERDICT_SEEN" ]]; then
+      MISSING="$MISSING /codex-review-doc(invoked, no verdict)"
+    fi
   fi
 
   # Check if review passed — use last verdict for recency-correct detection
   # (handles fail→pass→fail re-runs: the LAST verdict wins)
   if [[ -n "$HAS_CODEX_REVIEW" || -n "$HAS_REVIEW_DOC" ]]; then
     # Same plan-sentinel strip as REVIEW_PASSED/REVIEW_BLOCKED above (T4 isolation)
-    LAST_REVIEW=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: (✅|⛔)|✅ (All Pass|Mergeable|Ready)|⛔.*(Block|Needs revision|Must fix)|Gate.*(PASS|FAIL)' | tail -1 || true)
-    if [[ -n "$LAST_REVIEW" ]] && echo "$LAST_REVIEW" | grep -qE '⛔|FAIL'; then
+    # `✅ All Pass` excluded here too — see the REVIEW_PASSED comment above for why.
+    LAST_REVIEW=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: (✅|⛔)|✅ (Mergeable|Ready)|⛔.*(Block|Needs revision|Must fix)|Gate.*(PASS|FAIL)' | tail -1 || true)
+    if [[ -n "$LAST_REVIEW" ]] && grep -qE '⛔|FAIL' <<< "$LAST_REVIEW"; then
       BLOCKED_REASON="Review not passed (Blocked)"
+    fi
+  fi
+
+  # Per-plane recency. LAST_REVIEW above answers "what was the most recent verdict of ANY kind",
+  # which CONFLATES the two planes: a code review ending `⛔ Blocked` followed by a doc review
+  # ending `✅ Mergeable` left LAST_REVIEW passing, and since the MISSING test only asks whether
+  # *a* verdict exists (of either polarity, either plane), the failed code review vanished
+  # entirely — Stop was allowed over a blocked code review.
+  #
+  # These two scans are strictly ADDITIVE: they can only RAISE BLOCKED_REASON, never clear one, so
+  # every currently-blocking case still blocks. Each plane matches only its OWN sentinels, so a
+  # later verdict on the other plane cannot supersede it.
+  #
+  # Known over-block (deliberate, fail-closed): `$CONVERSATION` is JSONL, so one line can pack a
+  # whole message carrying BOTH planes' sentinels. Such a line reads as blocking for both. Erring
+  # toward a spurious ⚠️ in a degraded no-state path is the correct direction.
+  if [[ -z "$BLOCKED_REASON" && -n "$HAS_CODEX_REVIEW" ]]; then
+    LAST_CODE_VERDICT=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '## Gate: (✅|⛔)|✅ Ready|⛔ Blocked|⛔ Must fix' | tail -1 || true)
+    if [[ -n "$LAST_CODE_VERDICT" ]] && grep -qE '⛔' <<< "$LAST_CODE_VERDICT"; then
+      BLOCKED_REASON="Code review not passed (Blocked)"
+    fi
+  fi
+  if [[ -z "$BLOCKED_REASON" && -n "$HAS_REVIEW_DOC" ]]; then
+    LAST_DOC_VERDICT=$(echo "$CONVERSATION" | _strip_plan_sentinels | grep -E '✅ Mergeable|⛔ Needs revision' | tail -1 || true)
+    if [[ -n "$LAST_DOC_VERDICT" ]] && grep -qE '⛔' <<< "$LAST_DOC_VERDICT"; then
+      BLOCKED_REASON="Doc review not passed (Needs revision)"
     fi
   fi
 
   # D2: Check precommit result (not just execution) — scan for last ## Overall sentinel
   # Use the LAST ## Overall line to determine pass/fail (handles PASS→FAIL re-runs correctly)
+  #
+  # The sentinel must be TERMINATED, not merely present. Without the trailing-delimiter group, a
+  # narration line such as "I'll print `## Overall: ✅ PASS` once it's green" matched, and because
+  # it carries no FAIL marker it read as a passing precommit — so a prose mention emitted AFTER a
+  # real `⛔ FAIL` silently unblocked the gate (`tail -1` takes the later line).
+  #
+  # The state writer anchors its copy of this sentinel to a whole line at column 0, but that parser
+  # CANNOT be reused here: `$CONVERSATION` is `tail -500` of a JSONL transcript, so a genuine
+  # sentinel lives inside a JSON string on a line beginning with `{`. `^`/`$` would therefore match
+  # nothing in production while still passing the plain-text fixtures below — dead code that looks
+  # tested. The three accepted terminators cover both shapes: end-of-line (plain text), a literal
+  # `\n` escape (JSON-encoded newline), and `"` (sentinel ends the JSON string).
   if [[ -n "$HAS_PRECOMMIT" && -z "$BLOCKED_REASON" ]]; then
-    LAST_PRECOMMIT=$(echo "$CONVERSATION" | grep -E '## Overall: (✅ PASS|⛔ FAIL|❌ FAIL)' | tail -1 || true)
-    if [[ -n "$LAST_PRECOMMIT" ]] && echo "$LAST_PRECOMMIT" | grep -qE '(⛔|❌) FAIL'; then
+    # UNPAIRED, matching the two per-plane scans above. Blocking detection must be ADDITIVE: a
+    # `⛔ FAIL` anywhere in the window is evidence the gate failed, and no later invocation —
+    # announced, mentioned in a summary, or genuinely re-run without output — retires it. Pairing
+    # belongs to the MISSING branch, which asks a different question.
+    LAST_PRECOMMIT="$PRECOMMIT_VERDICT_ANY"
+    if [[ -n "$LAST_PRECOMMIT" ]] && grep -qE '(⛔|❌) FAIL' <<< "$LAST_PRECOMMIT"; then
       BLOCKED_REASON="Precommit not passed (FAIL)"
     fi
   fi
 fi
 
 # === Iteration hard cap check (schema v2) — takes priority over MISSING ===
+#
+# Both operands are DIGIT-VALIDATED before the numeric compare. `[[ x -ge y ]]` evaluates its
+# operands as ARITHMETIC EXPRESSIONS, and arithmetic evaluation performs both variable expansion
+# and COMMAND SUBSTITUTION inside an array subscript. `.claude_review_state.json` is an ordinary
+# file in the working tree — written by hooks, but writable by anything, including a fanout worker
+# — so a crafted `"current_round": "MISSING[$(...)]"` executed arbitrary commands inside this Stop
+# hook (reproduced: the payload's `touch` ran, then evaluation continued normally and printed the
+# LT branch, leaving no trace). Any variable name that exists in this scope works as the array base.
+# The same string form ALSO disarms the cap silently: `"12abc"` makes `[[ ]]` abort with
+# "value too great for base", which `2>/dev/null` swallows and the failed test reads as "under the
+# cap" — an unbounded review loop, the exact failure the hard cap exists to stop.
+# Non-numeric therefore routes to ⚠️ Need Human rather than to a default: the counters cannot be
+# trusted, so we cannot prove the budget is unspent.
 if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
-  ITER_ROUND=$(echo "$STATE" | jq -r '.iteration_history.current_round // 0' 2>/dev/null || echo 0)
-  ITER_MAX=$(echo "$STATE" | jq -r '.iteration_history.max_rounds // 10' 2>/dev/null || echo 10)
-  if [[ "$ITER_ROUND" -ge "$ITER_MAX" ]] 2>/dev/null; then
+  # Validate INSIDE jq, as bounded JSON integers, before any value reaches bash arithmetic.
+  # A bash-side `=~ ^[0-9]+$` guard is necessary but NOT sufficient:
+  #   • a non-object `iteration_history` (string / array / number) makes the per-field reads raise
+  #     a jq index error, which `|| echo 0` / `|| echo 10` turned into a clean "round 0 of 10" —
+  #     a corrupt parent silently reading as an unspent budget, so the cap never fires;
+  #   • a digit-only value beyond Bash's signed 64-bit range WRAPS in `[[ -ge ]]` and can compare
+  #     as below the cap;
+  #   • a digit-only value with a leading zero is parsed as OCTAL (`010` = 8, `08` = an error).
+  # jq emits numbers canonically, so a value that survives the checks below cannot carry leading
+  # zeros, a fractional part, a sign, or a magnitude bash cannot represent. Anything else is
+  # `corrupt` → ⚠️ Need Human, never a default: untrusted counters cannot prove the budget unspent.
+  # NOTE the deliberate absence of `//` here. jq's alternative operator treats **false** as
+  # "missing", so `(.iteration_history.current_round // 0)` mapped `current_round: false` to 0 —
+  # verified against real jq: `{"current_round":false,"max_rounds":false}` produced `0 10`, i.e. a
+  # FULLY UNSPENT budget, silently refunding the hard cap that is the only enforced convergence
+  # exit. The type checks below could never catch it because the false was already gone. Same for
+  # `(.iteration_history // {})`, which laundered `iteration_history: false` into an empty object.
+  # So: null/absent → documented defaults; anything else non-numeric, INCLUDING false → corrupt.
+  ITER_PARSED=$(jq -r '
+    .iteration_history as $ih
+    | if $ih == null then "0 10"
+      elif ($ih | type) != "object" then "corrupt"
+      else
+        (if ($ih | has("current_round")) and ($ih.current_round != null) then $ih.current_round else 0 end) as $r
+        | (if ($ih | has("max_rounds")) and ($ih.max_rounds != null) then $ih.max_rounds else 10 end) as $m
+        | if ($r | type) != "number" or ($m | type) != "number" then "corrupt"
+          elif ($r | floor) != $r or ($m | floor) != $m then "corrupt"
+          elif $r < 0 or $r > 100000 or $m < 1 or $m > 100000 then "corrupt"
+          # CLAMP the cap, do not accept it as written. The only producer of this field
+          # (`_read_project_int_setting` in post-tool-review-state.sh) admits 3..50 and otherwise
+          # falls back to the default 10, so a persisted 100000 cannot have come from the
+          # documented path. `.claude_review_state.json` is an ordinary writable file, and an
+          # out-of-contract cap is exactly how the convergence hard cap — the ONLY exit stop-guard
+          # actually enforces — gets disarmed: `current_round: 51` under `max_rounds: 100000` reads
+          # as a comfortably unspent budget forever. Clamping rather than declaring "corrupt" keeps
+          # a merely stale or hand-edited file usable in warn mode instead of forcing that user
+          # into strict, while still capping the budget at the contract maximum.
+          else "\($r) \(if $m < 3 then 3 elif $m > 50 then 50 else $m end)"
+          end
+      end' <<< "$STATE" 2>/dev/null) || ITER_PARSED="corrupt"
+  if [[ "$ITER_PARSED" =~ ^([0-9]+)[[:space:]]([0-9]+)$ ]]; then
+    ITER_ROUND="${BASH_REMATCH[1]}"
+    ITER_MAX="${BASH_REMATCH[2]}"
+  else
+    ITER_ROUND="corrupt"
+    ITER_MAX="corrupt"
+  fi
+  if [[ "$ITER_ROUND" == "corrupt" ]]; then
+    MISSING=""
+    BLOCKED_REASON="Iteration counters are not valid bounded integers — state file corrupt or tampered, needs human intervention"
+    if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
+      echo "[Debug] Iteration counters rejected (jq validation: ${ITER_PARSED:0:32})" >&2
+    fi
+  elif [[ "$ITER_ROUND" -ge "$ITER_MAX" ]]; then
     # Hard cap: override MISSING — human intervention needed, not more review cycles
     MISSING=""
     BLOCKED_REASON="Max review rounds exceeded ($ITER_ROUND/$ITER_MAX) — needs human intervention"
@@ -437,34 +1135,58 @@ if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
 fi
 
 # === Output result ===
+#
+# Both MISSING and BLOCKED_REASON carry STATE-DERIVED text (`review_phase`, `precommit.mode`, the
+# rejected counter values), and `.claude_review_state.json` is an ordinary file in the working tree
+# that any process can write. Interpolating such a value straight into the printf JSON template
+# lets a `"` or `\` or newline produce MALFORMED output, which the harness cannot parse — turning a
+# blocking verdict into no verdict at all. Strip the three characters that can break a JSON string
+# (control chars, quote, backslash) rather than trying to escape them: these fields are diagnostic
+# prose, so losing a stray quote costs nothing and guarantees well-formed output.
+#
+# Implemented with bash parameter expansion, NOT `tr`: this runs on the fail-closed path, and a
+# host whose PATH lacks the helper would make the pipeline exit 127 under `set -e` — killing the
+# hook before any JSON is printed, which the harness reads as "no objection" (fail-open). A
+# built-in cannot be missing. `LC_ALL=C` keeps `[[:cntrl:]]` byte-scoped rather than locale-scoped.
+_json_safe() {
+  local s="${1:-}"
+  local LC_ALL=C
+  s="${s//[[:cntrl:]]/ }"
+  s="${s//\\/}"
+  s="${s//\"/}"
+  printf '%s' "$s"
+}
+
 if [[ -n "${MISSING:-}" ]]; then
+  MISSING_JSON=$(_json_safe "$MISSING")
   if [[ "$GUARD_MODE" == "strict" ]]; then
     # On exit 2 only stderr reaches the model (stdout JSON is test-consumed),
     # so the actionable instruction must be here, not just in the JSON.
     echo "[Stop Guard] STRICT: Missing steps:${MISSING}" >&2
     echo "[Stop Guard] Execute immediately:${MISSING} — invoke the command now; do not ask the user, do not summarize." >&2
-    printf '{"ok":false,"reason":"Missing required steps","description":"Execute immediately:%s, do not ask user"}\n' "${MISSING}"
+    printf '{"ok":false,"reason":"Missing required steps","description":"Execute immediately:%s, do not ask user"}\n' "${MISSING_JSON}"
     exit 2
   else
     echo "[Stop Guard] WARN: Missing steps:${MISSING} (set STOP_GUARD_MODE=strict to block)" >&2
-    printf '{"ok":true,"reason":"Missing steps (warn mode):%s"}\n' "${MISSING}"
+    printf '{"ok":true,"reason":"Missing steps (warn mode):%s"}\n' "${MISSING_JSON}"
     exit 0
   fi
 elif [[ -n "${BLOCKED_REASON:-}" ]]; then
   # Use cap-specific description when max rounds exceeded
   BLOCK_DESC="Fix issues and re-run review immediately, do not stop"
-  if echo "${BLOCKED_REASON}" | grep -q "Max review rounds"; then
+  if grep -q "Max review rounds" <<< "${BLOCKED_REASON}"; then
     BLOCK_DESC="Max rounds reached; escalate to human, do not auto-retry"
   fi
+  BLOCKED_JSON=$(_json_safe "$BLOCKED_REASON")
   if [[ "$GUARD_MODE" == "strict" ]]; then
     # Same as the MISSING branch: the model only sees stderr on exit 2.
     echo "[Stop Guard] STRICT: ${BLOCKED_REASON}" >&2
     echo "[Stop Guard] ${BLOCK_DESC}" >&2
-    printf '{"ok":false,"reason":"%s","description":"%s"}\n' "${BLOCKED_REASON}" "${BLOCK_DESC}"
+    printf '{"ok":false,"reason":"%s","description":"%s"}\n' "${BLOCKED_JSON}" "${BLOCK_DESC}"
     exit 2
   else
     echo "[Stop Guard] WARN: ${BLOCKED_REASON} (set STOP_GUARD_MODE=strict to block)" >&2
-    printf '{"ok":true,"reason":"%s (warn mode)"}\n' "${BLOCKED_REASON}"
+    printf '{"ok":true,"reason":"%s (warn mode)"}\n' "${BLOCKED_JSON}"
     exit 0
   fi
 else

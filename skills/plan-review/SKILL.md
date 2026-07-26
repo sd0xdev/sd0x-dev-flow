@@ -1,7 +1,7 @@
 ---
 name: plan-review
 description: "Pre-ExitPlanMode adversarial plan review loop via Codex MCP. Use when: in plan mode, before presenting a plan to the user; reviewing an in-context plan draft. Not for: .md file review (use doc-review), code review (use codex-code-review), lifecycle spec review (use review-spec). Output: review trail summary + plan gate (✅ Plan Ready / ⛔ Plan Blocked / ⚠️ Plan Needs Human)."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(bash:*), Bash(git:*), Bash(node:*), Read, Grep, Glob, Task
+allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(bash:*), Bash(git:*), Bash(node:*), Read, Grep, Glob, Task, Skill
 ---
 
 # Plan Review Skill
@@ -113,12 +113,27 @@ if (high) {
 Run via `node -e` against the plan text, feeding the text through **stdin with a quoted heredoc — never as an argv literal**:
 
 ```bash
-node -e '...' <<'PLAN_EOF'
+node -e '...' <<'PLAN_EOF_<random-hex>'
 <plan text>
-PLAN_EOF
+PLAN_EOF_<random-hex>
 ```
 
-Rationale: argv leaks the un-redacted plan into system-wide process listings (`ps`); heredoc stdin never appears in argv. The quoted delimiter (`'PLAN_EOF'`) prevents shell interpolation of plan content. The plan draft already exists in the session transcript (it is in-context text), so the heredoc adds no new exposure surface — and a temp-file path is not viable here because `Write` is unavailable in plan mode. Forbidden anti-pattern: judging high-confidence via `redact(text, {abortOnHigh: false})` return value (high is already masked, indistinguishable from medium).
+> `<random-hex>` is a **placeholder to be generated**, not a value to copy. It is written this way
+> deliberately: the rationale below is that "a fixed delimiter makes the attack a copy-paste", and
+> an example carrying a concrete literal reinstates exactly that for anyone who copies rather than
+> generates. Substitute a fresh suffix on every invocation, per the table that follows.
+
+**The delimiter must be freshly randomized per invocation, and you must verify it does not collide.** Before emitting the command:
+
+| Step | Action |
+|------|--------|
+| 1 | Generate a new random suffix (≥8 hex chars) → `PLAN_EOF_<suffix>` |
+| 2 | Scan the plan text for any line whose **entire content** (after stripping trailing whitespace) equals that delimiter |
+| 3 | On collision → regenerate and re-check. Never emit a command whose delimiter appears in the body |
+
+Rationale: argv leaks the un-redacted plan into system-wide process listings (`ps`); heredoc stdin never appears in argv. The quoted delimiter prevents shell *interpolation* of plan content — but quoting does **not** stop the plan from **terminating** the heredoc. A plan containing a bare line `PLAN_EOF` ends the here-document early, and every line after it is handed to the shell as commands under this skill's `Bash` permission. That is arbitrary command execution driven by plan text, which in this skill is frequently drafted from untrusted material (issue bodies, PR descriptions, pasted logs). A fixed delimiter makes the attack a copy-paste; a randomized-and-checked one makes it unreachable.
+
+The plan draft already exists in the session transcript (it is in-context text), so the heredoc adds no new exposure surface — and a temp-file path is not viable here because `Write` is unavailable in plan mode. Forbidden anti-pattern: judging high-confidence via `redact(text, {abortOnHigh: false})` return value (high is already masked, indistinguishable from medium).
 
 ### Step 3: Review dispatch (tier ladder)
 
