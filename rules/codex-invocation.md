@@ -1,22 +1,15 @@
 # Codex Invocation Rule ⚠️ CRITICAL
 
-**Codex must independently research. Never feed conclusions.**
+**Codex must independently research. Never feed it your conclusions.**
 
-## Core Principle
+Codex is a second pair of eyes, not a rubber stamp. Tell it the answer and ask "is this right?" and you have paid full price for agreement.
 
-```
-Codex is a second pair of eyes — not a rubber stamp.
-If you tell Codex the answer and ask "is this right?", you get zero value.
-```
+## Required in every `mcp__codex__codex` prompt
 
-## Required: Independent Research Instructions
-
-Every `mcp__codex__codex` call MUST include this section in the prompt:
+Give **metadata** (changed file list, diff stats, the task) and mandate exploration. Never paste the diff or the code itself — Codex has sandbox access and finds what you did not think to show it.
 
 ```
 ## ⚠️ Important: You must independently research the project ⚠️
-
-When reviewing, you **must** perform the following research:
 
 ### Git Exploration (Priority)
 1. Check change status: `git status`
@@ -29,74 +22,21 @@ When reviewing, you **must** perform the following research:
 - Read related files: `cat <file-path> | head -100`
 ```
 
-## Prohibited Patterns
+Config for review operations: `sandbox: 'read-only'`, `'approval-policy': 'never'`. Use the prompt template from `@skills/*/references/` rather than composing one ad hoc.
 
-| Pattern | Example | Why It's Wrong |
+## Prohibited patterns
+
+| Pattern | Example | Why it's wrong |
 |---------|---------|---------------|
-| Feeding full diff/content | `"## Git Diff \`\`\`diff ... 2000 lines ...\`\`\`"` | Wastes tokens, Codex sees truncated slice instead of full context |
-| Feeding code | `"Here's the fix: \`\`\`code\`\`\` Is it correct?"` | Codex only sees what you show, can't find what you missed |
-| Feeding conclusion | `"Claude found the bug is in X, confirm?"` | Presupposes the answer, Codex won't challenge it |
+| Feeding full diff/content | `"## Git Diff \`\`\`diff … 2000 lines …\`\`\`"` | Burns tokens and hands Codex a truncated slice instead of full context |
+| Feeding code | `"Here's the fix: \`\`\`code\`\`\` Is it correct?"` | Codex sees only what you showed; it cannot find what you missed |
+| Feeding conclusion | `"Claude found the bug is in X, confirm?"` | Presupposes the answer — Codex will not challenge it |
 | Leading question | `"I think the problem is caching, verify?"` | Anchors Codex to your hypothesis |
-| Scope restriction | `"Only look at src/service/"` | Prevents discovering issues in related files |
-| Confirmation prompt | `"These fixes look good, right?"` | Invites agreement, not independent analysis |
+| Scope restriction | `"Only look at src/service/"` | Prevents discovery in related files, which is where the second opinion pays |
+| Confirmation prompt | `"These fixes look good, right?"` | Invites agreement, not analysis |
 
-## Correct Pattern
+The shared shape: every one of these narrows what Codex can find to what you already believe. If the prompt could not possibly produce a finding that surprises you, it is not a review.
 
-```typescript
-// ✅ CORRECT: Give metadata + mandate independent exploration
-mcp__codex__codex({
-  prompt: `You are a senior Code Reviewer...
+## Loop review exception
 
-## Changed Files
-${CHANGED_FILES}
-
-## Diff Stats
-${DIFF_STAT}
-
-## ⚠️ You must independently research the project ⚠️
-[... full research instructions: git diff, cat, grep ...]
-
-## Review Dimensions
-[... checklist ...]`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
-
-```typescript
-// ❌ WRONG: Feed fix and ask for confirmation
-mcp__codex__codex({
-  prompt: `Two issues were fixed:
-1. simulate.ts: to field is now omitted...
-2. summary.ts: Contract creation now returns...
-
-\`\`\`typescript
-// the fix code
-\`\`\`
-
-Are these fixes correct?`,
-  sandbox: 'read-only',
-});
-```
-
-## Enforcement Checklist
-
-Before every `mcp__codex__codex` call, verify:
-
-| Check | Required |
-|-------|----------|
-| Prompt includes "independently research" section | ✅ |
-| Prompt includes concrete git/grep commands | ✅ |
-| Prompt does NOT contain Claude's analysis results | ✅ |
-| Prompt does NOT ask "is this correct/right?" | ✅ |
-| `sandbox: 'read-only'` set (for review operations) | ✅ |
-| `'approval-policy': 'never'` set | ✅ |
-| Uses prompt template from `@skills/*/references/` | ✅ |
-
-## Loop Review Exception
-
-For `mcp__codex__codex-reply` (continuing a previous thread), providing the new diff is acceptable because Codex already has full project context from the initial review. But still:
-
-- Provide the diff, not your interpretation of it
-- Ask Codex to verify fixes, not confirm your fixes
-- Include: "Did fixes introduce new issues?"
+For `mcp__codex__codex-reply` (continuing a thread), providing the new diff is fine — Codex already has project context from the first pass. Still: give the diff, not your reading of it; ask it to *verify* the fixes, not confirm them; and always include "Did the fixes introduce new issues?"

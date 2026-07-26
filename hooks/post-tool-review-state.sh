@@ -2703,7 +2703,7 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
   # revoke a genuine Bash-recorded pass. Verdicts belong to their producer.
   #
   # Priority 4 (generic `✅ All Pass` → code_review pass) REMOVED. `✅ All Pass` is the
-  # PRECOMMIT sentinel (rules/auto-loop.md "Standard Gate Sentinels"), not a code-review
+  # PRECOMMIT sentinel (rules/auto-loop.md "Gate Sentinels"), not a code-review
   # verdict. Routing it to code_review conflated two independent gates: any precommit
   # output reaching MCP could bank a code_review pass AND reset changed_files, clearing
   # the very tracking the code gate depends on. Precommit verdicts are recorded ONLY by the

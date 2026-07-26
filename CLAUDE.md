@@ -36,12 +36,17 @@ After editing code or docs, you **MUST** run the review command **in the same re
 |------------------|----------------|--------------|
 | code files | `/codex-review-fast` | `/precommit` |
 | `.md` docs | `/codex-review-doc` | (done) |
-| Review found issues | Fix all → re-run same review | — |
+| Review found **blocking** issues | Fix all → re-run same review | — |
+| Review found **sub-threshold** issues | Log `[NIT_DEFERRED]`, do not re-review | continue to the "Then on pass" column |
+
+One reviewer — Codex. `/codex-review-fast` and `/codex-review-doc` do not launch a secondary; `/codex-review-branch --dual` is the only code-review entry point where two reviewers run, and it is off unless the flag is passed. (`/plan-review --dual` is the plan-mode equivalent, also off by default.)
+
+What counts as blocking comes from the **tier** (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). Unset means `standard`. **80 is a passing grade** — reach for `thorough` when the change is security, data integrity, a release, or public API, not by default.
 
 **Declaring ≠ Executing**: Saying "should run review" without invoking the Skill tool is a violation.
 **Summary ≠ Completion**: Outputting a table then stopping is a violation.
 
-Full spec: @rules/auto-loop.md
+Full spec: @rules/auto-loop.md (§ Tiers, § Sub-Threshold Findings)
 
 ## Test Requirements
 

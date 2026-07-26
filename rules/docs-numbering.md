@@ -1,87 +1,80 @@
 # Document Numbering Rules
 
-## Feature Document Structure
-
-Each feature's documents are numbered by development phase, stored in `docs/features/<feature>/`.
+Feature documents live in `docs/features/<feature>/`. Lifecycle docs carry a **numeric prefix** for their phase; ancillary docs carry a **semantic prefix** instead.
 
 ```
 docs/features/<feature>/
-├── 0-feasibility-study/         # Feasibility study (folder or single file)
-│   ├── 0-feasibility-study.md   #   Main document
-│   └── N-<sub-topic>.md         #   Sub-study
-├── 1-requirements.md            # Requirements spec (if applicable)
-├── 2-tech-spec.md               # Technical spec
-├── 3-architecture.md            # Architecture design
-├── 4-implementation.md          # Implementation notes (if applicable)
-└── requests/                    # Request docs (unnumbered)
-    └── YYYY-MM-DD-<title>.md
+├── 0-feasibility-study.md       # Lifecycle — or a 0-feasibility-study/ folder
+├── 1-requirements.md            #   with 0-feasibility-study.md + N-<sub-topic>.md inside
+├── 2-tech-spec.md
+├── 3-architecture.md
+├── 4-implementation.md
+├── runbook-release.md           # Ancillary — semantic prefix, no phase number
+├── checklist-deploy.md
+└── requests/
+    └── YYYY-MM-DD-<title>.md    # Date-prefixed
 ```
 
-## Numbering Rules
+## Lifecycle docs
 
-| Rule       | Description                                                              |
-|------------|--------------------------------------------------------------------------|
-| Format     | `<N>-<kebab-case-name>.md`                                               |
-| Start      | `0` = Feasibility study (earliest phase)                                 |
-| Order      | Reflects development phase order, not priority                           |
-| Gap allowed| Allowed (e.g., 0, 2, 3 skipping 1), indicates phase not applicable      |
-| Sub-files  | When multiple files in same phase, create subfolder (e.g., `0-feasibility-study/`) |
-| Sub-numbering | Files within folder also use numeric prefix (`0-main.md`, `1-sub.md`) |
+`<N>-<kebab-case-name>.md`, where N reflects **phase order, not priority**. Gaps are fine — `0, 2, 3` just means phase 1 did not apply.
 
-## Standard Phases
+| Number | Phase | Command | Required |
+|--------|-------|---------|----------|
+| 0 | Feasibility study | `/feasibility-study` | Recommended |
+| 1 | Requirements spec | `/req-analyze` | Recommended |
+| 2 | Technical spec | `/tech-spec` | Required |
+| 3 | Architecture design | `/architecture` | Recommended |
+| 4+ | Implementation / appendix | — | As needed |
 
-| Number | Phase              | Output Command       | Required    |
-|--------|--------------------|---------------------|-------------|
-| 0      | Feasibility study  | `/feasibility-study` | Recommended |
-| 1      | Requirements spec  | `/req-analyze`       | Recommended |
-| 2      | Technical spec     | `/tech-spec`         | Required    |
-| 3      | Architecture design| `/architecture`      | Recommended |
-| 4+     | Implementation/Appendix | -               | As needed   |
+## Ancillary docs
 
-## Cross-References
+Operational or supplementary artifacts that belong to no phase. `doc-classifier.js` recognizes them by `semantic_pattern` (step 4 of its 7-step precedence), not by prefix fallback — the namespace is `ancillary` in `scripts/config/doc-taxonomy.json`.
 
-Use **relative paths** for inter-document references:
+| Type | Pattern | Type | Pattern |
+|------|---------|------|---------|
+| Runbook | `runbook-<topic>.md` | Handoff | `handoff-<topic>.md` |
+| Checklist | `checklist-<topic>.md` | Briefing | `briefing-<topic>.md` |
+| ADR | `adr-<number>-<title>.md` | FP Brief | `*-fp-brief.md` |
 
-```markdown
-<!-- Same level reference -->
-See [Technical Spec](./2-tech-spec.md)
+## Size Limit — 500 Lines
 
-<!-- Subfolder -> parent -->
-See [Technical Spec](../2-tech-spec.md)
+**Over 500 lines, split into a numbered subfolder.** Length is how a document stops being read: past a few hundred lines the reader — human or model — skims, and a detail at line 700 is functionally absent even though it is written down.
 
-<!-- Parent -> subfolder -->
-See [Feasibility Study](./0-feasibility-study/0-feasibility-study.md)
-```
+| Lines | Action |
+|-------|--------|
+| ≤ 400 | Fine |
+| 401–500 | Split at the next substantive edit rather than growing further |
+| > 500 | **Split now** |
 
-## Ancillary Documents
+Measure with `wc -l`. Lines, not bytes — that is what the reader scrolls.
 
-Ancillary documents are operational or supplementary artifacts that do not belong to a lifecycle phase. They use **semantic prefixes** instead of numeric prefixes, as defined in `scripts/config/doc-taxonomy.json` (namespace: `ancillary`).
-
-| Type | Naming Pattern | Example |
-|------|---------------|---------|
-| Runbook | `runbook-<topic>.md` | `runbook-release.md` |
-| Checklist | `checklist-<topic>.md` | `checklist-deploy.md` |
-| ADR | `adr-<number>-<title>.md` | `adr-001-auth-strategy.md` |
-| Handoff | `handoff-<topic>.md` | `handoff-onboarding.md` |
-| Briefing | `briefing-<topic>.md` | `briefing-q1-review.md` |
-| FP Brief | `*-fp-brief.md` | `2-tech-spec-fp-brief.md` |
-
-**Ancillary docs are exempt from the numeric prefix rule.** The `doc-classifier.js` recognizes them via `semantic_pattern` matching (Step 4 in the 7-step precedence), not lifecycle prefix fallback.
+**Splitting is a manual edit — no skill does it for you.** `/update-docs` syncs docs against code and `/doc-refactor` condenses one file; neither moves sections into a subfolder or rewrites inbound links. The shape to produce:
 
 ```
-docs/features/<feature>/
-├── 0-feasibility-study.md       # Lifecycle (numbered)
-├── 2-tech-spec.md               # Lifecycle (numbered)
-├── 3-architecture.md            # Lifecycle (numbered)
-├── runbook-release.md           # Ancillary (semantic)
-├── checklist-deploy.md          # Ancillary (semantic)
-└── requests/                    # Request docs (date-prefixed)
-    └── YYYY-MM-DD-<title>.md
+docs/features/<feature>/2-tech-spec/
+├── 2-tech-spec.md        # Main: canonical filename, keeps §-structure, links to subs
+├── 1-<sub-topic>.md      # Subs: numbered from 1, no lifecycle meaning
+└── 2-<sub-topic>.md
 ```
+
+Three constraints, each with a parser behind it: the main file keeps the **canonical filename** (`doc-classifier.js` sets `is_canonical` only on an exact match); the folder keeps the **lifecycle prefix** (`_inferParentType` resolves a directory by its `^[0-4]-`, so no taxonomy entry is needed); and sub-file numbers restart at 1 because the parent's type overrides theirs — `3-core-logic.md` inside `2-tech-spec/` must not leak as a phase-3 architecture doc.
+
+Inbound links break silently, so finish the job: `grep -rn '<old-filename>' docs/ skills/ rules/ scripts/ test/` and repoint every hit — the path gains one directory level, so a sibling `./2-tech-spec.md` becomes `./2-tech-spec/2-tech-spec.md` and a `../` reference gains a `../`. Scripts that hard-code the old path count too. Then run `/codex-review-doc` on the result.
+
+**Cut at the section that dominates**, not at an arbitrary line count. Usually one `## ` section carries most of the file, and its `###` boundaries are the natural sub-documents. A split landing mid-argument is worse than the long file.
+
+Exempt: `rules/*.md` loaded via `@` (splitting adds import hops without reducing what loads — reduce the content instead), generated files and fixtures, and any file that is one unsplittable table.
+
+## Cross-references
+
+Relative paths only: `./2-tech-spec.md` at the same level, `../2-tech-spec.md` from a subfolder, `./0-feasibility-study/0-feasibility-study.md` into one.
 
 ## Prohibited
 
-- ❌ Unnumbered lifecycle docs (`tech-spec.md`) — Lifecycle docs (phases 0-4) must have numeric prefix
-- ❌ Numbered ancillary docs (`5-runbook.md`) — Ancillary docs use semantic prefixes, not phase numbers
-- ❌ Date prefixes on non-request docs (`2026-01-30-tech-spec.md`) — Date prefixes are only for `requests/`
-- ❌ Uppercase or underscores (`2_Tech_Spec.md`) — Use kebab-case consistently
+| ❌ | Why |
+|----|-----|
+| `tech-spec.md` | Lifecycle docs (phases 0-4) need their numeric prefix |
+| `5-runbook.md` | Ancillary docs use semantic prefixes, not phase numbers |
+| `2026-01-30-tech-spec.md` | Date prefixes belong to `requests/` only |
+| `2_Tech_Spec.md` | kebab-case, lowercase |

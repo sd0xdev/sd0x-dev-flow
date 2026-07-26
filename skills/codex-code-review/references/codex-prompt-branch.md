@@ -94,7 +94,7 @@ Wait. Before assigning severity levels, independently verify each finding:
 1. **Evidence check**: For each issue, what specific code proves it's real? (file:line quote)
 2. **Context check**: Did you read enough surrounding code to understand intent?
 3. **False positive check**: Could this be intentional design? Check for comments, tests, or docs.
-4. **Severity check**: Could any finding be more severe than your initial assessment?
+4. **Severity check**: Is the severity right — in **both** directions? Could this be worse than you assessed, and could it be *less* than you assessed?
 5. **Gap check**: What related issues might you have overlooked?
 
 Only report findings that survive all 5 checks.
@@ -105,6 +105,14 @@ Only report findings that survive all 5 checks.
 - **P1**: Functional anomaly, severe performance degradation
 - **P2**: Code quality, maintainability
 - **Nit**: Style suggestion
+
+### Calibration ⚠️
+
+This is the **thorough** review — the depth variant, run before releases and on security-sensitive branches. **P0, P1 and P2 all block here**, so the line that matters most is P2 vs Nit: a maintainability defect a future reader would trip over is P2; a stylistic preference is Nit.
+
+Severity still has to be earned in both directions. A finding is P0/P1 when you can describe the **concrete failure path** — given this input or this state, this code produces the wrong result, crashes, or leaks. If you cannot name the input, it is not P1, and calling it one here does not make the branch safer; it only obscures the findings that are.
+
+Do not manufacture findings to fill a section. A clean branch is a legitimate result.
 
 ## Output Format
 
@@ -142,9 +150,22 @@ ${SPEC_CHECKLIST ? `### AC Coverage
 |----|--------|----------|
 | <AC text> | ✅ Implemented / ⚠️ Partial / ❌ Missing / N/A | file:line |` : ''}
 
+### Deferred Findings
+
+For every Nit — the only sub-threshold severity at this tier — emit one line here, starting at column 0:
+
+\`\`\`
+[NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-Nit | <ISO8601 UTC>
+\`\`\`
+
+That tag and field order are parsed out of this output by a hook and stored with a TTL, which is what stops the same finding being raised again next session. Field 2 is the issue text, field 3 the reason — do not reorder them. Omit this section entirely if there are no Nits.
+
 ### Merge Gate
-- ✅ Ready: No P0/P1
-- ⛔ Blocked: Has P0/P1, needs fix`,
+
+This is a branch review, which runs at the \`thorough\` tier: **P0, P1 and P2 all block.** Only a Nit is sub-threshold.
+
+- ✅ Ready: no P0/P1/P2
+- ⛔ Blocked: has a P0, P1 or P2, needs fix`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });

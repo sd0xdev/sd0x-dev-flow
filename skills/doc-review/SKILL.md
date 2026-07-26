@@ -75,7 +75,21 @@ Organize results into rating table + severity-grouped findings + gate.
 
 ⛔ Needs revision → fix 🔴 items → `/codex-review-doc --continue <threadId>` → repeat until ✅ Mergeable.
 
-Max 3 rounds. Still failing → report blocker.
+Max 3 rounds (`fast` tier — docs are the tier's primary case). Still failing → report blocker.
+
+**🔴 only.** 🟡 and ⚪ are non-blocking: log them and proceed.
+
+```
+[NIT_DEFERRED] file:line | issue | reason: sub-threshold-doc | <ISO8601>
+```
+
+That tag and field order are **hook-parsed** — `post-tool-review-state.sh` matches `[NIT_DEFERRED]` at column 0 and writes the entry to `.claude_nit_history.json` with a TTL, so the same 🟡 is not re-raised next session. `/codex-review-doc` is an eligible producer (the routing matches `codex-review`). Any other tag is behavior-layer prose that no hook reads.
+
+The parse runs on the **reviewer's output**, which is why `references/codex-prompt-doc.md` asks Codex for a `### Deferred Findings` section. The same line typed into your own reply is readable but persists nothing.
+
+Do not batch-fix 🟡/⚪ and re-review to confirm — that spends a round on findings the gate already declared non-blocking. The two exceptions are the same as for code (`@rules/auto-loop.md` § Sub-Threshold Findings): a one-line fix in a file already open, and a mis-marked security / data-integrity issue that should have been 🔴.
+
+What counts as 🔴 is pinned in `references/codex-prompt-doc.md § Severity Calibration` — it is the reviewer prompt, not this file, that keeps the loop short.
 
 ## Verification
 

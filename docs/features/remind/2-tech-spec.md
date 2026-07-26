@@ -21,7 +21,7 @@
 | `skills/next-step/scripts/analyze.js:393-440` | Gate-missing heuristics (P0 findings) | Detection patterns |
 | `hooks/post-tool-review-state.sh` | State file write/update | State source |
 | `rules/*.md` | All rule files | Rule reminder content |
-| `rules/auto-loop.md:5-14` | Prohibited behaviors list | Violation detection targets |
+| `rules/auto-loop.md` § The Four Anchors | The four non-negotiable anchors (was "Prohibited Behaviors" before 2026-07-26) | Violation detection targets |
 
 ### Key Insight
 

@@ -6,7 +6,7 @@
 
 > The harness layer for Claude Code.
 
-**Quality gates that AI can't skip.** A reference implementation of AI Agent Harness Engineering for [Claude Code](https://claude.com/claude-code) — hook-enforced dual review, state-machine gates that survive context compaction, and fail-closed safety where it counts.
+**Quality gates that AI can't skip.** A reference implementation of AI Agent Harness Engineering for [Claude Code](https://claude.com/claude-code) — hook-enforced review gates, state-machine gates that survive context compaction, and fail-closed safety where it counts.
 
 <!-- BEGIN:HERO-COUNT -->
 98 bundled · 98 public skills · 15 agents — ~4% of Claude's context window
@@ -28,7 +28,7 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 | 4 | **Lifecycle interceptors** | 5 hook event types dispatched to 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 89 of 98 public skills declare `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
-| 7 | **Generator-evaluator split** | Dual review: Codex (primary) + Claude (secondary) dispatched in parallel on every review cycle | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Dual Review Mode) |
+| 7 | **Generator-evaluator split** | Codex reviews what Claude wrote, researching the repo independently — never handed a conclusion to confirm | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + convergence plateau detection | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
 | 9 | **Human-in-the-loop safety gates** | `/dev/tty` confirmation + `AskUserQuestion` for destructive ops | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Correction → record lesson → promote to rule after 3+ recurrences | [`rules/self-improvement.md`](rules/self-improvement.md) |
@@ -40,7 +40,7 @@ Most harness projects cover 2–4 of these. sd0x-dev-flow covers all 10 — whic
 | Without guardrails | With sd0x-dev-flow |
 |---|---|
 | AI skips review when context is long | **Hook-enforced**: stop-guard blocks incomplete reviews |
-| Single reviewer misses issues | **Dual dispatch**: Codex + secondary in parallel |
+| Self-review rubber-stamps its own work | **Independent reviewer**: Codex researches the repo itself, opt-in `--dual` for depth |
 | "Fixed it" without re-verification | **Auto-loop**: fix → re-review → pass → continue |
 | Review state lost after compact | **State tracking**: SessionStart hook re-injects |
 
@@ -73,34 +73,27 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-The **auto-loop engine** enforces quality gates automatically — after code edits, the review command dispatches **dual review** (Codex MCP + secondary reviewer in parallel) in the same reply. Findings are deduplicated, severity-normalized, and aggregated into a single gate. In strict mode, hooks enforce fail-closed semantics: if the aggregate gate is incomplete, stop-guard blocks. See [docs/hooks.md](docs/hooks.md) for mode and dependency details.
+The **auto-loop engine** enforces quality gates automatically — after code edits, the review command dispatches **Codex** in the same reply. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. In strict mode, hooks enforce fail-closed semantics: if the gate is incomplete, stop-guard blocks. A second reviewer is available via `/codex-review-branch --dual` and is off by default. See [docs/hooks.md](docs/hooks.md) for mode and dependency details.
 
 <details>
-<summary>Detailed: Dual-Review Sequence Diagram</summary>
+<summary>Detailed: Review Loop Sequence Diagram</summary>
 
 ```mermaid
 sequenceDiagram
     participant D as Developer
     participant C as Claude
     participant X as Codex MCP
-    participant T as Secondary Reviewer
     participant H as Hooks
 
     D->>C: Edit code
     H->>H: Track file change
-    C->>H: emit-review-gate PENDING
-    par Dual Review
-        C->>X: Codex review (sandbox)
-    and
-        C->>T: Task(code-reviewer)
-    end
-    X-->>C: Findings (primary)
-    T-->>C: Findings (secondary)
-    C->>C: Aggregate + dedup + gate
-    C->>H: emit-review-gate READY/BLOCKED
+    C->>X: Codex review (sandbox, researches repo itself)
+    X-->>C: Findings + gate sentinel
+    H->>H: Parse sentinel into code_review.passed
+    C->>C: Gate on the tier's blocking severity
 
-    alt Issues found
-        C->>C: Fix all issues
+    alt Blocking findings
+        C->>C: Fix them (sub-threshold: log and move on)
         C->>X: --continue threadId
         X-->>C: Re-verify
     end
@@ -113,16 +106,19 @@ sequenceDiagram
 
 </details>
 
-## Feature Spotlight: Dual-Reviewer Architecture
+## Feature Spotlight: Tiered Review
 
-v2.0 dispatches two independent reviewers in parallel — dual-review by default with degraded fallback modes:
+One reviewer — Codex — runs everywhere by default. The **tier** decides how much rigour a change gets, and what a reviewer finding has to be before it re-opens the loop:
 
-| Reviewer | Role | Fallback |
-|----------|------|----------|
-| Codex MCP | Primary (sandbox, full diff) | Single-reviewer mode if unavailable |
-| Secondary (pr-review-toolkit) | Confidence-scored review | strict-reviewer → single mode |
+| Tier | Use for | Blocks on | Round cap |
+|------|---------|-----------|-----------|
+| `fast` | Docs, config, small low-risk edits | P0 | 3 |
+| `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
+| `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 10 |
 
-Findings are **severity-normalized** (P0-Nit), **deduplicated** (file + issue key, ±5 line tolerance), and **source-attributed** (`codex` | `toolkit` | `both`).
+**80 is a passing grade.** Findings below the tier's blocking severity are logged (`[NIT_DEFERRED]`, persisted with a TTL so they are not re-raised next session) and the loop proceeds to `/precommit` — no extra fix pass, no extra review round. `/codex-review-branch` picks them up when the change is next reviewed at depth.
+
+A second reviewer is available via `/codex-review-branch --dual` and is **off unless the flag is passed** — worth its doubled token and wall-clock cost on a release or a security review, not on a typical fix. Under `--dual`, findings are severity-normalized, deduplicated (file + issue key, ±5 line tolerance) and source-attributed.
 
 Gate: `✅ Ready` or `⛔ Blocked` — in strict mode, incomplete gate = blocked.
 
@@ -131,7 +127,7 @@ Gate: `✅ Ready` or `⛔ Blocked` — in strict mode, incomplete gate = blocked
 | Capability | sd0x-dev-flow | gstack | Generic prompts |
 |---|---|---|---|
 | Enforced review gates | Hook + behavior layer | Suggestion only | None |
-| Dual-reviewer | Codex + secondary (parallel) | Single /review | None |
+| Independent reviewer | Codex, self-researching; `--dual` opt-in | Single /review | None |
 | Auto-fix loop | Fix → re-review → pass | Manual | None |
 | Multi-agent research | /deep-research (3 agents) | None | None |
 | Adversarial validation | Nash equilibrium debate | None | None |
@@ -167,7 +163,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional — `/codex-*` skills require it; without it, review falls back to single-reviewer mode)
+**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
 
 ## Workflow Tracks
 

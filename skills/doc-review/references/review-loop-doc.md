@@ -14,9 +14,14 @@ ${FILE_PATH}
 
 Please read the updated document yourself using \`cat ${FILE_PATH}\` and verify:
 1. Have previous 🔴 must-fix items been addressed?
-2. Did revisions introduce new issues?
-3. What is the quality of the revised document?
-4. Update Gate status
+2. Did the revisions introduce new issues?
+3. Update Gate status
+
+Keep the same 🔴 bar as the first round — a 🔴 is a defect that would mislead a reader into
+doing the wrong thing (a nonexistent file, a contradicted behaviour, an unsafe instruction,
+an internal contradiction, a broken cross-reference). Do not re-raise the previous round's
+🟡/⚪ items, and do not open a fresh general critique of a document that has already been
+through this loop: report only what the revision broke and what it failed to fix.
 
 Begin your report with the literal line \`## Document Review\`, exactly as in the first round.`,
 });

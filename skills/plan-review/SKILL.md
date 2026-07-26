@@ -31,9 +31,10 @@ Adversarial review gate for plan-mode drafts: the plan is challenged by an indep
 
 | Arg | Behavior |
 |-----|----------|
-| (none) | tier = `standard` (dual-dispatch: Codex + secondary) |
-| `--quick` | Single Codex pass, no loop, no dual |
-| `--deep` | Delegate to `/codex-brainstorm` (Nash equilibrium debate; attack/defense dual built-in) |
+| (none) | tier = `standard` — Codex alone, with the fix → re-review loop |
+| `--quick` | Single Codex pass, no loop |
+| `--dual` | Adds a secondary reviewer in parallel. **Off unless passed** — for a release or a security-sensitive plan, not routine planning |
+| `--deep` | Delegate to `/codex-brainstorm` (Nash equilibrium debate; attack/defense built-in) |
 | `--skip-review` | Immediate bypass: emit `[PLAN_REVIEW_SKIPPED]` + gate `SKIPPED`, present raw plan |
 | `--verbose` | Round-by-round trail (default: summary only) |
 
@@ -58,9 +59,8 @@ sequenceDiagram
         alt quick
             C->>CX: 1-pass review (references/codex-prompt-plan.md)
         else standard
-            par dual dispatch
-                C->>CX: Codex review loop (save threadId)
-            and
+            C->>CX: Codex review loop (save threadId)
+            opt --dual
                 C->>SA: Secondary perspective (parallel)
             end
         else deep
@@ -137,15 +137,15 @@ The plan draft already exists in the session transcript (it is in-context text),
 
 ### Step 3: Review dispatch (tier ladder)
 
-| Tier | Reviewer | Dual? | Loop |
-|------|----------|-------|------|
-| quick | Codex MCP ×1 | ❌ | 1-pass |
-| **standard** (default) | Codex MCP + Secondary (Task agent) parallel | ✅ | fix → re-review (`codex-reply`) |
-| deep | `Skill("codex-brainstorm", ...)` | ✅ (Nash attack/defense) | brainstorm termination |
+| Tier | Reviewer | Loop |
+|------|----------|------|
+| quick | Codex MCP ×1 | 1-pass |
+| **standard** (default) | Codex MCP | fix → re-review (`codex-reply`) |
+| deep | `Skill("codex-brainstorm", ...)` | brainstorm termination (Nash attack/defense) |
 
 - First Codex call: `mcp__codex__codex` with `references/codex-prompt-plan.md`. Config: `sandbox: 'read-only'`, `approval-policy: 'never'`. **Save the threadId.**
 - Re-review rounds: `mcp__codex__codex-reply` with `references/review-loop-plan.md`.
-- Secondary (standard tier): Task agent (`Explore` or `strict-reviewer`), prompt follows the same independent-research mandate; runs in background, does not block the Codex gate; a late secondary P0/P1 re-opens the loop.
+- Secondary — **only under `--dual`**: Task agent (`Explore` or `strict-reviewer`), prompt follows the same independent-research mandate; runs in background, does not block the Codex gate; a late secondary P0/P1 re-opens the loop. Without the flag there is no secondary and Codex is the gate; if Codex itself is unreachable there is nothing to degrade to — emit `[PLAN_REVIEW_DEGRADED]` and hand the plan to the user.
 - The plan text is handed over as a **candidate artifact to attack** — never as "Claude's conclusion to confirm" (per `rules/codex-invocation.md`).
 
 ### Step 4: Convergence (independent budget)
@@ -213,14 +213,14 @@ Degradation never blocks plan mode: the plan is always delivered to the user in 
 
 - Codex first-pass prompt: `references/codex-prompt-plan.md`
 - Re-review loop prompt: `references/review-loop-plan.md`
-- Rules: @rules/codex-invocation.md, @rules/auto-loop.md (Standard Gate Sentinels)
+- Rules: @rules/codex-invocation.md, @rules/auto-loop.md (Gate Sentinels)
 - Spec: `docs/features/plan-review-loop/2-tech-spec.md`
 
 ## Examples
 
 ```
 Input: /plan-review
-Action: PENDING standard → redact → Codex + secondary parallel → loop → ✅ Plan Ready → trail summary → ExitPlanMode
+Action: PENDING standard → redact → Codex review → loop → ✅ Plan Ready → trail summary → ExitPlanMode
 
 Input: /plan-review --quick
 Action: PENDING quick → redact → single Codex pass → gate → ExitPlanMode

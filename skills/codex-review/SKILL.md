@@ -21,6 +21,8 @@ See `@skills/codex-code-review/SKILL.md`
 | Scope | Diff + local checks |
 | Pre-checks | lint:fix + build |
 | Prompt template | `@skills/codex-code-review/references/codex-prompt-full.md` |
+| Reviewers | Codex alone — no `--dual`, no secondary. For two reviewers use `/codex-review-branch --dual` |
+| Tier | Inherits the session tier (`standard` by default) |
 
 ## Trigger
 

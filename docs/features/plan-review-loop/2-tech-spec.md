@@ -309,7 +309,9 @@ fi
 
 > **決策來源（Decision Record DR-1）**：feasibility OQ-7 disposition 的 default proposal 為 **deep-only**；本 spec 採 **standard + deep** 係 **使用者於 `/tech-spec` 互動決策覆寫 feasibility default**（AskUserQuestion，2026-05-18）。此 spec 區塊**即為該決策的 durable record**（無獨立 request artifact；本 DR-1 註記讓未來審查者能區分「使用者決策」與「作者假設」）。Trade-off：標準 plan 命中率↑，但 standard tier 成本/延遲約翻倍（見 §4 R5）。**可逆性**：屬預設值層級、無 schema 變動；pilot 量測若不符 ROI，回退 feasibility deep-only default 僅需改本表預設，不影響已 ship 介面。
 >
-> standard tier 的 dual 鏡射 `auto-loop.md` Dual Review Mode：Codex 為阻塞主審，Secondary 背景並行；late P0/P1 重開 loop。Secondary 用 Task agent（subagent_type: `Explore` 或 `strict-reviewer`），prompt 同樣遵守 `codex-invocation.md` 獨立研究原則。
+> **⚠️ 已被後續變更取代（2026-07-26）**：standard tier 不再預設 dual。`auto-loop.md` § Review Dispatch 現在規定所有 review 預設單審（Codex），雙審只在明確傳入 `--dual` 時啟用——`/plan-review --dual` 即 plan 平面的對應開關。下方原文保留當時的推導脈絡，**不代表現行行為**。
+>
+> ~~standard tier 的 dual 鏡射 `auto-loop.md` Dual Review Mode：Codex 為阻塞主審，Secondary 背景並行；late P0/P1 重開 loop。~~ 傳入 `--dual` 時，Secondary 仍用 Task agent（subagent_type: `Explore` 或 `strict-reviewer`），prompt 同樣遵守 `codex-invocation.md` 獨立研究原則。
 
 #### Plan handover 與 Codex prompt framing（OQ-2 / OQ-Sx-5）
 

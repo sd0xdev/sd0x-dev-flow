@@ -24,7 +24,7 @@
 | `hooks/post-tool-review-state.sh` | State file update（code_review, doc_review, precommit） | 供 SessionStart compact hook 讀取 |
 | `hooks/hooks.json` | Hook event 註冊 | 新增 SessionStart compact entry |
 | `hooks/post-edit-format.sh:203-225` | Edit 後設定 has_code/doc_change + invalidate state | 供 SessionStart compact hook 判斷 pending |
-| `rules/auto-loop.md:5-14` | Prohibited behaviors 列表 | Re-injection 內容來源 |
+| `rules/auto-loop.md` § The Four Anchors | 四條不可協商的 anchor（2026-07-26 前名為 Prohibited Behaviors） | Re-injection 內容來源 |
 | `commands/install-hooks.md` | Hook 安裝指令 | 更新以包含 SessionStart compact |
 
 ### Key Insight

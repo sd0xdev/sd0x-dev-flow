@@ -5,6 +5,7 @@
 | Concise            | Use tables over paragraphs, diagrams over text      |
 | Information-rich   | Preserve key information; don't over-simplify       |
 | Research first     | Research existing implementations before pseudocode |
+| Bounded            | Over 500 lines → split into a numbered subfolder. See @rules/docs-numbering.md § Size Limit |
 
 | Scenario           | Use                       | Avoid              |
 | ------------------ | ------------------------- | ---------------    |

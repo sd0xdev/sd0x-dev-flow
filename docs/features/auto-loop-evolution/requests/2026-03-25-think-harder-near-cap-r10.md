@@ -13,7 +13,7 @@ autoresearch 在偵測到 >5 次連續失敗時觸發策略重置（re-read file
 
 **關鍵發現**（Codex debate R2）: `current_round` 在 code edit 時會 reset（`post-edit-format.sh` code-edit iteration reset block），所以 near-cap 邏輯如果基於 `current_round` 將很少觸發。需要新的 state-file-lifetime counter `total_rounds_session`。
 
-> **⚠️ 已被後續變更取代（2026-07-25）**：上述「code edit 會 reset `current_round`」**已不再成立**。該 reset 正是讓 row-1 hard cap 永遠碰不到的原因（auto-loop 每輪 review 之間必然有 edit），因此已移除——code edit 現在**不會**動 `current_round`。目前的生命週期**一律以 `rules/auto-loop.md` 的 Round counter lifecycle 表為準**——本文不再複述歸零條件（先前那句已經過時兩處：`doc_review` 同為終端 gate 卻被刻意排除在歸零之外，且上界是 clamp 過的 cap 而非原始 `max_rounds`，複述本身就是過時來源）。本節保留原文以記錄當時的推導脈絡，**不代表現行行為**；`total_rounds_session` 這個結論本身仍然成立（它另有理由：永不歸零，反映累計投入）。
+> **⚠️ 已被後續變更取代（2026-07-25）**：上述「code edit 會 reset `current_round`」**已不再成立**。該 reset 正是讓 row-1 hard cap 永遠碰不到的原因（auto-loop 每輪 review 之間必然有 edit），因此已移除——code edit 現在**不會**動 `current_round`。目前的生命週期**一律以 [`docs/features/auto-loop-evolution/4-implementation.md`](../4-implementation.md) §2 Round counter lifecycle 為準**（2026-07-26 起該表從 `rules/auto-loop.md` 移出，規則本體只保留一句「`current_round` 是實際輪數的下界」）——本文不再複述歸零條件（先前那句已經過時兩處：`doc_review` 同為終端 gate 卻被刻意排除在歸零之外，且上界是 clamp 過的 cap 而非原始 `max_rounds`，複述本身就是過時來源）。本節保留原文以記錄當時的推導脈絡，**不代表現行行為**；`total_rounds_session` 這個結論本身仍然成立（它另有理由：永不歸零，反映累計投入）。
 
 ## Requirements
 

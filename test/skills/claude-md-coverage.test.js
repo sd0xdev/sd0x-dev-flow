@@ -139,8 +139,10 @@ test('auto-loop terminal gate routes to one precommit variant across rules, trac
   // resolve it; it only guarantees the tracked surfaces agree with each other.
   const rules = readFileSync(resolve(root, 'rules/auto-loop.md'), 'utf8');
 
-  const canonical = routedPrecommit(rules, /review Ready \(no P2\/Nit\)/);
-  assert.ok(canonical, 'rules/auto-loop.md Auto-Trigger table should route the no-P2/Nit Ready row');
+  // The row wording tracks the tier model (`auto-loop.md` § Tiers): the Ready row is keyed on
+  // "no blocking findings", not on a hard-coded P2/Nit list, because what blocks is per-tier.
+  const canonical = routedPrecommit(rules, /review Ready \(no blocking findings\)/);
+  assert.ok(canonical, 'rules/auto-loop.md Auto-Trigger table should route the no-blocking-findings Ready row');
 
   // EVERY precommit reference in the normative file, not just the row `canonical` is read from.
   // Deriving the answer from one row and checking only the other files left the source of truth

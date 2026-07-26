@@ -6,7 +6,7 @@ Each detection heuristic maps to specific rule files and sections. When a violat
 
 | # | ID | Priority | Condition | Rule File | Section to Extract |
 |---|-----|----------|-----------|-----------|-------------------|
-| 1 | `code-no-review` | P0 | `has_code_change=true` + `code_review.passed=false` | `rules/auto-loop.md` | "Prohibited Behaviors" + "Auto-Trigger" table (code files rows) |
+| 1 | `code-no-review` | P0 | `has_code_change=true` + `code_review.passed=false` | `rules/auto-loop.md` | "The Four Anchors" + "Auto-Trigger" table (code rows) |
 | 2 | `doc-no-review` | P0 | `has_doc_change=true` + `doc_review.passed=false` | `rules/auto-loop.md` | Auto-Trigger table (`.md` rows) |
 | 3 | `review-no-precommit` | P0 | `code_review.passed=true` + `precommit.passed=false` | `rules/auto-loop.md` | "precommit Pass" → "Adequacy Gate" flow |
 | 4 | `state-drift` | P0 | State says changes but `git status --porcelain` is empty | — | Suggest: reset `.claude_review_state.json` |
@@ -19,8 +19,8 @@ When reading a rule file, extract specific sections using these grep patterns:
 
 | Section | Pattern | Example |
 |---------|---------|---------|
-| Prohibited Behaviors | Lines between `## Prohibited Behaviors` and next `##` | auto-loop.md:5-14 |
-| Auto-Trigger table | Lines between `## Auto-Trigger` and next `##` | auto-loop.md:16-26 |
+| The Four Anchors | Lines between `## The Four Anchors` and next `##` | auto-loop.md |
+| Auto-Trigger table | Lines between `## Auto-Trigger` and next `##` | auto-loop.md |
 | Required Checks | Lines between `## Required Checks` and next `##` | CLAUDE.md |
 | Core Principles | Lines between `## Core Principle` and next `##` | Various rules |
 | Branch naming | Lines containing `Branches:` or `feat/*` | git-workflow.md:3 |

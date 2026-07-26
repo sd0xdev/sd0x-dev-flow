@@ -21,6 +21,8 @@ See `@skills/codex-code-review/SKILL.md`
 | Scope | Diff only |
 | Pre-checks | None (no lint/build) |
 | Prompt template | `@skills/codex-code-review/references/codex-prompt-fast.md` |
+| Reviewers | Codex alone — no `--dual`, no secondary. For two reviewers use `/codex-review-branch --dual` |
+| Tier | Inherits the session tier (`standard` by default). Findings below the tier's blocking severity are logged `[NIT_DEFERRED]`, not fixed |
 
 ## Trigger
 

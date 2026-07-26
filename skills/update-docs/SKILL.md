@@ -18,7 +18,7 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash(ls:*), Bash(git:*), Bash(find
 
 ## Auto-Trigger
 
-Auto-triggered after precommit Pass, only when the change maps to a feature under `docs/features/` (see `@rules/auto-loop.md` Doc Sync Note). Can also be invoked manually.
+Auto-triggered after precommit Pass, only when the change maps to a feature under `docs/features/` (see `@rules/auto-loop.md` § Doc Sync). Can also be invoked manually.
 
 ## Task
 

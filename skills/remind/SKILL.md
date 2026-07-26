@@ -75,7 +75,7 @@ For each detected issue, **Read the mapped rule file** and extract the key secti
 
 | # | Detection | Condition | Rule to Load | Section to Extract |
 |---|-----------|-----------|-------------|-------------------|
-| 1 | Code changed, no review | `HAS_CODE=true` + `CODE_REVIEW=false` | `rules/auto-loop.md` | "Prohibited Behaviors" + "Auto-Trigger" table |
+| 1 | Code changed, no review | `HAS_CODE=true` + `CODE_REVIEW=false` | `rules/auto-loop.md` | "The Four Anchors" + "Auto-Trigger" table |
 | 2 | Doc changed, no review | `HAS_DOC=true` + `DOC_REVIEW=false` | `rules/auto-loop.md` | ".md" row in Auto-Trigger table |
 | 3 | Review passed, no precommit | `CODE_REVIEW=true` + `PRECOMMIT=false` | `rules/auto-loop.md` | "precommit Pass" row |
 | 4 | State drift | State says changes but git clean | — | Suggest reset state file |
@@ -97,7 +97,7 @@ For each finding, quote the relevant rule text inline so the model re-ingests th
 
 ### Rule Context (auto-loaded)
 
-> **auto-loop.md — Prohibited Behaviors**:
+> **auto-loop.md — The Four Anchors**:
 > - ❌ Declaring ≠ Executing: Saying "need to run X" without actually invoking the tool
 > - ❌ Summary ≠ Completion: Outputting a summary then stopping
 >
@@ -170,10 +170,10 @@ The whole point of `/remind` is that the model's memory of rules has drifted. Th
 
 ```
 Input: /remind
-Output: Smart detection finds code changed without review → loads auto-loop.md → quotes Prohibited Behaviors → outputs `/codex-review-fast`
+Output: Smart detection finds code changed without review → loads auto-loop.md → quotes The Four Anchors → outputs `/codex-review-fast`
 
 Input: /remind auto-loop
-Output: Reads rules/auto-loop.md → summarizes 8 prohibited behaviors + auto-trigger table → checks state file → reports current compliance
+Output: Reads rules/auto-loop.md → summarizes the four anchors + auto-trigger table → checks state file → reports current compliance
 
 Input: /remind --all
 Output: Reads CLAUDE.md + all rules/*.md → produces full compliance matrix → flags all violations with correction commands

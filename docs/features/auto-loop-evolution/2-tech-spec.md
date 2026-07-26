@@ -112,7 +112,7 @@ flowchart TD
 
 **Migration**: Hook 讀取 `schema_version`；缺失時視為 v1（向後相容）。新欄位全部 optional，舊 hook 忽略。
 
-**Rule alignment**: `max_rounds` 已在 `rules/auto-loop.md:86` 定義（預設 10），state file 追蹤 `current_round`。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改 max_rounds 數值。
+**Rule alignment**: `max_rounds` 由 `rules/auto-loop.md` § Tiers 決定（`fast` 3 / `standard` 5 / `thorough` 10，未設定即 `standard`；`auto-loop-project.md` 的 `## Max Rounds` 可覆寫），state file 追蹤 `current_round`。本節原文寫「預設 10」，那是 2026-07-26 導入 tier 之前的單一預設值。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改 max_rounds 數值。
 
 #### Nit History File (`.claude_nit_history.json`)
 

@@ -96,7 +96,7 @@ Claude Code 的 plan mode 由 `ExitPlanMode` 工具終結：Claude 草擬完計�
 | Constraint | ExitPlanMode 是 harness-provided tool，本 plugin 無法修改其行為 | 本 repo grep 找不到 ExitPlanMode 程式碼；屬 Claude Code harness 範疇 |
 | Constraint | 本 repo `hooks/hooks.json:32-41` PreToolUse matcher 目前僅覆蓋 `Edit\|Write`；要攔截其他 tool 需擴充，且 harness 是否支援 PreToolUse 對 ExitPlanMode 為未知 | [`hooks/hooks.json:32-41`](../../../hooks/hooks.json) + harness 文件缺口 |
 | Constraint | review 必須遵守 `rules/codex-invocation.md` 全文——獨立研究、不餵養結論、prompt 來自 reference template | [`rules/codex-invocation.md:1`](../../../rules/codex-invocation.md)（全文）|
-| Constraint | sentinel / state field 不可污染既有 review state；既有可辨識 sentinel 與 state 欄位列於 `rules/auto-loop.md` Standard Gate Sentinels 與 [`hooks/post-tool-review-state.sh`](../../../hooks/post-tool-review-state.sh) | [`rules/auto-loop.md`](../../../rules/auto-loop.md) Standard Gate Sentinels 章節 |
+| Constraint | sentinel / state field 不可污染既有 review state；既有可辨識 sentinel 與 state 欄位列於 `rules/auto-loop.md` Gate Sentinels 與 [`hooks/post-tool-review-state.sh`](../../../hooks/post-tool-review-state.sh) | [`rules/auto-loop.md`](../../../rules/auto-loop.md) Gate Sentinels 章節 |
 | Constraint | Plan review 必須非 destructive：不刪除 plan 段落或改變語意，只能 surface findings 讓 Claude 重寫 | 衍生自 NFR-4 透明度 + UC-3 review trail |
 | Assumption | Claude 在 plan mode 能取得自己即將傳給 ExitPlanMode 的 plan 文字 | 推論：Claude 是 plan author；plan 內容本來就在其 working context |
 | Assumption | 獨立 reviewer（Codex MCP 為主要候選）在 plan mode 仍可被呼叫，不被 plan-mode 的 read-only constraint 排除 | 推論：Codex 屬 MCP 諮詢工具，plan-mode 限制針對 Edit/Write |

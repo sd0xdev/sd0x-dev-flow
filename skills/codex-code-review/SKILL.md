@@ -32,14 +32,28 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yar
 ## Shared Workflow
 
 ```
-Step 0 (PENDING) → Collect changes → [Pre-checks if Full] → Dual Review (Codex + Task) → Await Results → Aggregate → Emit Gate → Loop if Blocked
+Collect changes → [Pre-checks if Full] → Codex Review → Gate → Loop if Blocked
 ```
 
-### Step 0: Dual Review Init (Fail-closed)
+Dual dispatch adds the aggregate plane, and is opt-in:
 
-Execute: `bash scripts/emit-review-gate.sh PENDING`
+```
+--dual:  Step 0 (PENDING) → … → Codex + Task in parallel → Aggregate → Emit Gate → Loop if Blocked
+```
 
-This sets `review_mode=dual` and `aggregate_gate.executed=false` in state file, ensuring fail-closed semantics — if the process crashes before Step 4.5, stop-guard blocks.
+### Step 0: Reviewer Mode
+
+**Default: Codex alone.** Do not run `scripts/emit-review-gate.sh`, and do not launch a secondary reviewer. `review_mode` stays at its initialized value `"single"`, the aggregate plane stays dormant, and `code_review.passed` governs the gate through the ordinary path — the same fail-closed path every other verdict uses.
+
+**`--dual` (Branch variant only):** execute `bash scripts/emit-review-gate.sh PENDING`. This sets `review_mode=dual` and `aggregate_gate.executed=false`, which is fail-closed: if the process dies before Step 4.5, stop-guard blocks. It also forces stop-guard into `strict` for the rest of the session — that is the point of asking for it, and the reason it is not the default.
+
+| Variant | `--dual` accepted? |
+|---------|--------------------|
+| Fast (`/codex-review-fast`) | No — single only |
+| Full (`/codex-review`) | No — single only |
+| Branch (`/codex-review-branch`) | Yes, off unless passed |
+
+See `@rules/auto-loop.md § Review Dispatch` for why single is the default.
 
 ### Step 1: Collect Change Metadata
 
@@ -52,6 +66,18 @@ Collect **metadata only** — Codex reads the actual diffs and file contents its
 | Branch  | Same + `CURRENT_BRANCH` + `BASE_BRANCH` + `COMMIT_COUNT` |
 
 Codex independently reads full diffs and file contents via `git diff HEAD -- <file>` + `cat` (per research instructions).
+
+### Step 1.1: Resolve the tier (required before dispatch)
+
+The gate is tier-derived, and the **reviewer** has to be told which severities block — otherwise it emits `✅ Ready` / `⛔ Blocked` against its own assumption and the hook persists that verdict. Resolve the tier first, then bind `TIER` and `BLOCKING` into the prompt:
+
+| Tier | `BLOCKING` | Source |
+|------|-----------|--------|
+| `fast` | `P0` | `auto-loop-project.md ## Tier` |
+| `standard` (default) | `P0/P1` | unset, unrecognized, or explicit |
+| `thorough` | `P0/P1/P2` | explicit, **or** the Branch variant, **or** a security / data-integrity change |
+
+The Branch variant is `thorough` by definition, so `BLOCKING = P0/P1/P2` there regardless of project config — a P2 blocks a branch review. Escalation for a security or data-integrity change applies to every variant, and you say that you escalated.
 
 ### Step 1.5: Feature Context & AC Detection (Spec-Driven Review)
 
@@ -115,11 +141,11 @@ Graceful degradation: file missing / invalid JSON / no entries / sanitization fa
 
 These placeholders are resolved from the host project's `CLAUDE.md` or `package.json` scripts. Record results as `LOCAL_CHECKS`.
 
-### Step 3: Dual Review (Parallel Dispatch)
+### Step 3: Dispatch
 
 **Case A: First review (no `--continue`)**
 
-Launch **two reviewers in parallel** (single message, multiple tool calls):
+Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 1. **Codex MCP (primary)**: Use `mcp__codex__codex` with variant-specific prompt:
 
@@ -133,7 +159,7 @@ Launch **two reviewers in parallel** (single message, multiple tool calls):
 
    **Save the returned `threadId`.**
 
-2. **Secondary reviewer**: Use `Task` tool with reviewer selection cascade:
+2. **Secondary reviewer — `--dual` only, skip entirely otherwise**: Use `Task` tool with reviewer selection cascade:
 
    | Priority | Reviewer | subagent_type | Condition |
    |----------|----------|---------------|-----------|
@@ -167,26 +193,35 @@ Launch **two reviewers in parallel** (single message, multiple tool calls):
    Output findings in this format:
    - [P0/P1/P2/Nit] file:line issue description → fix recommendation
 
-   Group by severity. Include a final gate: ✅ Ready (no P0/P1) or ⛔ Blocked (has P0/P1).
+   Group by severity. Include a final gate: ✅ Ready (no finding at or above ${BLOCKING})
+   or ⛔ Blocked (has one).
    ```
 
 **Case B: Loop review (has `--continue`)**
 
 - **Codex**: Use `mcp__codex__codex-reply` with re-review template from `references/review-common.md`
-- **Secondary**: Re-dispatch in parallel (same mechanism as first pass, fresh context). Always dispatched in v1 — no skip exception. Cycle resets on any code edit.
+- **Secondary** (`--dual` only): re-dispatch in parallel, fresh context. Cycle resets on any code edit.
 
-### Step 3.5: Await Codex + Reconcile Secondary
+### Step 3.5: Await Results
 
-Codex is the **blocking** reviewer — await its result for the initial gate. Secondary runs in background (`run_in_background: true`) and is **non-blocking**:
+**Single mode (default):** await Codex. Its verdict is the gate. Go to Step 4.
+
+If Codex itself is unavailable there is nothing to degrade to — the one reviewer *is* the gate. Emit `⛔ Blocked` + `⚠️ Need Human` and stop; do not silently substitute a subagent, because that would swap the reviewer the gate was defined against without the user having asked for it.
+
+**`--dual`:** Codex is the **blocking** reviewer — await its result for the initial gate. Secondary runs in background (`run_in_background: true`) and is **non-blocking**:
 
 | Secondary Status | Action |
 |-----------------|--------|
 | Completed before Codex | Include in aggregation (Step 4) |
 | Completed after Codex, before precommit | Reconcile at pre-precommit checkpoint |
-| Still running at precommit | Proceed with Codex gate (authoritative); if late result has P0/P1, re-open fix→re-review loop |
+| Still running at precommit | Proceed with Codex gate (authoritative); if the late result has a finding at or above `${BLOCKING}`, re-open fix→re-review loop |
 | Failed/timed out | Apply degradation matrix per `references/review-common.md § Dual Reviewer Aggregation` |
 
-### Step 4: Consolidate Output (Dual Mode)
+### Step 4: Consolidate Output
+
+**Single mode (default):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate: any finding at or above the tier's blocking severity → BLOCKED, else READY (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
+
+**`--dual`:**
 
 1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix`
    - Codex findings: already in standard format
@@ -200,7 +235,7 @@ Codex is the **blocking** reviewer — await its result for the initial gate. Se
 
 4. **Sort**: P0 → P1 → P2 → Nit
 
-5. **Gate decision**: any P0/P1 → BLOCKED; else → READY
+5. **Gate decision**: any finding at or above the tier's blocking severity → BLOCKED; else → READY
 
 Output format includes source tag:
 
@@ -211,13 +246,11 @@ Output format includes source tag:
 
 ### Step 4.5: Emit Review Gate
 
-Execute: `bash scripts/emit-review-gate.sh READY` or `bash scripts/emit-review-gate.sh BLOCKED`
+**`--dual` only** — execute `bash scripts/emit-review-gate.sh READY` or `... BLOCKED`, which updates `aggregate_gate.executed=true` and `aggregate_gate.gate`. In single mode this step is **skipped**: emitting it would set `review_mode=dual` and drag the session into strict blocking on behalf of a review that only ever had one reviewer.
 
-This updates `aggregate_gate.executed=true` and `aggregate_gate.gate` in the state file.
-
-Then output the standard gate sentinel:
-- `✅ Ready` — if READY (no P0/P1)
-- `⛔ Blocked` — if BLOCKED (has P0/P1)
+Either way, output the standard gate sentinel:
+- `✅ Ready` — if READY (nothing at or above the tier's blocking severity)
+- `⛔ Blocked` — if BLOCKED
 
 ## Shared Definitions
 
@@ -233,28 +266,28 @@ See `references/review-common.md` for:
 
 **⚠️ @CLAUDE.md auto-loop: fix → re-review → ... → ✅ PASS ⚠️**
 
-Blocked → fix P0/P1 → `/codex-review-fast --continue <threadId>` → repeat until Ready.
-Ready + P2/Nit → batch fix → 1 Codex `--continue` verify → evaluate (see `rules/auto-loop.md` P2/Nit Quality Sweep).
+Blocked → fix the blocking findings → `/codex-review-fast --continue <threadId>` → repeat until Ready.
+Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
-3 rounds on same issue → report blocker, request intervention.
+Round cap comes from the tier (`fast` 3, `standard` 5, `thorough` 10). Same issue recurring at the cap → report blocker, request intervention.
 
-### Dual Mode Loop Behavior
+### Loop Behavior
 
 | Reviewer | Loop Behavior |
 |----------|---------------|
 | Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context |
-| Secondary | Re-dispatched every iteration (fresh context). Always dispatched in v1 (no skip exception). |
+| Secondary (`--dual` only) | Re-dispatched every iteration, fresh context |
 
-Codex gate is authoritative for timing. Secondary runs non-blocking in background. Aggregation reconciled at pre-precommit checkpoint. Any code edit resets the review cycle — both reviewers must re-run.
+Any code edit resets the review cycle — the reviewer must re-run.
 
-### Pre-precommit Checkpoint
+### Pre-precommit Checkpoint (`--dual` only)
 
 Before triggering `/precommit`, reconcile any pending secondary result:
 
 | Condition | Action |
 |-----------|--------|
-| Task completed + has P0/P1 | Re-emit BLOCKED → fix → re-review (Codex `--continue` + Secondary fresh) |
-| Task completed + no P0/P1 | Union aggregate → proceed to precommit |
+| Task completed + has a finding at or above `${BLOCKING}` | Re-emit BLOCKED → fix → re-review (Codex `--continue` + Secondary fresh) |
+| Task completed + nothing at or above `${BLOCKING}` | Union aggregate → proceed to precommit |
 | Task still running | Proceed with Codex gate (authoritative); if late result has P0/P1, re-open fix→re-review loop |
 
 ## Verification
@@ -277,14 +310,17 @@ Before triggering `/precommit`, reconcile any pending secondary result:
 
 ```
 Input: /codex-review-fast
-Action: emit PENDING → git diff → Codex + Task(code-reviewer) parallel → aggregate → emit gate → P0/P1/P2/Nit + Gate
+Action: git diff → Codex → findings + Gate
 
 Input: /codex-review --focus "auth"
-Action: emit PENDING → lint:fix → build → git diff → Codex + Task parallel (focus: auth) → aggregate → emit gate
+Action: lint:fix → build → git diff → Codex (focus: auth) → findings + Gate
 
 Input: /codex-review-branch origin/develop
+Action: branch diff + history → Codex → Rating table + Findings + Gate
+
+Input: /codex-review-branch origin/develop --dual
 Action: emit PENDING → branch diff + history → Codex + Task parallel → aggregate → emit gate → Rating table + Findings + Gate
 
 Input: /codex-review-fast (Codex unavailable)
-Action: emit PENDING → git diff → Task(code-reviewer) only → degraded aggregate → emit gate + ⚠️ warning
+Action: ⛔ Blocked + ⚠️ Need Human — the single reviewer is the whole gate, so there is nothing to degrade to
 ```
