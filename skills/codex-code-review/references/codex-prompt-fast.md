@@ -76,7 +76,7 @@ Only report findings that survive all 5 checks.
 
 ### Calibration ⚠️
 
-Anything at or above \${BLOCKING} **blocks the merge and costs a review round**. Those severities are for defects with a **concrete failure path you can describe**: given this input or this state, this code produces the wrong result, crashes, or leaks. If you cannot name the input, it is not P1.
+Anything at or above ${BLOCKING} **blocks the merge and costs a review round**. Those severities are for defects with a **concrete failure path you can describe**: given this input or this state, this code produces the wrong result, crashes, or leaks. If you cannot name the input, it is not P1.
 
 | P0 / P1 | P2 / Nit |
 |---------|----------|
@@ -104,7 +104,7 @@ ${SPEC_CHECKLIST ? `### AC Coverage
 
 ### Deferred Findings
 
-For every finding **below** \${BLOCKING}, emit one line here, starting at column 0:
+For every finding **below** ${BLOCKING}, emit one line here, starting at column 0:
 
 \`\`\`
 [NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-<severity> | <ISO8601 UTC>
@@ -114,10 +114,10 @@ That tag and field order are parsed out of this output by a hook and stored with
 
 ### Merge Gate
 
-Blocking severities for this review: **\${BLOCKING}** (tier: \${TIER}).
+Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}).
 
-- ✅ Ready: no \${BLOCKING} findings — safe to merge, sub-threshold findings and all
-- ⛔ Blocked: has a \${BLOCKING} finding, needs fix
+- ✅ Ready: no ${BLOCKING} findings — safe to merge, sub-threshold findings and all
+- ⛔ Blocked: has a ${BLOCKING} finding, needs fix
 
 ### Structured Summary (optional, after text report)
 

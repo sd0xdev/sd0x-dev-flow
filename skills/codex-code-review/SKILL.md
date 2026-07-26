@@ -288,7 +288,7 @@ Before triggering `/precommit`, reconcile any pending secondary result:
 |-----------|--------|
 | Task completed + has a finding at or above `${BLOCKING}` | Re-emit BLOCKED → fix → re-review (Codex `--continue` + Secondary fresh) |
 | Task completed + nothing at or above `${BLOCKING}` | Union aggregate → proceed to precommit |
-| Task still running | Proceed with Codex gate (authoritative); if late result has P0/P1, re-open fix→re-review loop |
+| Task still running | Proceed with Codex gate (authoritative); if the late result has a finding at or above `${BLOCKING}`, re-open fix→re-review loop. Branch review is always `thorough`, so a late P2 counts |
 
 ## Verification
 

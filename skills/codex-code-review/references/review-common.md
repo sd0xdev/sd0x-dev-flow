@@ -189,8 +189,10 @@ When `--dual` is passed, `review_mode=dual` and two reviewers run in parallel. T
 |----------|----------|------------|--------|
 | Codex ✅ + Secondary ✅ | Union aggregation | `codex+toolkit` | Full dual findings |
 | Codex ✅ + Secondary ❌ | Codex-only + degradation warning | `codex-only` | `⚠️ Secondary reviewer unavailable` |
-| Codex ❌ + Secondary ✅ | Secondary-only + degradation warning | `toolkit-only` | `⚠️ Codex MCP unavailable` |
+| Codex ❌ + Secondary ✅ | `⛔ Blocked` + `⚠️ Need Human`; report the secondary's findings as advisory | `none` | `⚠️ Codex MCP unavailable — secondary cannot carry the gate` |
 | Both ❌ | `⛔ Blocked` + `⚠️ Need Human` | `none` | Both reviewers failed |
+
+**Codex failing never degrades to a passing gate**, in either mode. It is the gate everywhere — `--dual` adds a second set of eyes, not a second authority — so a secondary-only result is advisory findings plus `⚠️ Need Human`, matching what the READMEs say happens when Codex is absent. The row above used to read `toolkit-only`, which let a review pass on a reviewer the rest of this skill calls non-authoritative.
 
 ### Source Attribution
 
