@@ -205,6 +205,10 @@ if (query && query.includes('[$key]') && vars.key) {
   const guardsPass = query.includes('$passed == true');
   const guardsTypes = query.includes('| type) == "number"');
   const guardsClamp = query.includes('if $m < 3 then 3 elif $m > 50 then 50 else $m end');
+  // Freshness gate: reset only when the PERSISTED cap equals the resolved project cap. Read off
+  // the filter text like the guards above, so dropping the clause from the hook drops it here too
+  // rather than leaving the stub enforcing a rule production no longer has.
+  const guardsFresh = query.includes('$m == $rmr');
   // WHICH keys reset is read off the filter too. Hardcoding precommit || doc_review here meant the
   // stub kept resetting on a doc pass no matter what the hook said, so neither adding nor removing
   // a key from the filter could be detected by a test.
@@ -217,9 +221,12 @@ if (query && query.includes('[$key]') && vars.key) {
     if (!ih || typeof ih !== 'object' || Array.isArray(ih)) return false;
     if (!guardsTypes && !guardsClamp) return true; // hook dropped the guards — so does the stub
     const r = ih.current_round === undefined || ih.current_round === null ? 0 : ih.current_round;
-    const m = ih.max_rounds === undefined || ih.max_rounds === null ? 10 : ih.max_rounds;
+    // 30, not 10: mirrors the hook's "else 30 end" default for an absent cap. It read 10 for as
+    // long as that was the shipped default and silently diverged when the default moved.
+    const m = ih.max_rounds === undefined || ih.max_rounds === null ? 30 : ih.max_rounds;
     if (guardsTypes && (!isInt(r) || !isInt(m))) return false;
     if (guardsTypes && (r < 0 || r > 100000 || m < 1 || m > 100000)) return false;
+    if (guardsFresh && m !== vars.rmr) return false;
     const cap = guardsClamp ? Math.min(50, Math.max(3, m)) : m;
     return r < cap;
   };
@@ -369,6 +376,47 @@ if (query && query.includes('contains(')) {
   }
 }
 
+// The two halves of \`_reconcile_max_rounds\`: read the current cap, then assign a new one.
+// Both must sit above the generic branches — without them the read fell through to the
+// empty-string default, the hook's numeric guard rejected it, and reconciliation silently
+// no-opped. A test asserting "the value did not change" then passed for the wrong reason.
+if (query && query.includes('.iteration_history.max_rounds | numbers')) {
+  // Mirrors the production filter's THREE-way classification. Collapsing "absent" into the
+  // refusal set is the bug this shape exists to prevent: a subtree present but capless is
+  // repairable here and nowhere else, while a corrupt cap must survive so stop-guard can still
+  // render its fail-closed verdict. Pinned against the real binary in jq-filter-fidelity.test.js
+  // — this stub is a convenience, not the specification.
+  const ih = data && typeof data === 'object' ? data.iteration_history : undefined;
+  // A null or missing PARENT is repairable, not a refusal: stop-guard reads it as \`0 30\`, i.e. a
+  // default rather than a corruption, so leaving it alone strands the configured cap.
+  if (ih === null || ih === undefined) { process.stdout.write('absent'); process.exit(0); }
+  if (typeof ih !== 'object' || Array.isArray(ih)) { process.stdout.write('corrupt'); process.exit(0); }
+  const v = ih.max_rounds;
+  if (v === undefined || v === null) { process.stdout.write('absent'); process.exit(0); }
+  const ok = typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 100000;
+  // What it emits is the RAW persisted cap, not stop-guard's clamped one. Production applies the
+  // clamp only to vet the spelling that stop-guard's shell regex will see; emitting the clamped
+  // value made persisted 100 compare equal to a configured 50 and suppress its own repair.
+  // NOTE: this stub cannot reproduce the SPELLING half of the rule at all — JSON.parse
+  // canonicalizes \`1e2\` to 100 and \`30.0\` to 30 before they are ever seen, while real jq
+  // preserves the literal through tostring. That partition is pinned against the real binary in
+  // jq-filter-fidelity.test.js and not here.
+  process.stdout.write(ok ? String(v) : 'corrupt');
+  process.exit(0);
+}
+if (query && query.includes('.max_rounds = $mr')) {
+  if (data && typeof data === 'object') {
+    const cur = data.iteration_history;
+    const base = (cur === null || cur === undefined || typeof cur !== 'object' || Array.isArray(cur))
+      ? { current_round: 0, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false }
+      : cur;
+    base.max_rounds = vars.mr;
+    data.iteration_history = base;
+  }
+  process.stdout.write(JSON.stringify(data, null, 2));
+  process.exit(0);
+}
+
 // Presence probe for the CONTENT gate in _migrate_state_v2 (\`has("iteration_history")\`).
 // Without this branch the query fell through to the empty-string default, which the hook reads as
 // "absent" — so the migration fired on EVERY state and the content gate was never exercised.
@@ -396,7 +444,7 @@ if (query && query.includes('schema_version = $sv') && query.includes('iteration
   if (!data.iteration_history) {
     data.iteration_history = {
       current_round: 0,
-      max_rounds: vars.mr !== undefined ? vars.mr : 10,
+      max_rounds: vars.mr !== undefined ? vars.mr : 30,
       findings_by_round: [],
       total_rounds_session: 0,
       strategic_reset_fired: false,
@@ -511,7 +559,7 @@ if (query && query.includes('plan_review.iteration_history.current_round += 1'))
 // Handle iteration update: .iteration_history.current_round += 1
 if (query && query.includes('iteration_history.current_round += 1')) {
   if (!data.iteration_history) {
-    data.iteration_history = { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
+    data.iteration_history = { current_round: 0, max_rounds: 30, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
   }
   data.iteration_history.current_round += 1;
   data.iteration_history.total_rounds_session = (data.iteration_history.total_rounds_session || 0) + 1;
@@ -853,6 +901,16 @@ test('convergence reset: an EXHAUSTED budget is never refunded, even by a passin
   // test fails (the stub gates on that clause's TEXT, so it stops enforcing it too).
   const workDir = makeTempDir('sd0x-post-tool-converge-noRefund-');
   const binDir = setupStubBin();
+  // The cap is PINNED in project config, not merely seeded in the state. `_reconcile_max_rounds`
+  // makes config the source of truth, so a state whose cap the config no longer resolves to is
+  // stale rather than exhausted — it gets raised, and the reset below then legitimately fires.
+  // Without this pin the fixture tested a coincidence (state cap == the then-shipped default) and
+  // would silently stop testing exhaustion the moment that default moved.
+  mkdirSync(join(workDir, 'rules'), { recursive: true });
+  writeFileSync(
+    join(workDir, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project Overrides\n\n## Max Rounds\n\n10\n\n## Git Memory\n'
+  );
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
     JSON.stringify({
@@ -887,6 +945,15 @@ test('convergence reset: an EXHAUSTED budget is never refunded, even by a passin
     state.iteration_history.findings_by_round.length,
     1,
     'and the evidence of the exhausted loop must survive for stop-guard to read'
+  );
+  // The decisive addition: assert the state stop-guard will READ, not just the counter. Asserting
+  // `current_round` alone passed even while reconciliation raised the cap to 30 underneath it —
+  // leaving `10/30`, which stop-guard reads as budget REMAINING. The counter surviving is not the
+  // invariant; the pair still reading as exhausted is.
+  assert.equal(state.iteration_history.max_rounds, 10, 'the pinned cap must not be raised');
+  assert.ok(
+    state.iteration_history.current_round >= state.iteration_history.max_rounds,
+    'the pair stop-guard reads must still classify as exhausted'
   );
 });
 
@@ -2450,6 +2517,12 @@ test('a mktemp failure inside a LOCKED helper releases the lock (no self-deadloc
   // On the passing code-review path mktemp is called three times, in source order:
   //   #1 update_state   #2 _reset_changed_files   #3 _update_iteration
   // Failing ONLY #2 isolates the leak: #1 and #3 are both perfectly able to succeed.
+  //
+  // The cap is seeded at the SHIPPED default on purpose. `_reconcile_max_rounds` stages a temp of
+  // its own, but only when the cap it finds differs from the resolved one — so a fixture carrying
+  // a stale cap would insert a fourth call, shift every ordinal above, and make MKTEMP_FAIL_ON
+  // hit a different function than the one this test is about. Seeding the current value keeps the
+  // enumeration true and keeps this test about the lock leak.
   const workDir = makeTempDir('sd0x-post-tool-lockleak-');
   const binDir = setupStubBin();
   writeFileSync(
@@ -2457,7 +2530,12 @@ test('a mktemp failure inside a LOCKED helper releases the lock (no self-deadloc
     JSON.stringify({
       has_code_change: true,
       code_review: { executed: false, passed: false },
-      iteration_history: { current_round: 3, max_rounds: 10, findings_by_round: [], total_rounds_session: 3 },
+      iteration_history: {
+        current_round: 3,
+        max_rounds: SHIPPED_MAX_ROUNDS_DEFAULT,
+        findings_by_round: [],
+        total_rounds_session: 3,
+      },
     })
   );
   writeExecutable(join(binDir, 'mktemp'), NTH_FAILING_MKTEMP);
@@ -3018,7 +3096,7 @@ test('R6: init ignores commented placeholder and falls back to default', () => {
   const state = readState(workDir);
   assert.ok(state);
   assert.equal(
-    state.iteration_history.max_rounds, 10,
+    state.iteration_history.max_rounds, 30,
     'commented-out placeholder must NOT be treated as an override'
   );
 });
@@ -3029,7 +3107,7 @@ test('R6: init ignores integer inside multi-line HTML comment', () => {
   mkdirSync(join(workDir, 'rules'), { recursive: true });
   writeFileSync(
     join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n<!--\n30\n-->\n\n## Git Memory\n'
+    '# Auto-Loop Project Overrides\n\n## Max Rounds\n<!--\n7\n-->\n\n## Git Memory\n'
   );
   const result = runHook({
     cwd: workDir,
@@ -3044,7 +3122,7 @@ test('R6: init ignores integer inside multi-line HTML comment', () => {
   const state = readState(workDir);
   assert.ok(state);
   assert.equal(
-    state.iteration_history.max_rounds, 10,
+    state.iteration_history.max_rounds, 30,
     'integer inside multi-line HTML comment must be treated as commented-out'
   );
 });
@@ -3070,7 +3148,7 @@ test('R6: init rejects out-of-range override (100) and uses default', () => {
   const state = readState(workDir);
   assert.ok(state);
   assert.equal(
-    state.iteration_history.max_rounds, 10,
+    state.iteration_history.max_rounds, 30,
     'out-of-range override must fall back to default'
   );
 });
@@ -3976,7 +4054,7 @@ test('plan migration: v2→v3 injects complete plan_review default subtree, pres
   assert.deepEqual(state.plan_review.history, [], 'history starts empty (PENDING never appends)');
 });
 
-test('plan max rounds: defaults apply when no project override exists — plan 5, root 10', () => {
+test('plan max rounds: defaults apply when no project override exists — plan 5, root 30', () => {
   const workDir = makeTempDir('sd0x-plan-pmr-default-');
   const binDir = setupStubBin();
   // No rules/auto-loop-project.md anywhere in workDir
@@ -3988,7 +4066,7 @@ test('plan max rounds: defaults apply when no project override exists — plan 5
   assert.equal(result.status, 0);
   const state = readState(workDir);
   assert.equal(state.plan_review.iteration_history.max_rounds, 5, 'plan default is 5');
-  assert.equal(state.iteration_history.max_rounds, 10, 'root code/doc default is 10');
+  assert.equal(state.iteration_history.max_rounds, 30, 'root code/doc default is 30');
 });
 
 test('plan max rounds: out-of-range override falls back to default 5', () => {
@@ -4024,7 +4102,7 @@ test('plan migration: v2→v3 honors Plan Review Max Rounds override and preserv
     code_review: { executed: false, passed: false, last_run: '' },
     doc_review: { executed: false, passed: false, last_run: '' },
     precommit: { executed: false, passed: false, last_run: '' },
-    iteration_history: { current_round: 2, max_rounds: 10, findings_by_round: [], total_rounds_session: 4, strategic_reset_fired: false },
+    iteration_history: { current_round: 2, max_rounds: 30, findings_by_round: [], total_rounds_session: 4, strategic_reset_fired: false },
   };
   writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
   const result = runHook({
@@ -5493,7 +5571,7 @@ test('content-gated migration repairs a session-init v2 state missing iteration_
   // session-init.sh writes {schema_version: 2, session_commit_scope: {...}} with NO
   // iteration_history. A `ver < 2` version gate can never repair that, so the project
   // ## Max Rounds override goes unread for the whole session and stop-guard's hard cap
-  // silently falls back to 10.
+  // silently falls back to 30.
   const workDir = makeTempDir('sd0x-post-tool-migrate-v2-partial-');
   const binDir = setupStubBin();
   mkdirSync(join(workDir, 'rules'), { recursive: true });
@@ -5523,7 +5601,7 @@ test('content-gated migration repairs a session-init v2 state missing iteration_
   assert.equal(result.status, 0);
   const state = readState(workDir);
   assert.ok(state.iteration_history, 'partial v2 state must gain iteration_history');
-  assert.equal(state.iteration_history.max_rounds, 7, 'must read the project override, not fall back to 10');
+  assert.equal(state.iteration_history.max_rounds, 7, 'must read the project override, not fall back to the shipped default');
 });
 
 test('content-gated migration does not downgrade a v3 state missing iteration_history', () => {
@@ -6099,3 +6177,309 @@ test('EVERY locked state rewrite stages inside the lock and re-checks ownership 
     'at least four locked writers must actually be checked, else the derivation has stopped matching'
   );
 });
+
+// ===========================================================================
+// max_rounds reconciliation — an EXISTING iteration_history must pick up a
+// changed default. `_migrate_state_v2` uses `//=`, which only fills a MISSING
+// subtree, and session-init.sh resets current_round while preserving
+// max_rounds — so before `_reconcile_max_rounds` an installed state kept its
+// original cap across every upgrade. Observed live: a schema-v3 state still
+// holding max_rounds 10 after the shipped default moved to 30.
+// ===========================================================================
+
+const SHIPPED_MAX_ROUNDS_DEFAULT = 30;
+const LEGACY_MAX_ROUNDS_DEFAULT = 10;
+
+function seedStateWithMaxRounds(workDir, maxRounds) {
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'seed',
+      updated_at: '2026-07-26T00:00:00Z',
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false },
+      doc_review: { executed: false, passed: false },
+      precommit: { executed: false, passed: false },
+      aggregate_gate: { executed: false, gate: null },
+      review_mode: 'single',
+      iteration_history: {
+        current_round: 2,
+        max_rounds: maxRounds,
+        findings_by_round: [3],
+        total_rounds_session: 2,
+        strategic_reset_fired: false,
+      },
+    }, null, 2)
+  );
+}
+
+function runReviewVerdict(workDir, binDir) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ✅',
+    },
+  });
+}
+
+test('reconcile: an existing schema-v3 state on the legacy default is raised to the shipped one', () => {
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-legacy-');
+  const binDir = setupStubBin();
+  seedStateWithMaxRounds(workDir, LEGACY_MAX_ROUNDS_DEFAULT);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(
+    state.iteration_history.max_rounds, SHIPPED_MAX_ROUNDS_DEFAULT,
+    'an installed state must pick up a raised default, not keep the cap it was born with'
+  );
+});
+
+test('reconcile: an explicit ## Max Rounds override is not overwritten by the shipped default', () => {
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-override-');
+  const binDir = setupStubBin();
+  mkdirSync(join(workDir, 'rules'), { recursive: true });
+  writeFileSync(
+    join(workDir, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project Overrides\n\n## Max Rounds\n\n12\n\n## Git Memory\n'
+  );
+  seedStateWithMaxRounds(workDir, LEGACY_MAX_ROUNDS_DEFAULT);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(
+    state.iteration_history.max_rounds, 12,
+    'reconciliation must resolve through the project config, not hardcode the shipped default'
+  );
+});
+
+test('reconcile: a project pinned to the legacy value keeps it', () => {
+  // The discriminating case for "distinguish an explicit override from the old implicit default":
+  // the state and the override hold the SAME number, so raising it would silently override a
+  // deliberate choice.
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-pinned-');
+  const binDir = setupStubBin();
+  mkdirSync(join(workDir, 'rules'), { recursive: true });
+  writeFileSync(
+    join(workDir, 'rules', 'auto-loop-project.md'),
+    `# Auto-Loop Project Overrides\n\n## Max Rounds\n\n${LEGACY_MAX_ROUNDS_DEFAULT}\n\n## Git Memory\n`
+  );
+  seedStateWithMaxRounds(workDir, LEGACY_MAX_ROUNDS_DEFAULT);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(
+    state.iteration_history.max_rounds, LEGACY_MAX_ROUNDS_DEFAULT,
+    'a project that explicitly pins the legacy value must keep it'
+  );
+});
+
+test('reconcile: the rest of iteration_history survives the rewrite', () => {
+  // The reconciliation is a targeted field assignment, not a subtree replacement. Zeroing
+  // current_round here would refund the round budget — the hard cap is the only convergence exit
+  // stop-guard enforces, so a refund on every hook invocation makes it unreachable.
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-preserve-');
+  const binDir = setupStubBin();
+  seedStateWithMaxRounds(workDir, LEGACY_MAX_ROUNDS_DEFAULT);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const ih = readState(workDir).iteration_history;
+  assert.equal(ih.max_rounds, SHIPPED_MAX_ROUNDS_DEFAULT);
+  // Exact values, not lower bounds. `>=` would accept a lost increment or a partial rewind, which
+  // is the failure this test exists to catch: the seeded state is at round 2 and this fixture
+  // feeds exactly one more verdict.
+  assert.equal(ih.current_round, 3, 'the seeded round plus this verdict — no rewind, no lost count');
+  assert.equal(ih.total_rounds_session, 3, 'the cumulative session counter advances by exactly one');
+  // The verdict also records a round, so the array GROWS by one. What must not happen is the
+  // seeded entry disappearing — that is the trend data the convergence table reads.
+  assert.equal(ih.findings_by_round[0], 3, 'the pre-existing per-round entry must survive');
+  assert.equal(ih.findings_by_round.length, 2, 'exactly one entry appended, none dropped');
+  assert.equal(ih.strategic_reset_fired, false, 'the strategic-reset mark must survive');
+});
+
+test('reconcile: a state ABOVE the resolved cap is lowered, not only raised', () => {
+  // The stated invariant is "either direction". Every other test here moves the cap UP, so a
+  // one-way implementation (`[[ $want -gt $cur ]]`) would pass all of them.
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-down-');
+  const binDir = setupStubBin();
+  mkdirSync(join(workDir, 'rules'), { recursive: true });
+  writeFileSync(
+    join(workDir, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project Overrides\n\n## Max Rounds\n\n12\n\n## Git Memory\n'
+  );
+  seedStateWithMaxRounds(workDir, SHIPPED_MAX_ROUNDS_DEFAULT);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  assert.equal(
+    readState(workDir).iteration_history.max_rounds, 12,
+    'lowering the project override must take effect, not be ignored as a downgrade'
+  );
+});
+
+// A subtree that EXISTS but carries no cap. Neither writer used to repair it: `_migrate_state_v2`
+// gates on the subtree existing and its `//=` fills only a MISSING one, while the reconciler
+// deferred "absent" to that migration — a job it could never do. stop-guard then substituted its
+// own default, so an explicit LOWER `## Max Rounds` bought the loop a budget the config never
+// granted. Reproduced before the fix as 5/30 = unspent.
+function seedCaplessState(workDir, extra = {}) {
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'seed',
+      updated_at: '2026-07-26T00:00:00Z',
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false },
+      doc_review: { executed: false, passed: false },
+      precommit: { executed: false, passed: false },
+      aggregate_gate: { executed: false, gate: null },
+      review_mode: 'single',
+      iteration_history: {
+        current_round: 5,
+        findings_by_round: [3],
+        total_rounds_session: 5,
+        strategic_reset_fired: false,
+        ...extra,
+      },
+    }, null, 2)
+  );
+}
+
+function writeMaxRoundsOverride(workDir, value) {
+  mkdirSync(join(workDir, 'rules'), { recursive: true });
+  writeFileSync(
+    join(workDir, 'rules', 'auto-loop-project.md'),
+    `# Auto-Loop Project Overrides\n\n## Max Rounds\n\n${value}\n\n## Git Memory\n`
+  );
+}
+
+test('reconcile: a capless iteration_history picks up a LOWER explicit override', () => {
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-capless-');
+  const binDir = setupStubBin();
+  writeMaxRoundsOverride(workDir, 5);
+  seedCaplessState(workDir);
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const ih = readState(workDir).iteration_history;
+  assert.equal(ih.max_rounds, 5,
+    'a subtree present but capless must be repaired from the project config — left absent, '
+    + 'stop-guard substitutes its own default and the explicit lower cap never binds');
+  // The repair is a targeted field assignment, so the rest of the subtree must survive it. The
+  // counter reads 6, not 5: this same hook invocation records the review round it was given. What
+  // matters is that it advanced from the seeded 5 rather than being zeroed by a subtree rewrite.
+  assert.equal(ih.current_round, 6, 'the repair must not reset the round counter, only add the cap');
+  assert.equal(ih.findings_by_round[0], 3, 'the seeded findings history must survive the repair');
+});
+
+test('reconcile: an explicitly null cap is repaired the same way an absent one is', () => {
+  // `has("max_rounds")` would be true here while the value is still unusable. The filter keys on
+  // `== null`, which covers both, and stop-guard likewise treats null as "use the default".
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-nullcap-');
+  const binDir = setupStubBin();
+  writeMaxRoundsOverride(workDir, 7);
+  seedCaplessState(workDir, { max_rounds: null });
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir).iteration_history.max_rounds, 7);
+});
+
+test('reconcile: a NULL iteration_history parent is materialised with the explicit override', () => {
+  // One shape deeper than the capless subtree, and unreachable to BOTH writers before this fix:
+  // `_migrate_state_v2` gates on `has("iteration_history")`, which is true for an explicit null,
+  // so its `//=` never runs; the reconciler classified a non-object parent as untouchable. But
+  // stop-guard reads a null parent as `0 30` — its own default, not a corruption — so the state
+  // sat there indefinitely with the configured cap ignored.
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-nullparent-');
+  const binDir = setupStubBin();
+  writeMaxRoundsOverride(workDir, 5);
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'seed',
+      updated_at: '2026-07-26T00:00:00Z',
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false },
+      doc_review: { executed: false, passed: false },
+      precommit: { executed: false, passed: false },
+      aggregate_gate: { executed: false, gate: null },
+      review_mode: 'single',
+      iteration_history: null,
+    }, null, 2)
+  );
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  const ih = readState(workDir).iteration_history;
+  assert.ok(ih !== null && typeof ih === 'object', 'the null parent must be materialised, not left null');
+  assert.equal(ih.max_rounds, 5, 'and it must carry the resolved project cap, not stop-guard\'s default');
+  // Materialised, not half-built: the counters stop-guard reads must exist rather than be absent.
+  assert.equal(typeof ih.total_rounds_session, 'number', 'the counter fields must be materialised too');
+  assert.ok(Array.isArray(ih.findings_by_round), 'including findings_by_round');
+});
+
+test('reconcile: a CORRUPT cap is still left alone, not swept up by the capless repair', () => {
+  // The discriminating case for widening the repair too far. A string cap is what stop-guard's
+  // iteration filter calls `corrupt`; repairing it here would erase that fail-closed verdict
+  // before stop-guard ever reads the file.
+  const workDir = makeTempDir('sd0x-ptrs-reconcile-corrupt-');
+  const binDir = setupStubBin();
+  writeMaxRoundsOverride(workDir, 7);
+  seedCaplessState(workDir, { max_rounds: '30' });
+
+  const result = runReviewVerdict(workDir, binDir);
+
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir).iteration_history.max_rounds, '30',
+    'a corrupt cap must survive reconciliation so stop-guard can still escalate on it');
+});
+
+// A persisted cap OUTSIDE stop-guard's 3..50 band is still enforceable — stop-guard clamps it and
+// runs. So the reconciler must compare the configured cap against what is PERSISTED, not against
+// what stop-guard would clamp it to. Comparing against the clamped value made these two shapes
+// short-circuit their own repair, and the stale field then survived into `update_state()`, whose
+// precommit reset gate keys on the raw value (`$m == $rmr`) — leaving `current_round` unreset and
+// carrying round debt forward into the next loop.
+for (const [persisted, config, why] of [
+  [100, 50, 'clamps DOWN onto the configured cap'],
+  [1, 3, 'clamps UP onto the configured cap'],
+]) {
+  test(`reconcile: a persisted ${persisted} is rewritten to a configured ${config} (${why})`, () => {
+    const workDir = makeTempDir(`sd0x-ptrs-reconcile-clamped-${persisted}-`);
+    const binDir = setupStubBin();
+    writeMaxRoundsOverride(workDir, config);
+    seedCaplessState(workDir, { max_rounds: persisted });
+
+    const result = runReviewVerdict(workDir, binDir);
+
+    assert.equal(result.status, 0);
+    const ih = readState(workDir).iteration_history;
+    assert.equal(ih.max_rounds, config,
+      `persisted ${persisted} ${why}, so a clamp-comparing reconciler saw them as equal and `
+      + 'never wrote — the persisted field must be brought to the configured value');
+    assert.notEqual(ih.max_rounds, persisted, 'the stale persisted cap must not survive');
+    assert.equal(ih.findings_by_round[0], 3, 'and the repair must stay a targeted field assignment');
+  });
+}

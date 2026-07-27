@@ -16,7 +16,7 @@ Or run: /install-rules --customize auto-loop --add-section
 <!-- How much review a change gets. See auto-loop.md § Tiers.
        fast      — P0 blocks;       cap 3.  Docs, config, small low-risk edits.
        standard  — P0/P1 block;     cap 5.  Ordinary features and bug fixes. (default)
-       thorough  — P0/P1/P2 block;  cap 10. Security, data integrity, releases, public API.
+       thorough  — P0/P1/P2 block;  cap 30. Security, data integrity, releases, public API.
      Blank or unrecognized means standard. Behaviour-layer only — no hook reads this.
      Security and data-integrity changes are treated as thorough regardless.
      To override: uncomment below, leaving a bare tier name. -->
@@ -25,8 +25,28 @@ Or run: /install-rules --customize auto-loop --add-section
 
 ## Max Rounds
 
-<!-- Overrides the cap the tier above would supply. Range 3-50, bare integer, no
-     trailing comment. Parsed by hooks on schema migration. -->
+<!-- One switch, BOTH caps: an explicit value overrides the tier cap above AND the
+     hook-persisted-and-checked iteration_history.max_rounds. Range 3-50, bare
+     integer, no trailing comment. Unset is the only case where the two diverge —
+     the model follows the tier (standard = 5) while the hooks persist 30.
+     stop-guard checks the persisted cap either way, but only BLOCKS in strict or
+     dual mode; the default warn mode reports to stderr and exits 0, so there the
+     behaviour layer is the enforcement (auto-loop.md § Exit Conditions).
+     The hooks pick it up two different ways, and conflating them gets the timing wrong.
+     SEEDING: init_state_file()/migration read it whenever state is CREATED, so any path
+     that can create state seeds the cap from this file — a Markdown edit and an
+     aggregate-only transition both call init_state_file() and so both qualify.
+     RECONCILING an already-persisted cap: exactly three entry paths — a code edit, a
+     single-gate verdict write, an iteration write — which is what lets a changed value
+     land mid-session instead of only at startup. Nothing else reconciles: not
+     SessionStart (session-init.sh resets counters but preserves the cached cap), not a
+     Markdown edit, not an aggregate-only transition, not the plan plane (NFR-7 forbids
+     it), not Stop or PostCompact, which only read what is already there.
+     So editing THIS file, itself a Markdown edit, has two outcomes: with state already
+     present the new value takes effect on the FOLLOWING code edit or verdict/iteration
+     write, not on the edit that set it; with no state file that same edit creates one
+     and seeds it immediately. Neither delay binds the behaviour layer — the tier cap
+     applies as soon as you have read the rule. -->
 
 <!-- 5 -->
 

@@ -401,7 +401,7 @@ if (query && query.includes('.iteration_history as $ih')) {
   }
   const pick = (v, d) => (v === undefined || v === null ? d : v);
   const r = pick(norm.current_round, 0);
-  const m = pick(norm.max_rounds, 10);
+  const m = pick(norm.max_rounds, 30);
   const bad =
     typeof r !== 'number' || typeof m !== 'number' ||
     !Number.isInteger(r) || !Number.isInteger(m) ||
@@ -424,7 +424,7 @@ if (query && query.includes('iteration_history.current_round')) {
 }
 if (query && query.includes('iteration_history.max_rounds')) {
   const ih = data.iteration_history || {};
-  outputValue(String(ih.max_rounds != null ? ih.max_rounds : 10));
+  outputValue(String(ih.max_rounds != null ? ih.max_rounds : 30));
   process.exit(0);
 }
 
@@ -4311,8 +4311,8 @@ test('boolean current_round (false) → corrupt, NOT a refunded "round 0 of 10"'
   assert.match(payload.reason || '', /not valid bounded integers/i);
 });
 
-test('boolean max_rounds (false) → corrupt, NOT a silent fallback to the default cap of 10', () => {
-  // Same `//` hole on the other counter: `false` became 10, so a state whose cap had been corrupted
+test('boolean max_rounds (false) → corrupt, NOT a silent fallback to the default cap', () => {
+  // Same `//` hole on the other counter: `false` became the default cap, so a state whose cap had been corrupted
   // to a boolean silently inherited the documented default instead of being flagged. That hides the
   // corruption rather than surfacing it — and if the real cap was lower, it *raises* the budget.
   const workDir = makeTempDir('sd0x-stop-guard-iter-false-max-');
@@ -4330,14 +4330,14 @@ test('boolean max_rounds (false) → corrupt, NOT a silent fallback to the defau
   );
   const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
   const payload = parseJson(result.stdout);
-  assert.equal(payload.ok, false, 'a boolean cap must not inherit the default 10');
+  assert.equal(payload.ok, false, 'a boolean cap must not inherit the default');
   assert.match(payload.reason || '', /not valid bounded integers/i);
 });
 
 test('boolean iteration_history (false) → corrupt, NOT laundered into an empty object', () => {
   // The parent had the same hole: `(.iteration_history // {})` turned `false` into `{}`, whose type
   // is "object", so the parent-type guard passed and both counters then took their defaults —
-  // "0 10" again. `iteration_history: 'oops'` was already covered; the boolean shape was not,
+  // "0 <default>" again. `iteration_history: 'oops'` was already covered; the boolean shape was not,
   // because `//` intercepted it before the type check ever saw it.
   const workDir = makeTempDir('sd0x-stop-guard-iter-false-parent-');
   const binDir = setupStubBin();
@@ -4360,7 +4360,7 @@ test('boolean iteration_history (false) → corrupt, NOT laundered into an empty
 
 test('null counters still take the DOCUMENTED defaults (the false fix must not over-reject)', () => {
   // Guard against the opposite error: explicit nulls, and an absent iteration_history entirely, are
-  // legitimate legacy shapes and must keep reading as "round 0 of 10" — i.e. proceed, not block.
+  // legitimate legacy shapes and must keep reading as "round 0 of the default cap" — proceed, not block.
   const workDir = makeTempDir('sd0x-stop-guard-iter-nulls-');
   const binDir = setupStubBin();
   const transcriptPath = join(workDir, 'transcript.json');
@@ -4377,6 +4377,33 @@ test('null counters still take the DOCUMENTED defaults (the false fix must not o
   const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
   assert.equal(result.status, 0);
   assert.equal(parseJson(result.stdout).ok, true, 'null must keep its documented default, unlike false');
+});
+
+test('the absent-cap default is the CURRENT one — round 10 is unspent, not exhausted', () => {
+  // The test above starts at round 0, which reads as unspent under ANY default — so it cannot tell
+  // 10 from 30 and quietly stopped pinning the value when the default moved. This one is chosen to
+  // straddle the old boundary: with a null cap, `current_round: 10` is EXACTLY exhausted under the
+  // former default of 10 and comfortably unspent under 30. It fails if either the hook or the stub
+  // drifts back.
+  const workDir = makeTempDir('sd0x-stop-guard-iter-default-discriminating-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      iteration_history: { current_round: 10, max_rounds: null },
+    })
+  );
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
+  assert.equal(result.status, 0);
+  assert.equal(
+    parseJson(result.stdout).ok, true,
+    'round 10 against the absent-cap default must read as unspent — a 10 here means the default regressed'
+  );
 });
 
 test('reconciliation: a NON-C-locale directory-omission warning does NOT downgrade HAS_CODE_CHANGE → blocks (host-independent)', (t) => {

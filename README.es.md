@@ -114,7 +114,7 @@ Un solo reviewer — Codex — por defecto en todas partes. El **tier** decide c
 |------|------|-----------|----------------|
 | `fast` | Documentación, configuración, ediciones pequeñas de bajo riesgo | P0 | 3 |
 | `standard` **(por defecto)** | Funcionalidades y correcciones ordinarias | P0, P1 | 5 |
-| `thorough` | Seguridad, integridad de datos, releases, API pública | P0, P1, P2 | 10 |
+| `thorough` | Seguridad, integridad de datos, releases, API pública | P0, P1, P2 | 30 |
 
 **80 es nota de aprobado.** Los hallazgos por debajo del umbral de bloqueo del tier se registran (`[NIT_DEFERRED]`, persistido con TTL para que no se vuelvan a plantear en la siguiente sesión) y el bucle avanza a `/precommit` — sin pasada extra de correcciones ni ronda extra de review. `/codex-review-branch` los retoma cuando el cambio se revise en profundidad.
 

@@ -114,7 +114,7 @@ One reviewer — Codex — runs everywhere by default. The **tier** decides how 
 |------|---------|-----------|-----------|
 | `fast` | Docs, config, small low-risk edits | P0 | 3 |
 | `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
-| `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 10 |
+| `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
 **80 is a passing grade.** Findings below the tier's blocking severity are logged (`[NIT_DEFERRED]`, persisted with a TTL so they are not re-raised next session) and the loop proceeds to `/precommit` — no extra fix pass, no extra review round. `/codex-review-branch` picks them up when the change is next reviewed at depth.
 

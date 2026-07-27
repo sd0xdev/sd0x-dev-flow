@@ -81,9 +81,9 @@ test('real jq: a non-object iteration_history is corrupt, not an empty default',
 });
 
 test('real jq: absent iteration_history takes the documented defaults', { skip: !HAVE_JQ }, () => {
-  assert.equal(runFilter(ITER_FILTER, {}).out, '0 10');
-  assert.equal(runFilter(ITER_FILTER, { iteration_history: null }).out, '0 10');
-  assert.equal(runFilter(ITER_FILTER, { iteration_history: {} }).out, '0 10');
+  assert.equal(runFilter(ITER_FILTER, {}).out, '0 30');
+  assert.equal(runFilter(ITER_FILTER, { iteration_history: null }).out, '0 30');
+  assert.equal(runFilter(ITER_FILTER, { iteration_history: {} }).out, '0 30');
 });
 
 test('real jq: non-integer and out-of-range counters are corrupt', { skip: !HAVE_JQ }, () => {
@@ -95,7 +95,7 @@ test('real jq: non-integer and out-of-range counters are corrupt', { skip: !HAVE
 
 test('real jq: max_rounds is CLAMPED to the producer contract (3..50)', { skip: !HAVE_JQ }, () => {
   // `_read_project_int_setting` (post-tool-review-state.sh) admits 3..50 and otherwise falls back
-  // to 10, so a persisted 100000 did not come from the documented path. Accepting it as written is
+  // to 30, so a persisted 100000 did not come from the documented path. Accepting it as written is
   // how the hard cap gets disarmed: round 51 under a 100000 budget reads as barely started, and
   // that cap is the ONLY convergence exit stop-guard enforces. `.claude_review_state.json` is an
   // ordinary writable file, so "nothing legitimate writes it" is not the same as "nothing does".
@@ -208,12 +208,29 @@ const RESET_FILTER = (() => {
   return reviewState.slice(at + 1, close);
 })();
 
-function runReset(iterationHistory, { key = 'precommit', passed = true } = {}) {
+/**
+ * `$rmr` is the RESOLVED project cap, and the filter resets only when the persisted cap already
+ * equals it — the fail-closed gate for a reconciliation that silently failed (it returns 0 either
+ * way by contract). That gate is orthogonal to the budget ARITHMETIC these differential tests
+ * exist to pin, so unless a case is specifically about freshness, `rmr` defaults to the input's own
+ * cap: the state a SUCCESSFUL reconciliation leaves behind. Neutralising it here is what keeps the
+ * reader/writer comparison about the clamp and canonicality mirror rather than about config drift.
+ * The gate itself is covered separately below.
+ */
+function resolveRmr(rawJson, override) {
+  if (override !== undefined) return String(override);
+  const m = /"max_rounds"\s*:\s*(-?[0-9][0-9eE+.\-]*)/.exec(rawJson);
+  return m ? m[1] : '30';
+}
+
+function runReset(iterationHistory, { key = 'precommit', passed = true, rmr } = {}) {
+  const input = JSON.stringify({ iteration_history: iterationHistory });
   const r = spawnSync(
     'jq',
-    ['-c', '--arg', 'key', key, '--argjson', 'executed', 'true', '--argjson', 'passed', String(passed),
+    ['-c', '--arg', 'key', key, '--argjson', 'rmr', resolveRmr(input, rmr),
+      '--argjson', 'executed', 'true', '--argjson', 'passed', String(passed),
       '--arg', 'mode', '', '--arg', 'now', 'T', RESET_FILTER],
-    { input: JSON.stringify({ iteration_history: iterationHistory }), encoding: 'utf8' }
+    { input, encoding: 'utf8' }
   );
   return { status: r.status, err: r.stderr || '', doc: r.stdout ? JSON.parse(r.stdout) : null };
 }
@@ -275,7 +292,7 @@ test('real jq: a valid below-cap counter IS reset, including the clamped-up cap'
     [{ current_round: 4, max_rounds: 10 }, 'ordinary below-cap'],
     [{ current_round: 9, max_rounds: 50 }, 'at the contract maximum'],
     [{ current_round: 2, max_rounds: 1 }, 'cap clamps UP to 3, so 2 is still unspent'],
-    [{ current_round: 4 }, 'absent max_rounds takes the documented default 10'],
+    [{ current_round: 4 }, 'absent max_rounds takes the documented default 30'],
   ]) {
     const r = runReset({ ...ih, ...RESET_FIXTURE });
     assert.equal(wasReset(r.doc.iteration_history), true, `should have reset (${why}): ${JSON.stringify(ih)}`);
@@ -310,10 +327,11 @@ function runFilterRaw(filter, rawJson) {
   return { status: r.status, out: (r.stdout || '').trim(), err: r.stderr || '' };
 }
 
-function runResetRaw(rawJson) {
+function runResetRaw(rawJson, rmr) {
   const r = spawnSync(
     'jq',
-    ['-c', '--arg', 'key', 'precommit', '--argjson', 'executed', 'true', '--argjson', 'passed', 'true',
+    ['-c', '--arg', 'key', 'precommit', '--argjson', 'rmr', resolveRmr(rawJson, rmr),
+      '--argjson', 'executed', 'true', '--argjson', 'passed', 'true',
       '--arg', 'mode', '', '--arg', 'now', 'T', RESET_FILTER],
     { input: rawJson, encoding: 'utf8' }
   );
@@ -379,11 +397,11 @@ const DIFFERENTIAL_CORPUS = buildCorpus();
 // corpus dropped both of these without saying so while its test name claimed "EVERY input".
 const EXPECTED_DIVERGENCE = new Map([
   ['{"iteration_history":null}',
-    'reader maps a null history to the documented default "0 10" (unspent); the writer requires an '
+    'reader maps a null history to the documented default "0 30" (unspent); the writer requires an '
     + 'OBJECT parent because its reset would otherwise CREATE iteration_history out of nothing. '
     + 'Refusing is the safe half — there is no round budget to refund when no history exists.'],
   ['{}',
-    'same as above: absent history reads as "0 10" but there is nothing to reset.'],
+    'same as above: absent history reads as "0 30" but there is nothing to reset.'],
 ]);
 
 test('real jq: reader and writer agree on every input in the corpus', { skip: !HAVE_JQ }, () => {
@@ -443,4 +461,300 @@ test('real jq: the corpus actually exercises both verdicts (not vacuously one-si
   // And specifically: the non-canonical literals must land on the REFUSED side, or the fixture has
   // been normalised somewhere and the regression it guards is invisible again.
   assert.equal(runFilterRaw(ITER_FILTER, '{"iteration_history":{"current_round":1e1,"max_rounds":5e1}}').out, '1E+1 5E+1');
+});
+
+// ===========================================================================
+// _reconcile_max_rounds — the cap-refresh filter pair
+//
+// Same blindness as above, one layer down: the hook suites stub `.iteration_history.max_rounds //
+// empty` and `.iteration_history.max_rounds = $mr` in JavaScript, so they assert what the stub
+// author believed jq does. Two of those beliefs are load-bearing and neither is obvious —
+// `//` treating `false` as missing, and `-r` normalising exponent literals — so pin both under the
+// real binary. Contract: hooks/post-tool-review-state.sh § _reconcile_max_rounds.
+// ===========================================================================
+
+const editFormat = readFileSync(resolve(__dirname, '../../hooks/post-edit-format.sh'), 'utf8');
+
+const RECONCILE_READ = extractFilter(reviewState, 'cur=$(jq -r ');
+const RECONCILE_WRITE = extractFilter(reviewState, 'if jq --argjson mr "$want" ');
+
+// The shell gate the read feeds. Duplicated from the hook because the whole point is that neither
+// half is safe alone: jq emitting `100` is only benign because this regex accepts it.
+const SHELL_NUMERIC = /^[0-9]+$/;
+
+// Mirrors the hook's `case` arms. The filter classifies three ways and only two of them reach the
+// write: a numeric cap (rewritten when it differs from the resolved one) and the literal `absent`
+// (a subtree present but capless — repairable here and nowhere else, because `_migrate_state_v2`'s
+// `//=` only fills a MISSING subtree). `skip` and `corrupt` must not.
+const reconciles = (out) => SHELL_NUMERIC.test(out) || out === 'absent';
+
+// stop-guard's accept/corrupt verdict is decided in TWO stages, and reading only the first is how
+// a real disagreement hid behind a passing property test: jq emits the pair, then
+// `[[ "$ITER_PARSED" =~ ^([0-9]+)[[:space:]]([0-9]+)$ ]]` judges it. `4e1` leaves jq as `4 4E+1` —
+// jq never says "corrupt", but the regex rejects it, so stop-guard's verdict IS corrupt. Any
+// oracle for congruence has to include every stage that contributes to the final verdict.
+const STOP_GUARD_PAIR = /^[0-9]+\s[0-9]+$/;
+const stopGuardVerdict = (rawJson) =>
+  (STOP_GUARD_PAIR.test(runFilterRaw(ITER_FILTER, rawJson).out) ? 'accepted' : 'corrupt');
+
+// Runs the extracted write filter under the real binary, exactly as the hook invokes it.
+const runWriteRaw = (raw, mr) => {
+  const r = spawnSync('jq', ['--argjson', 'mr', String(mr), RECONCILE_WRITE],
+    { input: raw, encoding: 'utf8' });
+  assert.equal(r.status, 0, `real jq rejected the write filter:\n${r.stderr}`);
+  return JSON.parse(r.stdout);
+};
+
+test('the two _reconcile_max_rounds twins run the identical filter text', { skip: !HAVE_JQ }, () => {
+  // post-edit-format.sh carries a hand-copied twin. Drift between them means one hook heals the cap
+  // and the other silently does not, which is invisible from either hook's own suite.
+  assert.equal(extractFilter(editFormat, 'cur=$(jq -r '), RECONCILE_READ,
+    'the post-edit-format read filter has drifted from post-tool-review-state');
+  assert.equal(extractFilter(editFormat, 'if jq --argjson mr "$want" '), RECONCILE_WRITE,
+    'the post-edit-format write filter has drifted from post-tool-review-state');
+});
+
+test('real jq: the read filter yields nothing for every shape that must not be reconciled',
+  { skip: !HAVE_JQ }, () => {
+    // Each of these must leave `cur` empty or non-numeric so the function returns before writing.
+    // `false` is the one that would surprise a stub author: jq's `//` treats it as missing, so the
+    // alternative fires and the whole expression produces `empty` rather than the string "false".
+    const mustNotReconcile = [
+      ['{"iteration_history":[]}', 'array parent — corrupt to stop-guard, so untouchable here'],
+      ['{"iteration_history":"x"}', 'string parent — likewise corrupt'],
+      ['{"iteration_history":{"max_rounds":false}}', 'jq `//` treats false as missing'],
+      // The one that forced `| numbers` into the filter. `jq -r` renders the string "30"
+      // indistinguishably from the number 30, so a plain `// empty` accepted it, and the write
+      // then fired whenever the value differed from the resolved cap — erasing the `corrupt`
+      // verdict stop-guard's iteration filter returns for a string cap (asserted below).
+      ['{"iteration_history":{"max_rounds":"30"}}', 'string cap must stay visible as corrupt'],
+      ['{"iteration_history":{"max_rounds":[]}}', 'array cap'],
+      ['{"iteration_history":{"max_rounds":3.5}}', 'fractional cap fails the shell regex'],
+      ['{"iteration_history":{"max_rounds":-5}}', 'negative cap fails the shell regex'],
+      // The range boundaries. Both are NUMBERS and both are digits-only, so `| numbers` plus the
+      // shell regex accepted them — but stop-guard calls both `corrupt` (asserted below), and a
+      // reconciler that rewrites them erases exactly the verdict it must not touch.
+      ['{"iteration_history":{"max_rounds":0}}', 'zero is corrupt to stop-guard, not merely clamped'],
+      ['{"iteration_history":{"max_rounds":100001}}', 'above stop-guard`s 100000 ceiling'],
+    ];
+    for (const [raw, why] of mustNotReconcile) {
+      const out = runFilterRaw(RECONCILE_READ, raw).out;
+      assert.ok(!reconciles(out),
+        `read filter produced the reconcilable value ${JSON.stringify(out)} for ${raw} — ${why}`);
+    }
+    // Positive control: without this the test above passes for a filter that refuses everything.
+    assert.equal(runFilterRaw(RECONCILE_READ, '{"iteration_history":{"max_rounds":30}}').out, '30');
+  });
+
+test('real jq: a subtree present but CAPLESS classifies as repairable, not as refused',
+  { skip: !HAVE_JQ }, () => {
+    // The hole this filter shape was rewritten to close. `_migrate_state_v2` gates on the subtree
+    // EXISTING and its `//=` fills only a missing one, so a partial `iteration_history` is
+    // unreachable to migration. When the reconciler also refused it, nothing ever wrote the cap:
+    // stop-guard substituted its own default 30 and an explicit `## Max Rounds: 5` read as 5/30 —
+    // unspent — handing the loop six times the budget the config granted.
+    const capless = [
+      ['{"iteration_history":{}}', 'cap key absent'],
+      ['{"iteration_history":{"max_rounds":null}}', 'explicit null cap'],
+      ['{"iteration_history":{"current_round":5,"findings_by_round":[]}}', 'partial, mid-loop'],
+      // The PARENT shapes. `_migrate_state_v2` cannot reach either: it gates on
+      // `has("iteration_history")`, which is TRUE for an explicit null, and its `//=` fills only a
+      // missing subtree. stop-guard reads both as `0 30` — a default, not a corruption — so
+      // refusing them here strands the configured cap behind stop-guard's own default.
+      ['{}', 'parent missing entirely'],
+      ['{"iteration_history":null}', 'parent explicitly null'],
+    ];
+    for (const [raw, why] of capless) {
+      const out = runFilterRaw(RECONCILE_READ, raw).out;
+      assert.equal(out, 'absent', `capless state (${why}) must classify as repairable: ${raw}`);
+      assert.ok(reconciles(out), `and the shell gate must let it through to the write: ${raw}`);
+    }
+    // The classes must stay DISTINCT — collapsing absent into corrupt is the bug, twice over.
+    assert.equal(runFilterRaw(RECONCILE_READ, '{"iteration_history":{"max_rounds":"30"}}').out,
+      'corrupt', 'a corrupt cap must stay corrupt so stop-guard can still fail closed on it');
+    assert.equal(runFilterRaw(RECONCILE_READ, '{"iteration_history":[]}').out,
+      'corrupt', 'a non-object parent is corrupt to stop-guard and must stay that way here');
+  });
+
+test('real jq: the read filter emits the PERSISTED cap, not stop-guard`s clamped one',
+  { skip: !HAVE_JQ }, () => {
+    // Three values are in play and conflating any two of them is a live bug: the persisted cap, the
+    // clamped cap stop-guard would actually enforce, and the configured cap. The clamp belongs to
+    // the SPELLING test only — `cur` is compared against the resolved config to decide whether to
+    // write, so emitting the clamped value made a persisted 100 look equal to a configured 50 and
+    // suppressed its own repair. `update_state()`'s reset gate then reads the RAW persisted value
+    // (`$m == $rmr`), so a converged precommit left `current_round` unreset and the round debt
+    // carried into the next loop, where it can trip the hard cap early.
+    const persisted = [
+      ['{"iteration_history":{"max_rounds":100}}', '100', 50, 'above the band — clamps to 50'],
+      ['{"iteration_history":{"max_rounds":1}}', '1', 3, 'below the band — clamps up to 3'],
+      ['{"iteration_history":{"max_rounds":2}}', '2', 3, 'below the band'],
+      ['{"iteration_history":{"max_rounds":100000}}', '100000', 50, 'the ceiling itself'],
+      // In-band, so the clamp is a no-op and raw == clamped. Kept as the control: without it a
+      // filter that emitted only out-of-band raws would still look correct.
+      ['{"iteration_history":{"max_rounds":30}}', '30', 30, 'in-band, clamp is identity'],
+      // Canonicalisation still happens — `1e2` is accepted (its clamped spelling is `50`) and must
+      // surface as a shell-comparable integer, not as the literal.
+      ['{"iteration_history":{"max_rounds":1e2}}', '100', 50, 'accepted exponent, canonicalised'],
+    ];
+    for (const [raw, expected, config, why] of persisted) {
+      const out = runFilterRaw(RECONCILE_READ, raw).out;
+      assert.equal(out, expected, `read filter must emit the persisted cap (${why}): ${raw}`);
+      assert.ok(SHELL_NUMERIC.test(out), `and it must survive the shell gate: ${raw}`);
+      // The consequence the value exists for: `[[ "$want" == "$cur" ]] && return 0`.
+      if (String(config) !== expected) {
+        assert.notEqual(out, String(config),
+          `a persisted ${expected} against a configured ${config} must NOT short-circuit the write`);
+      }
+    }
+    // Non-tautology anchor: the OLD clamped-emitting filter is what this pins against. Under it,
+    // every out-of-band row above collapsed onto its configured cap and the write never fired.
+    const clampEmitting = RECONCILE_READ
+      .replace('| select((if . < 3 then 3 elif . > 50 then 50 else . end) | tostring | test("^[0-9]+$"))\n    | floor)',
+        '| (if . < 3 then 3 elif . > 50 then 50 else . end)\n    | select(tostring | test("^[0-9]+$")))');
+    assert.notEqual(clampEmitting, RECONCILE_READ, 'the old filter text no longer matches — update this anchor');
+    assert.equal(runFilterRaw(clampEmitting, '{"iteration_history":{"max_rounds":100}}').out, '50',
+      'the previous implementation really did emit 50 here, which is the bug being pinned');
+  });
+
+test('real jq: the write materialises a missing parent without disturbing existing counters',
+  { skip: !HAVE_JQ }, () => {
+    // The repair for a null/missing parent has to CREATE the subtree, not just set a field on
+    // nothing — `.iteration_history.max_rounds = $mr` alone yields a subtree holding only the cap,
+    // and the counters stop-guard reads would then be absent rather than zeroed.
+    const made = runWriteRaw('{"schema_version":3,"iteration_history":null}', 5);
+    assert.deepEqual(made.iteration_history, {
+      current_round: 0, findings_by_round: [], total_rounds_session: 0,
+      strategic_reset_fired: false, max_rounds: 5,
+    }, 'a null parent must be materialised as a complete default subtree carrying the resolved cap');
+    assert.equal(made.schema_version, 3, 'and nothing outside iteration_history may be touched');
+
+    // The far more common path: an existing subtree keeps every sibling counter.
+    const kept = runWriteRaw(
+      '{"iteration_history":{"current_round":5,"findings_by_round":[3],"total_rounds_session":9,"strategic_reset_fired":true}}',
+      7
+    );
+    assert.deepEqual(kept.iteration_history, {
+      current_round: 5, findings_by_round: [3], total_rounds_session: 9,
+      strategic_reset_fired: true, max_rounds: 7,
+    }, 'the `//` must be inert when the parent already exists');
+  });
+
+test('real jq: the reset refuses to fire against a cap the config no longer resolves to',
+  { skip: !HAVE_JQ }, () => {
+    // The failed-reconciliation fail-open. `_reconcile_max_rounds` is best-effort BY CONTRACT — it
+    // returns 0 whether its staging, jq, ownership check or rename succeeded — so `update_state`
+    // cannot infer freshness from a return code and must read it off the state instead.
+    //
+    // The damaging direction is a cap DECREASE, because the stale cap is the LARGER one:
+    const stale = '{"iteration_history":{"current_round":20,"max_rounds":30,"findings_by_round":[{"total":2}]}}';
+
+    // Reconciliation failed: the file still says 30 while the project now resolves 10.
+    const failed = runResetRaw(stale, 10);
+    assert.equal(failed.status, 0);
+    assert.equal(failed.doc.iteration_history.current_round, 20,
+      'a stale cap must not license a reset — config says the budget was exhausted at 10');
+    assert.equal(failed.doc.iteration_history.findings_by_round.length, 1,
+      'and the exhaustion evidence must survive for stop-guard to read');
+
+    // Reconciliation succeeded: the persisted cap matches, and 20 >= 10 is genuinely exhausted.
+    const healed = '{"iteration_history":{"current_round":20,"max_rounds":10,"findings_by_round":[{"total":2}]}}';
+    assert.equal(runResetRaw(healed, 10).doc.iteration_history.current_round, 20,
+      'still exhausted once healed — the gate must not be the only thing preventing the refund');
+
+    // Non-vacuity: the gate must not block every reset, only mismatched ones. Same cap, unspent.
+    const fresh = '{"iteration_history":{"current_round":4,"max_rounds":10,"findings_by_round":[{"total":2}]}}';
+    const ok = runResetRaw(fresh, 10);
+    assert.equal(ok.doc.iteration_history.current_round, 0, 'an in-sync unspent budget still resets');
+    assert.deepEqual(ok.doc.iteration_history.findings_by_round, []);
+
+    // And the increase direction: stale-low cap, config raised. Refusing here is conservative
+    // rather than protective, but it must still refuse — the rule is equality, not "stale is fine
+    // when it happens to be smaller".
+    const staleLow = '{"iteration_history":{"current_round":4,"max_rounds":10,"findings_by_round":[{"total":2}]}}';
+    assert.equal(runResetRaw(staleLow, 30).doc.iteration_history.current_round, 4,
+      'a cap the config no longer resolves to is not a basis for any reset, either direction');
+  });
+
+test('PROPERTY: the reconciler and stop-guard agree on every cap shape, in BOTH directions',
+  { skip: !HAVE_JQ }, () => {
+    // The invariant behind every enumerated case above, checked as a property so a future clause
+    // change cannot satisfy the lists while breaking the rule. Both directions are load-bearing
+    // and each was wrong once:
+    //
+    //   corrupt  ⇒ refuse   The reconciler runs BEFORE stop-guard reads the file, so any corrupt
+    //                       cap it normalises is a fail-closed escalation that never fires.
+    //   accepted ⇒ repair   A cap stop-guard USES but the reconciler refuses stays stale, and
+    //                       stop-guard then honours the stale value. `1e2` was exactly this: the
+    //                       reconciler called it corrupt (jq renders it `1E+2`, which failed a
+    //                       digits-only clause) while stop-guard clamped it to 50 — so an explicit
+    //                       `## Max Rounds: 5` never bound and the budget read as unspent.
+    //
+    // An earlier revision of this test asserted only the first direction and argued in its own
+    // comment that "stricter than the reader is the safe asymmetry". That is false, and the second
+    // direction is what disproves it.
+    const caps = [
+      '"30"', 'false', 'true', 'null', '[]', '{}', '"abc"',
+      '0', '-1', '-5', '100001', '999999999', '3.5', '0.5', '-0',
+      // Non-canonical spellings of in-band integers. These are the discriminating cases: the clamp
+      // REPLACES an out-of-band value (so `1e2` reaches the regex as `50` and is accepted) but
+      // passes an in-band one through as written (so `4e1` reaches it as `4E+1` and is rejected).
+      // A reconciler that canonicalises with `floor` alone accepts `4e1` and launders it.
+      '1e2', '4e1', '3e1', '30.0', '1.0', '1', '2', '3', '30', '50', '51', '100000',
+    ];
+    let corruptSeen = 0;
+    let acceptedSeen = 0;
+    for (const cap of caps) {
+      const raw = `{"iteration_history":{"current_round":4,"max_rounds":${cap}}}`;
+      // The FULL verdict, jq plus the shell regex. An earlier revision compared only the jq output
+      // and so classified `4e1` as accepted, which is precisely the case it needed to catch.
+      const guard = stopGuardVerdict(raw);
+      const out = runFilterRaw(RECONCILE_READ, raw).out;
+      if (guard === 'corrupt') {
+        corruptSeen += 1;
+        assert.ok(!reconciles(out),
+          `stop-guard calls max_rounds=${cap} corrupt, so the reconciler must refuse it — `
+          + `reconciling would repair away the fail-closed signal (got ${JSON.stringify(out)})`);
+      } else {
+        acceptedSeen += 1;
+        assert.ok(reconciles(out),
+          `stop-guard USES max_rounds=${cap} (its pair is "${runFilterRaw(ITER_FILTER, raw).out}"), `
+          + 'so the reconciler must be able to repair it — refusing leaves a stale cap stop-guard '
+          + `then honours (got ${JSON.stringify(out)})`);
+      }
+    }
+    // Non-vacuity, per direction: a filter change that emptied either branch would otherwise let
+    // this test pass while asserting nothing about it.
+    assert.ok(corruptSeen >= 8,
+      `expected the corpus to contain corrupt caps, stop-guard rejected only ${corruptSeen}`);
+    assert.ok(acceptedSeen >= 6,
+      `expected the corpus to contain accepted caps, stop-guard accepted only ${acceptedSeen}`);
+  });
+
+test('real jq: the write filter assigns a number and touches nothing else', { skip: !HAVE_JQ }, () => {
+  const before = {
+    schema_version: 3,
+    code_review: { executed: true, passed: true },
+    iteration_history: {
+      current_round: 7,
+      max_rounds: 10,
+      findings_by_round: [3, 1],
+      total_rounds_session: 41,
+      strategic_reset_fired: true,
+    },
+  };
+  const r = spawnSync('jq', ['--argjson', 'mr', '30', RECONCILE_WRITE],
+    { input: JSON.stringify(before), encoding: 'utf8' });
+  assert.equal(r.status, 0, `real jq rejected the write filter:\n${r.err}`);
+  const after = JSON.parse(r.stdout);
+
+  assert.equal(after.iteration_history.max_rounds, 30);
+  assert.equal(typeof after.iteration_history.max_rounds, 'number',
+    '--argjson must inject a JSON number; a string cap would fail every later arithmetic comparison');
+
+  // Everything else byte-identical. A subtree replacement here would refund the round budget,
+  // which makes the hard cap — the only convergence exit stop-guard enforces — unreachable.
+  const expected = JSON.parse(JSON.stringify(before));
+  expected.iteration_history.max_rounds = 30;
+  assert.deepEqual(after, expected, 'the write filter must be a single-field assignment');
 });

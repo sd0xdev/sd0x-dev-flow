@@ -22,7 +22,7 @@ See `@skills/codex-code-review/SKILL.md`
 | Pre-checks | None |
 | Prompt template | `@skills/codex-code-review/references/codex-prompt-branch.md` |
 | Reviewers | Codex alone. `--dual` adds a secondary reviewer — **off unless the flag is passed** |
-| Tier | `thorough` (this is the depth variant — P0/P1/P2 block, round cap 10) |
+| Tier | `thorough` (this is the depth variant — P0/P1/P2 block, round cap 30) |
 
 ## Flags
 

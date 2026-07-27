@@ -114,7 +114,7 @@ sequenceDiagram
 |------|------|----------|----------|
 | `fast` | 文件、設定、低風險小改 | P0 | 3 |
 | `standard` **（預設）** | 一般功能與 bug fix | P0、P1 | 5 |
-| `thorough` | 安全性、資料完整性、release、public API | P0、P1、P2 | 10 |
+| `thorough` | 安全性、資料完整性、release、public API | P0、P1、P2 | 30 |
 
 **80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`，帶 TTL 持久化，下次 session 不會重複被提），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
 

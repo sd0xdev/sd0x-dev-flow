@@ -800,9 +800,9 @@ _edit_write_failed() {
 # Initialize state file if it doesn't exist
 init_state_file() {
   if [[ ! -f "$STATE_FILE" ]]; then
-    # R6: read project max_rounds override for initial value (fallback 10)
+    # R6: read project max_rounds override for initial value (fallback 30)
     local _mr
-    _mr=$(_read_project_max_rounds 10)
+    _mr=$(_read_project_max_rounds 30)
     # Atomic create (see post-tool-review-state.sh init_state_file): temp + rename so a
     # crash mid-write never leaves a truncated state file for the jq readers to choke on.
     # The write AND its size-guard share a single `if` CONDITION so `set -euo pipefail` is
@@ -907,7 +907,7 @@ _read_project_int_setting() {
 
 # Read max_rounds override from project config (R6)
 _read_project_max_rounds() {
-  _read_project_int_setting "Max Rounds" "${1:-10}"
+  _read_project_int_setting "Max Rounds" "${1:-30}"
 }
 
 # Migrate state file to schema v2 (add iteration_history if missing).
@@ -924,7 +924,7 @@ _migrate_state_v2() {
   has_iter=$(jq -r 'has("iteration_history")' "$state_file" 2>/dev/null || echo "true")
   if [[ "$ver" -lt 2 || "$has_iter" != "true" ]]; then
     local mr tmp target
-    mr=$(_read_project_max_rounds 10)
+    mr=$(_read_project_max_rounds 30)
     # Best-effort migration: an unavailable temp must not abort the caller's transaction.
     tmp=$(_state_staging_file) || return 0
     target=2
@@ -945,6 +945,48 @@ _migrate_state_v2() {
       rm -f "$tmp" 2>/dev/null || true
     fi
   fi
+}
+
+# Twin of post-tool-review-state.sh's `_reconcile_max_rounds` — see there for why this exists
+# and why divergence is corrected in both directions. Kept here as well because the edit plane
+# runs far more often than the review plane, so this is where an upgraded default actually lands
+# for an existing session.
+_reconcile_max_rounds() {
+  local state_file="${1:-$STATE_FILE}"
+  [[ ! -f "$state_file" ]] && return 0
+  local cur want tmp
+  # Mirrors stop-guard's corrupt-cap verdict so this function cannot repair away a fail-closed
+  # signal — see the twin in post-tool-review-state.sh for the clause-by-clause reasoning.
+  cur=$(jq -r 'if (.iteration_history | type) == "null" then "absent"
+    elif (.iteration_history | type) != "object" then "corrupt"
+    elif (.iteration_history.max_rounds == null) then "absent"
+    else ((.iteration_history.max_rounds | numbers
+    | select((floor == .) and . >= 1 and . <= 100000)
+    | select((if . < 3 then 3 elif . > 50 then 50 else . end) | tostring | test("^[0-9]+$"))
+    | floor) // "corrupt")
+    end' "$state_file" 2>/dev/null || echo "corrupt")
+  # "absent" (parent null/missing, or present but capless) is materialised below; "corrupt" is
+  # exactly what stop-guard rejects across BOTH its stages — jq's pair and the Bash regex that
+  # judges it — which is why the clamp is mirrored here. The clamp only vets the SPELLING; what
+  # this emits is the raw persisted cap, so persisted 100 against a configured 50 still repairs.
+  # See the twin for the full reasoning.
+  case "$cur" in
+    absent) ;;
+    ''|corrupt|*[!0-9]*) return 0 ;;
+  esac
+  want=$(_read_project_max_rounds 30)
+  [[ "$want" == "$cur" ]] && return 0
+  # Best-effort: an unavailable temp must not abort the caller's transaction.
+  tmp=$(_state_staging_file) || return 0
+  if jq --argjson mr "$want" '.iteration_history = ((.iteration_history // {"current_round": 0, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}) | .max_rounds = $mr)' \
+    "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _may_commit_state && mv "$tmp" "$state_file" 2>/dev/null; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+  # Unconditional success — see the twin in post-tool-review-state.sh for why a cache refresh must
+  # never be able to abort its caller.
+  return 0
 }
 
 # Invalidate a review's passed flag (preserves executed + last_run)
@@ -992,6 +1034,8 @@ update_change_flag() {
   init_state_file
   # R6: apply project max_rounds override on fresh state file (no-op when schema_version >= 2)
   _migrate_state_v2 "$STATE_FILE" || true
+  # A pre-existing iteration_history keeps its original cap; reconcile it against project config.
+  _reconcile_max_rounds "$STATE_FILE" || true
 
   local now
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")

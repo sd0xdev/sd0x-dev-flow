@@ -1084,24 +1084,24 @@ if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
   # `corrupt` → ⚠️ Need Human, never a default: untrusted counters cannot prove the budget unspent.
   # NOTE the deliberate absence of `//` here. jq's alternative operator treats **false** as
   # "missing", so `(.iteration_history.current_round // 0)` mapped `current_round: false` to 0 —
-  # verified against real jq: `{"current_round":false,"max_rounds":false}` produced `0 10`, i.e. a
-  # FULLY UNSPENT budget, silently refunding the hard cap that is the only enforced convergence
+  # verified against real jq: `{"current_round":false,"max_rounds":false}` produced `0` and the
+  # full default cap, i.e. a FULLY UNSPENT budget, silently refunding the only enforced convergence
   # exit. The type checks below could never catch it because the false was already gone. Same for
   # `(.iteration_history // {})`, which laundered `iteration_history: false` into an empty object.
   # So: null/absent → documented defaults; anything else non-numeric, INCLUDING false → corrupt.
   ITER_PARSED=$(jq -r '
     .iteration_history as $ih
-    | if $ih == null then "0 10"
+    | if $ih == null then "0 30"
       elif ($ih | type) != "object" then "corrupt"
       else
         (if ($ih | has("current_round")) and ($ih.current_round != null) then $ih.current_round else 0 end) as $r
-        | (if ($ih | has("max_rounds")) and ($ih.max_rounds != null) then $ih.max_rounds else 10 end) as $m
+        | (if ($ih | has("max_rounds")) and ($ih.max_rounds != null) then $ih.max_rounds else 30 end) as $m
         | if ($r | type) != "number" or ($m | type) != "number" then "corrupt"
           elif ($r | floor) != $r or ($m | floor) != $m then "corrupt"
           elif $r < 0 or $r > 100000 or $m < 1 or $m > 100000 then "corrupt"
           # CLAMP the cap, do not accept it as written. The only producer of this field
           # (`_read_project_int_setting` in post-tool-review-state.sh) admits 3..50 and otherwise
-          # falls back to the default 10, so a persisted 100000 cannot have come from the
+          # falls back to the default 30, so a persisted 100000 cannot have come from the
           # documented path. `.claude_review_state.json` is an ordinary writable file, and an
           # out-of-contract cap is exactly how the convergence hard cap — the ONLY exit stop-guard
           # actually enforces — gets disarmed: `current_round: 51` under `max_rounds: 100000` reads

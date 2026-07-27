@@ -23,9 +23,9 @@ The tier sets **how much** review a change gets. It never changes *whether* the 
 |------|---------|-----------|-----------|
 | `fast` | Docs, comments, config, small low-risk edits | P0 | 3 |
 | `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
-| `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 10 |
+| `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
-Set it in `auto-loop-project.md` under `## Tier`. Unset or unrecognized → `standard`. An explicit `## Max Rounds` overrides the tier's cap. A security or data-integrity change is treated as `thorough` whatever is configured — escalate, and say that you did.
+Set it in `auto-loop-project.md` under `## Tier`. Unset or unrecognized → `standard`. An explicit `## Max Rounds` (3–50) overrides the tier's cap **and** is the value the hooks persist and check — one setting, both layers. Checking is not blocking: only `strict` or dual mode stops on it (§ Exit Conditions). Left unset the two diverge: you follow the tier while the hook-side cap sits at its default 30. A security or data-integrity change is treated as `thorough` whatever is configured — escalate, and say that you did.
 
 **80 is a passing grade.** `standard` exists to ship a correct, tested change and stop. When the reviewer's remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round. Chasing the last few points is what `thorough` is for — a deliberate choice, not the default gravity.
 

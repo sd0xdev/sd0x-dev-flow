@@ -269,7 +269,7 @@ See `references/review-common.md` for:
 Blocked → fix the blocking findings → `/codex-review-fast --continue <threadId>` → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
-Round cap comes from the tier (`fast` 3, `standard` 5, `thorough` 10). Same issue recurring at the cap → report blocker, request intervention.
+Round cap comes from the tier (`fast` 3, `standard` 5, `thorough` 30). Same issue recurring at the cap → report blocker, request intervention.
 
 ### Loop Behavior
 

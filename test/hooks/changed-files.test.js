@@ -204,7 +204,7 @@ if (query && query.includes('[$key]') && vars.key) {
   // cap and then happened to pass would erase the evidence before stop-guard reads it.
   if (vars.passed === true && (vars.key === 'precommit' || vars.key === 'doc_review')
       && data.iteration_history
-      && (data.iteration_history.current_round || 0) < (data.iteration_history.max_rounds || 10)) {
+      && (data.iteration_history.current_round || 0) < (data.iteration_history.max_rounds || 30)) {
     data.iteration_history.current_round = 0;
     data.iteration_history.findings_by_round = [];
   }
@@ -231,12 +231,12 @@ if (query === '.gate // empty') { process.stdout.write(data.gate || ''); process
 if (query && query.includes('schema_version // 1')) { process.stdout.write(String(data.schema_version || 1)); process.exit(0); }
 if (query && query.includes('schema_version = 2') && query.includes('iteration_history')) {
   data.schema_version = 2;
-  if (!data.iteration_history) data.iteration_history = { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
+  if (!data.iteration_history) data.iteration_history = { current_round: 0, max_rounds: 30, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
 }
 if (query && query.includes('iteration_history.current_round += 1')) {
-  if (!data.iteration_history) data.iteration_history = { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
+  if (!data.iteration_history) data.iteration_history = { current_round: 0, max_rounds: 30, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false };
   data.iteration_history.current_round += 1;
   data.iteration_history.total_rounds_session = (data.iteration_history.total_rounds_session || 0) + 1;
   data.iteration_history.findings_by_round.push({ round: data.iteration_history.current_round, total: vars.total || 0, p0: vars.p0 || 0, p1: vars.p1 || 0, p2: vars.p2 || 0, nit: vars.nit || 0, timestamp: vars.now || '' });

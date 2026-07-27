@@ -62,7 +62,7 @@ test('auto-loop.md tier table defines all three tiers with blocking severity and
   const rows = [
     [/\| `fast` \|.*\| P0 \| 3 \|/, 'fast: blocks on P0, cap 3'],
     [/\| `standard` \*\*\(default\)\*\* \|.*\| P0, P1 \| 5 \|/, 'standard: blocks on P0/P1, cap 5'],
-    [/\| `thorough` \|.*\| P0, P1, P2 \| 10 \|/, 'thorough: blocks on P0/P1/P2, cap 10'],
+    [/\| `thorough` \|.*\| P0, P1, P2 \| 30 \|/, 'thorough: blocks on P0/P1/P2, cap 30'],
   ];
   for (const [re, label] of rows) {
     assert.match(content, re, `tier table must state ${label}`);

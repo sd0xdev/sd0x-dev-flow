@@ -258,9 +258,9 @@ fi
 # $LOCKDIR to stage inside. Its commit is create-if-absent, not a rewrite over a committed verdict.
 init_state_file() {
   if [[ ! -f "$STATE_FILE" ]]; then
-    # R6: read project max_rounds override for initial value (fallback 10)
+    # R6: read project max_rounds override for initial value (fallback 30)
     local _mr _pmr
-    _mr=$(_read_project_max_rounds 10)
+    _mr=$(_read_project_max_rounds 30)
     _pmr=$(_read_project_plan_max_rounds 5)
     # Atomic create: write to a same-dir temp then rename, so a crash mid-write never
     # leaves a truncated state file that the jq readers (stop-guard etc.) would treat
@@ -348,7 +348,7 @@ _read_project_int_setting() {
 
 # Read max_rounds override from project config (R6)
 _read_project_max_rounds() {
-  _read_project_int_setting "Max Rounds" "${1:-10}"
+  _read_project_int_setting "Max Rounds" "${1:-30}"
 }
 
 # Read plan-review max_rounds override (plan-review-loop OQ-10, default 5)
@@ -362,7 +362,7 @@ _read_project_plan_max_rounds() {
 # (schema_version 2 carrying only session_commit_scope). Such a state slipped past this
 # migration AND past the v3 plan migration (which delegates here first and then only adds
 # plan_review), so iteration_history stayed absent for the entire session and the project
-# `## Max Rounds` override was silently replaced by stop-guard's hardcoded `// 10` fallback.
+# `## Max Rounds` override was silently replaced by stop-guard's hardcoded `// 30` fallback.
 _migrate_state_v2() {
   local state_file="${1:-$STATE_FILE}"
   [[ ! -f "$state_file" ]] && return 0
@@ -383,7 +383,7 @@ _migrate_state_v2() {
   # only enforced loop exit today. In other orderings the same abort skips a fail-closed sidecar
   # write. Both are silent: an aborted PostToolUse hook is not a gate the user sees fail.
     tmp=$(_lock_staging_file) || { echo "[Review State] _migrate_state_v2 skipped (mktemp unavailable)" >&2; return 0; }
-    mr=$(_read_project_max_rounds 10)
+    mr=$(_read_project_max_rounds 30)
     # Never DOWNGRADE: a v3 state that merely lacked the subtree keeps its version. The prior
     # unconditional `.schema_version = 2` would have rewound it and re-run the v3 migration.
     target=2
@@ -404,6 +404,89 @@ _migrate_state_v2() {
   fi
 }
 
+# Keep `iteration_history.max_rounds` equal to what the project config resolves to.
+#
+# `_migrate_state_v2` only FILLS a missing `iteration_history` (`//=`), so a state that already
+# has one keeps whatever cap it was born with — forever, across upgrades, because session-init.sh
+# resets `current_round` but preserves `max_rounds`. Raising the shipped default therefore reached
+# new installs only; every existing one stayed at the old value. Observed on this repo: a
+# schema-v3 state still holding `max_rounds: 10` after the default moved to 30.
+#
+# The rule is that the project config is the source of truth and the state file caches it, so a
+# divergence in either direction is corrected. That does mean a hand-edited budget in
+# `.claude_review_state.json` does not survive — deliberate, and consistent with how the rest of
+# the system treats that file (stop-guard clamps its cap to 3..50 rather than trusting it).
+# `## Max Rounds` is the supported way to choose a cap.
+#
+# Two call sites, both inside an already-held lock. `update_state` calls it before its reset
+# filter, which INTERPRETS the cap — and because this function's exit status is 0 unconditionally,
+# that filter re-derives the resolved cap and resets only when the PERSISTED one already equals it.
+# `_update_iteration` only increments counters, so it never interprets the cap and needs no such
+# gate; it reconciles opportunistically because it already holds the lock. The plan-review plane
+# deliberately has no call site: NFR-7 forbids a plan write from touching the root subtree, and
+# `current_round` counts code-review rounds only.
+_reconcile_max_rounds() {
+  local state_file="${1:-$STATE_FILE}"
+  [[ ! -f "$state_file" ]] && return 0
+  local cur want tmp
+  # EXACT congruence with stop-guard's accept/corrupt partition — both directions, neither is the
+  # "safe" side. Repairing what it calls corrupt launders a fail-closed signal before the reader
+  # sees it; refusing what it ACCEPTS leaves the cap stale and stop-guard then honours the stale
+  # value. Both were live bugs.
+  #
+  # Congruence is not a jq-only property: stop-guard decides in TWO stages, jq emitting a pair and
+  # a Bash `^[0-9]+[[:space:]][0-9]+$` regex judging it. So the SPELLING test below is applied to
+  # stop-guard's CLAMPED value (<3 → 3, >50 → 50), which is what that regex actually sees — `1e2`
+  # clamps to 50 and is accepted, while `4e1` and `30.0` keep their own spelling and are rejected.
+  #
+  # But what it EMITS is the raw cap, because three values are in play and only two are equal by
+  # luck: persisted, clamped-effective, and configured. Emitting the clamped value made persisted
+  # 100 compare equal to a configured 50 and suppressed its own repair, and `update_state()`'s
+  # reset gate then compares the RAW persisted value — so round debt survived a precommit.
+  # Pinned shape by shape against the extracted stop-guard filter in jq-filter-fidelity.test.js.
+  cur=$(jq -r 'if (.iteration_history | type) == "null" then "absent"
+    elif (.iteration_history | type) != "object" then "corrupt"
+    elif (.iteration_history.max_rounds == null) then "absent"
+    else ((.iteration_history.max_rounds | numbers
+    | select((floor == .) and . >= 1 and . <= 100000)
+    | select((if . < 3 then 3 elif . > 50 then 50 else . end) | tostring | test("^[0-9]+$"))
+    | floor) // "corrupt")
+    end' "$state_file" 2>/dev/null || echo "corrupt")
+  # absent  — parent null/missing, or present but capless. Materialised below. Migration cannot
+  #           reach these: it gates on has("iteration_history"), true for an explicit null, and its
+  #           //= fills only a MISSING subtree. Left unwritten, stop-guard substitutes its own
+  #           default and an explicit LOWER `## Max Rounds` silently buys a bigger budget than the
+  #           config grants (reproduced: cap 5 read as 5/30, and as 5/50 via a `1e2` literal).
+  # corrupt — exactly what stop-guard rejects, across both its stages.
+  # integer — the PERSISTED cap, canonicalised (`1e2` → 100). Compared against the configured cap,
+  #           so a persisted value stop-guard would clamp still gets rewritten to the real setting.
+  case "$cur" in
+    absent) ;;
+    ''|corrupt|*[!0-9]*) return 0 ;;
+  esac
+  want=$(_read_project_max_rounds 30)
+  # "absent" never equals a numeric $want, so the repair path always reaches the write below.
+  [[ "$want" == "$cur" ]] && return 0
+  # Degrade, never abort — see _migrate_state_v2.
+  tmp=$(_lock_staging_file) || { echo "[Review State] _reconcile_max_rounds skipped (mktemp unavailable)" >&2; return 0; }
+  # `_own_lock && mv` on ONE line: an ownership check in the `if` condition proves ownership at
+  # that moment, not at the `mv`. Enforced structurally by the "EVERY locked state rewrite" test.
+  # `//` materialises the subtree when the parent is null or missing, then sets the cap; on an
+  # existing object the `//` is a no-op and every sibling counter survives untouched.
+  if jq --argjson mr "$want" '.iteration_history = ((.iteration_history // {"current_round": 0, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}) | .max_rounds = $mr)' \
+    "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _own_lock && mv "$tmp" "$state_file" 2>/dev/null; then
+    :
+  else
+    rm -f "$tmp" 2>/dev/null || true
+  fi
+  # UNCONDITIONAL success. This is a cache refresh, not a verdict: a failed one costs a stale cap
+  # until the next invocation, whereas a nonzero return from a BARE call under `set -euo pipefail`
+  # aborts the whole hook — in `_update_iteration`'s case after the lock is taken and before the
+  # round is counted, which silently starves the hard cap. Callers must not have to remember
+  # `|| true`; the contract lives here.
+  return 0
+}
+
 # Migrate state file to schema v3 (additive: inject plan_review subtree).
 # `. +` merge preserves ALL existing top-level fields verbatim; the only deliberate
 # change besides the injected subtree is schema_version 2→3 (plan-review-loop spec §3.2).
@@ -419,6 +502,10 @@ _migrate_state_plan_review() {
     echo "[Review State] plan migration skipped: non-numeric schema_version='$ver'" >&2
     return 1
   fi
+  # DELIBERATELY no _reconcile_max_rounds here, in either arm. NFR-7 forbids a plan-plane write
+  # from touching the ROOT iteration_history, and `current_round` counts code-review rounds only
+  # (rules/auto-loop.md § Exit Conditions), so a plan-only session has no reader for the root cap
+  # to be stale for. The code-review and precommit planes reconcile it on their own paths.
   if [[ "$ver" -eq 3 ]]; then return 0; fi
   if [[ "$ver" -gt 3 ]]; then
     echo "[Review State] plan migration skipped: schema_version=$ver is newer than this hook supports" >&2
@@ -1036,6 +1123,25 @@ update_state() {
       return 0
     fi
 
+    # Reconcile BEFORE the verdict filter below reads the cap. Deferring it to after the filter was
+    # tried and is incoherent: stop-guard re-reads the FILE, so a state left at `10/30` is not
+    # exhausted to the only consumer that matters — the deferral changed when the budget grew, not
+    # whether it did, while the comment claimed the state "stays latched". Config is the source of
+    # truth (see _reconcile_max_rounds); when the resolved cap genuinely rises, the budget genuinely
+    # rises, and the reset that follows is correct rather than a refund. Exhaustion against a cap
+    # the project no longer configures is not a signal worth preserving.
+    _reconcile_max_rounds "$STATE_FILE"
+    # …and then do NOT trust that it worked. Reconciliation is best-effort by contract (it must
+    # never abort its caller), so a failed staging/jq/ownership/rename leaves the cached cap stale
+    # while still returning 0. The reset below would then evaluate against that stale cap — and on a
+    # cap DECREASE that is a fail-open: config 30→10 with `current_round=20, max_rounds=30` reads as
+    # `20 < 30`, refunding a budget the resolved config says was exhausted at 10, and erasing the
+    # only evidence of it. So the filter re-derives the resolved cap and resets only when the
+    # PERSISTED cap already equals it. Success is thus proven by the state itself rather than by a
+    # return code, and a failed reconciliation degrades to "no reset" instead of "wrong reset".
+    local rmr
+    rmr=$(_read_project_max_rounds 30)
+
     local now
     now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
@@ -1085,6 +1191,7 @@ update_state() {
     # exists to stop. A doc-only session is unaffected either way: it never increments the counter,
     # so there was never anything for its reset to do.
     if jq --arg key "$key" \
+       --argjson rmr "$rmr" \
        --argjson executed "$executed" \
        --argjson passed "$passed" \
        --arg mode "$mode" \
@@ -1096,12 +1203,13 @@ update_state() {
         | if $ih == null then .
           else
             (if ($ih | has("current_round")) and ($ih.current_round != null) then $ih.current_round else 0 end) as $r
-            | (if ($ih | has("max_rounds")) and ($ih.max_rounds != null) then $ih.max_rounds else 10 end) as $m
+            | (if ($ih | has("max_rounds")) and ($ih.max_rounds != null) then $ih.max_rounds else 30 end) as $m
             | if ($r | type) == "number" and ($m | type) == "number"
                  and ($r | tostring | test("^[0-9]+$"))
                  and ((if $m < 3 then 3 elif $m > 50 then 50 else $m end) | tostring | test("^[0-9]+$"))
                  and ($r | floor) == $r and ($m | floor) == $m
                  and $r >= 0 and $r <= 100000 and $m >= 1 and $m <= 100000
+                 and $m == $rmr
                  and ($r < (if $m < 3 then 3 elif $m > 50 then 50 else $m end))
               then .iteration_history.current_round = 0 | .iteration_history.findings_by_round = []
               else . end
@@ -1204,6 +1312,7 @@ _update_iteration() {
   # Acquire lock for state file write (consistent with update_state)
   if _lock; then
     _migrate_state_v2 "$state_file"
+    _reconcile_max_rounds "$state_file"
     # Degrade, never abort — see _migrate_state_v2.
     tmp=$(_lock_staging_file) || { echo "[Review State] _update_iteration skipped (mktemp unavailable)" >&2; _unlock; return 0; }
     # Ownership re-check before the commit — see update_state for why holding the lock once is not

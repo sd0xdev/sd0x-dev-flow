@@ -245,16 +245,18 @@ fi
 #
 # DIGIT-VALIDATED before any arithmetic use. `.claude_review_state.json` is an ordinary working-tree
 # file, so its values are untrusted input, and bash arithmetic — both `$(( ))` and the `-gt`/`-ge`
-# operands of `[[ ]]` — expands COMMAND SUBSTITUTION inside an array subscript. `THRESHOLD=$((
-# ${ITER_MAX:-10} - 3 ))` below is a direct arithmetic context, so a crafted
-# `"max_rounds": "a[$(...)]"` executed arbitrary commands from this hook. Falling back to the
+# operands of `[[ ]]` — expands COMMAND SUBSTITUTION inside an array subscript. The threshold below
+# is a direct arithmetic context, so before the digit check was added a crafted
+# `"max_rounds": "a[$(...)]"` executed arbitrary commands from this hook. The two lines below now
+# read with a jq default and then RE-VALIDATE the result as digits-only, so a non-numeric value
+# reaches the arithmetic as the schema default rather than as itself. Falling back to the
 # schema defaults keeps this ADVISORY hook advisory: it only decides whether to print an
 # `[ITERATION_STATE]` / `[STRATEGIC_RESET]` hint, and the enforcing decision (the hard cap) lives in
 # stop-guard.sh, which fails closed on the same input rather than defaulting.
 ITER_ROUND=$(jq -r '.iteration_history.current_round // 0' "$STATE_FILE" 2>/dev/null || echo 0)
-ITER_MAX=$(jq -r '.iteration_history.max_rounds // 10' "$STATE_FILE" 2>/dev/null || echo 10)
+ITER_MAX=$(jq -r '.iteration_history.max_rounds // 30' "$STATE_FILE" 2>/dev/null || echo 30)
 [[ "$ITER_ROUND" =~ ^[0-9]+$ ]] || ITER_ROUND=0
-[[ "$ITER_MAX" =~ ^[0-9]+$ ]] || ITER_MAX=10
+[[ "$ITER_MAX" =~ ^[0-9]+$ ]] || ITER_MAX=30
 
 # Only inject if there is a pending step
 if [[ -n "$NEXT" ]]; then
