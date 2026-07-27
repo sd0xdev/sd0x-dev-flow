@@ -836,6 +836,42 @@ test('.md file logs doc change to stderr', () => {
   assert.match(result.stderr, /Doc change detected/);
 });
 
+// R2 AC7: the fact block must arrive through the REAL hook protocol, not merely exist in the
+// source. The static checks in `auto-loop-state.test.js` read the file and cannot catch a block
+// that is present but never reached — an early `exit 0`, a guard that never opens, a redirect that
+// sends it to stdout where the harness discards it. These two tests spawn the hook with the stdin
+// the harness sends and read what actually lands on stderr.
+for (const [label, filePath, wantChange, wantPending] of [
+  ['code', '/project/src/app.ts', 'code', 'code_review,precommit'],
+  ['doc', '/project/docs/readme.md', 'doc', 'doc_review'],
+]) {
+  test(`${label} edit delivers the [AUTO_LOOP_STATE] block on stderr with every documented field`, () => {
+    const workDir = makeTempDir(`sd0x-format-alf-${label}-`);
+    const binDir = setupStubBin();
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      filePath,
+      env: { HOOK_NO_FORMAT: '1' },
+    });
+
+    const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+    assert.ok(line, `no fact block reached stderr; got: ${result.stderr}`);
+    assert.match(line, new RegExp(`event=${label}_edit\\b`), 'the event must name the path that fired');
+    assert.match(line, new RegExp(`change=${wantChange}\\b`));
+    assert.match(line, new RegExp(`pending=${wantPending.replace(/,/g, ',')}`),
+      'pending must list the planes this edit just invalidated');
+    // phase/round/tier ride in `_alf_common`. Values depend on the stub's jq, so pin presence and
+    // shape rather than content — a missing field is the regression this guards, not a wrong tier.
+    assert.match(line, /\bphase=\S+/);
+    assert.match(line, /\bround=\d+\/\d+/);
+    assert.match(line, /\btier=(fast|standard|thorough)\b/);
+    assert.match(line, /receipts=\S+/);
+    assert.ok(!result.stdout.includes('[AUTO_LOOP_STATE]'),
+      'the block belongs on stderr — stdout is the hook protocol channel and would be parsed as a verdict');
+  });
+}
+
 // =============================================================================
 // HOOK_NO_FORMAT still tracks changes
 // =============================================================================

@@ -109,6 +109,97 @@ if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then exit 0; fi
 # State file path (needed by the jq-unavailable fail-closed check below)
 STATE_FILE=".claude_review_state.json"
 
+# === [AUTO_LOOP_STATE] fact emitter ===
+# BYTE-FOR-BYTE identical across all six emitter hooks; `test/hooks/auto-loop-state.test.js` pins
+# that. They share no sourced lib because `.claude/hooks/` is a FLAT install — a `lib/` subdirectory
+# would be absent on every install predating it, and the signal would vanish silently for exactly
+# those users. See docs/features/auto-loop-autonomy/requests/2026-07-26-factual-hook-signals-r2.md.
+_alf_read_tier() {
+  local rf val
+  for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
+    [[ -f "$rf" ]] || continue
+    val=$(awk '
+      /^## / { s = ($0 ~ /^## Tier[[:space:]]*$/) ? 1 : 0; next }
+      s && /<!--/ { c = 1 }
+      s && !c && /^[[:space:]]*(fast|standard|thorough)[[:space:]]*$/ { gsub(/[[:space:]]/, ""); print; exit }
+      s && /-->/ { c = 0 }
+    ' "$rf" 2>/dev/null) || val=""
+    case "$val" in fast|standard|thorough) printf '%s' "$val"; return 0 ;; esac
+  done
+  printf 'standard'
+}
+# Values that come from outside this hook — a `file_path` out of tool input, a string field out of
+# the state file — are encoded, not merely trimmed. The record is whitespace-delimited `key=value`,
+# so a legal filename is enough to forge structure: `a.ts` with an embedded newline starts a second
+# fact line, and `a.ts pending=none` inserts a second `pending=` token into the first. Both are
+# reachable by naming a file. Percent-encoding is reversible, so nothing is silently lost.
+_alf_val() {
+  # Byte-wise, or the encoding is neither valid nor host-independent: under a UTF-8 locale
+  # `${s:i:1}` yields a CHARACTER, and `'一` gives its wide value, so `檔.ts` encodes to the
+  # 4-hex-digit `%6A94.ts` on one host and `%E6%AA%94.ts` on another. No safety difference — every
+  # structure-forging byte is ASCII — but a percent-encoding that cannot be decoded is not one.
+  local LC_ALL=C
+  local s="$1" out="" i c hex
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._/@:,+-]) out+="$c" ;;
+      *) printf -v hex '%%%02X' "'$c"; out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+# Whole-line backstop for anything that reached the emitter without going through `_alf_val`.
+# One event must produce exactly one physical line even when a field was assembled elsewhere.
+_alf_flatten() {
+  local s="$1"
+  s="${s//$'\n'/\\n}"
+  printf '%s' "${s//$'\r'/\\r}"
+}
+_alf_emit() {
+  printf '[AUTO_LOOP_STATE] %s\n' "$(_alf_flatten "$*")"
+}
+# Defaulting belongs HERE, not in the jq filter. On a zero-byte state file `jq -r '.x // "d"'`
+# prints nothing and exits 0 — so neither the filter default nor a `|| echo` fallback fires, and the
+# field renders empty. A truncated write leaves exactly that file, which is when an accurate signal
+# matters most. `${out:-...}` catches empty output and a failed/absent jq through one path.
+_alf_field() {
+  local out
+  out=$(jq -r "$1" "$STATE_FILE" 2>/dev/null) || out=""
+  _alf_val "${out:-${2:-unknown}}"
+}
+# Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
+# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
+# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# state that may never have been committed, which is the one thing this signal must not do.
+#
+# THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
+# than a write result: a lost BLOCKING verdict then reads old=false, observed=false, want=false, and
+# nothing marks it degraded even though no receipt was persisted at all. `unknown` keeps the
+# unreadable case distinguishable from a recorded `false`, and it is never equal to a requested
+# verdict, so it always leaves the plane pending.
+#
+# TYPE-TESTED, not defaulted. jq's `//` selects its right operand for `false` as well as `null`, so
+# `.x.passed // "__absent__"` reported every ordinary RECORDED blocking verdict as unreadable, and
+# accepted a string `"false"` as a valid one — both backwards. A non-object parent makes jq exit
+# non-zero, which `_alf_field` already turns into `unknown`.
+_alf_receipt() {
+  case "$(_alf_field ".${1}.passed | if type == \"boolean\" then tostring else \"__absent__\" end" __absent__)" in
+    true) printf 'true' ;;
+    false) printf 'false' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+# The three fields every emitter carries identically. Degrades to `unknown`/schema defaults rather
+# than aborting a hook that runs under `set -euo pipefail`, where an abort is read as no objection.
+_alf_common() {
+  printf 'phase=%s round=%s/%s tier=%s' \
+    "$(_alf_field '.review_phase // "unknown"' unknown)" \
+    "$(_alf_field '.iteration_history.current_round // 0' 0)" \
+    "$(_alf_field '.iteration_history.max_rounds // 30' 30)" \
+    "$(_alf_read_tier)"
+}
+
 # --- Sidecar readers (both planes) --------------------------------------------------------------
 #
 # The writers keep a SHARED `.blocked` file plus per-event emergency markers named
@@ -141,6 +232,24 @@ _sidecar_any() {
   return 1
 }
 
+# The event plane alone. Separate from `_sidecar_any` because presence HERE decides whether any
+# command can discharge what the marker implies: every writer's clear is hard-coded to the shared
+# file, so only SessionStart's clean-tree sweep retires one of these. Callers use it to choose
+# between an actionable instruction and a non-retry one — never to decide whether to block.
+_sidecar_event_any() {
+  local f
+  for f in "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$f" && return 0
+  done
+  return 1
+}
+
+# One string for every site that has to explain an unretireable obligation — the jq-free early
+# exits below and both renderers at the end of the file. Kept free of `"` and `\` by construction
+# so the early exits, which run before `_json_safe` is defined, can interpolate it directly;
+# `test/hooks/stop-guard.test.js` pins that property.
+SIDECAR_EVENT_NORETRY="a per-event sidecar marker is present. No review, precommit or edit retires it — only a later session whose SessionStart finds no dirty code or doc file. Finishing the pending work is still correct, but it will NOT stop this objection; do not retry in a loop."
+
 
 # Check if jq is available
 if ! command -v jq &> /dev/null; then
@@ -164,7 +273,14 @@ if ! command -v jq &> /dev/null; then
   # block unconditionally, matching the sidecar handler in the state-file block below.
   if _sidecar_any; then
     echo "[Stop Guard] jq unavailable + blocked sidecar — failing closed" >&2
-    echo '{"ok":false,"reason":"jq unavailable + blocked sidecar — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+    # Same block either way; only the instruction differs. Without jq we cannot read state, but the
+    # plane is a filesystem fact, so the one thing still knowable is whether a retry could ever help.
+    if _sidecar_event_any; then
+      echo "[Stop Guard] Do NOT auto-retry: ${SIDECAR_EVENT_NORETRY}" >&2
+      printf '{"ok":false,"reason":"jq unavailable + blocked sidecar — failing closed","description":"Do not auto-retry: %s"}\n' "${SIDECAR_EVENT_NORETRY}"
+    else
+      echo '{"ok":false,"reason":"jq unavailable + blocked sidecar — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+    fi
     exit 2
   fi
   if [[ -f "$STATE_FILE" ]]; then
@@ -203,7 +319,15 @@ fi
 # sidecar handler in the state-file block below takes over.
 if [[ ! -f "$STATE_FILE" ]] && _sidecar_any; then
   echo "[Stop Guard] Blocked sidecar without state file — failing closed" >&2
-  echo '{"ok":false,"reason":"blocked sidecar present without state file — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+  # Production-reachable, not hypothetical: `update_aggregate_gate` raises `aggregate_write_failed`
+  # when state INITIALIZATION fails, and `_set_own_sidecar` diverts that evidence to the event plane
+  # exactly when it could not serialize on the shared one. State absent + event marker is that case.
+  if _sidecar_event_any; then
+    echo "[Stop Guard] Do NOT auto-retry: ${SIDECAR_EVENT_NORETRY}" >&2
+    printf '{"ok":false,"reason":"blocked sidecar present without state file — failing closed","description":"Do not auto-retry: %s"}\n' "${SIDECAR_EVENT_NORETRY}"
+  else
+    echo '{"ok":false,"reason":"blocked sidecar present without state file — failing closed","description":"Resolve the pending review/precommit, then re-run; do not stop with unverified state"}'
+  fi
   exit 2
 fi
 
@@ -233,6 +357,22 @@ fi
 
 # === Prefer reading state file === (STATE_FILE defined above for the jq-unavailable check)
 USE_STATE_FILE=false
+
+# Initialized here, unconditionally, because the fact emitter at the terminal output block reads all
+# of them and the transcript-fallback path never enters the branch that assigns them. Under
+# `set -euo pipefail` an unset read there aborts the hook: no JSON reaches the harness, which reads
+# the silence as "no objection" and lets the stop through — fail-OPEN, on the one path where an
+# unproven verdict is least affordable. `${x:-}` at each use would stop the abort but not the other
+# half: an inherited environment value of any of these names would be believed. Same reasoning as
+# `_SIDECAR_EVENT_PRESENT` below.
+HAS_CODE_CHANGE=false
+HAS_DOC_CHANGE=false
+CODE_REVIEW_PASSED=false
+CODE_RECEIPT_PERSISTED=false
+DOC_REVIEW_PASSED=false
+PRECOMMIT_PASSED=false
+_AGG_OBLIGATION=false
+_AGG_OUTSTANDING=false
 
 if [[ -f "$STATE_FILE" ]]; then
   USE_STATE_FILE=true
@@ -316,6 +456,12 @@ if [[ -f "$STATE_FILE" ]]; then
   # (.has_code_change/.has_doc_change/.review_phase) index the guaranteed-object STATE
   # directly, so they cannot raise an index error and need no guard.
   CODE_REVIEW_PASSED=$(echo "$STATE" | jq -r '.code_review.passed // false' 2>/dev/null || echo false)
+  # Snapshotted because dual mode overwrites CODE_REVIEW_PASSED with the AGGREGATE result below
+  # (`CODE_REVIEW_PASSED="$DUAL_GATE_PASSED"`). That substitution is right for the gate decision and
+  # wrong for the fact block: reporting `code_review:false` when the code review demonstrably passed
+  # and only aggregation is outstanding points the reader at a review that is already done. The
+  # receipt reports what was recorded; `pending` carries the aggregate obligation.
+  CODE_RECEIPT_PERSISTED="$CODE_REVIEW_PASSED"
   DOC_REVIEW_PASSED=$(echo "$STATE" | jq -r '.doc_review.passed // false' 2>/dev/null || echo false)
   PRECOMMIT_PASSED=$(echo "$STATE" | jq -r '.precommit.passed // false' 2>/dev/null || echo false)
   # Which precommit variant produced that verdict. The writer only ever emits the closed enum
@@ -442,6 +588,11 @@ if [[ -f "$STATE_FILE" ]]; then
   #                        SAFER than the ones it does. Default-deny, so adding a reason cannot
   #                        silently weaken the gate again.
   SIDECAR_ESCALATE=false
+  # Reset OUTSIDE the conditional. With no sidecar the block below never runs, and an inherited
+  # environment value of either name would then reach the routing block and fabricate an obligation
+  # out of nothing. `${x:-}` prevents the `set -u` abort but not this.
+  _SIDECAR_RAW=""
+  _SIDECAR_EVENT_PRESENT=false
   if _sidecar_any; then
     # The marker file holds a SET of reasons, one per LINE — writers append their own instead of
     # overwriting (post-tool-review-state.sh `_set_own_sidecar`), because a last-writer-wins file
@@ -474,7 +625,6 @@ if [[ -f "$STATE_FILE" ]]; then
     # between "nothing was written" and "something was written and we cannot see it" only survives
     # if the read reports its own failure, so the loop keeps that signal per source.
     _SIDECAR_READABLE=true
-    _SIDECAR_RAW=""
     # `_sidecar_is_marker`, not a bare `-f`, and the same test `_sidecar_any` uses to decide there
     # is anything here at all. A bare `-f` follows symlinks, so the two would disagree exactly when
     # it matters: `_sidecar_any` rejects a planted link and reports "no sidecar", while this loop
@@ -483,8 +633,15 @@ if [[ -f "$STATE_FILE" ]]; then
       _sc_part=$(cat -- "${STATE_FILE}.blocked" 2>/dev/null) || { _SIDECAR_READABLE=false; _sc_part=""; }
       _SIDECAR_RAW="$_sc_part"
     fi
+    # Reasons merge into one set (they classify identically); PRESENCE on this plane is tracked
+    # separately because retirement is a property of the PLANE, not of the reason. Every writer's
+    # clear is hard-coded to the shared file, so any `.blocked.event.*` marker — whatever it says,
+    # even if empty or unreadable — is retired only by session-init's orphan sweep. Hence the flag
+    # is raised before the read can fail: an unreadable marker is no more dischargeable than a
+    # legible one. See post-tool-review-state.sh § "Retirement is deliberately coarse".
     for _sc_f in "${SIDECAR_EVENT_PREFIX}"*; do
       _sidecar_is_marker "$_sc_f" || continue
+      _SIDECAR_EVENT_PRESENT=true
       _sc_part=$(cat -- "$_sc_f" 2>/dev/null) || { _SIDECAR_READABLE=false; continue; }
       _SIDECAR_RAW="${_SIDECAR_RAW}${_SIDECAR_RAW:+$'\n'}${_sc_part}"
     done
@@ -928,13 +1085,66 @@ fi
 # === Logic evaluation ===
 MISSING="${MISSING:-}"
 BLOCKED_REASON="${BLOCKED_REASON:-}"
+# Unconditional, not `${x:-}`: this one decides whether the model is told to retry, so an inherited
+# environment value must never be able to suppress the retry instruction.
+UNRETIREABLE_REASON=""
+# Same reasoning: an inherited value must not be able to invent an obligation the state does not hold.
+AGG_OBLIGATION_NOTE=""
+# Keyed on the PLANE, not on which gate is missing. A per-event marker invalidates its gates on
+# every Stop and no writer clears it, so whatever ends up in MISSING, running it cannot make this
+# Stop stop objecting. Ordering a retry would be an instruction with no terminating state.
+# Reuses the early exits' string so the recovery story is identical wherever the model reads it.
+if [[ "$USE_STATE_FILE" == "true" && "${_SIDECAR_EVENT_PRESENT:-false}" == "true" ]]; then
+  UNRETIREABLE_REASON="$SIDECAR_EVENT_NORETRY"
+fi
 
 if [[ "$USE_STATE_FILE" == "true" ]]; then
   # State file mode
   if [[ "$HAS_CODE_CHANGE" == "true" ]]; then
-    # Dual mode: aggregate_gate overrides individual code_review
+    # Which entry point can actually discharge the code plane. Two facts decide it, and neither is
+    # DUAL_GATE_PASSED: that variable is the generic "invalidate the code gate" signal, which the
+    # corrupt-state and sidecar blocks above raise in SINGLE mode too.
+    #
+    # Persisted mode alone is also insufficient. `update_aggregate_gate PENDING` sets
+    # `review_mode=dual` in the SAME jq as the aggregate fields, so a failed write leaves an
+    # aggregate-plane marker raised over a mode that still reads single. Routing that state to
+    # `/codex-review-fast` is unsatisfiable by construction — the same deadlock this branch exists
+    # to remove, entered through a different door. A SHARED marker is retired by any committed
+    # transaction that owns the aggregate plane (the aggregate write itself,
+    # post-tool-review-state.sh:2329; a code or doc edit, post-edit-format.sh:1186 / :1249) or by
+    # the clean-tree SessionStart sweep. A code review is none of those.
+    # See docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md.
+    #
+    # Whole-line matching in pure bash throughout. No grep: this branch is reached precisely when
+    # state is unverifiable, and the file's standing rule (see _json_safe and SIDECAR_REASON above)
+    # is that a fail-closed path must not abort at 127 on a host with a thin PATH.
+    _agg_marker_in() {
+      local _p=$'\n'"${1:-}"$'\n'
+      [[ "$_p" == *$'\n'aggregate_write_failed$'\n'* || "$_p" == *$'\n'lock_failure$'\n'* ]]
+    }
+    _AGG_OBLIGATION=false
+    if [[ "${REVIEW_MODE:-}" == "dual" ]]; then
+      _AGG_OBLIGATION=true
+    elif _agg_marker_in "${_SIDECAR_RAW:-}"; then
+      _AGG_OBLIGATION=true
+    fi
     if [[ "${DUAL_GATE_PASSED:-}" == "false" ]]; then
-      MISSING="$MISSING /codex-review-fast"
+      if [[ "$_AGG_OBLIGATION" == "true" ]]; then
+        # Bare command, annotation on its own line. The file's `/precommit(mode=fast, …)` convention
+        # attaches the note to a command NAME, where stripping at `(` still leaves something
+        # runnable; attaching it to a FLAG does not, and the space inside the parenthetical splits
+        # into junk tokens under whitespace parsing. A signal that names the only entry point able
+        # to discharge this gate must not name it in a form that cannot be run.
+        MISSING="$MISSING /codex-review-branch --dual"
+        AGG_OBLIGATION_NOTE="aggregate_gate is pending. Only the final emitter of /codex-review-branch --dual writes that plane, so no other review discharges it."
+        # Set HERE rather than from `_AGG_OBLIGATION` alone, which is true for the whole of dual mode
+        # including after the gate reads READY. Deriving the fact block from the raw flag made this
+        # hook contradict itself: `pending=aggregate_gate` beside a MISSING list that had already
+        # dropped the demand. Same guard, one source of truth.
+        _AGG_OUTSTANDING=true
+      else
+        MISSING="$MISSING /codex-review-fast"
+      fi
     elif [[ -z "${DUAL_GATE_PASSED:-}" && "$CODE_REVIEW_PASSED" != "true" ]]; then
       MISSING="$MISSING /codex-review-fast"
     fi
@@ -1054,6 +1264,24 @@ else
       BLOCKED_REASON="Precommit not passed (FAIL)"
     fi
   fi
+
+  # Normalize into the variables the fact renderer reads. This branch stores GREP MATCHES and tests
+  # them for non-emptiness; the state-file branch stores booleans and compares against `"true"`. The
+  # renderer inherited the second convention, so on this path it emitted `change=none pending=none`
+  # beside a populated MISSING — the fact contradicting the decision it accompanies, on the one path
+  # where it is the only signal there is. `true`/empty rather than `true`/`false`, so every `-n` test
+  # above keeps its meaning unchanged.
+  HAS_CODE_CHANGE=$([[ -n "$HAS_CODE_CHANGE" ]] && echo true || echo "")
+  HAS_DOC_CHANGE=$([[ -n "$HAS_DOC_CHANGE" ]] && echo true || echo "")
+  # A plane counts as passed only when it was invoked, a verdict was paired to it, and nothing in
+  # the window blocked. `BLOCKED_REASON` is shared across planes, so a doc block also withholds the
+  # code receipt: it under-claims rather than over-claims, which is the correct direction on a
+  # degraded path. These are transcript INFERENCES, not receipts — `source=transcript` on the line
+  # says so, and no `->` pair is emitted here because there was no write to observe.
+  _fb_receipt() { [[ -n "$1" && -n "$2" && -z "${BLOCKED_REASON:-}" ]] && echo true || echo false; }
+  CODE_RECEIPT_PERSISTED=$(_fb_receipt "${HAS_CODEX_REVIEW:-}" "${CODE_VERDICT_SEEN:-}")
+  DOC_REVIEW_PASSED=$(_fb_receipt "${HAS_REVIEW_DOC:-}" "${DOC_VERDICT_SEEN:-}")
+  PRECOMMIT_PASSED=$(_fb_receipt "${HAS_PRECOMMIT:-}" "${PRECOMMIT_VERDICT_SEEN:-}")
 fi
 
 # === Iteration hard cap check (schema v2) — takes priority over MISSING ===
@@ -1159,23 +1387,80 @@ _json_safe() {
 
 if [[ -n "${MISSING:-}" ]]; then
   MISSING_JSON=$(_json_safe "$MISSING")
+  # Why the obligation gets its own line rather than riding inside MISSING: MISSING is read as a
+  # list of runnable steps, so anything spliced into it has to stay runnable. Printed before the
+  # mode branches so it appears whichever instruction follows.
+  if [[ -n "$AGG_OBLIGATION_NOTE" ]]; then
+    echo "[Stop Guard] ${AGG_OBLIGATION_NOTE}" >&2
+  fi
+  # Facts first, in the shape every other emitter uses. `pending` names PLANES, derived from the
+  # same receipts that built MISSING rather than parsed back out of it — MISSING carries commands
+  # because a human reads that line, and re-deriving planes from command text would break the
+  # moment a command is renamed.
+  _ALF_CHANGE="none"
+  [[ "$HAS_CODE_CHANGE" == "true" ]] && _ALF_CHANGE="code"
+  [[ "$HAS_DOC_CHANGE" == "true" ]] && _ALF_CHANGE="doc"
+  [[ "$HAS_CODE_CHANGE" == "true" && "$HAS_DOC_CHANGE" == "true" ]] && _ALF_CHANGE="code,doc"
+  _ALF_PENDING=""
+  [[ "$_AGG_OUTSTANDING" == "true" ]] && _ALF_PENDING="aggregate_gate"
+  # `CODE_RECEIPT_PERSISTED`, not `CODE_REVIEW_PASSED`: in dual mode the latter has been replaced by
+  # the aggregate verdict, so it would name the code review as outstanding when the aggregate plane
+  # is the only thing left. The aggregate obligation is already carried by the entry above.
+  [[ "$HAS_CODE_CHANGE" == "true" && "$CODE_RECEIPT_PERSISTED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}code_review"
+  [[ "$HAS_DOC_CHANGE" == "true" && "$DOC_REVIEW_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}doc_review"
+  [[ "$HAS_CODE_CHANGE" == "true" && "$PRECOMMIT_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}precommit"
+  # Which branch produced these values changes how much they are worth: the state file holds
+  # recorded receipts, the transcript holds inferences drawn from a 500-line window. Saying so is
+  # cheaper than having the reader guess, and it is the same disclosure the degraded paths make.
+  if [[ "$USE_STATE_FILE" == "true" ]]; then
+    _ALF_SOURCE="source=state_file"
+  else
+    _ALF_SOURCE="source=transcript degraded=no_state_file"
+  fi
+  _alf_emit "event=stop_attempt change=${_ALF_CHANGE} mode=${GUARD_MODE} ${_ALF_SOURCE}" \
+    "receipts=code_review:${CODE_RECEIPT_PERSISTED},doc_review:${DOC_REVIEW_PASSED},precommit:${PRECOMMIT_PASSED}" \
+    "$(_alf_common)" "pending=${_ALF_PENDING:-none}" >&2
   if [[ "$GUARD_MODE" == "strict" ]]; then
     # On exit 2 only stderr reaches the model (stdout JSON is test-consumed),
     # so the actionable instruction must be here, not just in the JSON.
     echo "[Stop Guard] STRICT: Missing steps:${MISSING}" >&2
-    echo "[Stop Guard] Execute immediately:${MISSING} — invoke the command now; do not ask the user, do not summarize." >&2
-    printf '{"ok":false,"reason":"Missing required steps","description":"Execute immediately:%s, do not ask user"}\n' "${MISSING_JSON}"
+    if [[ -n "$UNRETIREABLE_REASON" ]]; then
+      # Still exit 2 — the gate is genuinely shut and fail-closed is the point. What changes is the
+      # instruction: "invoke the command now" against an obligation nothing retires is a loop with
+      # no terminating state. Same shape as the max-rounds branch below, which blocks and tells the
+      # model to escalate rather than retry.
+      UNRETIREABLE_JSON=$(_json_safe "$UNRETIREABLE_REASON")
+      echo "[Stop Guard] Do NOT auto-retry: ${UNRETIREABLE_REASON}" >&2
+      printf '{"ok":false,"reason":"Blocked on an obligation no command retires","description":"Do not auto-retry: %s"}\n' "${UNRETIREABLE_JSON}"
+    else
+      echo "[Stop Guard] Obligations open:${MISSING} — the gate stays shut until each is discharged." >&2
+      printf '{"ok":false,"reason":"Missing required steps","description":"Open obligations:%s"}\n' "${MISSING_JSON}"
+    fi
     exit 2
   else
     echo "[Stop Guard] WARN: Missing steps:${MISSING} (set STOP_GUARD_MODE=strict to block)" >&2
-    printf '{"ok":true,"reason":"Missing steps (warn mode):%s"}\n' "${MISSING_JSON}"
+    if [[ -n "$UNRETIREABLE_REASON" ]]; then
+      # Also in the JSON, not only on stderr: a consumer that reads stdout alone would otherwise see
+      # ordinary missing steps and lose the one fact that changes what to do about them.
+      echo "[Stop Guard] Do NOT auto-retry: ${UNRETIREABLE_REASON}" >&2
+      printf '{"ok":true,"reason":"Missing steps (warn mode):%s","description":"Do not auto-retry: %s"}\n' "${MISSING_JSON}" "${UNRETIREABLE_REASON}"
+    else
+      printf '{"ok":true,"reason":"Missing steps (warn mode):%s"}\n' "${MISSING_JSON}"
+    fi
     exit 0
   fi
 elif [[ -n "${BLOCKED_REASON:-}" ]]; then
   # Use cap-specific description when max rounds exceeded
-  BLOCK_DESC="Fix issues and re-run review immediately, do not stop"
+  BLOCK_DESC="Findings are outstanding; the review gate has not passed"
   if grep -q "Max review rounds" <<< "${BLOCKED_REASON}"; then
     BLOCK_DESC="Max rounds reached; escalate to human, do not auto-retry"
+  fi
+  # Reachable with an event marker: corrupt iteration counters CLEAR `MISSING` and set
+  # `BLOCKED_REASON` instead (see the ITER_ROUND branch above), so this renderer inherits the same
+  # obligation the other one just learned to describe honestly. Checked last — an unretireable
+  # obligation outranks both descriptions above, since neither retry nor escalation ends it.
+  if [[ -n "$UNRETIREABLE_REASON" ]]; then
+    BLOCK_DESC="Do not auto-retry: ${UNRETIREABLE_REASON}"
   fi
   BLOCKED_JSON=$(_json_safe "$BLOCKED_REASON")
   if [[ "$GUARD_MODE" == "strict" ]]; then
@@ -1186,7 +1471,15 @@ elif [[ -n "${BLOCKED_REASON:-}" ]]; then
     exit 2
   else
     echo "[Stop Guard] WARN: ${BLOCKED_REASON} (set STOP_GUARD_MODE=strict to block)" >&2
-    printf '{"ok":true,"reason":"%s (warn mode)"}\n' "${BLOCKED_JSON}"
+    # Warn mode lets the stop through, so there is no loop to break here — this is for symmetry with
+    # the MISSING warn branch, and for the JSON-only consumer that would otherwise see a plain
+    # blocked reason and try to work it off.
+    if [[ -n "$UNRETIREABLE_REASON" ]]; then
+      echo "[Stop Guard] Do NOT auto-retry: ${UNRETIREABLE_REASON}" >&2
+      printf '{"ok":true,"reason":"%s (warn mode)","description":"Do not auto-retry: %s"}\n' "${BLOCKED_JSON}" "${UNRETIREABLE_REASON}"
+    else
+      printf '{"ok":true,"reason":"%s (warn mode)"}\n' "${BLOCKED_JSON}"
+    fi
     exit 0
   fi
 else

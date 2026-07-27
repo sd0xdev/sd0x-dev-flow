@@ -32,6 +32,145 @@ fi
 
 STATE_FILE=".claude_review_state.json"
 
+# === [AUTO_LOOP_STATE] fact emitter ===
+# BYTE-FOR-BYTE identical across all six emitter hooks; `test/hooks/auto-loop-state.test.js` pins
+# that. They share no sourced lib because `.claude/hooks/` is a FLAT install — a `lib/` subdirectory
+# would be absent on every install predating it, and the signal would vanish silently for exactly
+# those users. See docs/features/auto-loop-autonomy/requests/2026-07-26-factual-hook-signals-r2.md.
+_alf_read_tier() {
+  local rf val
+  for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
+    [[ -f "$rf" ]] || continue
+    val=$(awk '
+      /^## / { s = ($0 ~ /^## Tier[[:space:]]*$/) ? 1 : 0; next }
+      s && /<!--/ { c = 1 }
+      s && !c && /^[[:space:]]*(fast|standard|thorough)[[:space:]]*$/ { gsub(/[[:space:]]/, ""); print; exit }
+      s && /-->/ { c = 0 }
+    ' "$rf" 2>/dev/null) || val=""
+    case "$val" in fast|standard|thorough) printf '%s' "$val"; return 0 ;; esac
+  done
+  printf 'standard'
+}
+# Values that come from outside this hook — a `file_path` out of tool input, a string field out of
+# the state file — are encoded, not merely trimmed. The record is whitespace-delimited `key=value`,
+# so a legal filename is enough to forge structure: `a.ts` with an embedded newline starts a second
+# fact line, and `a.ts pending=none` inserts a second `pending=` token into the first. Both are
+# reachable by naming a file. Percent-encoding is reversible, so nothing is silently lost.
+_alf_val() {
+  # Byte-wise, or the encoding is neither valid nor host-independent: under a UTF-8 locale
+  # `${s:i:1}` yields a CHARACTER, and `'一` gives its wide value, so `檔.ts` encodes to the
+  # 4-hex-digit `%6A94.ts` on one host and `%E6%AA%94.ts` on another. No safety difference — every
+  # structure-forging byte is ASCII — but a percent-encoding that cannot be decoded is not one.
+  local LC_ALL=C
+  local s="$1" out="" i c hex
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._/@:,+-]) out+="$c" ;;
+      *) printf -v hex '%%%02X' "'$c"; out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+# Whole-line backstop for anything that reached the emitter without going through `_alf_val`.
+# One event must produce exactly one physical line even when a field was assembled elsewhere.
+_alf_flatten() {
+  local s="$1"
+  s="${s//$'\n'/\\n}"
+  printf '%s' "${s//$'\r'/\\r}"
+}
+_alf_emit() {
+  printf '[AUTO_LOOP_STATE] %s\n' "$(_alf_flatten "$*")"
+}
+# Defaulting belongs HERE, not in the jq filter. On a zero-byte state file `jq -r '.x // "d"'`
+# prints nothing and exits 0 — so neither the filter default nor a `|| echo` fallback fires, and the
+# field renders empty. A truncated write leaves exactly that file, which is when an accurate signal
+# matters most. `${out:-...}` catches empty output and a failed/absent jq through one path.
+_alf_field() {
+  local out
+  out=$(jq -r "$1" "$STATE_FILE" 2>/dev/null) || out=""
+  _alf_val "${out:-${2:-unknown}}"
+}
+# Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
+# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
+# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# state that may never have been committed, which is the one thing this signal must not do.
+#
+# THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
+# than a write result: a lost BLOCKING verdict then reads old=false, observed=false, want=false, and
+# nothing marks it degraded even though no receipt was persisted at all. `unknown` keeps the
+# unreadable case distinguishable from a recorded `false`, and it is never equal to a requested
+# verdict, so it always leaves the plane pending.
+#
+# TYPE-TESTED, not defaulted. jq's `//` selects its right operand for `false` as well as `null`, so
+# `.x.passed // "__absent__"` reported every ordinary RECORDED blocking verdict as unreadable, and
+# accepted a string `"false"` as a valid one — both backwards. A non-object parent makes jq exit
+# non-zero, which `_alf_field` already turns into `unknown`.
+_alf_receipt() {
+  case "$(_alf_field ".${1}.passed | if type == \"boolean\" then tostring else \"__absent__\" end" __absent__)" in
+    true) printf 'true' ;;
+    false) printf 'false' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+# The three fields every emitter carries identically. Degrades to `unknown`/schema defaults rather
+# than aborting a hook that runs under `set -euo pipefail`, where an abort is read as no objection.
+_alf_common() {
+  printf 'phase=%s round=%s/%s tier=%s' \
+    "$(_alf_field '.review_phase // "unknown"' unknown)" \
+    "$(_alf_field '.iteration_history.current_round // 0' 0)" \
+    "$(_alf_field '.iteration_history.max_rounds // 30' 30)" \
+    "$(_alf_read_tier)"
+}
+
+# Transition emitters live in this file only, so this helper stays out of the byte-identical block
+# above. It renders R2's "收據新舊" pair: the receipt as it stood before the write, then the receipt
+# READ BACK afterwards. `update_state` returns 0 on its mktemp, empty-output and lock-contention
+# failures alike, so the fact that it returned proves nothing about what was committed — emitting
+# the requested verdict would assert a durable state that may not exist. When the two disagree the
+# write was dropped and a sidecar is holding the gate shut; say so rather than advancing the loop.
+# Takes the read-back value rather than re-reading, so the receipt reported and the `pending` derived
+# from it come from one observation of the file. Reasons ACCUMULATE into a single `degraded=` key:
+# two keys in one whitespace-delimited record leave precedence to whichever parser reads it, which
+# is not a property a "structured fact" may have. `$5` carries a reason the caller already knows
+# (an interrupted response), so it joins the same key rather than adding a second.
+#
+# Read-back has one blind spot: when the receipt ALREADY held the requested value, a dropped write
+# renders `false->false` exactly like a successful no-op. `_verdict_write_failed` leaves a marker
+# keyed `verdict_write_failed:<plane>` for the dangerous half of that — a lost BLOCKING verdict —
+# so the pair of snapshots below closes it. Reading a marker is read-side work; AC5's prohibition
+# is on the write path.
+_alf_sidecar_has() {
+  local want="$1" p body
+  for p in "${STATE_FILE}.blocked" "${SIDECAR_EVENT_PREFIX}"*; do
+    [[ -f "$p" && ! -L "$p" ]] || continue
+    body=$'\n'"$(cat "$p" 2>/dev/null || true)"$'\n'
+    [[ "$body" == *$'\n'"$want"$'\n'* ]] && return 0
+  done
+  return 1
+}
+# Call before `update_state`; `_alf_transition` reads what it leaves behind. Snapshotting BEFORE is
+# what separates "this write was lost" from "an earlier loss on this plane is still unretired" —
+# `post-edit-format.sh` retires these markers, so a standing one is not evidence about this call.
+_alf_begin() {
+  _alf_old=$(_alf_receipt "$1")
+  _alf_lost0=$(_alf_sidecar_has "verdict_write_failed:$1" && printf 1 || printf 0)
+}
+_alf_transition() {
+  local plane="$1" old="$2" now="$3" want="$4" reasons="${5:-}"
+  local lost0="${_alf_lost0:-0}" lost1
+  lost1=$(_alf_sidecar_has "verdict_write_failed:${plane}" && printf 1 || printf 0)
+  printf 'receipts=%s:%s->%s' "$plane" "$old" "$now"
+  # `unknown` means the read found no receipt to describe — distinct from finding a recorded
+  # `false`, and the distinction the two-valued version destroyed.
+  [[ "$now" == "unknown" ]] && reasons="${reasons:+${reasons};}receipt_unreadable"
+  [[ "$now" == "$want" ]] || reasons="${reasons:+${reasons};}verdict_not_recorded"
+  [[ "$lost1" == 1 && "$lost0" == 0 && "$reasons" != *verdict_not_recorded* ]] \
+    && reasons="${reasons:+${reasons};}verdict_not_recorded"
+  [[ -n "$reasons" ]] && printf ' degraded=%s' "$reasons"
+  return 0
+}
+
 # === Portable mkdir locking (macOS has no flock) ===
 LOCKDIR="${STATE_FILE}.lockdir"
 # Env-overridable so contention tests don't pay the full wait per lock site.
@@ -2554,10 +2693,17 @@ if [[ "$_code_review_matched" == "true" ]]; then
     # convergence tracking) into the shared critical section. Review commands run
     # at human cadence, so the extra lock round-trips are uncontended and cheap;
     # the atomicity is not worth the state-machine risk. Deferred by design.
+    _alf_begin code_review
     update_state "code_review" "true" "$passed"
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated: passed=$passed" >&2
+    # `pending` follows the OBSERVED receipt, not the requested verdict: a PASS that was dropped
+    # leaves the code plane outstanding, and saying `pending=precommit` there would walk the loop
+    # past a gate that is still shut.
+    _alf_new=$(_alf_receipt code_review)
+    _alf_emit "event=code_review_verdict change=code $(_alf_transition code_review "$_alf_old" "$_alf_new" "$passed")" \
+      "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo precommit || echo code_review)" >&2
   fi
 fi
 
@@ -2579,8 +2725,12 @@ if [[ "$_doc_review_matched" == "true" ]]; then
     echo "[Review State] Skill launch placeholder — no doc_review verdict to record" >&2
   else
     passed=$(check_passed "$TOOL_OUTPUT")
+    _alf_begin doc_review
     update_state "doc_review" "true" "$passed"
     echo "[Review State] doc_review updated: passed=$passed" >&2
+    _alf_new=$(_alf_receipt doc_review)
+    _alf_emit "event=doc_review_verdict change=doc $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$passed")" \
+      "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo doc_review)" >&2
   fi
 fi
 
@@ -2651,8 +2801,14 @@ if [[ "$_precommit_matched" == "true" ]]; then
     # below and bank a truncated PASS. TOOL_INTERRUPTED is parsed generically (.interrupted on
     # tool_response/tool_output), and only Skill/Bash precommit reaches this block, so gating on
     # the flag alone is exact.
+    _alf_begin precommit
     update_state "precommit" "true" "false" "$_precommit_mode"
     echo "[Review State] precommit: response interrupted — recording passed=false (fail-closed)" >&2
+    # This branch performs a real state transition, so it owes a fact like any other. Emitting
+    # nothing here was worse than emitting a degraded one: the reader saw the loop go quiet after a
+    # precommit and had no way to distinguish "interrupted, recorded false" from "hook never fired".
+    _alf_emit "event=precommit_verdict change=code $(_alf_transition precommit "$_alf_old" "$(_alf_receipt precommit)" false response_interrupted)" \
+      "mode=${_precommit_mode} $(_alf_common)" "pending=precommit" >&2
   else
     # FAIL-precedence: the precommit verdict is the LAST `## Overall:` line, NOT the first
     # PASS anywhere (check_passed) — a PASS embedded in the runner's test/build tail would
@@ -2662,11 +2818,27 @@ if [[ "$_precommit_matched" == "true" ]]; then
     # Two independent locks (update_state + _set_phase_idle) — deferred by design
     # for the same reason as the code_review branch above: independent fail-closed
     # semantics over a human-cadence command, not worth merging.
+    _alf_begin precommit
     update_state "precommit" "true" "$passed" "$_precommit_mode"
     if [[ "$passed" == "true" ]]; then
       _set_phase_idle || true
     fi
     echo "[Review State] precommit updated: passed=$passed mode=$_precommit_mode" >&2
+    # `lint:fix` REWRITES the tree before the build and test steps observe it, so a verdict that
+    # follows one describes source this run itself changed. The runner cannot tell us whether it
+    # actually changed anything — its `## Changed files after lint:fix` list is a plain
+    # `git diff --name-only`, i.e. the whole dirty tree — so the honest claim is only that a
+    # mutating step ran. Closing that gap belongs to the fingerprint track, not here.
+    _ALF_FRESH="unknown"
+    if grep -q '^> finished lint_fix' <<< "$TOOL_OUTPUT"; then
+      _ALF_FRESH="unverified-after-mutating-check"
+    elif grep -q '^> skip lint_fix' <<< "$TOOL_OUTPUT"; then
+      _ALF_FRESH="verified"
+    fi
+    _alf_new=$(_alf_receipt precommit)
+    _alf_emit "event=precommit_verdict change=code $(_alf_transition precommit "$_alf_old" "$_alf_new" "$passed") mode=${_precommit_mode}" \
+      "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo precommit)" \
+      "freshness=${_ALF_FRESH}" >&2
     # `mode` records WHICH COMMAND ran, not which stages executed — the two can diverge, and
     # `PRECOMMIT_REQUIRE_FULL=1` gates on the former. precommit-runner.js emits
     # `- ⏭️ build (skipped: script missing)` when the repo has no build script, and a non-Node
@@ -2726,8 +2898,12 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
     else
       _mcp_doc_verdict=$(_mcp_doc_review_passed "$TOOL_OUTPUT")
       if [[ -n "$_mcp_doc_verdict" ]]; then
+        _alf_begin doc_review
         update_state "doc_review" "true" "$_mcp_doc_verdict"
         echo "[Review State] doc_review updated (MCP): passed=$_mcp_doc_verdict" >&2
+        _alf_new=$(_alf_receipt doc_review)
+        _alf_emit "event=doc_review_verdict change=doc source=mcp $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$_mcp_doc_verdict")" \
+          "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo doc_review)" >&2
       else
         echo "[Review State] MCP doc review carries no verdict sentinel — no state recorded" >&2
       fi
@@ -2782,10 +2958,14 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
       exit 0
     fi
     passed=$(_mcp_code_review_passed "$TOOL_OUTPUT")
+    _alf_begin code_review
     update_state "code_review" "true" "$passed"
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated (MCP): passed=$passed" >&2
+    _alf_new=$(_alf_receipt code_review)
+    _alf_emit "event=code_review_verdict change=code source=mcp $(_alf_transition code_review "$_alf_old" "$_alf_new" "$passed")" \
+      "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo precommit || echo code_review)" >&2
   fi
   # Priority 3 (MCP `^## Overall:` → precommit verdict) REMOVED — MCP is not a precommit
   # producer, so every sentinel reaching this path is QUOTED text, never a run.

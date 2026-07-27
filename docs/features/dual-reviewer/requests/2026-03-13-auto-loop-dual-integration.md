@@ -4,6 +4,7 @@
 > **Status**: Completed
 > **Priority**: P1
 > **Tech Spec**: [3-auto-loop-integration.md](../3-auto-loop-integration.md)
+> **As-built 勘誤（2026-07-27）**：本單屬歷史紀錄，**未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。已知撤銷：本單的目標「讓 dual dispatch 在每次 code review 時自然觸發」已被推翻——dual 改為 opt-in，唯一入口是 `/codex-review-branch --dual`；Codex 失敗亦永不降級為通過的 gate。詳見 [tech spec 勘誤](../2-tech-spec.md)。
 
 ## Background
 

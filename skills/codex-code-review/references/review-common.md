@@ -150,15 +150,35 @@ When `SPEC_CHECKLIST` is injected (feature has request doc with ACs), review out
 - `✅ Ready` — Passed (code review)
 - `⛔ Blocked` — Failed (code review)
 
-**In the default single-reviewer mode these sentinels are the whole gate.** They ride in the reviewer's own output, which `post-tool-review-state.sh` parses into `code_review.passed`. Do **not** run `scripts/emit-review-gate.sh`: it sets `review_mode=dual` and arms the aggregate plane, which forces stop-guard into `strict` for the rest of the session on behalf of a review that only ever had one reviewer.
+**Where the effective mode is single these sentinels are the whole gate** — effective, not merely un-flagged: a persisted `review_mode=dual`, or an aggregate-plane marker left by a failed transition, puts the aggregate gate in charge no matter how this review was dispatched. They ride in the reviewer's own output, which `post-tool-review-state.sh` parses into `code_review.passed`. Do **not** run `scripts/emit-review-gate.sh` — no argument is safe outside `--dual`, and they are unsafe in different ways. See § Aggregate-Plane Writes.
 
 **Under `/codex-review-branch --dual` only**, additionally run `bash scripts/emit-review-gate.sh PENDING` before dispatch and `... READY|BLOCKED` after aggregation (it outputs `REVIEW_GATE=<value>`, consumed by the same hook). There the emitter is the point — it is what makes an incomplete aggregate fail closed.
 
 ## Dual Reviewer Aggregation (opt-in)
 
-**This whole section applies only under `/codex-review-branch --dual`.** The default everywhere is a single reviewer (Codex), in which case `review_mode` stays `"single"`, the aggregate plane stays dormant, and none of the mapping, deduplication or degradation logic below runs — Codex's findings are the output as-is.
+**This whole section applies only under `/codex-review-branch --dual`.** The default everywhere is a single reviewer (Codex). Where the aggregate plane is dormant, none of the mapping, deduplication or degradation logic below runs — Codex's findings are the output as-is.
+
+Dormant is not the same as `review_mode == "single"`. Two states arm the plane while only one reviewer ran, and neither is discharged by that reviewer's verdict: a persisted `review_mode=dual` (a default invocation does not reset it, and no downgrade exists), and an `aggregate_write_failed` or `lock_failure` marker.
 
 When `--dual` is passed, `review_mode=dual` and two reviewers run in parallel. This section defines how to merge their results.
+
+### Aggregate-Plane Writes
+
+What `scripts/emit-review-gate.sh` actually does, per argument and per lock outcome. Source: `hooks/post-tool-review-state.sh` — `update_aggregate_gate` (locked) and `update_aggregate_blocked` (fallback).
+
+| Argument | Outer lock | `review_mode` | `aggregate_gate` | Marker on failure |
+|----------|-----------|---------------|------------------|-------------------|
+| `PENDING` | acquired | → `dual` | armed (`executed=false`) | `aggregate_write_failed` |
+| `READY` / `BLOCKED` | acquired | untouched | verdict recorded | `aggregate_write_failed` |
+| any of the three | **failed** | → `dual` (best-effort) | → `BLOCKED` (best-effort) | `lock_failure`, raised **before** the best-effort JSON state write |
+
+`aggregate_write_failed` has three raise points and they do not share an ordering: state-file initialization failure and staging failure raise it **before** the aggregate transition's jq/rename sequence; only a failed commit raises it **after**.
+
+Three consequences that dense prose kept losing:
+
+- **A `review_mode=dual` written by any of these rows outlives the review that caused it.** It forces stop-guard into `strict` and stays there until the state file is rebuilt or the field is changed by hand — SessionStart preserves it, and no supported `dual → single` downgrade exists.
+- **`READY`/`BLOCKED` can still set `review_mode=dual`** — not on the normal path, but whenever the outer lock fails and the whole call diverts to the fallback row.
+- **A marker tells you nothing about what `review_mode` currently reads.** `aggregate_write_failed` means the locked transition did not commit; `lock_failure` means the lock was never held and the write that follows it is best-effort. Neither implies a particular field value. Check both signals — never infer one from the other.
 
 ### Severity Mapping (toolkit → standard)
 
@@ -216,3 +236,5 @@ Output format: `- [P0] file:line issue → fix [source: both]`
 Codex gate is authoritative for timing. Secondary runs non-blocking in background. Aggregation reconciled at pre-precommit checkpoint. Any code edit resets the review cycle — both reviewers must re-run.
 
 Without `--dual` the loop is just Codex: `--continue <threadId>` on the same thread until the gate passes. There is no secondary to reconcile and no pre-precommit checkpoint to wait on.
+
+That describes the **dispatch**, not necessarily the gate. On a state file where `review_mode` already reads `dual`, the aggregate plane still governs and no number of single-reviewer rounds discharges it — see `SKILL.md` § Step 4.5 for what Stop reports and which obligations have no command at all.

@@ -5,6 +5,7 @@
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Parent Request**: [dual-reviewer-parallel-architecture.md](./2026-03-11-dual-reviewer-parallel-architecture.md)
+> **As-built 勘誤（2026-07-27）**：本單屬 dual-reviewer 家族的歷史紀錄，**未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。兩項全家族適用的撤銷：dual 已改為 opt-in，唯一入口是 `/codex-review-branch --dual`；Codex 失敗永不降級為通過的 gate。詳見 [tech spec 勘誤](../2-tech-spec.md)。
 
 ## Background
 

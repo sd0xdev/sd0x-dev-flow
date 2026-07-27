@@ -1,5 +1,13 @@
 # 雙 Reviewer 並行審查架構 — 技術規格
 
+> **As-built 勘誤（2026-07-27）**：本規格描述的是**當初的設計**。以下三點與實作不符，讀者請勿據以行動；本文其餘內容亦未逐條查核，遇有疑義一律以現行契約為準。
+>
+> 1. 本文與 [R3 需求單](./requests/2026-03-11-r3-skill-workflow.md) 多處描述「兩個 reviewer 皆不可用時退回 `review_mode=single`」——實作中**不存在**任何 `dual → single` 降級路徑。`review_mode` 僅在 state 檔重建時初始化為 `single`，其後所有模式轉移一律寫 `dual`，且 SessionStart 保留該欄位。
+> 2. 預設已改為**單一 reviewer**。dual 是 `/codex-review-branch --dual` 的 opt-in，不再是預設。
+> 3. **§3.3.4 降級矩陣的「Codex 失敗 + 次要成功 → `toolkit-only`」該列已被撤銷。** Codex 失敗**永不**降級為通過的 gate：現行行為是 `⛔ Blocked` + `⚠️ Need Human`，次要 reviewer 的 findings 僅供參考，gate source 為 `none`。次要 reviewer 從來不是權威——`--dual` 增加的是第二雙眼睛，不是第二個裁決者。以 [`review-common.md` § Degradation Matrix](../../../skills/codex-code-review/references/review-common.md) 為準。
+>
+> 現行契約以 [`skills/codex-code-review/SKILL.md`](../../../skills/codex-code-review/SKILL.md) § Step 0 與上述 `review-common.md` 為準；殘留成因與修正範圍見 [R1](../auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md)。本文其餘內容保留作為歷史紀錄。
+
 ## 1. 需求摘要
 
 - **問題**: `/codex-review-fast` 僅依賴單一 Codex MCP reviewer，存在單點失敗、單一視角、無降級機制三大問題

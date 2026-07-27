@@ -2667,6 +2667,99 @@ test('a LOST BLOCKING verdict raises the fail-closed sidecar (stale ✅ must not
   assert.equal(readState(workDir).code_review.passed, true, 'the write really was lost — only the sidecar holds the gate');
 });
 
+test('a lost BLOCKING verdict is reported degraded even when the receipt already read false', () => {
+  // Read-back's blind spot. When the receipt already holds the requested value, a dropped write
+  // renders `false->false` exactly like a successful no-op — inequality detects nothing, and the
+  // test above misses it because it starts from `passed: true`. The keyed sidecar that
+  // `_verdict_write_failed` raises is the evidence, and it must be attributed to THIS call.
+  const workDir = makeTempDir('sd0x-post-tool-lost-idempotent-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { executed: true, passed: false } })
+  );
+  writeExecutable(join(binDir, 'mktemp'), FAILING_MKTEMP);
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ⛔ Blocked',
+    },
+  });
+
+  assert.equal(result.status, 0, 'the hook must degrade, not crash');
+  const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; stderr: ${result.stderr}`);
+  assert.match(line, /receipts=code_review:false->false/,
+    'both snapshots genuinely read false — that is what makes this case invisible to inequality');
+  assert.match(line, /degraded=[^ ]*verdict_not_recorded/,
+    'a verdict that update_state reported as lost must not render as a clean no-op');
+});
+
+test('a same-plane marker cleared by a committed write is not reported as this write failing', () => {
+  // `_clear_own_sidecar` retires a `:precommit` marker on the next committed precommit write, so an
+  // unretired one is not evidence about the call in progress. Reporting it as such would mark every
+  // later transition on the plane degraded until something cleared it — a warning that fires
+  // forever teaches the reader to ignore it.
+  const workDir = makeTempDir('sd0x-post-tool-lost-stale-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, precommit: { executed: true, passed: false } })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'verdict_write_failed:precommit\n');
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit' },
+      tool_output: '## Overall: ⛔ FAIL',
+    },
+  });
+
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; stderr: ${result.stderr}`);
+  assert.doesNotMatch(line, /degraded=[^ ]*verdict_not_recorded/,
+    'the write landed; a marker that predates it says nothing about this call');
+});
+
+test('a marker on a DIFFERENT plane is never attributed to this write', () => {
+  // The cross-plane case the test above does not cover: a lost precommit verdict says nothing about
+  // a code review, and nothing about it is retired by one. `_alf_sidecar_has` keys on the plane, so
+  // this marker must be invisible to the code_review transition in both snapshots.
+  const workDir = makeTempDir('sd0x-post-tool-lost-crossplane-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({ has_code_change: true, code_review: { executed: true, passed: false } })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'verdict_write_failed:precommit\n');
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ⛔ Blocked',
+    },
+  });
+
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; stderr: ${result.stderr}`);
+  assert.match(line, /receipts=code_review:false->false/,
+    'the idempotent shape — which is exactly when a mis-attributed marker would show up');
+  assert.doesNotMatch(line, /degraded=[^ ]*verdict_not_recorded/,
+    "another plane's lost verdict must not be charged to this one");
+});
+
 test('a LOST PASSING verdict raises NO sidecar (already fail-closed; must not block on nothing)', () => {
   const workDir = makeTempDir('sd0x-post-tool-lost-passing-');
   const binDir = setupStubBin();

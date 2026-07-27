@@ -6,6 +6,7 @@
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Parent Request**: [dual-reviewer-parallel-architecture.md](./2026-03-11-dual-reviewer-parallel-architecture.md)
 > **Depends On**: [R1 Foundation](./2026-03-11-r1-foundation-config.md)
+> **As-built 勘誤（2026-07-27）**: 本單記錄的是當初的設計，**其餘內容未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。已知被撤銷者五處，勿據以行動——(1) AC1「退回 Codex-only 行為（`review_mode=single`）」：不存在 `dual → single` 降級路徑；(2) Requirements 表「降級處理：任一失敗 → 單源結果 + 警告」與 (3) AC4「Codex 失敗 + 次要成功 → 次要-only（`source=toolkit-only`）」：Codex 失敗永不降級為通過的 gate，現行為 `⛔ Blocked` + `⚠️ Need Human`、gate source `none`；(4) AC1「Step 3.5: 等待雙方結果返回」：現行由 Codex 決定時序，次要 reviewer 非阻塞背景執行；(5) AC3「任一 P0/P1 → BLOCKED」：閘門改由 tier 決定，且唯一的 dual 入口 `/codex-review-branch` 的 tier 固定為 `thorough`，因此 P2 也阻擋。dual 亦已非預設。詳見 [tech spec 勘誤](../2-tech-spec.md)。
 
 ## Background
 

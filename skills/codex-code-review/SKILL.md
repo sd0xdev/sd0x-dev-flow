@@ -43,9 +43,11 @@ Dual dispatch adds the aggregate plane, and is opt-in:
 
 ### Step 0: Reviewer Mode
 
-**Default: Codex alone.** Do not run `scripts/emit-review-gate.sh`, and do not launch a secondary reviewer. `review_mode` stays at its initialized value `"single"`, the aggregate plane stays dormant, and `code_review.passed` governs the gate through the ordinary path — the same fail-closed path every other verdict uses.
+**Default: Codex alone.** Do not run `scripts/emit-review-gate.sh`, and do not launch a secondary reviewer. This invocation emits **no transition** to dual, so on a state file that has never seen `--dual`, `review_mode` holds its initialized `"single"`, the aggregate plane stays dormant, and `code_review.passed` governs the gate through the ordinary path — the same fail-closed path every other verdict uses.
 
-**`--dual` (Branch variant only):** execute `bash scripts/emit-review-gate.sh PENDING`. This sets `review_mode=dual` and `aggregate_gate.executed=false`, which is fail-closed: if the process dies before Step 4.5, stop-guard blocks. It also forces stop-guard into `strict` for the rest of the session — that is the point of asking for it, and the reason it is not the default.
+Emitting no transition is not the same as returning to single. A `review_mode=dual` left by an earlier session survives (see `--dual` below), and where one is set, stop-guard judges by the aggregate plane no matter which variant you ran: a passing `code_review.passed` will not discharge the gate, and the Stop hook will keep naming the aggregate obligation. The field is not the only trigger — an `aggregate_write_failed` or `lock_failure` sidecar marker routes the same way, and a marker says nothing about what `review_mode` currently reads (the two are written on independent paths — see `references/review-common.md` § Aggregate-Plane Writes). Before concluding a single review is the whole gate, check both `review_mode` and whether Stop is naming an aggregate obligation; Stop's own output is the authority.
+
+**`--dual` (Branch variant only):** execute `bash scripts/emit-review-gate.sh PENDING`. This sets `review_mode=dual` and `aggregate_gate.executed=false`, which is fail-closed: if the process dies before Step 4.5, stop-guard blocks. It also forces stop-guard into `strict` until the state file is rebuilt or `review_mode` is changed by hand — SessionStart preserves the field and there is no supported `dual → single` downgrade, so the strict policy outlives the session that asked for it. Strict blocking *during* the review you asked for is the point, and the reason `--dual` is not the default; its persistence into later sessions is a **known defect**, not a feature to rely on — tracked in [R1](../../docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md), whose lifecycle fix is deliberately out of that ticket's scope.
 
 | Variant | `--dual` accepted? |
 |---------|--------------------|
@@ -204,7 +206,7 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 ### Step 3.5: Await Results
 
-**Single mode (default):** await Codex. Its verdict is the gate. Go to Step 4.
+**Single reviewer (default dispatch):** await Codex. Its verdict is the gate *for this dispatch*. Go to Step 4.
 
 If Codex itself is unavailable there is nothing to degrade to — the one reviewer *is* the gate. Emit `⛔ Blocked` + `⚠️ Need Human` and stop; do not silently substitute a subagent, because that would swap the reviewer the gate was defined against without the user having asked for it.
 
@@ -219,7 +221,7 @@ If Codex itself is unavailable there is nothing to degrade to — the one review
 
 ### Step 4: Consolidate Output
 
-**Single mode (default):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate: any finding at or above the tier's blocking severity → BLOCKED, else READY (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
+**Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate: any finding at or above the tier's blocking severity → BLOCKED, else READY (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
 
 **`--dual`:**
 
@@ -246,7 +248,11 @@ Output format includes source tag:
 
 ### Step 4.5: Emit Review Gate
 
-**`--dual` only** — execute `bash scripts/emit-review-gate.sh READY` or `... BLOCKED`, which updates `aggregate_gate.executed=true` and `aggregate_gate.gate`. In single mode this step is **skipped**: emitting it would set `review_mode=dual` and drag the session into strict blocking on behalf of a review that only ever had one reviewer.
+**`--dual` only** — execute `bash scripts/emit-review-gate.sh READY` or `... BLOCKED`, which updates `aggregate_gate.executed=true` and `aggregate_gate.gate`. On a default dispatch this step is **skipped**: it would stamp the aggregate plane with a verdict no aggregation produced. On the normal path these two values leave `review_mode` alone; if the outer lock fails they do not — see `references/review-common.md` § Aggregate-Plane Writes.
+
+Skipping is right for the *dispatch* and can still leave the *gate* shut. Where `review_mode` already reads `dual` (Step 0) — or where a failed aggregate transition left a marker while the field still reads `single` — stop-guard governs on the aggregate plane, so a `✅ Ready` from this skill will not reopen it. Stop names `/codex-review-branch --dual` as the outstanding obligation. That is the real remaining work, and it is what this skill's single-reviewer path deliberately does not do.
+
+Separately, Stop may add **`Do NOT auto-retry`**. That means a per-event sidecar marker is present, and those are retired by no command at all — not review, not precommit, not an edit — regardless of what the marker says or which gate it invalidates. It becomes *eligible* for clearing when a later SessionStart finds no dirty code or doc file; lock contention or a failed scan can hold it for another session beyond that. Take the line at face value: finish or abandon the work, but do not re-run the named step expecting the gate to open.
 
 Either way, output the standard gate sentinel:
 - `✅ Ready` — if READY (nothing at or above the tier's blocking severity)
@@ -270,6 +276,8 @@ Blocked → fix the blocking findings → `/codex-review-fast --continue <thread
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
 Round cap comes from the tier (`fast` 3, `standard` 5, `thorough` 30). Same issue recurring at the cap → report blocker, request intervention.
+
+This loop converges on the **review result**, not on the Stop gate. Reaching Ready ends it even if Stop still objects — an aggregate obligation or a `Do NOT auto-retry` line (Step 4.5) is not a finding, and no further round addresses it.
 
 ### Loop Behavior
 

@@ -1501,6 +1501,488 @@ test('dual mode with a STRING aggregate_gate.executed ("true") + dirty tree → 
   assert.equal(parseJson(result.stdout).ok, false);
 });
 
+test('dual mode with a pending aggregate demands the AGGREGATE entry point, never /codex-review-fast', () => {
+  // The interface deadlock this fixes (R1): `/codex-review-fast` cannot write the aggregate plane —
+  // only the final emitter of `/codex-review-branch --dual` does. Demanding it in dual mode banked
+  // `code_review.passed=true`, left `aggregate_gate` shut, and the next Stop demanded it again.
+  // Deterministic, not probabilistic: nothing the model can do in response to the demand clears it.
+  const workDir = makeTempDir('sd0x-stop-guard-dual-deadlock-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // `code_review.passed: true` is the whole point — the individual gate is already satisfied, so a
+  // demand for another code review is unsatisfiable by construction. precommit passes so the only
+  // thing left in MISSING is the code-plane obligation under test.
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      review_mode: 'dual',
+      code_review: { executed: true, passed: true },
+      aggregate_gate: { executed: false, gate: 'PENDING' },
+      precommit: { executed: true, passed: true, mode: 'full' },
+    })
+  );
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+
+  // Dual forces strict regardless of STOP_GUARD_MODE=warn (stop-guard.sh:577), so this blocks.
+  assert.equal(result.status, 2, 'dual mode forces strict, and a pending aggregate must block');
+  assert.match(result.stderr, /\/codex-review-branch --dual/,
+    'the demanded step must be an entry point that can actually write the aggregate plane');
+  assert.match(result.stderr, /aggregate_gate/,
+    'and it must name the obligation, not just a command');
+  // Non-tautology: pre-fix this line read `/codex-review-fast` and this assertion failed.
+  assert.doesNotMatch(result.stderr, /\/codex-review-fast/,
+    'fast review cannot satisfy the aggregate gate — demanding it is the deadlock');
+});
+
+test('single mode with an invalidated code gate still demands /codex-review-fast, not the dual entry point', () => {
+  // Guards the trap in the fix above: `DUAL_GATE_PASSED` is NOT a mode flag. The corrupt-state
+  // (stop-guard.sh:351) and sidecar (:557) blocks set it false in SINGLE mode too, as the generic
+  // "invalidate the code gate" signal. Branching on it instead of REVIEW_MODE routes single-mode
+  // sessions to `/codex-review-branch --dual` — a command whose whole purpose is to opt INTO dual.
+  const workDir = makeTempDir('sd0x-stop-guard-single-not-dual-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // No `review_mode` field at all → `.review_mode // "single"`. The sidecar forces DUAL_GATE_PASSED
+  // false anyway, which is exactly the shape that makes the mode-proxy reading look correct.
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { executed: true, passed: true },
+      precommit: { executed: true, passed: true, mode: 'full' },
+    })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked'), 'verdict_write_failed:code_review\n');
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+
+  assert.equal(result.status, 2, 'a sidecar invalidates the gate and escalates to strict');
+  assert.match(result.stderr, /\/codex-review-fast/,
+    'single mode must keep demanding the single-reviewer entry point');
+  assert.doesNotMatch(result.stderr, /--dual/,
+    'never route a single-mode session into dual — that would opt it into a stricter gate it never chose');
+});
+
+// An aggregate-plane sidecar over a mode that still reads `single` is the SAME deadlock the dual
+// branch above removes, reached through a different door — and routing on persisted mode alone
+// walks straight back into it. `update_aggregate_gate PENDING` writes `review_mode = "dual"` in the
+// SAME jq as the aggregate fields (post-tool-review-state.sh:2312), so a failed write raises the
+// marker while leaving the mode single. These markers are cleared by a committed transition that
+// owns the aggregate plane — the aggregate write itself (:2329-2330) or a code EDIT, which resets
+// `aggregate_gate` outright (post-edit-format.sh:1186). A code-review verdict is neither: it clears
+// `verdict_write_failed:<gate>` and nothing else, so demanding `/codex-review-fast` here is
+// unsatisfiable by construction.
+//
+// Both markers, because the sidecar classifier treats them differently: `aggregate_write_failed` is
+// non-transient and escalates to strict (exit 2), `lock_failure` is on the transient allowlist and
+// leaves warn mode intact (exit 0). The ROUTE must be the same either way — the escalation decision
+// and the "which command can discharge this" decision are independent.
+for (const [marker, wantStatus, why] of [
+  ['aggregate_write_failed', 2, 'non-transient — escalates to strict'],
+  ['lock_failure', 0, 'transient — warn mode survives, but the obligation does not change'],
+]) {
+  test(`an aggregate-plane sidecar (${marker}) routes to the aggregate entry point even when review_mode reads single`, () => {
+    const workDir = makeTempDir('sd0x-stop-guard-agg-sidecar-');
+    const binDir = setupStubBin();
+    setupStubGit(binDir, ' M src/app.ts');
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    // No `review_mode` field at all — the exact shape a failed PENDING transition leaves behind.
+    writeFileSync(
+      join(workDir, '.claude_review_state.json'),
+      JSON.stringify({
+        has_code_change: true,
+        code_review: { executed: true, passed: true },
+        precommit: { executed: true, passed: true, mode: 'full' },
+      })
+    );
+    writeFileSync(join(workDir, '.claude_review_state.json.blocked'), `${marker}\n`);
+
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: { transcript_path: transcriptPath },
+      env: { STOP_GUARD_MODE: 'warn' },
+    });
+
+    assert.equal(result.status, wantStatus, why);
+    assert.match(result.stderr, /\/codex-review-branch --dual/,
+      `${marker} needs a committed aggregate-plane transition — the demanded step must be able to make one`);
+    // Named in a RUNNABLE form. `--dual(aggregate_gate pending)` reads as the flag `--dual(aggregate_gate`
+    // under whitespace parsing, and the parenthetical's own space splits off a second junk token —
+    // so the one entry point that can discharge the gate would be quoted in a form that cannot be
+    // invoked. The obligation belongs on its own line; MISSING stays a list of runnable steps.
+    const missingLine = result.stderr.split('\n').find((l) => l.includes('Missing steps:'));
+    assert.ok(missingLine, `stderr must carry a Missing steps line; got: ${result.stderr}`);
+    assert.match(missingLine, /\/codex-review-branch --dual(\s|$)/,
+      'the command in MISSING must terminate cleanly, not run into an annotation');
+    assert.doesNotMatch(missingLine, /--dual\(/,
+      'no parenthetical may attach to the flag — it would be parsed as part of the flag token');
+    assert.match(result.stderr, /aggregate_gate is pending/,
+      'and the obligation must still be named, just not inside the command list');
+    // Non-tautology: routing on REVIEW_MODE alone emits `/codex-review-fast` here and this fails.
+    assert.doesNotMatch(result.stderr, /\/codex-review-fast/,
+      'a code-review verdict clears verdict_write_failed:<gate> only — it can never retire this marker');
+    // A shared-file marker CAN be retired (see the comment above), so the honest "nothing retires
+    // this" caveat must NOT appear here. Without this assertion the caveat could be emitted
+    // unconditionally and the event-plane test below would still pass.
+    assert.doesNotMatch(result.stderr, /Do NOT auto-retry/,
+      'a shared-file marker is retired by a committed transition — this obligation IS dischargeable');
+    if (wantStatus === 2) {
+      // The ordinary MISSING renderer, which fires only when nothing unretireable is in play. R2
+      // replaced the imperative that used to sit here with a statement of gate state; the property
+      // is unchanged — a dischargeable obligation gets the ordinary line, not the no-retry one.
+      assert.match(result.stderr, /the gate stays shut until each is discharged/,
+        'and because it is dischargeable, the ordinary obligation line must survive');
+    }
+  });
+}
+
+// The event plane is the case where NO entry point can discharge the obligation. `_clear_own_sidecar`
+// and `_clear_superseded_sidecar` both address `${STATE_FILE}.blocked` by name, so a marker under
+// `.blocked.event.*` survives every writer and is retired only by session-init's orphan sweep — by
+// design, per post-tool-review-state.sh § "Retirement is deliberately coarse".
+//
+// Naming the right command stays correct — it IS the right work. What must not survive is the
+// generic `Execute immediately: … invoke the command now` imperative, because the model would run
+// the step, the marker would outlive it, and the next Stop would issue the same order. A caveat
+// printed three lines above that imperative does not cancel it; suppressing the imperative does.
+//
+// Parameterised across REASON CLASSES on purpose. Retirement is a property of the plane, so the
+// caveat must not be keyed on the reason: an earlier fix raised it only for aggregate reasons, and
+// a per-event `verdict_write_failed:code_review` then drew `/codex-review-fast` plus a retry order
+// that no amount of reviewing could satisfy. The empty case covers a marker whose content is
+// missing or unreadable — no less unretireable for being illegible.
+for (const [label, body, wantRoute] of [
+  ['aggregate reason', 'aggregate_write_failed\n', /\/codex-review-branch --dual/],
+  ['non-aggregate reason', 'verdict_write_failed:code_review\n', /\/codex-review-fast/],
+  ['empty marker', '', null],
+]) {
+  test(`an EVENT-plane marker (${label}) blocks WITHOUT ordering a retry`, () => {
+    const workDir = makeTempDir('sd0x-stop-guard-event-noretry-');
+    const binDir = setupStubBin();
+    setupStubGit(binDir, ' M src/app.ts');
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    writeFileSync(
+      join(workDir, '.claude_review_state.json'),
+      JSON.stringify({
+        has_code_change: true,
+        code_review: { executed: true, passed: true },
+        precommit: { executed: true, passed: true, mode: 'full' },
+      })
+    );
+    // Event plane only — no shared `.blocked`, which is what a writer that could not serialize leaves.
+    writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.7f3a21'), body);
+    assert.equal(existsSync(join(workDir, '.claude_review_state.json.blocked')), false,
+      'the shared file must be absent — otherwise this would retest the shared-plane case above');
+
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: { transcript_path: transcriptPath },
+      env: { STOP_GUARD_MODE: 'warn' },
+    });
+
+    if (wantRoute) {
+      assert.match(result.stderr, wantRoute,
+        'the plane changes whether the step reopens the gate, never which step is the right work');
+    }
+    assert.match(result.stderr, /Do NOT auto-retry/,
+      `${label}: an obligation no command can discharge must be reported as such`);
+    // The assertion that closes the loop. Pre-fix the hook printed the caveat AND an order to run
+    // the step, which is the contradiction that kept the recovery loop alive. Anchored on the
+    // ordinary renderer's own line: the two branches are mutually exclusive, so its absence is what
+    // proves the no-retry branch won. Anchoring on the removed imperative instead would leave a
+    // `doesNotMatch` against a string the tree no longer contains — green forever, guarding nothing.
+    assert.doesNotMatch(result.stderr, /the gate stays shut until each is discharged/,
+      `${label}: never present an obligation nothing retires as one that can be worked off`);
+  });
+}
+
+// The three OTHER terminal branches that emit a retry instruction. Fixing only the `MISSING`
+// renderer left each of these still ordering work that cannot end the objection — a plane fact has
+// to reach every exit that tells the model what to do next, not just the main one.
+//
+// Each case pairs with a shared-marker control: the point is that the plane decides, so a fix that
+// simply dropped the retry wording from these branches would be wrong in the other direction.
+for (const [label, eventPlane] of [['event marker', true], ['shared marker', false]]) {
+  const wantNoRetry = eventPlane;
+
+  test(`jq unavailable + ${label} → ${wantNoRetry ? 'no-retry' : 'ordinary retry'} instruction`, () => {
+    // Without jq nothing about the state is knowable, but the plane is a filesystem fact, so the
+    // one thing still decidable is whether a retry could ever help. `_sidecar_event_any` is pure
+    // bash for exactly this reason — this branch is reached BECAUSE the toolchain is thin.
+    const workDir = makeTempDir('sd0x-stop-guard-nojq-plane-');
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    writeFileSync(
+      join(workDir, eventPlane
+        ? '.claude_review_state.json.blocked.event.c0ffee'
+        : '.claude_review_state.json.blocked'),
+      'aggregate_write_failed\n'
+    );
+
+    const result = runHookNoJq({
+      cwd: workDir,
+      input: { transcript_path: transcriptPath },
+      env: { STOP_GUARD_MODE: 'warn' },
+    });
+
+    assert.equal(result.status, 2, 'a sidecar fails closed without jq regardless of plane');
+    const json = parseJson(result.stdout);
+    assert.equal(json.ok, false, 'and the JSON verdict must agree');
+    if (wantNoRetry) {
+      assert.match(json.description, /Do not auto-retry/, 'the plane fact must reach the JSON, not only stderr');
+      assert.doesNotMatch(json.description, /then re-run/, 'never order a re-run that cannot clear the marker');
+    } else {
+      assert.match(json.description, /then re-run/, 'a shared marker IS dischargeable — keep the actionable instruction');
+      assert.doesNotMatch(json.description, /Do not auto-retry/, 'and must not be told otherwise');
+    }
+  });
+
+  test(`${label} without a state file → ${wantNoRetry ? 'no-retry' : 'ordinary retry'} instruction`, () => {
+    // Production-reachable: `update_aggregate_gate` raises `aggregate_write_failed` when state
+    // INITIALIZATION fails, and `_set_own_sidecar` diverts to the event plane precisely when it
+    // could not serialize on the shared one — so "no state file + event marker" is a real state.
+    const workDir = makeTempDir('sd0x-stop-guard-nostate-plane-');
+    const binDir = setupStubBin();
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    assert.equal(existsSync(join(workDir, '.claude_review_state.json')), false, 'no state file — that is the case under test');
+    writeFileSync(
+      join(workDir, eventPlane
+        ? '.claude_review_state.json.blocked.event.c0ffee'
+        : '.claude_review_state.json.blocked'),
+      'state_write_failed:code\n'
+    );
+
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: { transcript_path: transcriptPath },
+      env: { STOP_GUARD_MODE: 'warn' },
+    });
+
+    assert.equal(result.status, 2, 'a sidecar without state is unverifiable and fails closed');
+    const json = parseJson(result.stdout);
+    assert.equal(json.ok, false, 'and the JSON verdict must agree');
+    if (wantNoRetry) {
+      assert.match(json.description, /Do not auto-retry/, 'no writer retires an event marker, so no step ends this');
+      assert.doesNotMatch(json.description, /then re-run/, 'never order a re-run that cannot clear the marker');
+    } else {
+      assert.match(json.description, /then re-run/, 'a shared marker IS dischargeable — keep the actionable instruction');
+    }
+  });
+
+  test(`corrupt iteration counters + ${label} → ${wantNoRetry ? 'no-retry' : 'ordinary fix-and-re-run'} instruction`, () => {
+    // Corrupt counters CLEAR `MISSING` and set `BLOCKED_REASON` instead, so the output goes through
+    // the other renderer entirely. Without threading the plane fact there too, the fix to the
+    // `MISSING` branch is silently bypassed by a state shape that is itself a failure signal.
+    const workDir = makeTempDir('sd0x-stop-guard-corrupt-iter-plane-');
+    const binDir = setupStubBin();
+    setupStubGit(binDir, ' M src/app.ts');
+    const transcriptPath = join(workDir, 'transcript.json');
+    writeFileSync(transcriptPath, '[]');
+    writeFileSync(
+      join(workDir, '.claude_review_state.json'),
+      JSON.stringify({
+        has_code_change: true,
+        code_review: { executed: true, passed: true },
+        precommit: { executed: true, passed: true, mode: 'full' },
+        // Non-integer counters — rejected by the jq bounds check, which collapses to "corrupt".
+        iteration_history: { current_round: 'x', max_rounds: 'y' },
+      })
+    );
+    writeFileSync(
+      join(workDir, eventPlane
+        ? '.claude_review_state.json.blocked.event.c0ffee'
+        : '.claude_review_state.json.blocked'),
+      'aggregate_write_failed\n'
+    );
+
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: { transcript_path: transcriptPath },
+      env: { STOP_GUARD_MODE: 'warn' },
+    });
+
+    assert.equal(result.status, 2, 'corrupt counters + a sidecar must block');
+    assert.match(result.stderr, /corrupt or tampered/, 'this must be the BLOCKED_REASON renderer, not the MISSING one');
+    if (wantNoRetry) {
+      assert.match(result.stderr, /Do not auto-retry/, 'the BLOCKED_REASON renderer must honour the plane fact too');
+      assert.doesNotMatch(result.stderr, /Findings are outstanding/, 'the ordinary description must be displaced, not merely appended to');
+    } else {
+      assert.match(result.stderr, /Findings are outstanding/, 'a shared marker keeps the ordinary corrupt-state description');
+    }
+  });
+}
+
+test('warn-mode BLOCKED_REASON carries the no-retry fact too (symmetry with the MISSING branch)', () => {
+  // Reaching this branch needs a corrupt-counter BLOCKED_REASON that stays in warn mode, so the
+  // event marker must hold a TRANSIENT reason — a non-transient one escalates to strict and lands
+  // in the branch above. Warn mode allows the stop, so nothing loops here; the gap being closed is
+  // that a stdout-only consumer would otherwise see a plain blocked reason and try to work it off.
+  const workDir = makeTempDir('sd0x-stop-guard-blocked-warn-plane-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { executed: true, passed: true },
+      precommit: { executed: true, passed: true, mode: 'full' },
+      iteration_history: { current_round: 'x', max_rounds: 'y' },
+    })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.c0ffee'), 'edit_lock_contention:code\n');
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+
+  assert.equal(result.status, 0, `a transient reason must not override the user's warn preference; stderr: ${result.stderr}`);
+  const json = parseJson(result.stdout);
+  assert.equal(json.ok, true, 'warn mode still allows the stop');
+  assert.match(json.description, /Do not auto-retry/, 'but the JSON must still carry why working it off will not help');
+});
+
+test('a sidecar is checked BEFORE the unreadable-state and dual branches (what makes those unreachable)', () => {
+  // My audit concluded the `Restore read access …` and `Install jq …` exits at :205/:212 cannot be
+  // reached with an event marker, because `_sidecar_any` covers BOTH planes and exits first. That
+  // is a claim about ORDERING, and orderings get refactored. This pins it: reorder the checks and
+  // the retry-flavoured description reappears here.
+  const workDir = makeTempDir('sd0x-stop-guard-nojq-order-');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  // A state file that exists but cannot be read — the exact precondition of the :205 branch — plus
+  // an event marker. The sidecar branch must win.
+  const statePath = join(workDir, '.claude_review_state.json');
+  writeFileSync(statePath, '{"has_code_change":true}');
+  chmodSync(statePath, 0o000);
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.c0ffee'), 'aggregate_write_failed\n');
+
+  const result = runHookNoJq({
+    cwd: workDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+  chmodSync(statePath, 0o644);
+
+  assert.equal(result.status, 2, 'either branch blocks — the question is which instruction is given');
+  const json = parseJson(result.stdout);
+  assert.match(json.reason, /blocked sidecar/, 'the sidecar branch must claim this state, not the unreadable-state branch');
+  assert.match(json.description, /Do not auto-retry/, 'and it must give the plane-correct instruction');
+  assert.doesNotMatch(json.description, /Restore read access/, 'the later branch would order work that cannot clear the marker');
+});
+
+test('an UNREADABLE event marker is still classified unretireable (the flag is raised before the read)', (t) => {
+  // The set-before-read ordering in the event loop is load-bearing and otherwise untested: an
+  // unreadable marker yields no reason text, so any classification derived from CONTENT would miss
+  // it — and an illegible marker is no more dischargeable than a legible one.
+  //
+  // Skipped rather than run as root: `chmod 000` does not stop root from reading, so the fixture
+  // would be legible, the assertions would pass via the content path, and the ordering this test
+  // exists for would go untested while still reporting green.
+  if (typeof process.getuid === 'function' && process.getuid() === 0) {
+    t.skip('running as root — chmod 000 cannot make the marker unreadable');
+    return;
+  }
+  const workDir = makeTempDir('sd0x-stop-guard-event-unreadable-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { executed: true, passed: true },
+      precommit: { executed: true, passed: true, mode: 'full' },
+    })
+  );
+  const marker = join(workDir, '.claude_review_state.json.blocked.event.7f3a21');
+  writeFileSync(marker, 'aggregate_write_failed\n');
+  chmodSync(marker, 0o000);
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+  chmodSync(marker, 0o644); // restore so the temp-dir cleanup can remove it
+
+  assert.equal(result.status, 2, `an unreadable marker is unverifiable and must block; stderr: ${result.stderr}`);
+  assert.match(result.stderr, /Do NOT auto-retry/,
+    'plane, not content, decides retireability — a read failure must not downgrade it to retryable');
+  assert.doesNotMatch(result.stderr, /the gate stays shut until each is discharged/,
+    'and the workable-obligation line must be suppressed here as anywhere else on this plane');
+});
+
+test('the no-retry string is JSON-safe by construction (the early exits cannot sanitize it)', () => {
+  // `SIDECAR_EVENT_NORETRY` is interpolated into JSON at the jq-free early exits, which run BEFORE
+  // `_json_safe` is defined — so the string itself has to carry the property. A `"` or `\` added
+  // here would produce malformed output on the fail-closed path, which the harness reads as "no
+  // objection": a fail-OPEN turned on by an innocuous copy edit.
+  const src = readFileSync(hookPath, 'utf8');
+  const m = src.match(/^SIDECAR_EVENT_NORETRY="([^\n]*)"$/m);
+  assert.ok(m, 'the constant must stay a single-line double-quoted assignment for this guard to read it');
+  assert.doesNotMatch(m[1], /["\\]/, 'no quote or backslash may enter the string');
+  assert.doesNotMatch(m[1], /[\x00-\x1f]/, 'no control characters either');
+});
+
+test('an EVENT-plane marker still exits 2 when it is non-transient (the block itself must not soften)', () => {
+  // Control for the pair above: dropping the retry imperative must not be mistaken for dropping the
+  // block. Fail-closed is still the point — only the instruction changed.
+  const workDir = makeTempDir('sd0x-stop-guard-event-still-blocks-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { executed: true, passed: true },
+      precommit: { executed: true, passed: true, mode: 'full' },
+    })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.7f3a21'), 'aggregate_write_failed\n');
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'warn' },
+  });
+
+  assert.equal(result.status, 2, `aggregate_write_failed is non-transient and must still block; stderr: ${result.stderr}`);
+  assert.equal(parseJson(result.stdout).ok, false, 'and the JSON verdict must agree with the exit code');
+});
+
 test('dual mode with a NESTED non-object aggregate_gate (string) → blocks, not exit-5 fail-open', () => {
   const workDir = makeTempDir('sd0x-stop-guard-nested-agg-');
   const binDir = setupStubBin();
@@ -3971,11 +4453,14 @@ test('plan pending: terminal/inactive plan states do not emit pending advisory',
   }
 });
 
-// === deep-explore regression: strict exit-2 stderr must carry the instruction ===
+// === deep-explore regression: strict exit-2 stderr must carry the guidance ===
 // On exit 2 only stderr reaches the model; the stdout JSON description is
-// consumed by tests alone. Pin that the actionable guidance is on stderr.
+// consumed by tests alone. Pin that the actionable content is on stderr.
+// R2 turned that content from an order into a statement of what the state holds — which step is
+// outstanding, and that the gate is shut until it is discharged. Both halves are pinned below: a
+// gate-state sentence with no step named would be as useless to the model as JSON it never sees.
 
-test('strict block puts actionable instruction on stderr (not only stdout JSON)', () => {
+test('strict block puts actionable content on stderr (not only stdout JSON)', () => {
   const workDir = makeTempDir('sd0x-stop-guard-stderr-guidance-');
   const binDir = setupStubBin();
   const transcriptPath = join(workDir, 'transcript.json');
@@ -3999,9 +4484,96 @@ test('strict block puts actionable instruction on stderr (not only stdout JSON)'
   assert.equal(result.status, 2);
   assert.match(
     result.stderr,
-    /do not ask the user|Fix issues and re-run|escalate to human/,
-    `stderr must instruct the model what to do next, got: ${result.stderr}`
+    /Missing steps:.*\/codex-review-fast/,
+    `stderr must name the outstanding step, got: ${result.stderr}`
   );
+  assert.match(
+    result.stderr,
+    /the gate stays shut until each is discharged/,
+    `stderr must say the gate is still shut, got: ${result.stderr}`
+  );
+});
+
+// R2 AC7: the strict-Stop path is one of the five that must be shown to DELIVER the fact block, not
+// merely to contain it in source. This is the highest-stakes of the five — on exit 2 stderr is the
+// only channel the model sees, so a block emitted to stdout, or skipped by a branch that returns
+// first, would be invisible exactly when the session is being held open.
+test('strict Stop delivers the [AUTO_LOOP_STATE] block on stderr with the pending planes', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-alf-delivery-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      has_doc_change: false,
+      code_review: { passed: false },
+      precommit: { passed: false },
+      doc_review: { passed: true },
+      review_phase: 'pending_review',
+      iteration_history: { current_round: 2, max_rounds: 30 },
+    })
+  );
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+
+  assert.equal(result.status, 2, `strict must block; stderr: ${result.stderr}`);
+  const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block reached stderr; got: ${result.stderr}`);
+  assert.match(line, /event=stop_attempt\b/);
+  assert.match(line, /\bmode=strict\b/, 'the mode decides whether this stop is advisory — it is a fact the model needs');
+  assert.match(line, /change=code\b/);
+  assert.match(line, /receipts=code_review:false,doc_review:true,precommit:false/,
+    'receipts must reflect the state file, not the MISSING string re-parsed');
+  // Values, not just shape: this state file is fully populated, so a `phase=unknown` here would mean
+  // the read silently failed rather than that the state was genuinely unknown.
+  assert.match(line, /\bphase=pending_review\b/);
+  assert.match(line, /\bround=2\/30\b/);
+  assert.match(line, /pending=code_review,precommit\b/,
+    'pending names planes and must list both outstanding ones');
+  assert.ok(!result.stdout.includes('[AUTO_LOOP_STATE]'),
+    'stdout carries the hook-protocol JSON — a stray fact line there risks being read as part of the verdict');
+});
+
+test('with no state file the fact line says so and still reports every field', () => {
+  // The transcript fallback is the degraded path, and it is exactly where an unproven verdict is
+  // least affordable. Two things must hold: the reader is told the facts came from the transcript,
+  // and no field renders empty — on a zero-byte or absent state file `jq -r '.x // "d"'` prints
+  // nothing and exits 0, so neither the filter default nor a `|| echo` fallback fires.
+  const workDir = makeTempDir('sd0x-stop-guard-alf-nostate-');
+  const binDir = setupStubBin();
+  setupStubGit(binDir, ' M src/app.ts');
+  const transcriptPath = join(workDir, 'transcript.txt');
+  // An edit the fallback can see, and no review after it — otherwise there is no obligation and
+  // the hook has nothing to report.
+  writeFileSync(transcriptPath,
+    '{"tool_name":"Edit","tool_input":{"file_path":"src/app.ts"}}\n');
+  // Deliberately no .claude_review_state.json.
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: { transcript_path: transcriptPath },
+    env: { STOP_GUARD_MODE: 'strict' },
+  });
+
+  const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block reached stderr; got: ${result.stderr}`);
+  assert.match(line, /\bsource=transcript\b/,
+    'a reader must be able to tell a transcript-derived verdict from a persisted one');
+  assert.match(line, /degraded=no_state_file\b/);
+  // Shape, not values: the whole point is that the values are unknown here. Empty is the failure.
+  assert.match(line, /\bphase=\S+/, `phase rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\bround=\d+\/\d+\b/, `round/cap rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\btier=(fast|standard|thorough)\b/, `tier rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\breceipts=\S+/, `receipts rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\bpending=\S+/, `pending rendered empty: ${JSON.stringify(line)}`);
 });
 
 // === deep-explore regression: .ipynb counts as code in reconciliation ===

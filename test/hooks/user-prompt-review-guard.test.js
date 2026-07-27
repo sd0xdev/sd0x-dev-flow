@@ -76,7 +76,7 @@ function runHook(cwd, env) {
   });
 }
 
-test('pending code review → output contains [PENDING_REVIEW] and /codex-review-fast', () => {
+test('pending code review → output contains [AUTO_LOOP_STATE] and /codex-review-fast', () => {
   const { dir, cooldownFile } = createWorkDir({
     has_code_change: true,
     code_review: { passed: false },
@@ -86,8 +86,69 @@ test('pending code review → output contains [PENDING_REVIEW] and /codex-review
 
   const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
   assert.equal(result.status, 0);
-  assert.ok(result.stdout.includes('[PENDING_REVIEW]'), 'should contain [PENDING_REVIEW]');
+  assert.ok(result.stdout.includes('[AUTO_LOOP_STATE]'), 'should contain [AUTO_LOOP_STATE]');
   assert.ok(result.stdout.includes('/codex-review-fast'), 'should suggest /codex-review-fast');
+  // Delivery is not enough — the fields have to survive the trip. A marker with `phase= round=/`
+  // behind it reads as a signal and carries nothing, which is what an empty jq read produces.
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.match(line, /\bphase=\S+/, `phase rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\bround=\d+\/\d+\b/, `round/cap rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\btier=(fast|standard|thorough)\b/, `tier rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\bpending=\S+/, `pending rendered empty: ${JSON.stringify(line)}`);
+});
+
+// Aggregate routing was previously tested only through post-skill-auto-loop, leaving two of the
+// three hooks that carry the derivation unexercised.
+for (const [label, mode] of [['dual', 'dual'], ['an unrecognized mode (fail-closed to dual)', 'duel']]) {
+  test(`${label} routes to the aggregate gate, not /codex-review-fast`, () => {
+    const { dir, cooldownFile } = createWorkDir({
+      has_code_change: true,
+      review_mode: mode,
+      // Passing on the INDIVIDUAL plane: the state in which reading the code receipt alone looks
+      // conclusive and is not.
+      code_review: { passed: true },
+      precommit: { passed: false },
+    });
+    writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+
+    const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+    assert.equal(result.status, 0);
+    const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+    assert.ok(line, `no fact block emitted; got: ${JSON.stringify(result.stdout)}`);
+    assert.match(line, /pending=aggregate_gate\b/);
+    assert.match(line, /suggested=\/codex-review-branch --dual/);
+  });
+}
+
+test('a zero-byte state file resolves review_mode to single, as stop-guard does', () => {
+  // This harness uses REAL jq, which is what the case needs: on a zero-byte file jq exits 0 with no
+  // output, so neither the filter default nor the `|| echo` fires and the value arrives empty.
+  // Empty must not read as an unrecognized mode — stop-guard replaces a corrupt snapshot with `{}`
+  // and reads `single`, and two hooks disagreeing about one state is the divergence R1 closed.
+  const { dir, cooldownFile } = createWorkDir({ has_code_change: true, code_review: { passed: false } });
+  writeFileSync(join(dir, '.claude_review_state.json'), '');
+  writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+
+  const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout, /suggested=\/codex-review-branch --dual/,
+    'an unreadable state file must not route to the most expensive gate on its own');
+});
+
+test('a clean session that inherited dual mode is not sent to the aggregate gate', () => {
+  // SessionStart preserves `review_mode` while resetting the change flags, so the obligation has to
+  // be gated on an actual code change or every fresh session inherits the most expensive gate.
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: false,
+    review_mode: 'dual',
+    code_review: { passed: false },
+    precommit: { passed: false },
+  });
+
+  const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout, /aggregate_gate/,
+    'no code change means nothing to aggregate');
 });
 
 test('pending precommit → output contains /precommit', () => {
@@ -168,7 +229,7 @@ test('cooldown expired → inject', () => {
 
   const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '300', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
   assert.equal(result.status, 0);
-  assert.ok(result.stdout.includes('[PENDING_REVIEW]'), 'should inject after cooldown expires');
+  assert.ok(result.stdout.includes('[AUTO_LOOP_STATE]'), 'should inject after cooldown expires');
 });
 
 test('stale state: git clean but state says code changed → reconcile to false → silent', () => {
@@ -208,7 +269,7 @@ test('stale state: untracked new code file surfaced by -uall → inject (pins -u
   });
   assert.equal(result.status, 0);
   assert.ok(
-    result.stdout.includes('[PENDING_REVIEW]'),
+    result.stdout.includes('[AUTO_LOOP_STATE]'),
     'untracked new .ts must keep has_code_change (−uall) → inject, not silently downgrade'
   );
   assert.ok(result.stdout.includes('/codex-review-fast'), 'should suggest /codex-review-fast');
@@ -237,7 +298,7 @@ test('stale state: partial git stdout on timeout-kill is discarded → inject (n
   });
   assert.equal(result.status, 0);
   assert.ok(
-    result.stdout.includes('[PENDING_REVIEW]'),
+    result.stdout.includes('[AUTO_LOOP_STATE]'),
     'partial-output-on-kill must not downgrade the stale flag → inject'
   );
 });
@@ -258,7 +319,7 @@ test('stale state: dirty shell hook (.sh) keeps has_code_change → inject', () 
   });
   assert.equal(result.status, 0);
   assert.ok(
-    result.stdout.includes('[PENDING_REVIEW]'),
+    result.stdout.includes('[AUTO_LOOP_STATE]'),
     'a dirty .sh is code → reminder injected, not silently downgraded'
   );
 });
@@ -305,11 +366,11 @@ test('stale-state reconciliation: untracked .ipynb keeps has_code_change → inj
     PATH: `${shimDir}:${process.env.PATH}`,
   });
   assert.equal(result.status, 0);
-  assert.ok(result.stdout.includes('[PENDING_REVIEW]'), 'notebook counts as code — must inject');
+  assert.ok(result.stdout.includes('[AUTO_LOOP_STATE]'), 'notebook counts as code — must inject');
   assert.ok(result.stdout.includes('/codex-review-fast'));
 });
 
-test('reconciliation: a NON-C-locale directory-omission warning does NOT downgrade the code flag → still injects [PENDING_REVIEW] (iter-20 P1, host-independent)', (t) => {
+test('reconciliation: a NON-C-locale directory-omission warning does NOT downgrade the code flag → still injects [AUTO_LOOP_STATE] (iter-20 P1, host-independent)', (t) => {
   // Locale-aware stub git + timeout shim so the stale-state reconciliation branch fires
   // deterministically on any host (no installed zh_TW needed). Ambient LC_ALL is a non-C string:
   // a hook that forgot to force LC_ALL=C would let the stub emit its localized (non-ASCII) omission
@@ -341,7 +402,7 @@ test('reconciliation: a NON-C-locale directory-omission warning does NOT downgra
   });
   assert.equal(result.status, 0);
   assert.ok(
-    result.stdout.includes('[PENDING_REVIEW]') && result.stdout.includes('/codex-review-fast'),
+    result.stdout.includes('[AUTO_LOOP_STATE]') && result.stdout.includes('/codex-review-fast'),
     'the hook must force LC_ALL=C so git\'s omission warning is the English form its regex matches → hold → inject, regardless of ambient locale'
   );
 });

@@ -93,7 +93,7 @@ Evaluated top-to-bottom, first match wins. State lives in `.claude_review_state.
 
 Row 1 is the only convergence exit the hook observes, and it only *blocks* in `strict` or dual mode; under the default `warn` it prints to stderr and lets the stop through. **In warn mode the behaviour layer is the enforcement** — treat the cap as binding on yourself.
 
-Row 2's zero is not self-evidencing: the count is derived by pattern-matching finding lines, so a reviewer error or a format change also yields `0`. Corroborate it with a passing `✅ Ready` before reading it as convergence.
+Row 2's zero is not self-evidencing: the count is derived by pattern-matching finding lines, so a reviewer error or a format change also yields `0`. Corroborate it with a passing `✅ Ready` before reading it as convergence. And a passing review is not always a passing gate: whenever Stop names an aggregate obligation, no single-reviewer round discharges it — and a `Do NOT auto-retry` line means no command does. Take either at face value rather than re-reviewing into it.
 
 `current_round` is a **lower bound** on rounds actually run — the increment is best-effort and a dropped verdict costs no round. It counts code-review rounds only; doc reviews and code edits do not touch it, and only a passing `/precommit` resets it. A value above `max_rounds` is normal, not corruption. Mechanics: [`docs/features/auto-loop-evolution/4-implementation.md`](../docs/features/auto-loop-evolution/4-implementation.md) §2.
 

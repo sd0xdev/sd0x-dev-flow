@@ -66,7 +66,12 @@ if (query) {
       val = val && val[key];
     }
     if (val === undefined || val === null) {
-      process.stdout.write(fieldMatch[2].trim());
+      // Real \`jq -r\` prints a string default UNQUOTED. Emitting the filter text verbatim handed
+      // the hook \`"single"\` where production sees \`single\` — which now reads as an unrecognized
+      // review_mode and fails closed to dual. A stub that is wrong in the direction of the code
+      // under test is worse than no stub.
+      const d = fieldMatch[2].trim();
+      process.stdout.write(/^".*"$/.test(d) ? d.slice(1, -1) : d);
     } else {
       process.stdout.write(String(val));
     }
@@ -265,8 +270,45 @@ test('post-compact-auto-loop injects /codex-review-fast when code review pending
   assert.equal(result.status, 0);
   assert.match(result.stdout, /codex-review-fast/, 'should mention /codex-review-fast');
   assert.match(result.stdout, /AUTO_LOOP_RESUME/, 'should have resume marker');
-  assert.match(result.stdout, /Declaring != Executing/, 'should re-inject rule 1');
+  // R2 replaced the anchor recital with the state it was standing in for. The recital repeated
+  // rules the model already carries; what compaction actually destroys is the STATE, so that is
+  // what gets re-injected. The command now rides in `suggested=` — advisory, not mandated.
+  assert.match(result.stdout, /pending=code_review,precommit/,
+    'the outstanding planes must be named');
+  assert.match(result.stdout, /suggested=\/codex-review-fast/,
+    'and the entry point offered as a suggestion');
+  assert.doesNotMatch(result.stdout, /Declaring != Executing/,
+    'the anchor recital must not come back — R2 removed it deliberately');
+  // Delivery is not enough — the fields have to survive the trip. A marker with `phase= round=/`
+  // behind it reads as a signal and carries nothing, which is what an empty jq read produces.
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_RESUME]'));
+  assert.ok(line, `no resume line found: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bphase=\S+/, `phase rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\bround=\d+\/\d+\b/, `round/cap rendered empty: ${JSON.stringify(line)}`);
+  assert.match(line, /\btier=(fast|standard|thorough)\b/, `tier rendered empty: ${JSON.stringify(line)}`);
 });
+
+// Aggregate routing was previously tested only through post-skill-auto-loop, leaving compaction —
+// the one hook whose whole job is restoring state the model just lost — unexercised.
+for (const [label, mode] of [['dual', 'dual'], ['an unrecognized mode (fail-closed to dual)', 'duel']]) {
+  test(`compaction under ${label} names the aggregate gate`, () => {
+    const cwd = makeTempDir('sd0x-pc-agg-');
+    const binDir = setupStubBin();
+    writeStateFile(cwd, {
+      has_code_change: true,
+      has_doc_change: false,
+      review_mode: mode,
+      code_review: { passed: true },
+      doc_review: { passed: false },
+      precommit: { passed: false },
+    });
+
+    const result = runHook({ cwd, binDir });
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /pending=aggregate_gate\b/);
+    assert.match(result.stdout, /suggested=\/codex-review-branch --dual/);
+  });
+}
 
 // --- Pending precommit ---
 

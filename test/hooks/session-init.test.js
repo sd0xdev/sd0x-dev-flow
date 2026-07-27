@@ -87,6 +87,46 @@ test('session-init: new session resets review state', () => {
   assert.equal(state.iteration_history.total_rounds_session, 8);
 });
 
+test('KNOWN DEFECT — session-init does NOT reset review_mode, so dual survives across sessions', () => {
+  // Pins current behaviour, not desired behaviour. The SessionStart transaction
+  // (hooks/session-init.sh) rewrites session_id, both change flags, the three review receipts,
+  // aggregate_gate, current_round, findings_by_round and session_commit_scope — and nothing else.
+  // `review_mode` is outside it, and no `dual → single` downgrade exists anywhere in the repo, so
+  // one `/codex-review-branch --dual` pins every later session into strict (stop-guard.sh:577)
+  // until the state file is rebuilt or hand-edited.
+  //
+  // Fixing the reset is deliberately OUT of scope for R1 — it changes the enforcement lifecycle,
+  // not the signal layer. See docs/features/auto-loop-autonomy/requests/
+  // 2026-07-26-dual-mode-signal-repair-r1.md § Scope. When a later ticket does reset it, this test
+  // is expected to fail; flip the assertion then rather than deleting it.
+  const workDir = makeTempDir('sd0x-session-init-dual-persist-');
+
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 2,
+      session_id: 'old-session-abc',
+      review_mode: 'dual',
+      has_code_change: true,
+      code_review: { executed: true, passed: true },
+      aggregate_gate: { executed: true, gate: 'READY' },
+      iteration_history: { current_round: 5, total_rounds_session: 8, findings_by_round: [] },
+    })
+  );
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-session-xyz' } });
+  assert.equal(result.status, 0);
+  const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
+
+  // The reset itself did happen — this is not a no-op session.
+  assert.equal(state.session_id, 'new-session-xyz');
+  assert.equal(state.code_review.passed, false, 'the receipts ARE reset');
+  assert.equal(state.aggregate_gate.executed, false, 'and so is the aggregate gate');
+
+  // …but the mode that governs how those receipts are judged is not.
+  assert.equal(state.review_mode, 'dual',
+    'review_mode survives SessionStart — a new session inherits strict blocking it never opted into');
+});
+
 test('session-init: same session does not reset', () => {
   const workDir = makeTempDir('sd0x-session-init-same-');
 

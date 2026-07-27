@@ -42,6 +42,97 @@ fi
 
 STATE_FILE=".claude_review_state.json"
 
+# === [AUTO_LOOP_STATE] fact emitter ===
+# BYTE-FOR-BYTE identical across all six emitter hooks; `test/hooks/auto-loop-state.test.js` pins
+# that. They share no sourced lib because `.claude/hooks/` is a FLAT install — a `lib/` subdirectory
+# would be absent on every install predating it, and the signal would vanish silently for exactly
+# those users. See docs/features/auto-loop-autonomy/requests/2026-07-26-factual-hook-signals-r2.md.
+_alf_read_tier() {
+  local rf val
+  for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
+    [[ -f "$rf" ]] || continue
+    val=$(awk '
+      /^## / { s = ($0 ~ /^## Tier[[:space:]]*$/) ? 1 : 0; next }
+      s && /<!--/ { c = 1 }
+      s && !c && /^[[:space:]]*(fast|standard|thorough)[[:space:]]*$/ { gsub(/[[:space:]]/, ""); print; exit }
+      s && /-->/ { c = 0 }
+    ' "$rf" 2>/dev/null) || val=""
+    case "$val" in fast|standard|thorough) printf '%s' "$val"; return 0 ;; esac
+  done
+  printf 'standard'
+}
+# Values that come from outside this hook — a `file_path` out of tool input, a string field out of
+# the state file — are encoded, not merely trimmed. The record is whitespace-delimited `key=value`,
+# so a legal filename is enough to forge structure: `a.ts` with an embedded newline starts a second
+# fact line, and `a.ts pending=none` inserts a second `pending=` token into the first. Both are
+# reachable by naming a file. Percent-encoding is reversible, so nothing is silently lost.
+_alf_val() {
+  # Byte-wise, or the encoding is neither valid nor host-independent: under a UTF-8 locale
+  # `${s:i:1}` yields a CHARACTER, and `'一` gives its wide value, so `檔.ts` encodes to the
+  # 4-hex-digit `%6A94.ts` on one host and `%E6%AA%94.ts` on another. No safety difference — every
+  # structure-forging byte is ASCII — but a percent-encoding that cannot be decoded is not one.
+  local LC_ALL=C
+  local s="$1" out="" i c hex
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._/@:,+-]) out+="$c" ;;
+      *) printf -v hex '%%%02X' "'$c"; out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+# Whole-line backstop for anything that reached the emitter without going through `_alf_val`.
+# One event must produce exactly one physical line even when a field was assembled elsewhere.
+_alf_flatten() {
+  local s="$1"
+  s="${s//$'\n'/\\n}"
+  printf '%s' "${s//$'\r'/\\r}"
+}
+_alf_emit() {
+  printf '[AUTO_LOOP_STATE] %s\n' "$(_alf_flatten "$*")"
+}
+# Defaulting belongs HERE, not in the jq filter. On a zero-byte state file `jq -r '.x // "d"'`
+# prints nothing and exits 0 — so neither the filter default nor a `|| echo` fallback fires, and the
+# field renders empty. A truncated write leaves exactly that file, which is when an accurate signal
+# matters most. `${out:-...}` catches empty output and a failed/absent jq through one path.
+_alf_field() {
+  local out
+  out=$(jq -r "$1" "$STATE_FILE" 2>/dev/null) || out=""
+  _alf_val "${out:-${2:-unknown}}"
+}
+# Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
+# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
+# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# state that may never have been committed, which is the one thing this signal must not do.
+#
+# THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
+# than a write result: a lost BLOCKING verdict then reads old=false, observed=false, want=false, and
+# nothing marks it degraded even though no receipt was persisted at all. `unknown` keeps the
+# unreadable case distinguishable from a recorded `false`, and it is never equal to a requested
+# verdict, so it always leaves the plane pending.
+#
+# TYPE-TESTED, not defaulted. jq's `//` selects its right operand for `false` as well as `null`, so
+# `.x.passed // "__absent__"` reported every ordinary RECORDED blocking verdict as unreadable, and
+# accepted a string `"false"` as a valid one — both backwards. A non-object parent makes jq exit
+# non-zero, which `_alf_field` already turns into `unknown`.
+_alf_receipt() {
+  case "$(_alf_field ".${1}.passed | if type == \"boolean\" then tostring else \"__absent__\" end" __absent__)" in
+    true) printf 'true' ;;
+    false) printf 'false' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+# The three fields every emitter carries identically. Degrades to `unknown`/schema defaults rather
+# than aborting a hook that runs under `set -euo pipefail`, where an abort is read as no objection.
+_alf_common() {
+  printf 'phase=%s round=%s/%s tier=%s' \
+    "$(_alf_field '.review_phase // "unknown"' unknown)" \
+    "$(_alf_field '.iteration_history.current_round // 0' 0)" \
+    "$(_alf_field '.iteration_history.max_rounds // 30' 30)" \
+    "$(_alf_read_tier)"
+}
+
 # === Portable mkdir locking (shared protocol with post-tool-review-state.sh) ===
 LOCKDIR="${STATE_FILE}.lockdir"
 # Honor REVIEW_STATE_LOCK_TIMEOUT so both writers of this shared lock protocol read
@@ -1192,6 +1283,12 @@ if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|k
     _EDIT_HOLDS_LOCK=0
     echo "[Edit Hook] Code change detected: $file_path" >&2
     echo "[Edit Hook] Invalidated code_review + precommit + aggregate_gate (iteration counter retained)" >&2
+    # `receipts=` reads all-false by construction here: the transaction that just committed is what
+    # invalidated them. The round is NOT reset by an edit, which is why it is worth stating — a
+    # reader who assumes the counter tracks edits will misjudge how close the cap is.
+    _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
+      "receipts=code_review:false,precommit:false $(_alf_common)" \
+      "pending=code_review,precommit" >&2
   else
     # Fail-closed: sidecar marker (atomic) + best-effort unlocked writes
     _set_own_sidecar "edit_lock_contention:${_EDIT_PLANE}" || true
@@ -1200,6 +1297,13 @@ if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|k
     invalidate_review "precommit" 2>/dev/null || true
     invalidate_aggregate_gate 2>/dev/null || true
     echo "[Edit Hook] Code change detected (degraded — lock contention, sidecar marker set): $file_path" >&2
+    # The degraded branch owes a fact more than the committed one does. Without it the reader sees a
+    # fact line after a clean edit and nothing after a contended one, which reads as "no edit
+    # happened" — the inverse of the truth. The invalidations above are best-effort, so `receipts`
+    # states the intent and `degraded` states that the sidecar, not the state file, is holding it.
+    _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
+      "receipts=code_review:false,precommit:false $(_alf_common)" \
+      "pending=code_review,precommit degraded=edit_lock_contention" >&2
   fi
 fi
 
@@ -1257,6 +1361,11 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
     _EDIT_HOLDS_LOCK=0
     echo "[Edit Hook] Doc change detected: $file_path" >&2
     echo "[Edit Hook] Invalidated doc_review + aggregate_gate" >&2
+    # A doc edit does not touch the code plane, so `pending` names only what this transaction
+    # invalidated — the code receipts, whatever they read, are not this event's business.
+    _alf_emit "event=doc_edit change=doc file=$(_alf_val "${file_path}")" \
+      "receipts=doc_review:false $(_alf_common)" \
+      "pending=doc_review" >&2
   else
     # Fail-closed: sidecar marker (atomic) + best-effort single unlocked jq write
     _set_own_sidecar "edit_lock_contention:${_EDIT_PLANE}" || true
@@ -1293,6 +1402,9 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
       ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_doc_tmp" 2>/dev/null
     fi
     echo "[Edit Hook] Doc change detected (degraded — lock contention, sidecar marker set): $file_path" >&2
+    _alf_emit "event=doc_edit change=doc file=$(_alf_val "${file_path}")" \
+      "receipts=doc_review:false $(_alf_common)" \
+      "pending=doc_review degraded=edit_lock_contention" >&2
   fi
 fi
 

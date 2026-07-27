@@ -39,9 +39,10 @@ const fs = require('fs');
 const args = process.argv.slice(2);
 let query;
 let file;
+let raw = false;
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
-  if (arg === '-r') continue;
+  if (arg === '-r') { raw = true; continue; }
   if (arg === '-e') continue;
   if (!query) { query = arg; continue; }
   if (!file) { file = arg; continue; }
@@ -64,7 +65,13 @@ if (query) {
       val = val && val[key];
     }
     if (val === undefined || val === null) {
-      process.stdout.write(fieldMatch[2].trim());
+      // Under -r, jq prints a string default WITHOUT its quotes: the quotes are JSON syntax in the
+      // filter, not part of the value. Emitting them made the stub report phase="unknown" where the
+      // real binary reports phase=unknown — a fidelity gap that hides quoting bugs instead of
+      // catching them.
+      let d = fieldMatch[2].trim();
+      if (raw && d.length > 1 && d.startsWith('"') && d.endsWith('"')) d = d.slice(1, -1);
+      process.stdout.write(d);
     } else {
       process.stdout.write(String(val));
     }
@@ -178,8 +185,150 @@ test('post-skill-auto-loop injects /codex-review-fast when code review pending',
   });
   const result = runHook({ cwd, binDir });
   assert.equal(result.status, 0);
-  assert.ok(result.stdout.includes('[AUTO_LOOP]'), 'should emit [AUTO_LOOP] directive');
+  assert.ok(result.stdout.includes('[AUTO_LOOP_STATE]'), 'should emit [AUTO_LOOP_STATE] directive');
   assert.ok(result.stdout.includes('/codex-review-fast'), 'should require /codex-review-fast');
+});
+
+// --- Dual mode: the aggregate plane is an obligation no code receipt can describe ---
+// `review_mode=dual` makes the AGGREGATE verdict the gate, and only the final emitter of
+// `/codex-review-branch --dual` writes that plane. Deriving this hook's output from
+// `code_review.passed` alone told the model to run `/precommit` against an obligation precommit
+// cannot discharge — stop-guard already learned to avoid that deadlock, and this hook walked back
+// into it through a different door.
+for (const [label, aggregate, wantPending, wantSuggested] of [
+  ['gate never aggregated', undefined, 'aggregate_gate', '/codex-review-branch --dual'],
+  ['aggregation ran and did not pass', { executed: true, gate: 'BLOCKED' }, 'aggregate_gate', '/codex-review-branch --dual'],
+  // The regression that makes the pair meaningful: once the aggregate reads READY the obligation is
+  // discharged, and naming it again would send the model back through the most expensive entry
+  // point in the plugin for a gate that already passed.
+  ['aggregation passed — only precommit left', { executed: true, gate: 'READY' }, 'precommit', '/precommit'],
+]) {
+  test(`dual mode, ${label} → pending=${wantPending}`, () => {
+    const cwd = makeTempDir('sd0x-ps-dual-');
+    const binDir = setupStubBin();
+    setupStubGitUntrackedAware(binDir, { tracked: ' M src/app.ts' });
+    writeStateFile(cwd, {
+      has_code_change: true,
+      has_doc_change: false,
+      review_mode: 'dual',
+      // Passing on the INDIVIDUAL plane throughout: that is exactly the state in which reading the
+      // code receipt alone looks conclusive and is not.
+      code_review: { passed: true },
+      doc_review: { passed: false },
+      precommit: { passed: false },
+      ...(aggregate ? { aggregate_gate: aggregate } : {}),
+    });
+
+    const result = runHook({ cwd, binDir });
+    assert.equal(result.status, 0);
+    const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+    assert.ok(line, `no fact block emitted; got: ${JSON.stringify(result.stdout)}`);
+    assert.match(line, new RegExp(`pending=${wantPending}\\b`));
+    assert.match(line, new RegExp(`suggested=${wantSuggested.replace(/[/\\]/g, '\\$&')}`));
+    if (wantPending !== 'aggregate_gate') {
+      assert.doesNotMatch(line, /aggregate_gate/,
+        'a discharged aggregate gate must not be re-reported — that is the deadlock, restated');
+    }
+  });
+}
+
+test('dual mode inherited by a clean session does not manufacture an aggregate obligation', () => {
+  // SessionStart resets the change flags and `aggregate_gate.executed` but deliberately PRESERVES
+  // `review_mode` (hooks/session-init.sh). Reading the mode alone therefore greets a session that has
+  // changed nothing by naming the most expensive entry point in the plugin.
+  const cwd = makeTempDir('sd0x-ps-dual-clean-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: '' });
+  writeStateFile(cwd, {
+    has_code_change: false,
+    has_doc_change: false,
+    review_mode: 'dual',
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  if (line) {
+    assert.doesNotMatch(line, /aggregate_gate/,
+      'no code change means nothing to aggregate — the obligation is gated on the change, not the mode');
+  }
+});
+
+test('an unrecognized review_mode falls to dual, matching stop-guard', () => {
+  // stop-guard normalizes any non-enum value to dual and has a regression test for `duel`. Testing
+  // `== "dual"` alone downgrades the same state to single here, so this hook would name
+  // `/codex-review-fast` for a state Stop refuses to let go without `/codex-review-branch --dual`.
+  const cwd = makeTempDir('sd0x-ps-mode-duel-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: ' M src/app.ts' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    review_mode: 'duel',
+    code_review: { passed: true },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /pending=aggregate_gate\b/);
+  assert.match(line, /suggested=\/codex-review-branch --dual/);
+});
+
+test('single mode plus an aggregate_write_failed marker still names the aggregate gate', () => {
+  // The inverse leak: a transition that failed BEFORE persisting `review_mode=dual` leaves the marker
+  // behind with the mode still reading `single`. stop-guard classifies that as an aggregate
+  // obligation; reading the mode alone made this hook name `/codex-review-fast`, which cannot
+  // discharge it. Same deadlock, opposite door.
+  const cwd = makeTempDir('sd0x-ps-marker-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: ' M src/app.ts' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    review_mode: 'single',
+    code_review: { passed: true },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(cwd, '.claude_review_state.json.blocked.event.1'), 'aggregate_write_failed\n');
+
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /pending=aggregate_gate\b/);
+  assert.match(line, /suggested=\/codex-review-branch --dual/);
+});
+
+test('a marker naming some other reason does not claim the aggregate plane', () => {
+  // The match is whole-line for a reason: `code_review` sidecars are the common case, and a
+  // substring test over the body would hand every one of them the most expensive gate in the plugin.
+  const cwd = makeTempDir('sd0x-ps-marker-other-');
+  const binDir = setupStubBin();
+  setupStubGitUntrackedAware(binDir, { tracked: ' M src/app.ts' });
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: false,
+    review_mode: 'single',
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(cwd, '.claude_review_state.json.blocked.event.1'), 'not_aggregate_write_failed\n');
+
+  const result = runHook({ cwd, binDir });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `no fact block emitted; got: ${JSON.stringify(result.stdout)}`);
+  assert.doesNotMatch(line, /aggregate_gate/);
+  assert.match(line, /suggested=\/codex-review-fast/);
 });
 
 // --- Stale-state reconciliation regression (pins -uno→-uall + ||-outside-$() fixes) ---
@@ -288,7 +437,7 @@ test('reconciliation: dirty .ipynb keeps has_code_change → injects review', ()
   );
 });
 
-test('reconciliation: a NON-C-locale directory-omission warning does NOT downgrade the code flag → still emits [AUTO_LOOP] (iter-20 P1, host-independent)', (t) => {
+test('reconciliation: a NON-C-locale directory-omission warning does NOT downgrade the code flag → still emits [AUTO_LOOP_STATE] (iter-20 P1, host-independent)', (t) => {
   // Locale-aware stub git + timeout shim so the stale-state reconciliation branch fires
   // deterministically on any host (no installed zh_TW needed). Ambient LC_ALL is a non-C string:
   // a hook that forgot to force LC_ALL=C would let the stub emit its localized (non-ASCII) omission
@@ -308,7 +457,7 @@ test('reconciliation: a NON-C-locale directory-omission warning does NOT downgra
   const result = runHook({ cwd: workDir, binDir, env: { PATH: binDir, ...AMBIENT_NON_C_ENV } });
   assert.equal(result.status, 0);
   assert.ok(
-    result.stdout.includes('[AUTO_LOOP]') && result.stdout.includes('/codex-review-fast'),
+    result.stdout.includes('[AUTO_LOOP_STATE]') && result.stdout.includes('/codex-review-fast'),
     'the hook must force LC_ALL=C so git\'s omission warning is the English form its regex matches → hold → emit, regardless of ambient locale'
   );
 });

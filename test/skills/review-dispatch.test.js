@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync, existsSync, statSync } = require('node:fs');
+const { readFileSync, existsSync, statSync, readdirSync } = require('node:fs');
 const { resolve } = require('node:path');
 
 const root = resolve(__dirname, '../..');
@@ -264,4 +264,129 @@ test('doc review loop does not re-open on sub-threshold findings', () => {
   const loop = read('skills/doc-review/references/review-loop-doc.md');
   assert.match(loop, /Do not re-raise the previous round's\n🟡\/⚪ items/,
     're-review must not re-surface deferred items — that is how a doc loop buys extra rounds');
+});
+
+// --- review_mode persistence: the docs must describe the lifetime the code actually implements ---
+//
+// R1 (docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md) found
+// three authoritative places claiming `--dual` forces strict "for the rest of the session". It does
+// not: SessionStart rewrites the receipts but leaves `review_mode` alone, and no downgrade
+// transition exists anywhere, so one `--dual` pins every later session into strict.
+
+const DUAL_LIFETIME_DOCS = [
+  'skills/codex-review-branch/SKILL.md',
+  'skills/codex-code-review/SKILL.md',
+  'skills/codex-code-review/references/review-common.md',
+];
+
+test('no dual-mode doc claims the strict escalation is session-bounded', () => {
+  for (const file of DUAL_LIFETIME_DOCS) {
+    assert.doesNotMatch(read(file), /rest of the session/,
+      `${file}: "for the rest of the session" is false — SessionStart preserves review_mode`);
+  }
+});
+
+test('every dual-mode doc states the real persistence boundary and the absent downgrade', () => {
+  for (const file of DUAL_LIFETIME_DOCS) {
+    const content = read(file);
+    assert.match(content, /until the state file is rebuilt or/,
+      `${file}: must name the boundary that actually ends the escalation`);
+    assert.match(content, /no supported `dual → single` downgrade|there is no supported `dual → single` downgrade/,
+      `${file}: a reader who is told the escalation persists will look for a way out — say there is none`);
+  }
+});
+
+test('no dual-mode doc claims a default invocation leaves the effective mode single', () => {
+  // Dispatch and effective enforcement state are different facts, and the docs used to conflate
+  // them: "`review_mode` stays at its initialized value" reads as a guarantee about the CURRENT
+  // state when it is only true of a state that never saw `--dual`. That mattered because the same
+  // sentence promised `code_review.passed` governs the gate — a recovery path stop-guard will not
+  // honour while a persisted dual is in force, so a reader following it loops.
+  for (const [file, retracted] of [
+    ['skills/codex-code-review/SKILL.md', /`review_mode` stays at its initialized value/],
+    ['skills/codex-code-review/references/review-common.md', /in which case `review_mode` stays/],
+  ]) {
+    assert.doesNotMatch(read(file), retracted,
+      `${file}: reasserted an unconditional "stays single" claim about the effective mode`);
+  }
+  assert.match(read('skills/codex-code-review/SKILL.md'),
+    /Emitting no transition is not the same as returning to single/,
+    'SKILL.md must keep the distinction that makes the default-mode paragraph true');
+  const reviewCommon = read('skills/codex-code-review/references/review-common.md');
+  assert.match(reviewCommon, /does not reset (a persisted `review_mode=dual`|it)/,
+    'review-common.md must say the default path cannot discharge an inherited dual gate');
+  assert.match(reviewCommon, /no downgrade exists/,
+    'and that there is no way back — otherwise a reader assumes one exists and waits for it');
+  // The field is not the only trigger, and this is the assertion that says so. A marker can arm the
+  // gate while `review_mode` still reads single, so a reader checking only the field concludes
+  // "single, done" and loops against a gate that will not open. The marker and the mode are written
+  // on independent paths with opposite orderings — see review-common.md § Aggregate-Plane Writes.
+  for (const file of [
+    'skills/codex-code-review/SKILL.md',
+    'skills/codex-code-review/references/review-common.md',
+  ]) {
+    assert.match(read(file), /`aggregate_write_failed`.*`lock_failure`|`lock_failure`.*`aggregate_write_failed`/s,
+      `${file}: must name the marker case, not just the review_mode field`);
+  }
+});
+
+test('the docs call cross-session dual persistence a defect, not a feature', () => {
+  // "That is the point of asking for it" attached to the persistence sentence characterized a
+  // known defect as intended behaviour — the opposite of what the R1 ticket records.
+  assert.match(read('skills/codex-code-review/SKILL.md'), /known defect/i,
+    'SKILL.md must not present persistence beyond the requesting session as a feature to rely on');
+});
+
+test('review_mode writes keep the initialize-single / transition-only-to-dual invariant', () => {
+  // The claim in the docs above is only true while this holds. Pinning "exactly two write sites"
+  // would be the wrong invariant — it breaks on a harmless refactor and says nothing about
+  // direction. What matters is the SHAPE: constructors seed `single`, every write to an existing
+  // state moves to `dual`, and nothing moves back.
+  //
+  // Scanned repo-wide, not over a hard-coded file list: a downgrade added in a new hook, in
+  // `scripts/`, or in a file nobody thought to enumerate is exactly the case a fixed list misses.
+  // `{recursive: true}` without `withFileTypes` yields relative path STRINGS, which sidesteps the
+  // Dirent.parentPath/Dirent.path rename across Node versions — this suite has to run on whatever
+  // the host ships.
+  const shellSources = ['hooks', 'scripts']
+    .flatMap((dir) => readdirSync(resolve(root, dir), { recursive: true })
+      .filter((p) => /\.(sh|js)$/.test(p))
+      .map((p) => `${dir}/${p}`));
+  assert.ok(shellSources.length > 10, 'source enumeration collapsed — the guard would go vacuous');
+
+  // Constructors: the literal sits inside the initial-state JSON template, so it is a seed, not a
+  // transition. Both writer hooks carry their own copy of that template.
+  for (const file of ['hooks/post-tool-review-state.sh', 'hooks/post-edit-format.sh']) {
+    assert.match(read(file), /"review_mode":\s*"single",/,
+      `${file}: the initial-state template must still seed review_mode to single`);
+  }
+
+  // Transitions against an existing state. Three shapes, because a downgrade need not be a literal
+  // assignment: `.review_mode = X` (any value, quoted or a jq variable), `setpath(["review_mode"];…)`
+  // and `del(.review_mode)` — deleting the field is a downgrade, since every reader defaults it to
+  // single. A variable-valued write is unresolvable here, so it fails rather than being waved past:
+  // the invariant is "only ever dual", and a value this guard cannot read is not proof of that.
+  let transitions = 0;
+  for (const file of shellSources) {
+    const src = read(file);
+    for (const m of src.matchAll(/\.review_mode\s*=\s*(?!=)(\$?\w+|"[^"]*")/g)) {
+      transitions += 1;
+      assert.equal(m[1], '"dual"',
+        `${file}: transition writing ${m[1]} — anything but a literal "dual" is a downgrade path, `
+          + 'or a value this guard cannot verify, and the docs promise neither exists');
+    }
+    assert.doesNotMatch(src, /setpath\(\s*\[\s*"review_mode"/,
+      `${file}: setpath into review_mode bypasses the assignment form this guard reads`);
+    assert.doesNotMatch(src, /del\(\s*\.review_mode\s*\)/,
+      `${file}: deleting review_mode is a downgrade — every reader defaults the absent field to single`);
+  }
+  assert.ok(transitions >= 2,
+    `only ${transitions} review_mode transitions found repo-wide; the known writers are `
+      + 'post-tool-review-state.sh PENDING + aggregate-blocked fallback — fewer means the pattern moved');
+
+  // SessionStart preserves the field. Pinned behaviourally in test/hooks/session-init.test.js
+  // ("KNOWN DEFECT — session-init does NOT reset review_mode"); pinned textually here so a reset
+  // added to the jq transaction fails in both places at once.
+  assert.doesNotMatch(read('hooks/session-init.sh'), /\.review_mode\s*=/,
+    'session-init resetting review_mode would invalidate the persistence claim in all three docs');
 });

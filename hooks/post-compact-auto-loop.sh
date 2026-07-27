@@ -34,6 +34,97 @@ fi
 
 STATE_FILE=".claude_review_state.json"
 
+# === [AUTO_LOOP_STATE] fact emitter ===
+# BYTE-FOR-BYTE identical across all six emitter hooks; `test/hooks/auto-loop-state.test.js` pins
+# that. They share no sourced lib because `.claude/hooks/` is a FLAT install — a `lib/` subdirectory
+# would be absent on every install predating it, and the signal would vanish silently for exactly
+# those users. See docs/features/auto-loop-autonomy/requests/2026-07-26-factual-hook-signals-r2.md.
+_alf_read_tier() {
+  local rf val
+  for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
+    [[ -f "$rf" ]] || continue
+    val=$(awk '
+      /^## / { s = ($0 ~ /^## Tier[[:space:]]*$/) ? 1 : 0; next }
+      s && /<!--/ { c = 1 }
+      s && !c && /^[[:space:]]*(fast|standard|thorough)[[:space:]]*$/ { gsub(/[[:space:]]/, ""); print; exit }
+      s && /-->/ { c = 0 }
+    ' "$rf" 2>/dev/null) || val=""
+    case "$val" in fast|standard|thorough) printf '%s' "$val"; return 0 ;; esac
+  done
+  printf 'standard'
+}
+# Values that come from outside this hook — a `file_path` out of tool input, a string field out of
+# the state file — are encoded, not merely trimmed. The record is whitespace-delimited `key=value`,
+# so a legal filename is enough to forge structure: `a.ts` with an embedded newline starts a second
+# fact line, and `a.ts pending=none` inserts a second `pending=` token into the first. Both are
+# reachable by naming a file. Percent-encoding is reversible, so nothing is silently lost.
+_alf_val() {
+  # Byte-wise, or the encoding is neither valid nor host-independent: under a UTF-8 locale
+  # `${s:i:1}` yields a CHARACTER, and `'一` gives its wide value, so `檔.ts` encodes to the
+  # 4-hex-digit `%6A94.ts` on one host and `%E6%AA%94.ts` on another. No safety difference — every
+  # structure-forging byte is ASCII — but a percent-encoding that cannot be decoded is not one.
+  local LC_ALL=C
+  local s="$1" out="" i c hex
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [A-Za-z0-9._/@:,+-]) out+="$c" ;;
+      *) printf -v hex '%%%02X' "'$c"; out+="$hex" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+# Whole-line backstop for anything that reached the emitter without going through `_alf_val`.
+# One event must produce exactly one physical line even when a field was assembled elsewhere.
+_alf_flatten() {
+  local s="$1"
+  s="${s//$'\n'/\\n}"
+  printf '%s' "${s//$'\r'/\\r}"
+}
+_alf_emit() {
+  printf '[AUTO_LOOP_STATE] %s\n' "$(_alf_flatten "$*")"
+}
+# Defaulting belongs HERE, not in the jq filter. On a zero-byte state file `jq -r '.x // "d"'`
+# prints nothing and exits 0 — so neither the filter default nor a `|| echo` fallback fires, and the
+# field renders empty. A truncated write leaves exactly that file, which is when an accurate signal
+# matters most. `${out:-...}` catches empty output and a failed/absent jq through one path.
+_alf_field() {
+  local out
+  out=$(jq -r "$1" "$STATE_FILE" 2>/dev/null) || out=""
+  _alf_val "${out:-${2:-unknown}}"
+}
+# Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
+# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
+# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# state that may never have been committed, which is the one thing this signal must not do.
+#
+# THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
+# than a write result: a lost BLOCKING verdict then reads old=false, observed=false, want=false, and
+# nothing marks it degraded even though no receipt was persisted at all. `unknown` keeps the
+# unreadable case distinguishable from a recorded `false`, and it is never equal to a requested
+# verdict, so it always leaves the plane pending.
+#
+# TYPE-TESTED, not defaulted. jq's `//` selects its right operand for `false` as well as `null`, so
+# `.x.passed // "__absent__"` reported every ordinary RECORDED blocking verdict as unreadable, and
+# accepted a string `"false"` as a valid one — both backwards. A non-object parent makes jq exit
+# non-zero, which `_alf_field` already turns into `unknown`.
+_alf_receipt() {
+  case "$(_alf_field ".${1}.passed | if type == \"boolean\" then tostring else \"__absent__\" end" __absent__)" in
+    true) printf 'true' ;;
+    false) printf 'false' ;;
+    *) printf 'unknown' ;;
+  esac
+}
+# The three fields every emitter carries identically. Degrades to `unknown`/schema defaults rather
+# than aborting a hook that runs under `set -euo pipefail`, where an abort is read as no objection.
+_alf_common() {
+  printf 'phase=%s round=%s/%s tier=%s' \
+    "$(_alf_field '.review_phase // "unknown"' unknown)" \
+    "$(_alf_field '.iteration_history.current_round // 0' 0)" \
+    "$(_alf_field '.iteration_history.max_rounds // 30' 30)" \
+    "$(_alf_read_tier)"
+}
+
 # Sidecar evidence lives in TWO places: the shared `.blocked` file and per-event emergency markers
 # named `.blocked.event.*` ALONGSIDE it. The second plane exists because clearers rewrite the shared
 # file wholesale,
@@ -57,6 +148,20 @@ _sidecar_any() {
   # `nullglob` dependency. A symlink at a marker name is not evidence either; see _sidecar_is_marker.
   for f in "${SIDECAR_EVENT_PREFIX}"*; do
     _sidecar_is_marker "$f" && return 0
+  done
+  return 1
+}
+
+# Reads the sidecar bodies directly — these hooks have no `_SIDECAR_RAW`. Same two reasons and the
+# same whole-line rule as stop-guard's `_agg_marker_in`; a substring test would let a longer reason
+# name containing one of these count as it.
+# See docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md.
+_alf_agg_marker() {
+  local p body
+  for p in "${STATE_FILE}.blocked" "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$p" || continue
+    body=$'\n'"$(cat "$p" 2>/dev/null || true)"$'\n'
+    [[ "$body" == *$'\n'aggregate_write_failed$'\n'* || "$body" == *$'\n'lock_failure$'\n'* ]] && return 0
   done
   return 1
 }
@@ -231,9 +336,38 @@ if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
   fi
 fi
 
+# Dual mode adds a plane no code receipt can describe — same derivation and same reason as
+# post-skill-auto-loop.sh; see the comment there and
+# docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md.
+AGG_OUTSTANDING=false
+# Gated on an actual code change, and covering the marker case where the mode never persisted —
+# same derivation and same reasoning as post-skill-auto-loop.sh; see the comment there.
+if [[ "$HAS_CODE" == "true" ]]; then
+  # Same closed enum and same fail-closed default as stop-guard (hooks/stop-guard.sh, "Unrecognized
+  # review_mode"). A typo like `duel` fails every `== "dual"` test, and testing equality alone
+  # silently downgrades dual->single HERE while Stop still treats it as dual — the two then name
+  # different recovery commands for one state, which is the contradiction R1 removed.
+  _REVIEW_MODE=$(jq -r '.review_mode // "single"' "$STATE_FILE" 2>/dev/null || echo single)
+  # A zero-byte state file makes jq exit 0 with NO output, so neither the filter default nor the
+  # `|| echo` fires and the value arrives empty. Empty is not an unrecognized mode — Stop replaces a
+  # corrupt snapshot with `{}` and reads `single` from it, so falling to dual here would put the two
+  # hooks back on different recovery commands for one state, which is the divergence just closed.
+  _REVIEW_MODE="${_REVIEW_MODE:-single}"
+  [[ "$_REVIEW_MODE" == "single" || "$_REVIEW_MODE" == "dual" ]] || _REVIEW_MODE="dual"
+  if [[ "$_REVIEW_MODE" == "dual" ]]; then
+    _agg_exec=$(jq -r '.aggregate_gate.executed // false' "$STATE_FILE" 2>/dev/null || echo false)
+    _agg_gate=$(jq -r '.aggregate_gate.gate // ""' "$STATE_FILE" 2>/dev/null || echo "")
+    [[ "$_agg_exec" == "true" && "$_agg_gate" == "READY" ]] || AGG_OUTSTANDING=true
+  elif _alf_agg_marker; then
+    AGG_OUTSTANDING=true
+  fi
+fi
+
 # Derive next required command
 NEXT=""
-if [[ "$HAS_CODE" == "true" && "$CODE_PASSED" != "true" ]]; then
+if [[ "$AGG_OUTSTANDING" == "true" ]]; then
+  NEXT="/codex-review-branch --dual"
+elif [[ "$HAS_CODE" == "true" && "$CODE_PASSED" != "true" ]]; then
   NEXT="/codex-review-fast"
 elif [[ "$HAS_CODE" == "true" && "$CODE_PASSED" == "true" && "$PRE_PASSED" != "true" ]]; then
   NEXT="/precommit"
@@ -323,17 +457,27 @@ if [[ -n "$NEXT" ]]; then
     fi
   fi
 
+  # Keeps its own `[AUTO_LOOP_RESUME]` header — the field set is isomorphic with `[AUTO_LOOP_STATE]`
+  # so one parser reads both, but the tag has to stay distinguishable: this one fires on compaction,
+  # where the useful fact is that the state was re-read from disk rather than carried through a
+  # summary that may have dropped it.
+  _ALF_CHANGE="none"
+  [[ "$HAS_CODE" == "true" ]] && _ALF_CHANGE="code"
+  [[ "$HAS_DOC" == "true" ]] && _ALF_CHANGE="doc"
+  [[ "$HAS_CODE" == "true" && "$HAS_DOC" == "true" ]] && _ALF_CHANGE="code,doc"
+  _ALF_PENDING=""
+  [[ "$AGG_OUTSTANDING" == "true" ]] && _ALF_PENDING="aggregate_gate"
+  [[ "$HAS_CODE" == "true" && "$CODE_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}code_review"
+  [[ "$HAS_DOC" == "true" && "$DOC_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}doc_review"
+  [[ "$HAS_CODE" == "true" && "$PRE_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}precommit"
+  _ALF_DEGRADED=""
+  [[ "$GIT_PORCELAIN" == "__GIT_UNAVAILABLE__" ]] && _ALF_DEGRADED=" degraded=change_flags_unreconciled"
   cat <<EOF
-[AUTO_LOOP_RESUME]
-Context was compacted. Auto-loop state is still active.
+[AUTO_LOOP_RESUME] event=compaction change=${_ALF_CHANGE} receipts=code_review:${CODE_PASSED},doc_review:${DOC_PASSED},precommit:${PRE_PASSED} $(_alf_common) pending=${_ALF_PENDING:-none} suggested=${NEXT}${_ALF_DEGRADED}
+Context was compacted. The state above was re-read from the state file, not recovered from the summary.
 ${ITER_LINE:+${ITER_LINE}
 }${THINK_HARDER:+${THINK_HARDER}
-}Required next step: ${NEXT}
-Core rules (re-injected):
-1) Declaring != Executing: saying "need to run X" without invoking the tool is a violation
-2) Summary != Completion: outputting a summary then stopping is a violation
-3) Execute review in same reply after edit — do not stop, do not ask
-Do not ask "should I continue" — execute ${NEXT} now.
+}
 EOF
 
   # R9: Git-as-memory injection (opt-in)

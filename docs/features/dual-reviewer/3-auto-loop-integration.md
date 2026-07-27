@@ -1,5 +1,7 @@
 # 雙 Reviewer Auto-Loop 整合 — 技術規格
 
+> **As-built 勘誤（2026-07-27）**：本文屬 dual-reviewer 家族的歷史紀錄，描述的是當初的設計，**未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。兩項全家族適用的撤銷：dual 已改為 opt-in，唯一入口是 `/codex-review-branch --dual`，**並非**每次 code review 都觸發；Codex 失敗永不降級為通過的 gate。詳見 [tech spec 勘誤](./2-tech-spec.md)。
+
 ## 1. 需求摘要
 
 - **問題**: 雙 reviewer 基礎設施已完成（SKILL.md + hooks + state），但 command `.md` 的 Workflow section 只描述 single Codex review，`auto-loop.md` 也不感知 dual mode，導致 Claude 實際行為中幾乎不觸發 dual dispatch

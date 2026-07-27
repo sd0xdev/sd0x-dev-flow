@@ -4,6 +4,7 @@
 > **Status**: Completed
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
+> **As-built 勘誤（2026-07-27）**：本單屬歷史紀錄，**未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。兩項已知撤銷：Requirements 表「雙 reviewer 並行：預設同時啟動」——dual 已改為 opt-in，唯一入口是 `/codex-review-branch --dual`；「降級串接：Codex 失敗 → 次要 reviewer 單獨出 gate」——Codex 失敗永不降級為通過的 gate，現行為 `⛔ Blocked` + `⚠️ Need Human`、gate source `none`。詳見 [tech spec 勘誤](../2-tech-spec.md)。
 
 ## Background
 

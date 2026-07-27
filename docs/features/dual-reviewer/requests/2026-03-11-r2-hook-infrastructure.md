@@ -6,6 +6,7 @@
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Parent Request**: [dual-reviewer-parallel-architecture.md](./2026-03-11-dual-reviewer-parallel-architecture.md)
 > **Depends On**: [R1 Foundation](./2026-03-11-r1-foundation-config.md)
+> **As-built 勘誤（2026-07-27）**：本單屬 dual-reviewer 家族的歷史紀錄，**未逐條查核，遇有疑義一律以現行契約為準**（`skills/codex-code-review/`）。兩項全家族適用的撤銷：dual 已改為 opt-in，唯一入口是 `/codex-review-branch --dual`；Codex 失敗永不降級為通過的 gate。`emit-review-gate.sh` 各引數對 `review_mode` / `aggregate_gate` 的實際寫入行為，以 `skills/codex-code-review/references/review-common.md` § Aggregate-Plane Writes 為準。詳見 [tech spec 勘誤](../2-tech-spec.md)。
 
 ## Background
 

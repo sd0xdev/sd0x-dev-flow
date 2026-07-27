@@ -17,7 +17,9 @@ Or run: /install-rules --customize auto-loop --add-section
        fast      — P0 blocks;       cap 3.  Docs, config, small low-risk edits.
        standard  — P0/P1 block;     cap 5.  Ordinary features and bug fixes. (default)
        thorough  — P0/P1/P2 block;  cap 30. Security, data integrity, releases, public API.
-     Blank or unrecognized means standard. Behaviour-layer only — no hook reads this.
+     Blank or unrecognized means standard. Hooks READ this value and report it as `tier=` in
+     their [AUTO_LOOP_STATE] output; what they do NOT do is enforce it — which severities block,
+     and whether a gate re-opens, stays behaviour-layer.
      Security and data-integrity changes are treated as thorough regardless.
      To override: uncomment below, leaving a bare tier name. -->
 
