@@ -5,7 +5,7 @@
 ### Problem
 
 Auto-loop 系統存在 4 個核心缺口（Deep Research 2026-03-24 識別）：
-1. 迭代計數器已實作（schema v2，`auto-loop.md:86` hard cap 10 rounds）但缺少收斂偵測（fingerprint overlap）
+1. 迭代計數器已實作（schema v2，`rules/auto-loop.md` § Exit Conditions 的 hard cap；當時預設 10，2026-07-26 起為 30）但缺少收斂偵測（fingerprint overlap）
 2. Review 存在 64.5% 自我修正盲點（Self-Correction Bench, arXiv 2507.02778）
 3. Code review 不引用 spec — 從 diff 反推意圖（"archaeological review"）
 4. P2/Nit deferred findings 不跨 session 持久化 — alert fatigue
@@ -14,7 +14,7 @@ Auto-loop 系統存在 4 個核心缺口（Deep Research 2026-03-24 識別）：
 
 | Goal | Metric | Target |
 |------|--------|--------|
-| G1 | 同一 issue 最大迭代次數 | <= 10 rounds (hard cap, configurable via `auto-loop-project.md`) |
+| G1 | 同一 issue 最大迭代次數 | 不超過生效中的 hard cap（hook 端預設 30，`auto-loop-project.md` 的 `## Max Rounds` 可覆寫；行為層另依 tier 自律，見 § Rule alignment） |
 | G2 | Review false positive rate | 降低 >= 50%（Wait prompt baseline: 89.3%） |
 | G3 | AC coverage visibility | 每次 review 輸出 AC mapping（有 spec 時） |
 | G4 | Nit 跨 session 去重率 | 不重複嘗試已 deferred 的 finding |
@@ -99,7 +99,7 @@ flowchart TD
 
   "iteration_history": {
     "current_round": 2,
-    "max_rounds": 10,
+    "max_rounds": 30,
     "total_rounds_session": 5,
     "strategic_reset_fired": false,
     "findings_by_round": [
@@ -112,7 +112,14 @@ flowchart TD
 
 **Migration**: Hook 讀取 `schema_version`；缺失時視為 v1（向後相容）。新欄位全部 optional，舊 hook 忽略。
 
-**Rule alignment**: `max_rounds` 由 `rules/auto-loop.md` § Tiers 決定（`fast` 3 / `standard` 5 / `thorough` 10，未設定即 `standard`；`auto-loop-project.md` 的 `## Max Rounds` 可覆寫），state file 追蹤 `current_round`。本節原文寫「預設 10」，那是 2026-07-26 導入 tier 之前的單一預設值。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改 max_rounds 數值。
+**Rule alignment**：「round cap」其實有**兩個不同的限制共用一個名字**，本節原文（單一預設 10）寫於兩者尚未分家之前。
+
+| 層 | 值 | 誰讀 | 效果 |
+|----|----|------|------|
+| 行為層 tier cap | `fast` 3 / `standard` 5 / `thorough` 30；未設定即 `standard` | 只有模型自己（`rules/auto-loop.md` § Tiers） | 決定實務上該收手的輪數。tier **名稱**沒有任何 hook 會讀（`auto-loop-project.md:20`），但下面那個覆寫開關會 |
+| Hook 端 `iteration_history.max_rounds` | 預設 30（2026-07-26 由 10 提高） | `stop-guard` 等 hook 讀取並檢查——只有 `strict`／dual 會真的擋下 | 收斂的硬底線 |
+
+`## Max Rounds`（3–50）是**兩層共用的覆寫開關**：設定後行為層 cap 與 hook 持久化的 `max_rounds` 同時採用該值（`rules/auto-loop.md` § Tiers）。兩者只在**未設定**時分岔——`standard` 的行為層 cap 是 5，而 hook 持久化的是 30，前者是自律，後者是背板。且 stop-guard 只在 `strict`／dual 模式真的擋下；預設 `warn` 只寫 stderr 然後 exit 0（`hooks/stop-guard.sh:1181`），所以預設情境下真正的執行者仍是行為層。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改任一數值。
 
 #### Nit History File (`.claude_nit_history.json`)
 
@@ -291,7 +298,7 @@ fi
 **New sentinel** for compact hook:
 
 ```
-[ITERATION_STATE] round=2/10 | findings=[4,1] | trend=converging
+[ITERATION_STATE] round=2/30 | findings=[4,1] | trend=converging
 ```
 
 #### T5: Nit History (Phase C)
@@ -352,35 +359,42 @@ _gc_nit_history() {
 
 ### 3.4 Schema Migration (Unified)
 
-**Current state**: Migration function `_migrate_state_v2` 已定義在 `post-tool-review-state.sh`，呼叫點在 `_update_iteration()` 內。`post-edit-format.sh` 有定義但未呼叫。
+**Status**: B-0 已完成出貨。下表是 **as-built**，不是待辦；早期版本記錄的 `post-edit-format.sh`「有定義但未呼叫」以及 `:209`／`:160` 兩個行號都已過時。行號會隨改動漂移，故一律以函式名定位。
 
-**Target state**（B-0 task scope）: 兩個 state writer 都需呼叫 migration：
+| 呼叫者 | 條件 |
+|--------|------|
+| `post-tool-review-state.sh` `_update_iteration()` | 無條件——code-review 路徑上唯一的直接呼叫者 |
+| `post-tool-review-state.sh` `_migrate_state_plan_review()` | **僅限 pre-v3**；該函式對 v3 立即 return，所以 v3 state 走不到 |
+| `post-edit-format.sh` `update_change_flag()` | 無條件（`_migrate_state_v2 "$STATE_FILE" \|\| true`） |
 
-| Writer | Current | Target |
-|--------|---------|--------|
-| `post-tool-review-state.sh` `_update_iteration()` | ✅ Calls `_migrate_state_v2` at `:209` | 維持 |
-| `post-edit-format.sh` state reset | ❌ Defined but not called | 新增呼叫點 at `:160` |
+`update_state()` **不**呼叫 migration——它只呼叫 `_reconcile_max_rounds`。兩者責任不同：migration 建立缺失的子樹，reconcile 修正既有子樹的 cap。「父層為 null」這個形狀 migration 永遠碰不到（`has("iteration_history")` 對顯式 null 為 true，其 `//=` 只填**缺失**的子樹），因此改由 reconcile：分類器把 null／缺失父層歸為 `absent`，write 再一併具現化。
 
-Shared function:
+Reconcile 同時處理**三個語意各異的值**（數值上可以相同——收斂後的正常狀態三者相等——但混用任兩個都是實際 bug）：**持久化的 cap**、**stop-guard clamp 後真正生效的 cap**（<3 → 3，>50 → 50）、以及**設定的 cap**。clamp 只用來檢驗 stop-guard 那道 shell regex 會看到的**拼寫**（`1e2` clamp 成 `50` 被接受；`4e1`、`30.0` 保留原拼寫被判 corrupt）；分類器**輸出的是持久化的原值**。曾經輸出 clamp 後的值，於是持久化 100 對上設定 50 被視為相等而抑制了自己的修復，而 `update_state()` 的 precommit 重置閘門比的又是原值（`$m == $rmr`），導致 `current_round` 未被重置、輪次債務被帶進下一輪。逐形狀對照的證據在 `test/hooks/jq-filter-fidelity.test.js`。
+
+Shared function — the shape, not the shipped source:
 
 ```bash
 _migrate_state_v2() {
   local state_file="${1:-.claude_review_state.json}"
   [[ ! -f "$state_file" ]] && return 0
-  local ver
+  local ver has_iter
   ver=$(jq -r '.schema_version // 1' "$state_file" 2>/dev/null || echo 1)
-  if [[ "$ver" -lt 2 ]]; then
-    local now tmp
-    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  has_iter=$(jq -r 'has("iteration_history")' "$state_file" 2>/dev/null || echo "true")
+  # CONTENT gate, not just a version gate: a v2/v3 state that lost the subtree is repaired too.
+  if [[ "$ver" -lt 2 || "$has_iter" != "true" ]]; then
+    local mr tmp
+    mr=$(_read_project_max_rounds 30)   # `## Max Rounds` override, else the shipped default
     tmp=$(mktemp)
-    jq '.schema_version = 2
-      | .iteration_history //= {"current_round": 0, "max_rounds": 10, "total_rounds_session": 0, "strategic_reset_fired": false, "findings_by_round": []}' \
+    jq --argjson mr "$mr" '.schema_version = 2
+      | .iteration_history //= {"current_round": 0, "max_rounds": $mr, "total_rounds_session": 0, "strategic_reset_fired": false, "findings_by_round": []}' \
       "$state_file" > "$tmp" && mv "$tmp" "$state_file"
   fi
 }
 ```
 
-**Backward compatibility**: `//=` (jq alternative assignment) only adds fields if absent. Hooks reading v1 state ignore unknown fields.
+The live version adds, **non-exhaustively**: lock staging in place of a bare `mktemp`, a `-s` size guard, temp cleanup on failure, an ownership recheck before the rename, non-numeric `schema_version` normalization, a never-downgrade clause for v3 states, and `2>/dev/null` on the jq write. Read the source before relying on this sketch for anything but the `//=` shape.
+
+**Backward compatibility**: `//=` (jq alternative assignment) only adds fields if absent. Hooks reading v1 state ignore unknown fields. That is also why raising the shipped default alone never reaches an existing install — `//=` fills a *missing* subtree, so a state already carrying `max_rounds: 10` keeps it until `_reconcile_max_rounds` rewrites it.
 
 ## 4. Risks and Dependencies
 
@@ -448,7 +462,7 @@ Grand total: 9d
 
 **B-1 Iteration Counter**:
 - Happy path: findings decrease over 3 rounds → converging
-- Hard cap: 10 rounds reached → exit with `Need Human`
+- Hard cap: `current_round` 觸及生效中的 `max_rounds`（預設 30）→ exit with `Need Human`
 - True plateau: findings[3] >= findings[2] AND fingerprint overlap >= 50% → exit
 - New issues: findings[3] >= findings[2] AND fingerprint overlap < 50% → continue
 - Null total: parse failure → continue (rely on hard cap)
@@ -461,232 +475,13 @@ Grand total: 9d
 - TTL expired → removed on next write
 - Corrupted file → delete + recreate
 
-## Phase D: Hook Hardening（Deep Research 2026-03-31 識別）
+## Phase D: Hook Hardening
 
-> 來源：`/deep-research` codex-plugin-cc 可借鑑做法 + 現有 auto-loop 24-finding 缺口分析
-
-### D-1: `stop_hook_active` Recursion Guard（P0）
-
-**Problem**: Strict mode `exit 2` → Claude 回應 → 再 stop → 再 `exit 2` → infinite loop。
-
-**Solution**: 在 `stop-guard.sh` 頂部檢查 stdin JSON 的 `stop_hook_active` flag：
-
-```bash
-# Near top of stop-guard.sh, after reading INPUT
-STOP_HOOK_ACTIVE=$(echo "$INPUT" | jq -r '.stop_hook_active // false' 2>/dev/null)
-if [[ "$STOP_HOOK_ACTIVE" == "true" ]]; then
-  exit 0  # Prevent infinite recursion
-fi
-```
-
-**Files**: `hooks/stop-guard.sh`（3 行）
-**Source**: claudefa.st + community patterns
-
-### D-2: Session Lifecycle Reset（P1）
-
-**Problem**: `.claude_review_state.json` 跨 session 持久化，`session_id` 為空 → 上次 session 未完成的 review state 影響新 session。
-
-**Solution**: 新增 SessionStart hook，初始化 state file：
-
-```bash
-#!/usr/bin/env bash
-# hooks/session-init.sh — SessionStart hook
-STATE_FILE=".claude_review_state.json"
-INPUT=$(cat)
-NEW_SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
-
-if [[ -z "$NEW_SESSION_ID" ]]; then exit 0; fi
-
-if [[ -f "$STATE_FILE" ]]; then
-  OLD_SESSION_ID=$(jq -r '.session_id // empty' "$STATE_FILE" 2>/dev/null)
-  if [[ "$OLD_SESSION_ID" != "$NEW_SESSION_ID" && -n "$OLD_SESSION_ID" ]]; then
-    # New session — reset review state, preserve iteration_history.total_rounds_session
-    jq --arg sid "$NEW_SESSION_ID" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-      '.session_id = $sid | .updated_at = $now |
-       .has_code_change = false | .has_doc_change = false |
-       .code_review = {"executed":false,"passed":false} |
-       .doc_review = {"executed":false,"passed":false} |
-       .precommit = {"executed":false,"passed":false} |
-       .aggregate_gate = {"executed":false} |
-       .iteration_history.current_round = 0 |
-       .iteration_history.findings_by_round = []' \
-      "$STATE_FILE" > "${STATE_FILE}.tmp" && mv "${STATE_FILE}.tmp" "$STATE_FILE"
-  fi
-else
-  # First session — create minimal state
-  echo "{\"schema_version\":2,\"session_id\":\"$NEW_SESSION_ID\"}" > "$STATE_FILE"
-fi
-```
-
-**hooks.json 變更**（additive — append to existing SessionStart array，不取代 namespace-hint 和 compact hooks）:
-
-```json
-// Append this entry to the existing "SessionStart" array in hooks.json
-{
-  "matcher": "startup",
-  "hooks": [{
-    "type": "command",
-    "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/session-init.sh",
-    "timeout": 5
-  }]
-}
-```
-
-> **Note**: hooks.json 已有 SessionStart entries（namespace-hint、compact reinjection）。此 entry 需 append 而非 replace。確保符合 `hooks-json-registry.test.js` 的 matcher 約束。
-
-**Files**: 新增 `hooks/session-init.sh` + 更新 `hooks/hooks.json`
-**Source**: codex-plugin-cc `session-lifecycle-hook.mjs`
-
-### D-3: `changed_files` 陣列追蹤（P1）
-
-**Problem**: State file 只記錄 `has_code_change` boolean，不知道哪些 files 變了 → stop-guard 無法判斷 review 是否覆蓋所有已變更檔案。
-
-**Solution**: 在 `post-edit-format.sh` 追蹤 changed files，review pass 後 reset：
-
-```bash
-# In post-edit-format.sh, after setting has_code_change/has_doc_change
-_track_changed_file() {
-  local file_path="$1" state_file="$2" tmp
-  tmp=$(mktemp)
-  jq --arg f "$file_path" \
-    'if .changed_files_since_review then
-       .changed_files_since_review |= (. + [$f] | unique)
-     else
-       .changed_files_since_review = [$f]
-     end' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
-}
-
-# In post-tool-review-state.sh, when code_review passes
-_reset_changed_files() {
-  local state_file="$1" tmp
-  tmp=$(mktemp)
-  jq '.changed_files_since_review = []' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
-}
-```
-
-**State schema v2 additive field** (backward compatible via jq `// []` fallback — existing v2 state files without `changed_files_since_review` continue to work without migration):
-
-```json
-{
-  "changed_files_since_review": ["scripts/lib/utils.js", "skills/next-step/scripts/analyze.js"]
-}
-```
-
-**Files**: `hooks/post-edit-format.sh` + `hooks/post-tool-review-state.sh`
-**Source**: O'Reilly "Auto-Reviewing Claude's Code"
-
-### D-4: Review Phase State（P2）
-
-**Problem**: State file 只追蹤 review 是否執行過，不追蹤當前所處階段 → stop-guard 無法區分「尚未開始 review」和「review 正在進行中」。
-
-**Solution**: 新增 `review_phase` 欄位：
-
-```json
-{
-  "review_phase": "idle" | "pending_review" | "addressing_findings" | "precommit_pending"
-}
-```
-
-| Event | Phase 轉換 |
-|-------|-----------|
-| 程式碼編輯 | → `pending_review` |
-| Emit PENDING gate | → `pending_review` |
-| Emit READY gate | → `precommit_pending` |
-| Emit BLOCKED gate | → `addressing_findings` |
-| Precommit pass | → `idle` |
-
-**stop-guard.sh 增強**:
-
-```bash
-case "$REVIEW_PHASE" in
-  pending_review)
-    MISSING="$MISSING /codex-review-fast" ;;
-  addressing_findings)
-    MISSING="$MISSING fix-P0P1-then-re-review" ;;
-  precommit_pending)
-    MISSING="$MISSING /precommit-fast" ;;
-  idle)
-    ;; # No pending obligations
-esac
-```
-
-**Files**: `hooks/post-tool-review-state.sh` + `hooks/post-edit-format.sh` + `hooks/stop-guard.sh`
-**Source**: hamelsmu/claude-review-loop two-phase state machine
-
-### D-5: Structured Output Schema（P2，incremental）
-
-**Problem**: Sentinel parsing（`✅ Ready`、`## Gate: ✅`）用 regex，Codex 輸出格式變化時靜默失敗。
-
-**Solution**: 保持 text sentinel 為 primary gate，新增 optional JSON structured output 作為 secondary enrichment。
-
-**在 review prompt 末尾新增**:
-
-```markdown
-## Structured Output (optional, after text report)
-
-If possible, also output a JSON block at the end of your review:
-
-\`\`\`json
-{
-  "gate": "READY" | "BLOCKED",
-  "findings_count": { "p0": N, "p1": N, "p2": N, "nit": N },
-  "top_finding": { "severity": "P1", "file": "path", "line": N, "issue": "..." }
-}
-\`\`\`
-```
-
-**post-tool-review-state.sh 增強**:
-
-```bash
-# Try structured JSON first, fallback to text sentinel
-_parse_review_gate() {
-  local output="$1" json_gate
-  # Try JSON block
-  json_gate=$(echo "$output" | sed -n '/^```json$/,/^```$/p' | sed '1d;$d' | jq -r '.gate // empty' 2>/dev/null)
-  if [[ -n "$json_gate" ]]; then
-    echo "$json_gate"
-    return
-  fi
-  # Fallback to text sentinel
-  if echo "$output" | grep -q '✅ Ready'; then echo "READY"
-  elif echo "$output" | grep -q '⛔ Blocked'; then echo "BLOCKED"
-  else echo "UNKNOWN"
-  fi
-}
-```
-
-**Files**: `codex-prompt-fast.md` + `post-tool-review-state.sh`
-**Source**: codex-plugin-cc `review-output.schema.json`
-
----
-
-## Phase D Work Breakdown
-
-| Task | Est. | Priority | Dependency | Files |
-|------|------|----------|------------|-------|
-| D-1: Recursion guard | 0.25d | P0 | — | `hooks/stop-guard.sh` |
-| D-2: Session lifecycle | 1d | P1 | — | New `hooks/session-init.sh` + `hooks/hooks.json` |
-| D-3: changed_files tracking | 1d | P1 | D-2 | `hooks/post-edit-format.sh` + `hooks/post-tool-review-state.sh` |
-| D-4: Review phase state | 1.5d | P2 | D-3 | `hooks/post-tool-review-state.sh` + `hooks/stop-guard.sh` |
-| D-5: Structured output | 1d | P2 | — | `codex-prompt-*.md` + `hooks/post-tool-review-state.sh` |
-| D-T: Tests for D-1~D-5 | 1.5d | P1 | D-1~D-5 | `test/hooks/stop-guard.test.js` + new test files |
-
-**Phase D total**: ~6.25 人天
-**Grand total (Phase A+B+C+D)**: ~15.25 人天
-
-## Phase D Testing Strategy
-
-| Task | Test Type | Test File |
-|------|-----------|-----------|
-| D-1 | Unit | `test/hooks/stop-guard.test.js`（新增 recursion guard case） |
-| D-2 | Unit | `test/hooks/session-init.test.js` |
-| D-3 | Unit | `test/hooks/changed-files.test.js` |
-| D-4 | Unit + Integration | `test/hooks/review-phase.test.js` |
-| D-5 | Unit | `test/hooks/structured-output-parse.test.js` |
+Phase D（D-1~D-5、其 Work Breakdown 與 Testing Strategy）已獨立為 [`1-phase-d-hook-hardening.md`](./1-phase-d-hook-hardening.md)。
 
 ## 7. Open Questions
 
-- [x] `max_rounds` per-project 可配置 → 放在 `auto-loop-project.md`（已決定，預設 10）
+- [x] `max_rounds` per-project 可配置 → 放在 `auto-loop-project.md`（已決定。當時定的預設 10 已於 2026-07-26 提高為 30；此列保留為決策紀錄）
 - [ ] AC injection 的 token budget 上限（10 ACs? 20 ACs? truncate?）
 - [x] Nit history 已在 `.gitignore`（local-only），若需 team-shared 則移除 .gitignore entry
 - [ ] 收斂 sentinel `[ITERATION_STATE]` 是否需要被 stop-guard hook 解析？

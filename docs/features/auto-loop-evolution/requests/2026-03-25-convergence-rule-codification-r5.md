@@ -4,7 +4,7 @@
 > **Status**: Completed
 > **Priority**: P2
 > **Verified**: 2026-04-21 — `rules/auto-loop.md` §Exit Conditions rewritten as 6-row decision table mirroring tech-spec §3.3 T1 (hard cap / zero / plateau / non-plateau / converging / parse-null); advisory exits retained orthogonally; `.claude/rules/auto-loop.md` sync verified via `diff -q` (byte-identical).
-> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec.md) Section 3.3 T1 (Convergence Detection)
+> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec/2-tech-spec.md) Section 3.3 T1 (Convergence Detection)
 > **Depends On**: [Iteration Counter (R2)](./2026-03-24-iteration-counter-convergence-r2.md)
 
 ## Background
@@ -31,7 +31,7 @@ R2 implemented per-round finding storage (`findings_by_round[]` in state schema 
 |------|--------|-------------|
 | `rules/auto-loop.md` | Modify | Add convergence decision table to Exit Conditions |
 | `.claude/rules/auto-loop.md` | Modify | Mirror same convergence table |
-| `docs/features/auto-loop-evolution/2-tech-spec.md` | Reference | Section 3.3 T1 convergence table is the source spec |
+| `docs/features/auto-loop-evolution/2-tech-spec/2-tech-spec.md` | Reference | Section 3.3 T1 convergence table is the source spec |
 
 ## Acceptance Criteria
 

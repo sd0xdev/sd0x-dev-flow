@@ -4,7 +4,7 @@
 > **Status**: Completed
 > **Priority**: P2
 > **Verified**: 2026-04-21 — init_state_file now reads project override via awk-based `_read_project_max_rounds` (section-scoped, HTML-comment aware). Regression tests: 6 in `test/hooks/post-edit-format.test.js` + 4 in `test/hooks/post-tool-review-state.test.js` covering override=15, no-override, commented placeholder, multi-line HTML comment isolation, out-of-range rejection. 242 hook tests green.
-> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec.md) Section 3.2 (Rule Migration)
+> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec/2-tech-spec.md) Section 3.2 (Rule Migration)
 > **Depends On**: [Iteration Counter (R2)](./2026-03-24-iteration-counter-convergence-r2.md)
 
 ## Background

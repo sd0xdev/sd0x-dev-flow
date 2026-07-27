@@ -3,7 +3,7 @@
 > **Created**: 2026-03-24
 > **Status**: Completed
 > **Priority**: P1
-> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec.md) Section 3.3 T2
+> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec/2-tech-spec.md) Section 3.3 T2
 
 ## Background
 

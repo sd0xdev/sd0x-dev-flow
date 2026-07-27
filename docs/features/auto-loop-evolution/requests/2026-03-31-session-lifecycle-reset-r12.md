@@ -3,7 +3,7 @@
 > **Created**: 2026-03-31
 > **Status**: Candidate Complete
 > **Priority**: P1
-> **Tech Spec**: [Tech Spec](../2-tech-spec.md) <- Phase D, Section D-2
+> **Tech Spec**: [Tech Spec](../2-tech-spec/1-phase-d-hook-hardening.md) <- Phase D, Section D-2
 
 ## Background
 
@@ -52,5 +52,5 @@
 
 ## References
 
-- Tech Spec: [auto-loop-evolution](../2-tech-spec.md) Phase D, D-2
+- Tech Spec: [auto-loop-evolution](../2-tech-spec/1-phase-d-hook-hardening.md) Phase D, D-2
 - Source: codex-plugin-cc session-lifecycle-hook.mjs

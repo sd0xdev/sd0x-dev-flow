@@ -4,7 +4,7 @@
 > **Status**: Completed
 > **Priority**: P1
 > **Verified**: 2026-04-21 — tech-spec retitled "schema v3 新增欄位" → "State schema v2 additive field (backward compatible via jq `// []` fallback)"; AC #4 rewritten to match v2-additive reality; new `test/hooks/changed-files.test.js` with 7 tests covering track/unique/reset/fallback/graceful-failure.
-> **Tech Spec**: [Tech Spec](../2-tech-spec.md) <- Phase D, Section D-3
+> **Tech Spec**: [Tech Spec](../2-tech-spec/1-phase-d-hook-hardening.md) <- Phase D, Section D-3
 > **Depends On**: [Session Lifecycle Reset](./2026-03-31-session-lifecycle-reset-r12.md)
 
 ## Background
@@ -53,5 +53,5 @@ State file 只記錄 `has_code_change` boolean，不追蹤哪些 files 變了。
 
 ## References
 
-- Tech Spec: [auto-loop-evolution](../2-tech-spec.md) Phase D, D-3
+- Tech Spec: [auto-loop-evolution](../2-tech-spec/1-phase-d-hook-hardening.md) Phase D, D-3
 - Source: O'Reilly "Auto-Reviewing Claude's Code"

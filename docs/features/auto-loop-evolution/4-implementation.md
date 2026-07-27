@@ -9,7 +9,7 @@ Read this when **changing** a hook, **debugging** a gate that did not fire, or *
 | Related | Path |
 |---------|------|
 | Behavioural contract | [`rules/auto-loop.md`](../../../rules/auto-loop.md) |
-| Feature tech spec | [`2-tech-spec.md`](./2-tech-spec.md) |
+| Feature tech spec | [`2-tech-spec.md`](./2-tech-spec/2-tech-spec.md) |
 | Writing hooks | `hooks/post-tool-review-state.sh`, `hooks/post-edit-format.sh`, `hooks/post-compact-auto-loop.sh`, `hooks/session-init.sh` |
 | Reading hook | `hooks/stop-guard.sh` |
 

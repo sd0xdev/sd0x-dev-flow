@@ -4,7 +4,7 @@
 > **Status**: Completed
 > **Priority**: P2
 > **Verified**: 2026-04-21 — new `test/hooks/review-phase.test.js` with 14 tests covering all 6 transition points (T1 code-edit → pending_review; T2 PENDING gate; T3 READY → precommit_pending; T4 BLOCKED → addressing_findings; T5 `/precommit` pass → idle; T6 MCP precommit → idle; T7/T8/T9 stop-guard phase-hint behavior; T10-T14 edge cases).
-> **Tech Spec**: [Tech Spec](../2-tech-spec.md) <- Phase D, Section D-4
+> **Tech Spec**: [Tech Spec](../2-tech-spec/1-phase-d-hook-hardening.md) <- Phase D, Section D-4
 > **Depends On**: [Changed Files Tracking](./2026-03-31-changed-files-tracking-r13.md)
 
 ## Background
@@ -55,5 +55,5 @@ State file 只追蹤 review 是否執行過，不追蹤當前 review cycle 階�
 
 ## References
 
-- Tech Spec: [auto-loop-evolution](../2-tech-spec.md) Phase D, D-4
+- Tech Spec: [auto-loop-evolution](../2-tech-spec/1-phase-d-hook-hardening.md) Phase D, D-4
 - Source: hamelsmu/claude-review-loop two-phase state machine

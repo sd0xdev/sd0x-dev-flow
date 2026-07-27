@@ -3,7 +3,7 @@
 > **Created**: 2026-03-24
 > **Status**: Completed
 > **Priority**: P2
-> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec.md) Section 3.2 (Nit History File), 3.3 T5
+> **Tech Spec**: [Auto-Loop Evolution](../2-tech-spec/2-tech-spec.md) Section 3.2 (Nit History File), 3.3 T5
 > **Depends On**: [Iteration Counter](./2026-03-24-iteration-counter-convergence-r2.md)
 
 ## Background

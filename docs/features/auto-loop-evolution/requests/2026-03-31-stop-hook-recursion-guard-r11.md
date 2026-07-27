@@ -3,7 +3,7 @@
 > **Created**: 2026-03-31
 > **Status**: Candidate Complete
 > **Priority**: P0
-> **Tech Spec**: [Tech Spec](../2-tech-spec.md) <- Phase D, Section D-1
+> **Tech Spec**: [Tech Spec](../2-tech-spec/1-phase-d-hook-hardening.md) <- Phase D, Section D-1
 
 ## Background
 
@@ -48,5 +48,5 @@ Strict mode `stop-guard.sh` exit 2 可能造成 infinite loop：Claude 回應 �
 
 ## References
 
-- Tech Spec: [auto-loop-evolution](../2-tech-spec.md) Phase D, D-1
+- Tech Spec: [auto-loop-evolution](../2-tech-spec/1-phase-d-hook-hardening.md) Phase D, D-1
 - Source: claudefa.st + community patterns
