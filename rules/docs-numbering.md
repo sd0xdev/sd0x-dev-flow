@@ -62,7 +62,7 @@ Three constraints, each with a parser behind it: the main file keeps the **canon
 
 Inbound links break silently, so finish the job: `grep -rn '<old-filename>' docs/ skills/ rules/ scripts/ test/` and repoint every hit — the path gains one directory level, so a sibling `./2-tech-spec.md` becomes `./2-tech-spec/2-tech-spec.md` and a `../` reference gains a `../`. Scripts that hard-code the old path count too. Then run `/codex-review-doc` on the result.
 
-**Cut at the section that dominates**, not at an arbitrary line count. Usually one `## ` section carries most of the file, and its `###` boundaries are the natural sub-documents. A split landing mid-argument is worse than the long file.
+**Cut at the section that dominates**, not at an arbitrary line count. Usually one `##` section carries most of the file, and its `###` boundaries are the natural sub-documents. A split landing mid-argument is worse than the long file.
 
 Exempt: `rules/*.md` loaded via `@` (splitting adds import hops without reducing what loads — reduce the content instead), generated files and fixtures, and any file that is one unsplittable table.
 

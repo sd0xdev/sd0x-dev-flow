@@ -758,7 +758,7 @@ Trackable tickets (each ≤1 day; one ticket = one `requests/YYYY-MM-DD-*.md`):
 | T14 | `--include-feasibility` flag + doc-kind gate override + `[OVERRIDE: feasibility included]` banner | T8 | XS |
 | T15 | `report.js` `--format json` serializer (FR-12 Could) | T6 | S |
 | T16 | Unit tests: path validation (5 cases), greenfield detection, depth→activeDimensions mapping, redaction filter, `--override` merging, gate selection (5 cases — matches §6 unit table), deterministic checks (all 6 conditions) | T6-T14 | L |
-| T17 | Integration tests via **dependency-injected mock MCP/Skill boundary**: full Phase A→B→C mock, advisory state-read, `--continue` routing, hook NON-integration via fixture subprocess (assert no `doc_review` write) | T16 | L | **未實作** — 現有 `integration.test.js` 是 white-box、直接以 fixture 餵 module exports，未注入或 mock `Skill()` / MCP invoker |
+| T17 | Integration tests via **dependency-injected mock MCP/Skill boundary**: full Phase A→B→C mock, advisory state-read, `--continue` routing, hook NON-integration via fixture subprocess (assert no `doc_review` write).<br>**未實作** — 現有 `integration.test.js` 是 white-box、直接以 fixture 餵 module exports，未注入或 mock `Skill()` / MCP invoker | T16 | L |
 | T18 | E2E test against `test/fixtures/necessity-audit/sample-over-designed-spec.md` (hand-crafted fixture with known Cut items) — **NOT** this skill's own tech-spec, to avoid meta-loop | T17 | M |
 | T19 | Register skill in `docs/skill-catalog.yml` + `/update-readme` + `/readme-i18n-sync` | T18 | S |
 | T20 | `CLAUDE.md` command reference row insertion | T19 | XS |
