@@ -55,7 +55,7 @@ Most harness projects cover 2–4 of these. sd0x-dev-flow covers all 10 — whic
 /project-setup
 ```
 
-One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 14 rules + 8 hooks.
+One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 15 rules + 8 hooks.
 
 Use `--lite` to only configure CLAUDE.md (skip rules/hooks).
 
@@ -246,8 +246,8 @@ Real-world scenarios showing which skills to combine and in what order.
 | Skills | 98 public (98 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
-| Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
+| Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
+| Scripts | 18 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Minimal Context Footprint
@@ -417,7 +417,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 ## Rules & Hooks
 
-14 rules (always-loaded conventions) + 8 hooks (automated guardrails).
+15 rules (always-loaded conventions) + 8 hooks (automated guardrails).
 
 > **Customization**: Edit `auto-loop-project.md` to override auto-loop behavior per project. Plugin updates won't conflict — see [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 

@@ -55,7 +55,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 /project-setup
 ```
 
-하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치합니다. 전체 플러그인에는 14개 Rules + 8개 Hooks가 포함됩니다.
+하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치합니다. 전체 플러그인에는 15개 Rules + 8개 Hooks가 포함됩니다.
 
 `--lite`로 CLAUDE.md만 설정 (Rules/Hooks 스킵).
 
@@ -246,8 +246,8 @@ flowchart TD
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
-| Rules | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
+| Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
+| Scripts | 18 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 최소한의 Context 사용량
@@ -415,7 +415,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 
 ## 규칙 & Hook
 
-14개 규칙 (상시 로드 컨벤션) + 8개 Hook (자동 가드레일).
+15개 규칙 (상시 로드 컨벤션) + 8개 Hook (자동 가드레일).
 
 > **커스터마이징**: `auto-loop-project.md`를 편집하여 프로젝트별 auto-loop 동작을 오버라이드할 수 있습니다. 플러그인 업데이트와 충돌하지 않습니다 — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 참조.
 

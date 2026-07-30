@@ -55,7 +55,7 @@ sd0x-dev-flow 是一个 reference implementation。下表的每一行都把一�
 /project-setup
 ```
 
-一个命令自动检测框架、包管理器、数据库、入口文件和脚本命令。安装部分 rules 和 hooks；完整插件包含 14 条 rules + 8 个 hooks。
+一个命令自动检测框架、包管理器、数据库、入口文件和脚本命令。安装部分 rules 和 hooks；完整插件包含 15 条 rules + 8 个 hooks。
 
 使用 `--lite` 仅配置 CLAUDE.md（跳过 rules/hooks）。
 
@@ -246,8 +246,8 @@ flowchart TD
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | 代理 | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | 钩子 | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
-| 规则 | 14 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| 脚本 | 17 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
+| 规则 | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
+| 脚本 | 18 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (CLI + shell), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 极小的 Context 占用
@@ -415,7 +415,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 
 ## 规则与钩子
 
-14 条规则（常驻加载的规范）+ 8 个钩子（自动化防护栏）。
+15 条规则（常驻加载的规范）+ 8 个钩子（自动化防护栏）。
 
 > **定制化**：编辑 `auto-loop-project.md` 可覆写项目的 auto-loop 行为。插件更新不会冲突 — 详见 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 
