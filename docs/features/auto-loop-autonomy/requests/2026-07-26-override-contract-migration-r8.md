@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Note**: 由 R7 拆出。R7 審查時發現「讓 Anchor 勝過使用者覆寫」不是標註工作而是**契約遷移**，且覆寫檔的結構讓 heading 級分類無法成立。兩者合併會使 R7 同時承擔標註與規格變更，AC 已達 11 條。父 tech spec 尚未建立（見 References）
 > **Priority**: P2
 > **Depends On**: [規則授權層級與提案核准通道 (R7)](./2026-07-26-rule-discretion-tiers-r7.md)
@@ -91,27 +91,28 @@ grep -vE '^\s*$|^#|^<!--|^\s|-->' rules/auto-loop-project.md   # 4 行，皆為 
 
 **測試環境限制**：本 repo 是自身的 dogfood 消費端，`.claude/rules` 是指向 `../rules` 的符號連結（`.claude/hooks`、`.claude/scripts` 同）。在此 checkout 中「範本來源」與「已安裝副本」是同一份檔案，兩分支測試無法就地區分。實作時必須在**獨立的 consumer fixture**（來源與目標為分離路徑的暫存目錄）中執行，不得依賴工作目錄的 `.claude/rules`。
 
-**解析階序（草案，優先序由高至低）**
+**解析階序（已定案，優先序由高至低）** — 草案原以「明文標註」為最高優先，doc review R1 指出這與 `discretion.md` 的權威順序矛盾，且讓使用者檔中的自我標註得以壓過 Register 命中；已補入 step 0。
 
 | 序 | 規則 | 適用 |
 |----|------|------|
-| 1 | 指示層級的明文標註 | 混合層級段落中的個別條款（如 `Tier` 段內的安全升級句） |
+| 0 | **Anchor Register 命中 → Anchor，解析終止** | 全域。層級由 `discretion.md` 決定而非由指示旁的標籤決定；任何檔案中的 tier 標註都不能降級 Register 命中，嘗試降級即回報衝突 |
+| 1 | 指示層級的明文標註（僅限非 Anchor） | 混合層級段落中的個別條款（如 `Tier` 段內的安全升級句） |
 | 2 | heading 對照表 | 有母檔同名段落者 |
 | 3 | preamble 合成歸屬 | 首個 `##` 之前的指示，視為一個合成段落統一歸屬 |
 | 4 | 未知 heading fail-closed → **Default** | 不歸 Guidance（使用者刻意寫下的設定不應可被忽略），亦不自動歸 Anchor（使用者本就有權調整） |
 
 ## Acceptance Criteria
 
-- [ ] 查證「HTML 註解不進入模型 context」並記錄結論與查證方式；若成立，precedence 宣告改為活文字（或改採不依賴檔內宣告的機制），且該決定寫入 `rule-override-pattern/2-tech-spec.md:105`
-- [ ] 兩個覆寫檔範本中的**每條**指示（含目前處於註解狀態者）解析為恰好一個層級，涵蓋 preamble、六個 `auto-loop-project` 段落、兩個 `testing-project` 段落，且測試拒絕遺漏、重複與衝突的對照
-- [ ] `auto-loop-project.md:14-22` 這類混合層級段落，其可設定項與安全升級句取得**不同**層級（測試以該段為 fixture）
-- [ ] `rule-override-pattern/2-tech-spec.md:98` 的 full replacement 語意收窄為 Default／Guidance，且與 R7 的 Anchor 定義無矛盾（兩份文件對「使用者檔能否解除 Anchor」給出同一答案）
-- [ ] `:100`「覆寫 heading 須與母檔完全相同」的要求與 project-only 段落的既有事實調和，且不使 `testing-project.md:29` 成為違規
-- [ ] 測試在**獨立 consumer fixture**（來源與目標為分離路徑，不得用本 repo 的 `.claude/rules` 符號連結）中同時證明兩件事：`/install-rules` 對**尚未安裝**的目標生成的 header 帶新 precedence 文字，且**已存在**的目標位元組完全不變。`rules/` 範本來源本身允許且必須被修改，`testing-project.md` 的散布路徑於 `2-tech-spec.md:120` 有明確定義（納入映射或明載不複製）
-- [ ] 負向測試證明：覆寫檔無法壓制「編輯後須 review」、無法讓 tier 決定迴圈是否執行、無法解除 code 編輯的週期重置
-- [ ] 舊 header 的既有安裝由 `claude-health` S2.5 第 6 項檢查回報，且有迴歸測試釘住該檢查不修改檔案
-- [ ] Pass /codex-review-doc
-- [ ] Pass /precommit
+- [x] 查證「HTML 註解不進入模型 context」並記錄結論與查證方式；precedence 宣告改為活文字，決定寫入 `rule-override-pattern/2-tech-spec.md` precedence-mechanism 設計列 — 查證方式：**消費端第一手觀測**（2026-07-29 session 注入的 project instructions 中 `auto-loop-project.md` 僅 6 個裸 heading、`testing-project.md` 僅 H1，磁碟檔帶完整註解），結論與工具路徑豁免（claude-health 讀 `Based on:` 為檔案解析）一併記入規格；測試 `spec when recording the carrier decision` 釘住記錄
+- [x] 兩個覆寫檔範本中的**每條**指示解析為恰好一個層級 — 母檔各發布 heading → tier 對照表（`auto-loop.md` § Override Contract 7 列：preamble 合成段落＋6 heading；`testing.md` § Project Customization 3 列）；`override-contract.test.js` 以 strict 表格解析 deepEqual 全列、Set 檢重複、並對磁碟範本 heading 清點交叉驗證拒絕遺漏（含註解態 heading，排除 `： enabled` 範例值行）
+- [x] 混合層級段落：`## Tier` 的可設定項（Default）與安全升級句（Anchor）取得**不同**層級 — 測試以實際範本 `## Tier` 段為 fixture。Anchor 主張**有 Register 背書而非自我背書**（code review P1 修正）：升級義務收進 `discretion.md` Register #3 內容（「reviewed at `thorough` whatever tier is configured — overrides included」，屬既有項目的內容擴充，7 項封閉清單不變）、範本句帶明文標註 `(Anchor — discretion.md Register #3; no tier setting or override removes it)`、對照列引 Register #3 hit、測試三環交叉驗證且限定在 `3. **Data integrity**` 項本體內比對（P2 當場修）
+- [x] full replacement 語意收窄為 Default／Guidance，Anchor 不可被覆寫、衝突回報；規格明文「兩份文件對『使用者檔能否解除 Anchor』答案一致：**不能**」— 測試斷言新語意存在且舊無條件句不得逐字存活
+- [x] 「覆寫 heading 須與母檔完全相同」調和：規格 Note 加註 documented project-only extension 例外，`## Adequacy Mode` 由 `testing.md` 對照表明列（"no parent section here; permitted as a documented extension"），不再構成違規
+- [x] 獨立 consumer fixture（mkdtemp 分離來源/目標路徑，不用本 repo 符號連結）雙分支測試：未安裝 → 複製產生帶活 `Precedence:` header 的副本；已存在（帶舊 header＋使用者編輯）→ `Buffer.equals` 位元組完全不變；`testing-project.md` 散布路徑納入 `override_templates` 映射（`"testing.md": "testing-project.md"`）。**證據範圍誠實聲明**：fixture 執行的是測試本地的 `installOverrideTemplates()` 鏡像，不是出貨 skill 本身（skill 為宣告式 markdown，無可執行入口）。AC-trace 據此判為 Medium gap，補救方式是把鏡像**綁回出貨合約**：`shipped /install-rules contract pins…` 逐條斷言 `skills/install-rules/SKILL.md` § Override Template Copy Contract 的兩組映射、absent-copy 正向整句、`--reset` 活 header、never-rewrite、legacy 路由；doc review 再追加 managed-set 排除斷言。因此可證的是「文件合約 + fixture 行為分支」，仍不可證「執行期安裝流程」——後者需要可執行入口，列入 Known Limitation
+- [x] 負向測試：discretion.md Register #6 三條迴圈義務逐字存活＋兩個載體對照表全列 Default（無任何列可授予解除路徑）＋規格 tier-scoped 語意；`REVIEW_GRANT_PATTERNS` 掃描持續涵蓋 `rules/auto-loop.md`（含新增的 § Override Contract 文字）
+- [x] 舊 header 偵測：claude-health S2.5 第 6 項（`<!-- Precedence:` 存在且首個 `##` 前無活 `Precedence:` 行 → P2 回報）；`test/skills/claude-health.test.js` 釘住 6 列檢查表、read-only 措辭、偵測鏡像 4 fixture（legacy 旗標／live 通過／dual 通過／無宣告不誤報）、shipped 範本不觸發。**AC-trace 兩輪補救**：初版以原始位元組讀 skill、`indexOf()` 抽 S2.5，把 S2.5 包進 fenced block 後八條斷言全綠而 `liveText()` 已無該指引——即本張要防的缺陷落在最後一個未遷移的檔案。改為 `liveText()` 讀取＋`structuralViolations` 斷言＋唯一活區段抽取，pin 置於完整 `### Sync Module — Checks (S1-S3)` 區域（8129 字元），並補三個變異測試（fenced 包裹／重複 S2.5／區域內 H4 兄弟段）。第二輪指出逃逸不在區域本體而在其**終止者**（`### Sync Module — Exception` 插在 `### Fix Tiers` 前，落點恰為區域原本結束處，本體逐字不變），加上 H1–H3 標題序列 pin。邊界矩陣：H1/H2/H3 插入 → 序列 pin 擋；H4 插入 → 區域 pin 擋；fenced H3 → 兩者皆不變但撤回句不在 `liveText()`，即非規範範例的預期行為。附帶修正 `skills/claude-health/SKILL.md` 的 S2.5 標題層級（`###` → `####`，與 S1/S2/S3 對齊）
+- [x] Pass /codex-review-doc — 4 輪後 ✅ Mergeable（5 P2 deferred）；本張這次 Doc Sync 編輯與 `skills/claude-health/SKILL.md` 標題層級變更另行 doc review
+- [x] Pass /precommit — `## Overall: ✅ PASS`（3042 tests / 3036 pass / 0 fail / 6 skipped，2026-07-30）；code review 33 輪後 ✅ Ready；AC-trace ✅ Adequate（8/8 Covered，AC8 兩輪補救後翻轉）
 
 ## Design Decision
 
@@ -131,14 +132,16 @@ grep -vE '^\s*$|^#|^<!--|^\s|-->' rules/auto-loop-project.md   # 4 行，皆為 
 
 **分層無強制力**：R7 與本張都是行為層。使用者仍可在覆寫檔中寫下與 Anchor 抵觸的文字，屆時模型面對的是兩段互相矛盾的 context，靠的是規則敘述而非 hook 攔截。hook 端強制執行明列於 Scope Out。
 
+**安裝流程的可證性上限**：`/install-rules` 是宣告式 skill（markdown 工作流，無可執行入口），因此測試最多能釘住**出貨合約文字**與**行為分支鏡像**，不能執行真正的安裝路徑。managed-set 排除、copy-time hash stamping、`--reset` 例外都以合約斷言把關；若日後抽出可執行的安裝邏輯，這三項應改為直接呼叫該實作。
+
 ## Progress
 
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
-| Analysis | Done | 兩檔現況（live `##` 6/0、活指示 0）與四個結構性問題皆經實測；註解不進 context 為消費端第一手觀測，機制待查（AC 第 1 條） |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Analysis | Done | 兩檔現況（live `##` 6/0、活指示 0）與四個結構性問題皆經實測。**消費端行為已確立**（註解不進 context，第一手觀測，AC 第 1 條已結）；仍待查的是 harness **底層剝除機制**（在哪一層、是否所有註解形式一致），屬 plugin 外部實作細節，不阻擋本張 |
+| Development | Done | 兩範本 header 活文字化（`##` 段落零觸及）；`auto-loop.md` § Override Contract＋`testing.md` § Project Customization 對照表與階序；規格更新＋`override_templates` 補 testing 映射；claude-health S2.5 第 6 項；install-rules 複製契約段。**doc review R1 六個 P1 修正**：階序改 **Anchor-first**（step 0 為 Register 判定，明文標註不得降級 Register 命中）；對照表加 **Kind 欄**（section replacement vs setting）並標明各自 consumer——出貨的 auto-loop 六個 heading 全為 setting（`## Tier` ≠ 母檔 `## Tiers`）；drift check #1 加「有活內容才比對」前置條件＋複製時 stamp hash（否則 fresh install 立即誤報）；install-rules workflow 明列 `*-project.md` managed-set 排除（Phase 2/3.5/4 皆不得觸及）；`--reset` 與 never-rewrite 的矛盾收斂為單一例外；兩份仍在教舊註解式 header 的規範文件（`3-customize-v2.md` §3.6、`testing-rules-enrichment/2-tech-spec.md` §3.3）標 superseded 並改活文字 |
+| Testing | Done | `override-contract.test.js` **47 tests**（新）＋`claude-health.test.js` **12 tests**（新）＋`install-rules-customize.test.js` **28 tests**（+14：fixture 雙分支、活 header、preamble 豁免、出貨合約綁定、managed-set 排除、copy-time stamping、否定式掃描）＋`testing-rules.test.js` 1 斷言汰換舊 supremacy 句＋`discretion-tiers.test.js` baseline 列同步。code review **33 輪**（全數由 Codex 依 @rules/codex-invocation.md 獨立研究；thread `019fae06-54fc-7070-9aa9-a8161f2d9a14`）。**證據範圍聲明**（doc review R5 P2）：輪次計數是 **in-session 記錄**，無法從工作樹重建——`.claude_review_state.json` 只存 session 層級的 `total_rounds_session`，不按需求單歸屬，各輪報告也未落檔。可從樹上驗證的是各檔測試數與全套件結果；輪次本身僅此 thread 可回溯。逐輪摘要：R1 ⛔（P1 升級句 Register 背書化）→ R2 ✅ → R3 ✅（AC-trace 補救後複驗）→ R4 ⛔ 2 P1：**fixture 仍是逐位元複製、無法 stamp，且因範本 hash 恰等於母檔而遮蔽**（改為以 `0000000` 刻意過期 hash 播種＋本地 blob hash 計算並與 `git hash-object` 對驗）、**合約 regex 可被否定句穿透**（改比對含主詞的完整子句＋否定式掃描）；2 P2 一併修：活躍偵測誤判 heading-form 設定（`## Plan Review: enabled` 無 body 行）、heading 比對對縮排/反引號敏感（統一 normalizer）→ R5 ⛔ 1 P1：**逐行 allowlist 遮蔽反轉句**（`never rewritten, but are not excluded` 整句被視為單一允許 span），改為逐 match 判定 → R6 ⛔ 1 P1 + 1 P2：否定式僅認分詞、漏掉 `do not copy` 系列且誤傷 `not only copied`（改為文法對齊的動詞交替＋`(?!only\b)` 排除，並以 lookahead 阻止單一 match 跨子句）、ATX 解析未追蹤 fenced block 且統一剝反引號（拆為 `atxHeadingName` / `mappingHeadingName` / fence-aware `documentSections`）。**R7 起改為結構性防護**：`assert.match(doc, /X/)` 在原始位元組上比對，可以證成讀者看不見的散文——HTML 註解不進模型 context，這正是本張 AC 第 1 條的發現反過來咬到測試自身。新增 `test/helpers/markdown-structure.js`（共用 Markdown 解析器＋封閉結構閘門 `structuralViolations()`），受護文件皆斷言 0 violations（`override-contract.test.js` 迴圈涵蓋七份，AC8 補救時把 `skills/claude-health/SKILL.md` 納入為第八份）；載重句改以 canonical 等值 pin，並逐輪從行級提升到段級、再到完整區域級。R7–R30 逐輪由審查者示範一個新的載體或解析歧異後修正，關鍵轉折：R24 改為**以詞法約束註解**而非在閘門內另寫一部剖析器（兩部剖析器的每個分歧點都是假綠燈）、R25 認出 strikethrough 是「可見但語意被撤回」的另一類別、R27 證明行級 pin 不劃定語意單位（canonical 行逐字不變，例外寫在旁邊）、R29 證明釘記錄不等於釘區域（不以 `Phase` 開頭的指示、寫在子段外的 redirect）。最終邊界：`## Workflow` 與 `### 3.4 Core Logic Changes` 兩個完整區域 pin（normalized 3524／4659 字元；**度量基準**為測試實際使用的 `liveText(raw, { fencesCount: true })` → `sectionAt()` → 去 NUL 後折疊空白。以 fences 隱藏量測會得到 3049／2894，那不是 pin 的值——doc review R5 即因此誤判數字過期，故在此明載函式）。**R31–R33** 是 AC-trace 揪出的獨立缺口：`claude-health.test.js` 原以原始位元組讀出貨 skill，同一缺陷落在最後一個未遷移的檔案，遷移後再由兩輪找出「兄弟子段」與「區域終止者」兩個逃逸，補上 `### Sync Module — Checks (S1-S3)` 區域 pin（8129 字元）與 H1–H3 標題序列 pin。全套件 **3042 tests / 3036 pass / 0 fail / 6 skipped**（2026-07-30 本機實測）。**skip 歸因更正**（doc review R5 P2）：這 6 個 skip 與 Codex sandbox 無關，全是主機環境／平台條件的 `t.skip` — `post-tool-review-state.test.js:4610`（Linux stale-reclaim race）、`stop-guard.test.js:2201/2318/2366`（無 perl／無 zh_TW locale／以 root 執行）、`user-prompt-review-guard.test.js:386` 與 `post-skill-auto-loop.test.js:452`（coreutils 無法解析）。本張的 detached consumer fixture（`install-rules-customize.test.js:427`、`:638`）**直接呼叫 `mkdtempSync` 且無 skip guard**，因此在唯讀 sandbox 中會被計為 fail 而非 skip；先前把兩件事混為一談是錯的記錄 |
+| Acceptance | Done | AC-trace ✅ Adequate（8/8 Covered；AC6 與 AC8 各由 Medium gap 補救後翻轉）；precommit `## Overall: ✅ PASS`（3042 / 3036 pass / 0 fail / 6 skipped，2026-07-30）；code review 33 輪後 ✅ Ready，審查者宣告設計在其邊界內封閉——三層責任分工：結構閘門擋住不渲染的 Markdown 載體冒充規範散文、區域等值偵測明確擁有的契約邊界內任何語意變更、跨段落矛盾與同時竄改原始碼與 canonical 常數歸人工審查（再擴張需釘住整份檔案乃至每份能引用它的文件，得不到有意義的有限邊界）。doc review 4 輪：R1 ⛔ 6 P1、R2 ⛔ 3 P1（drift check 硬編碼 auto-loop.md、CLAUDE autonomy 文字重新授權 sub-threshold 自由修正、testing 面操作說明仍留無條件 supremacy）、R3 ⛔ 1 P1（check #1 交棒的「衍生 base 缺失」指向不具該偵測的 check #3，且僅涵蓋單一覆寫檔——已將 check #3 泛化為「Missing reference or base」並補測試）＋2 P2（本單測試計數過期，已同步；tech spec 殘留 auto-loop-only 的過期範圍敘述，已修正）、R4 ✅ Mergeable（5 P2 deferred）；本張這次 Doc Sync 編輯與 `skills/claude-health/SKILL.md` 標題層級變更另行 doc review；hooks 消費端驗證：`^##` 閘控 awk 不受 preamble 活文字影響（code review 獨立確認）；`REVIEW_GRANT_PATTERNS` 掃描含新 § Override Contract 文字通過 |
 
 **Status**: Pending / In Progress / Candidate Complete / Completed
 

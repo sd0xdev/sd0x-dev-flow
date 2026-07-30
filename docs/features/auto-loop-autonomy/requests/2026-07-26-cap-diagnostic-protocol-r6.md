@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Note**: 改寫既有的 opt-in Strategic Reset，而非新建機制。與 R2 的事實訊號互補：R2 讓模型知道「現在站在哪」，R6 處理「一直走不出去時該怎麼辦」。父 tech spec 尚未建立（見 References）
 > **Priority**: P1
 > **Depends On**: [Hook 事實訊號標準化 (R2)](./2026-07-26-factual-hook-signals-r2.md) · [Auto-Loop 散文縮減 (R3)](./2026-07-26-auto-loop-prose-reduction-r3.md) — R3 重寫 `rules/auto-loop.md` § Exit Conditions，本張改寫同一節，須在其定稿後進行
@@ -61,7 +61,7 @@
 | `rules/auto-loop-project.md` | Modify | `## Think Harder` 語意更新為本協定的開關 / 門檻覆寫 |
 | `hooks/stop-guard.sh` | Modify | `:1128-1130` 的 `BLOCKED_REASON` 與 `:1177-1179` 的 `BLOCK_DESC` **中性化**（只述「已達 n/max」），移除處置裁決；不新增條件分支、不動 exit code |
 | `test/hooks/stop-guard.test.js` | Modify | 觸頂訊息中性化的斷言；strict `exit 2` 與 warn `exit 0` 皆以實際執行釘住 |
-| `hooks/post-compact-auto-loop.sh` | Modify | `:285-290` 的 5 條泛用清單改為診斷分類；保留為輔助管道而非唯一管道 |
+| `hooks/post-compact-auto-loop.sh` | Modify | `THINK_HARDER=` heredoc（開單時 `:285-290`，現約 `:421`）的 5 條泛用清單改為診斷分類；保留為輔助管道而非唯一管道 |
 | `test/hooks/post-compact-auto-loop.test.js` | Modify | 清單內容變更的斷言 |
 | `docs/features/auto-loop-evolution/4-implementation.md` | Reference | 輪次計數器語意（§2）；本張不改其行為 |
 
@@ -78,17 +78,17 @@
 
 ## Acceptance Criteria
 
-- [ ] `rules/auto-loop.md` § Exit Conditions 第 1 列改為「診斷 → 有界調整 → 回到迴圈」，且**保留**安全／資料完整性變更直接升級人工的例外
-- [ ] 診斷分類以封閉集合定義（≥6 類），每類含判定訊號與調整方向，非自由散文
-- [ ] 明訂防迴圈上限：同一變更第二次觸頂即 `⚠️ Need Human`，且該上限在規則中以具體數字表述
-- [ ] 「有界調整」的界線可檢查：明訂允許的變更性質與體量，並明確禁止在迴圈中途擴張為重寫
-- [ ] 觸發不依賴 compaction：規則層敘述不得以 post-compact hook 為唯一管道，且該 hook 仍可作為輔助注入
-- [ ] `post-compact-auto-loop.sh:285-290` 的清單改為診斷分類，`strategic_reset_fired` 的既有寫入邏輯與鎖協定零變更
-- [ ] `stop-guard.sh` 觸頂訊息為中性事實：不含 `do not auto-retry`、`escalate to human` 等處置裁決，且**不依情境分歧**（測試以實際執行 hook 取得 stderr 為證，非讀原始碼）
-- [ ] 首次／第二次／安全變更的分流條文完全位於 `rules/auto-loop.md`；`stop-guard.sh` 的 diff 中無任何新增的條件式訊息分支
-- [ ] state schema 與 exit code 分支零變更：觸頂在 strict 下仍 `exit 2`、warn 下仍 `exit 0`（**兩者皆以實際執行 hook 釘住**），`git diff` 中無 `jq` 寫入語句異動
-- [ ] Pass /codex-review-doc
-- [ ] Pass /precommit
+- [x] `rules/auto-loop.md` § Exit Conditions 第 1 列改為「診斷 → 有界調整 → 回到迴圈」，且**保留**安全／資料完整性變更直接升級人工的例外 — § Tiers cap 句改指向 § Cap Diagnostic Protocol；該節首段明訂安全／資料完整性例外（skip protocol → ⚠️ Need Human）
+- [x] 診斷分類以封閉集合定義（≥6 類），每類含判定訊號與調整方向，非自由散文 — 6 類表（ARCHITECTURE…REQUIREMENT_AMBIGUITY），Signals + Bounded direction 兩欄
+- [x] 明訂防迴圈上限：同一變更第二次觸頂即 `⚠️ Need Human`，且該上限在規則中以具體數字表述 — 「Anti-loop cap: 1 diagnosis per change」，第二次觸頂 → ⚠️ Need Human、不得再診斷
+- [x] 「有界調整」的界線可檢查：明訂允許的變更性質與體量，並明確禁止在迴圈中途擴張為重寫 — 協定第 2 步：範圍（檔案）、性質（分類方向欄）、體量（單一拆分／單一重界定／≤5 個聚焦編輯），並明文禁止中途變成重寫
+- [x] 觸發不依賴 compaction：規則層敘述不得以 post-compact hook 為唯一管道，且該 hook 仍可作為輔助注入 — 協定首段明訂觸發是 cap 本身（行為層），post-compact 注入為輔助管道、never the trigger
+- [x] `post-compact-auto-loop.sh:285-290` 的清單改為診斷分類，`strategic_reset_fired` 的既有寫入邏輯與鎖協定零變更 — 該 5 條泛用清單（開單時位於 `:285-290`，實作時已因其他單移動；以 `THINK_HARDER=` heredoc 為穩定定位，現約 `:421`）改為 6 類 taxonomy + 指向句（不裁決分流，AC-trace High 修正後）；fired 寫入與鎖協定 diff 零觸及
+- [x] `stop-guard.sh` 觸頂訊息為中性事實：不含 `do not auto-retry`、`escalate to human` 等處置裁決，且**不依情境分歧**（測試以實際執行 hook 取得 stderr 為證，非讀原始碼）— cap 訊息「Review round cap reached (n/max)」；cap+event-marker 並存路徑同步中性化（`SIDECAR_EVENT_NORETRY` 去祈使句與行動評價、BLOCKED renderer 改「Unretireable obligation: <事實>」）；strict/warn + 有無 marker 共 4 個實際執行 fixtures 釘住 stderr/stdout 禁語
+- [x] 首次／第二次／安全變更的分流條文完全位於 `rules/auto-loop.md`；`stop-guard.sh` 的 diff 中無任何新增的條件式訊息分支 — 分流全在 § Cap Diagnostic Protocol；stop-guard diff 僅字串替換（cap matcher 為既有條件式），post-compact heredoc 尾句改為指向句、hook 不裁決（測試以負向斷言釘住）
+- [x] state schema 與 exit code 分支零變更：觸頂在 strict 下仍 `exit 2`、warn 下仍 `exit 0`（**兩者皆以實際執行 hook 釘住**），`git diff` 中無 `jq` 寫入語句異動 — 4 個 cap fixtures 斷言 exit 2/0；diff 無 jq 寫入異動
+- [x] Pass /codex-review-doc — rules/auto-loop.md + auto-loop-project.md ✅ Mergeable（2 P2 deferred）；本張與 R4 證據附註的 Doc Sync 編輯另行 doc review
+- [x] Pass /precommit — `## Overall: ✅ PASS`（2955 tests / 2949 pass / 0 fail / 6 skipped，2026-07-29）；AC-trace `✅ Adequate`（AC7/AC8 High 缺口修正後複核）
 
 ## Design Decision
 
@@ -113,11 +113,9 @@
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | 現有 Strategic Reset 七項落差、`ITER_MAX` 預設值、hook 註冊事件皆經實測；現場案例取自本 session |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
-
-**Status**: Pending / In Progress / Candidate Complete / Completed
+| Development | Done | rules/auto-loop.md § Cap Diagnostic Protocol、auto-loop-project.md Think Harder 語意、stop-guard cap 中性化（含 cap+marker 路徑）、post-compact taxonomy heredoc；code review ✅ Ready（AC-trace 修正回合共 3 輪驗證） |
+| Testing | Done | stop-guard 4 個 cap fixtures（strict/warn × 有無 marker）+ post-compact taxonomy 斷言；/precommit ✅ PASS 2949/2955 |
+| Acceptance | Done | AC-trace `✅ Adequate`（初判 ⛔ 2 High → AC7/AC8 修正 → 複核 Covered） |
 
 ## References
 

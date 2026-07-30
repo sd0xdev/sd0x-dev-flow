@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Note**: 與 R3 同源 — 都是「常駐／隨碼載入的散文過量」。但 R5 針對程式碼註解、R3 針對 context 檔，範圍不重疊，**可與 R3 並行**。本張會在 `rules/docs-writing.md` 新增指示，故須早於 R7 的全規則分類。父 tech spec 尚未建立（見 References）
 > **Priority**: P2
 > **Brainstorm threadId**: `019f9d77-5c89-75f1-b610-00a2262e5dc3`
@@ -89,15 +89,15 @@ done | sort -t'|' -k2 -rn
 
 ## Acceptance Criteria
 
-- [ ] `rules/docs-writing.md` 新增註解政策，含**數值門檻**與指標格式範例，非僅原則性敘述
-- [ ] 導出指令（三棵樹遞迴版）重跑後，≥30 行的連續註解區塊數為 **0**（現況 **15**），且該指令與本張列出的清單同源
-- [ ] 每個被移除的區塊，其論證皆可在文件中找到對應段落；抽查 3 處以 `grep` 佐證資訊未淨損失
-- [ ] `post-tool-review-state.sh:443` 改為指標，且涵蓋 `4-implementation.md` **§3.1、§3.6、§3.7** 三節（該區塊跨越集合累積、plane 歸屬與 sidecar lock 三個主題），指標含節號而非僅檔名
-- [ ] 目的地文件皆 ≤ 500 行（`wc -l` 為證）；若觸及上限則依 `@rules/docs-numbering.md` 拆為編號子資料夾，且主檔保留 canonical 檔名
-- [ ] `check-comment-blocks.js` 可回報違規位置與行數，並支援豁免清單（授權標頭、`shellcheck`/`eslint` directive 等）
-- [ ] 既有行為零變更：`test/hooks/*.test.js` 與 `skills/orchestrate` 相關測試全綠，且**被遷移的那 15 個區塊所在的既有檔案**在 diff 中無非註解行異動（本條僅約束受遷移檔；新增的 `check-comment-blocks.js`、其測試與 `rules/docs-writing.md` 的政策段落當然含非註解行，不在此條範圍內）
-- [ ] Pass /codex-review-fast
-- [ ] Pass /precommit
+- [x] `rules/docs-writing.md` 新增註解政策，含**數值門檻**與指標格式範例，非僅原則性敘述 — § Code Comments：≥30 blocking、25–29 warning、指標格式含節號範例、move-or-dedupe、豁免清單
+- [x] 導出指令（三棵樹遞迴版）重跑後，≥30 行的連續註解區塊數為 **0**（現況 **15**），且該指令與本張列出的清單同源 — awk 導出重跑輸出為空；更嚴格的 `check-comment-blocks.js`（stateful `/* */` 計數）亦 0 BLOCK、exit 0，並因此多抓到 awk 漏掉的 prune-runs.js 相鄰 49 行 JSDoc（已一併遷移至 workflow-orchestration `4-implementation.md` §1.1）
+- [x] 每個被移除的區塊，其論證皆可在文件中找到對應段落；抽查 3 處以 `grep` 佐證資訊未淨損失 — Codex AC-trace 獨立抽查 3 處（sidecar §3.1/§3.6/§3.7、prune containment/TOCTOU、cleanup capability token）皆命中
+- [x] `post-tool-review-state.sh:443` 改為指標，且涵蓋 `4-implementation.md` **§3.1、§3.6、§3.7** 三節（該區塊跨越集合累積、plane 歸屬與 sidecar lock 三個主題），指標含節號而非僅檔名 — 現位於 `:669`，指標明列三節號
+- [x] 目的地文件皆 ≤ 500 行（`wc -l` 為證）；若觸及上限則依 `@rules/docs-numbering.md` 拆為編號子資料夾，且主檔保留 canonical 檔名 — auto-loop-evolution 295、workflow-orchestration 82（新檔）、necessity-audit 23（新檔）、docs-writing 56（doc review 收斂豁免文字後）
+- [x] `check-comment-blocks.js` 可回報違規位置與行數，並支援豁免清單（授權標頭、`shellcheck`/`eslint` directive 等）— `BLOCK/WARN file:line — N contiguous comment lines` 格式；SPDX/Copyright/eslint-disable/shellcheck-disable 首行豁免 + vendored 目錄名任意深度豁免；`--json`、無效 `--root` fail-closed exit 2
+- [x] 既有行為零變更：`test/hooks/*.test.js` 與 `skills/orchestrate` 相關測試全綠，且**被遷移的那 15 個區塊所在的既有檔案**在 diff 中無非註解行異動（本條僅約束受遷移檔；新增的 `check-comment-blocks.js`、其測試與 `rules/docs-writing.md` 的政策段落當然含非註解行，不在此條範圍內）— hook suite 812/810 pass 0 fail；orchestrate 20/20；8 個遷移檔 hunk 級過濾非註解 diff 行 = 0（`post-edit-format.sh` 的非註解 hunk 屬 R4 交付物，經 Codex 以 R4 ticket Related Files 佐證排除）
+- [x] Pass /codex-review-fast — 4 P1（hook 執行位遺失、`/* */` stateful 計數、無效 --root fail-open、豁免錨定層級）修復後 ✅ Ready
+- [x] Pass /precommit — ✅ PASS（2951 tests / 2945 pass / 0 fail）
 
 ## Design Decision
 
@@ -115,9 +115,9 @@ done | sort -t'|' -k2 -rn
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | 註解密度、區塊分佈、`:443` 與 §3.6 重複性皆經實測 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | 15 區塊全數遷移（9 shell + 6 JS）+ checker 落地；awk 漏抓的相鄰 JSDoc 49 行區塊由 checker 發現後補遷 |
+| Testing | Done | 全套 2951/2945 pass；hook suite 812/810；checker + executability 23/23；hook 執行位迴歸測試新增 |
+| Acceptance | Done | Codex AC-trace ✅ Adequate（AC7 以 hunk 級 provenance 排除 R4 共檔異動後重驗通過） |
 
 **Status**: Pending / In Progress / Candidate Complete / Completed
 

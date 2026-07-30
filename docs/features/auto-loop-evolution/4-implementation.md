@@ -85,7 +85,9 @@ One asymmetry inside that mirror is easy to get backwards, and was:
 | `current_round` | **Yes** | jq preserves each number's literal form (`1e2` stays `1E+2`), and it reaches the reader's final bash regex verbatim |
 | `max_rounds` | **No** | The reader clamps it first; only the clamp's *output* is interpolated |
 
-Canonicality must therefore be tested on the raw `current_round` and on the **clamped** cap. Testing the raw cap reopened the same class of divergence pointing the other way: `{current_round: 4, max_rounds: 1e2}` reads to stop-guard as a valid, unspent `4 50`, while the writer refused to reset on `1E+2` — so the loop walked to the cap and latched on `⚠️ Need Human` with no visible cause. Both filters are pinned to the same answers under real `jq` by `test/hooks/jq-filter-fidelity.test.js`.
+Canonicality must therefore be tested on the raw `current_round` and on the **clamped** cap. Testing the raw cap reopened the same class of divergence pointing the other way: `{current_round: 4, max_rounds: 1e2}` reads to stop-guard as a valid, unspent `4 50`, while the writer refused to reset on `1E+2` — so the loop walked to the cap and latched on `⚠️ Need Human` with no visible cause. Both filters are pinned to the same answers under real `jq` by `test/hooks/jq-filter-fidelity.test.js` — which feeds **raw JSON text**, not `JSON.stringify`'d objects, because the divergent inputs (`1e2`, `-0`, `3.5`) cannot be expressed as object literals that survive serialization.
+
+Two more traps the mirror closes: jq has no integer type, so `type == "number"` admits `current_round: 3.5` — the reader rejects a fractional counter as corrupt, and resetting it to a clean `0` would destroy the very corruption the reader fails closed on. And `//` is deliberately absent from the filter: jq's alternative operator treats both `null` and `false` as "missing", so `(.current_round // 0)` mapped a `current_round: false` to 0 and one passing `/precommit` rewrote it to a clean `0`. An invalid counter simply does not qualify for the reset — it survives for stop-guard to keep flagging, and self-heals only through a deliberate human edit. The mirror stays an inline copy in each hook rather than a shared extraction because the two run in different hooks with different failure modes (reader: classify → warn/block; writer: qualify → reset); the differential test is what keeps the copies honest.
 
 ### 2.4 Latching
 
@@ -149,6 +151,8 @@ Stop-guard **invalidates the affected gate in every case**. Whether that invalid
 
 **Transient allowlist**: `edit_lock_contention:code`, `edit_lock_contention:doc`, `lock_failure`. A sidecar containing *only* these does not force strict mode. Any other marker, or any mix, does. Empty or unreadable escalates (`_SIDECAR_LINES_SEEN == 0` → not-all-transient).
 
+The allowlist is **closed and default-deny** by design. It began as a denylist naming only `state_init_failed`, which meant every reason producers added later defaulted to the *lenient* branch — and they added three that are not races at all (`state_write_failed`, `verdict_write_failed:<gate>`, `aggregate_write_failed`), each describing a state whose recorded verdict is known wrong in the unsafe direction. A transient marker is one a lock *race* produced — the race already resolved in someone's favour, so the file's content is a real write, just possibly not ours — and escalating that to strict would silently override an explicit `warn` choice. Everything else, including an unrecognized marker from a newer producer, escalates: adding a reason must never silently weaken the gate.
+
 "Forces strict blocking regardless of `GUARD_MODE`" was once written here as an unconditional claim, and it is wrong in the first row: the transient allowlist exists precisely so a lock contention that resolves itself does not override a user's `warn` preference.
 
 ### 3.6 Markers are keyed by plane
@@ -186,7 +190,13 @@ It is deliberately **not** the same protocol as the state lock:
 | Staleness | TTL **or** dead owner (`pid` file + `kill -0`) | TTL only — no `pid` file, so a writer killed mid-section wedges every sidecar mutation for the full 30 s rather than being reclaimed by the next contender |
 | Retry budget | `REVIEW_STATE_LOCK_TIMEOUT` seconds (env-overridable; the hook suites set `0`) | Fixed 20 spins (~2 s) — the env override has no effect on this path |
 
-### 3.8 The one full-file delete
+### 3.8 Reading the sidecar without aborting the hook
+
+stop-guard's classification loop reads both sidecar planes **once each, via `cat`**, and the choice of `cat` over a shell redirection is load-bearing. `tr '\n' ',' < "$f"` looks equivalent and is not: the `< "$f"` redirection is performed by the *shell*, so its failure is reported before `tr` runs and `2>/dev/null` (which redirects tr's stderr) does not suppress it. Under `set -euo pipefail` that non-zero substitution aborts the hook — exit 1 with no JSON on stdout, which the harness treats as a hook error and **allows the Stop**. A sidecar exists only because a blocking verdict was lost, so that is the worst possible moment to fail open. `cat` opens the file itself, so both the stderr redirect and the `||` fallback apply to the open failure. The same reasoning retired a second shell-performed open (`done < file` feeding the loop): each source is opened exactly once, with exactly one failure path.
+
+The read also deliberately bypasses the writers' `_sidecar_read_all` helper. That helper absorbs per-source errors with `|| true` so its `set -e` callers are not aborted by an unreadable marker — right for writers, wrong here: it would pin `_SIDECAR_READABLE` to `true` forever and turn "unreadable marker is unknown, and unknown default-denies" (§3.5) into dead code. The distinction between "nothing was written" and "something was written and we cannot see it" only survives if the read reports its own failure per source.
+
+### 3.9 The one full-file delete
 
 `session-init.sh` removes the sidecar when a new session finds the working tree free of dirty reviewable files, at which point every marker — whatever plane wrote it — is by definition an orphan, because no dirty file remains for any of them to stand in for.
 
@@ -242,6 +252,27 @@ Command detection in the same mode uses a "not a command-name character" boundar
 
 Plan sentinels live in the `plan_review.*` state subtree and never touch `code_review` / `doc_review` / `aggregate_gate`. Plan-review output must never contain bare `✅ Ready` / `✅ Mergeable` / `## Gate:` / bare `⛔ Blocked`. Stop-guard treats a pending plan review as **warn-only** (never blocks). Gate transitions flow through `scripts/emit-plan-gate.sh`; see `skills/plan-review/SKILL.md`.
 
+### 4.6 Precommit runner command binding
+
+The Bash-plane precommit verdict is recorded only when the **entire** command is a standalone `precommit-runner.js` invocation — optional `HOOK_*=val` env prefixes, then `node <trusted-root>/precommit-runner.js`, then plain option arguments, anchored `^...$` with no embedded newline. A raw-text regex can never prove the runner *executed*, only that its text appears; whole-command anchoring is what defeats fabrication, because the runner text cannot hide inside a quoted `printf`, a never-run `false && …` branch, or a trailing `…; printf '## Overall: PASS'` chain — in every such case the command is not solely the runner, the match fails, and no verdict is recorded (fail-closed: `/precommit` re-runs cleanly).
+
+Four defenses, each closing a distinct bypass:
+
+| # | Defense | Bypass it closes |
+|---|---------|-----------------|
+| 1 | **Path binding** — script operand pinned to `.claude/scripts/` or `.sd0x/scripts/` | A dropped `/tmp/precommit-runner.js` that prints `## Overall: ✅ PASS` |
+| 2 | **Env allowlist** — only `HOOK_*=<word>`, value `[A-Za-z0-9_]` only | Execution-affecting prefixes: `PATH=/tmp` (shadow node), `NODE_OPTIONS=--require=…`, `LD_PRELOAD=…` |
+| 3 | **Metacharacter-free args** — restrictive charset, not `[^;\|&]` | `> >(printf '## Overall: ✅ PASS')` — no `;`/`\|`/`&`, but redirects the real stdout away while `printf` supplies a fake PASS |
+| 4 | **Mode allowlist** (function body) — explicit `--mode`, every operand exactly `full`/`fast` | `--mode bogus` passes the structural grep but skips the build while lint+test still print PASS |
+
+**Accepted residual**: the defenses close *text-level* fabrication; they do not prove the file at the trusted path is the genuine runner. That is out of scope by design: the runner shares the `.claude/` trust root with the hook itself (an attacker who can rewrite one can rewrite the other), the PostToolUse payload carries no exit code to corroborate execution, and a manifest-hash check would live in the same trust root. The threat model here is **cooperative** (Claude's own auto-loop discipline), unlike `run-verify.js`'s adversarial fanout-worker model — closing text fabrication is the right boundary for it.
+
+### 4.7 Verdicts belong to their producer
+
+The MCP branch once mapped `^## Overall:` in a codex response to a precommit verdict, and a generic `✅ All Pass` to a code-review pass. Both were removed, for the same reason: **MCP is not the producer of either verdict.** Precommit executes over Bash (or the Skill's own output) — a verdict line inside an MCP response can only be codex *quoting* text: reviewing `precommit-runner.js`, reading a build log, or echoing the template line in `skills/precommit/SKILL.md`. That made the branch a live gate bypass, proven end-to-end: one codex response quoting the SKILL.md template flipped stop-guard from `Execute immediately: /precommit` to `All steps completed` with no precommit run. A namespace guard (requiring runner section headers) cannot fix it — those headers are exactly what codex reproduces when analyzing a precommit log; "ran it" and "quoted it" are lexically identical.
+
+Dropping the branch is fail-closed both ways: a passing precommit is simply not recorded from MCP (stop-guard re-requests `/precommit`, and the Bash path records it), and a quoted FAIL can no longer spuriously revoke a genuine Bash-recorded pass. The doc/plan/code MCP branches stay, because codex MCP really is the reviewer producing those verdicts. Routing `✅ All Pass` to code_review had the extra cost of conflating two gates: any precommit output reaching MCP banked a code_review pass *and* reset `changed_files` — clearing the very tracking the code gate depends on.
+
 ---
 
 ## 5. Convergence rows 3–4 are a V2 target
@@ -251,3 +282,14 @@ Plan sentinels live in the `plan_review.*` state subtree and never touch `code_r
 Until hook-side fingerprint storage lands, the round cap is the only convergence exit the hook observes at all — and even that one only *blocks* in `strict`/dual mode; under the default `warn` it prints to stderr and allows the stop. That is precisely why its counter must never be silently rewound (§2): **in warn mode the behaviour layer is the enforcement.** Consistent with [plan-review-loop tech spec](../plan-review-loop/2-tech-spec.md) OQ-9.
 
 Row 2 of the decision table carries a related trap. `_update_iteration()` derives `total` by counting `- [P0]`/`#### P0`-style lines, so an output in any other shape (reviewer error, truncated response, a format change) yields a perfectly ordinary `0`. There is no `parse_ok` field to tell the two apart — which is why a zero must be corroborated by a passing gate verdict before it is read as convergence.
+
+## 6. Max Rounds override — seeding vs reconciliation timing
+
+Moved here from the `rules/auto-loop-project.md` template comments (R3 prose reduction). `## Max Rounds` is one switch driving BOTH caps: the behaviour-layer tier cap and the hook-persisted `iteration_history.max_rounds`. The hooks pick it up two different ways, and conflating them gets the timing wrong:
+
+- **Seeding**: `init_state_file()`/migration read the override whenever state is CREATED, so any path that can create state seeds the cap from the file — a Markdown edit and an aggregate-only transition both call `init_state_file()` and so both qualify.
+- **Reconciling** an already-persisted cap: exactly three entry paths — a code edit, a single-gate verdict write, an iteration write — which is what lets a changed value land mid-session instead of only at startup. Nothing else reconciles: not SessionStart (`session-init.sh` resets counters but preserves the cached cap), not a Markdown edit, not an aggregate-only transition, not the plan plane (NFR-7 forbids it), not Stop or PostCompact, which only read what is already there.
+
+So editing `auto-loop-project.md`, itself a Markdown edit, has two outcomes: with state already present the new value takes effect on the FOLLOWING code edit or verdict/iteration write, not on the edit that set it; with no state file that same edit creates one and seeds it immediately. Neither delay binds the behaviour layer — the tier cap applies as soon as the rule has been read.
+
+stop-guard checks the persisted cap either way, but only BLOCKS in strict or dual mode; the default warn mode reports to stderr and exits 0, so there the behaviour layer is the enforcement.

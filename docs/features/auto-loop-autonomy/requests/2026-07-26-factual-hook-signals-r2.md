@@ -2,8 +2,8 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
-> **Note**: 機制先行 — 本張必須在 R3（散文刪除）之前完成，否則會在訊號建立前拿掉唯一的執行力。父 tech spec 尚未建立（見 References）
+> **Status**: Candidate Complete
+> **Note**: 機制先行 — 本張必須在 R3（散文刪除）之前完成，否則會在訊號建立前拿掉唯一的執行力。父 tech spec 尚未建立（見 References）。實作於 commit `b984ff3`（與 R1 同批）
 > **Priority**: P1
 > **Depends On**: [Dual-Mode 復原訊號修正 (R1)](./2026-07-26-dual-mode-signal-repair-r1.md)
 > **Brainstorm threadId**: `019f9d77-5c89-75f1-b610-00a2262e5dc3`
@@ -50,15 +50,15 @@
 
 ## Acceptance Criteria
 
-- [ ] 六個 emitter 皆輸出統一 `[AUTO_LOOP_STATE]` 格式，欄位名稱跨 emitter 一致（compaction 得保留自身的 `[AUTO_LOOP_RESUME]` 標頭，欄位須同構）
-- [ ] 訊號含 change class、收據新舊、phase、round/cap、configured tier、pending obligations
-- [ ] 全 repo hook 輸出中不再出現「Execute immediately」「do not ask」「do not summarize」等祈使句，**degraded 路徑（`stop-guard.sh:167`/`:179`/`:186`/`:206`）除外**，且測試釘住這四條的安全指示仍存在（防止被一併移除）
-- [ ] precommit 走過 `lint:fix` 時輸出 `freshness=unverified-after-mutating-check`
-- [ ] 既有 state 寫入邏輯零變更（`git diff` 中無 `jq` 寫入語句異動）
-- [ ] 既有 exit code 分支零變更；strict 仍 `exit 2`、warn 仍 `exit 0`
-- [ ] 訊號經真實 hook 協定送達驗證，涵蓋 Edit/Write、Skill、compaction、UserPromptSubmit、strict Stop retry 五個路徑
-- [ ] Pass /codex-review-fast
-- [ ] Pass /precommit
+- [x] 六個 emitter 皆輸出統一 `[AUTO_LOOP_STATE]` 格式，欄位名稱跨 emitter 一致（compaction 得保留自身的 `[AUTO_LOOP_RESUME]` 標頭，欄位須同構）— 共用區塊逐位元一致，`test/hooks/auto-loop-state.test.js` 釘住
+- [x] 訊號含 change class、收據新舊、phase、round/cap、configured tier、pending obligations — 收據為三值（`true`/`false`/`unknown`），型別測試讀取（jq `//` 對 boolean `false` 的陷阱見測試 `_alf_receipt decodes a receipt by TYPE`）
+- [x] 全 repo hook 輸出中不再出現「Execute immediately」「do not ask」「do not summarize」等祈使句，degraded 路徑除外，測試釘住四條安全指示仍存在
+- [x] precommit 走過 `lint:fix` 時輸出 `freshness=unverified-after-mutating-check`
+- [x] 既有 state 寫入邏輯零變更 — Codex 第 4 輪獨立確認「No state-write or exit-code logic moved」；讀回 + sidecar 快照全為讀取端
+- [x] 既有 exit code 分支零變更；strict 仍 `exit 2`、warn 仍 `exit 0` — 測試釘住
+- [x] 訊號經真實 hook 協定送達驗證，涵蓋 Edit/Write、Skill、compaction、UserPromptSubmit、strict Stop retry 五個路徑 — 各路徑皆有欄位非空斷言（零位元 state 曾使欄位靜默渲染為空）
+- [x] Pass /codex-review-fast — 4 輪（⛔×3 → ✅ Ready），threadId `019fa1da-b50a-7363-b6f8-c91bedc1ed55`
+- [x] Pass /precommit — ✅ PASS（lint 乾淨、2891 tests / 2885 pass / 0 fail / 6 skipped）
 
 ## Design Decision
 
@@ -74,11 +74,11 @@
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | Codex 辯論 R3 最終建議 P2；Claude Position A 的存活核心 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | 六 emitter 共用區塊 + `_alf_transition`/`_alf_begin` 讀回 + 三 reminder hook aggregate 分流（commit `b984ff3`，與 R1 同批） |
+| Testing | Done | `auto-loop-state.test.js` 新增 25 案；七檔既有 hook 測試套件擴充；全套 2885 pass / 0 fail |
+| Acceptance | Done | Codex 4 輪複驗至 ✅ Ready；兩條 P2 依 standard tier 延後（同 plane 重複失敗少報一次、多世代讀取競態），`/codex-review-branch` 下次深審接手 |
 
-**Status**: Pending / In Progress / Candidate Complete / Completed
+**Status**: Candidate Complete
 
 ## References
 

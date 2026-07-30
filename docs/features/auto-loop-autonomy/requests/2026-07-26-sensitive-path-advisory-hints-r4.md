@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Note**: 「依變更性質自動分流」的可交付版本。分流只到建議層級 — 機械化硬 gate 在本次半徑內無法誠實達成，理由見 Design Decision
 > **Priority**: P2
 > **Depends On**: [Hook 事實訊號標準化 (R2)](./2026-07-26-factual-hook-signals-r2.md)
@@ -44,15 +44,15 @@
 
 ## Acceptance Criteria
 
-- [ ] 敏感路徑規則以 anchored path segment 比對（如 `(^|/)auth(/|$)`），非任意子字串
-- [ ] 支援 include 與 exclude，且測試涵蓋正例（`auth`、`auth/login.ts`、`src/auth/login.ts`）與反例（`author/index.ts`、`docs/features/auth/2-tech-spec.md`）
-- [ ] 設定檔缺失或格式錯誤時輸出 `sensitivity=unknown`，不靜默視為未命中
-- [ ] 命中時僅輸出 `sensitivity_hint` / `rule` / `path` / `suggested_tier` / `suggested_route` 等建議欄位
-- [ ] 全 diff 可證：未寫入 `review_mode`，未寫入任何 enforcement 狀態欄位
-- [ ] 比對成本 < 50ms（實測為證），不引入任何全庫掃描
-- [ ] 內建預設規則以「範例」呈現，文件明確聲明非完整安全涵蓋
-- [ ] Pass /codex-review-fast
-- [ ] Pass /precommit
+- [x] 敏感路徑規則以 anchored path segment 比對（如 `(^|/)auth(/|$)`），非任意子字串 — `_alf_sensitivity()` 以 `"/$path/" == *"/$seg/"*` 包裹比對；`author/index.ts`、`src/oauth2/x.ts` 反例經測試釘樁
+- [x] 支援 include 與 exclude，且測試涵蓋正例（`auth`、`auth/login.ts`、`src/auth/login.ts`）與反例（`author/index.ts`、`docs/features/auth/2-tech-spec.md`）— exclude wins；全部案例逐字入測
+- [x] 設定檔缺失或格式錯誤時輸出 `sensitivity=unknown`，不靜默視為未命中 — 驗證為 all-or-nothing：單一 rule 不合 schema 即整份 INVALID（含 `false`/`null` optional 欄位、傳輸保留值 `,`/`-`/`VALID`/tab/newline/CR/backslash）；空 rules 陣列合法 → `none`
+- [x] 命中時僅輸出 `sensitivity_hint` / `rule` / `path` / `suggested_tier` / `suggested_route` 等建議欄位 — `path` 載體為事實行既有的 `file=` 欄位（同一行、同一路徑，不重複輸出）；端對端測試釘住整條 `[AUTO_LOOP_STATE]` line 契約
+- [x] 全 diff 可證：未寫入 `review_mode`，未寫入任何 enforcement 狀態欄位 — helper 為 file-local 唯讀；測試以禁用 token 清單（`STATE_FILE`/`review_mode`/`update_*`/`invalidate_*`/sidecar/`mktemp`/重導向）掃 helper 本體，並斷言其位於六 hook 共用 byte-identical 區塊之外
+- [x] 比對成本 < 50ms（實測為證），不引入任何全庫掃描 — 單次 jq 呼叫，無任何 find/grep 遍歷；50ms 絕對預算由**實際 shipped config**（`scripts/config/sensitive-paths.json`，4 rules）全 miss 最壞情況測試持有（暖機後 11 次取**中位數**）；100 rules × 10 segments 全 miss 極端基準改為**成對交錯（AB/BA）相對縮放斷言**（對 2-rule example config 的比值中位數 < 2.5× + 250ms runaway backstop）——絕對牆鐘在該規模量的是 /precommit 平行負載而非 hook（實測 47–68ms vs 單獨 <40ms），成對交錯降低量測間的系統性順序偏差，並直接保護「不引入 per-rule 遍歷」性質（2026-07-29 調整，經 code review 驗證）。實測環境為本機 macOS；Codex 沙箱因 mkdtemp EPERM 無法重跑行為測試，屬環境限制而非產品缺陷
+- [x] 內建預設規則以「範例」呈現，文件明確聲明非完整安全涵蓋 — `_comment` 明示 EXAMPLE only / NOT complete security coverage / 語意升級不依賴路徑命中；測試釘住此聲明
+- [x] Pass /codex-review-fast — 4 輪（R1 ⛔ 1P1：malformed rule 靜默丟棄；R2 ⛔ 1P1：`//` 對 `false` 取右值繞過驗證；R3 ✅ Ready；R4 ✅ Ready 驗證測試補強）
+- [x] Pass /precommit — ✅ PASS，2928 tests / 2922 pass / 0 fail / 6 skipped
 
 ## Design Decision
 
@@ -72,11 +72,18 @@
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | Codex 辯論 R3 建議 P4；淘汰理由經 Claude 實測（12.1s 計時、`stop-guard.sh:577/591` 驗證） |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | `scripts/config/sensitive-paths.json`（4 條範例規則）+ `_alf_sensitivity()`（file-local，共用區塊外）+ 兩個 code_edit emit 站點附加 hint |
+| Testing | Done | `test/hooks/sensitive-paths.test.js` 22 tests（anchored 比對、include/exclude、fail-loud 驗證、傳輸編碼保留值、e2e 整行契約、極端規模基準）；審查 4 輪 |
+| Acceptance | Done | AC-trace（advisory）指出之缺口已補：e2e 事實行測試、極端設定基準；`path`=`file=` 載體之等價決定記入 AC 附註 |
 
 **Status**: Pending / In Progress / Candidate Complete / Completed
+
+## Implementation Notes
+
+- **`path` 欄位載體決定**：AC4 的欄位列表為例示（「等建議欄位」）。事實行既有 `file=` 欄位即路徑載體，helper 不重複輸出 `path=`——同一行出現兩份路徑只會製造漂移面。此等價由 e2e 測試釘住整行契約（`file=` + hint tokens 同行、無 `review_mode`）。
+- **驗證策略沿革**：初版對 malformed rule 採 per-rule 丟棄（審查 R1 P1）；改為 all-or-nothing 後又發現 jq `//` 對 `false` 取右值可繞過型別檢查（R2 P1），最終以 `has()` 存在性檢查 + 傳輸保留值拒絕（`,`、`-`、`VALID`、tab/newline/CR/backslash）收斂。`sensitivity=unknown`（config 不可信）與 `sensitivity=none`（檢查過且乾淨）嚴格區分。
+- **審查中當場修正（sub-threshold 例外）**：R3 輪 deferred P2「`VALID`/`-` 線路協定保留值碰撞」屬已開檔一行修正，於同 pass 內修畢並補測試，未另開輪次。
+- **Adequacy（advisory ⛔ → 缺口處置）**：High×2（`path` 欄位、<50ms 極端規模）與 Medium（無 e2e）以測試補齊；Codex 沙箱 mkdtemp EPERM 導致其無法重跑行為測試，<50ms 證據為本機實測（記錄於 AC 附註）。Low（shipped-config 測試斷言數超過 ≤7 慣例、測試命名部分未依 `'<unit> <condition> → <expected>'`）屬既有測試風格議題，deferred 待 `/codex-review-branch` 深度審查一併處理。
 
 ## References
 

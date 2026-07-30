@@ -2,8 +2,8 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Pending
-> **Note**: 本張橫跨全部 `rules/`，風險最高 — 寫鬆了會讓模型有理由合理化跳過 review。必須在 R2（事實訊號就位）之後執行。父 tech spec 尚未建立（見 References）
+> **Status**: Candidate Complete
+> **Note**: 本張橫跨全部 `rules/`，風險最高 — 寫鬆了會讓模型有理由合理化跳過 review。必須在 R2（事實訊號就位）之後執行。父 tech spec 尚未建立（見 References）。實作採需求允許的「單一索引」形式（`rules/discretion.md`），12 受管檔本體未動
 > **Priority**: P1
 > **Depends On**: [R2](./2026-07-26-factual-hook-signals-r2.md) · [R3](./2026-07-26-auto-loop-prose-reduction-r3.md) · [R5](./2026-07-26-code-comment-doc-pointer-r5.md) · [R6](./2026-07-26-cap-diagnostic-protocol-r6.md) — 本張是**最後的全規則整合分類**，須待前述各張對 `rules/` 的新增與改寫定稿，否則新寫入的指示會漏標層級
 > **Brainstorm threadId**: `019f9d77-5c89-75f1-b610-00a2262e5dc3`
@@ -113,19 +113,19 @@ grep -oiE "must|never|必須|不得|禁止|forbidden|prohibited" rules/<f>.md | 
 
 ## Acceptance Criteria
 
-- [ ] 三級分層在 `rules/` 中有單一權威定義；**12 個 plugin 受管規則檔**的每條指示皆解析為恰好一個層級（含位於首個 `##` 之前的 preamble 指示）
-- [ ] 兩個 user-owned 覆寫檔的語意在本張完成後**未被改變**（diff 可證未觸及），且分層定義明文標示其分類由 R8 處理
-- [ ] 錨點以**封閉清單**列舉，至少涵蓋安全、資料完整性、機密記錄、git 破壞性操作、auto-loop 四大錨點；每個含既有例外者，其例外清單一併列為錨點契約的一部分
-- [ ] `/push-ci`、`/smart-commit --execute`、`/epic-merge` 三個既有核准工作流在改造後仍然有效，且有測試釘住（防止錨點被寫成無條件形式而抹除它們）
-- [ ] 改造前後比對可證：無任何現有錨點被降級為 Default 或 Guidance
-- [ ] 偏離 Default 時的陳述格式有明文定義，且要求引用具體事實訊號而非泛稱判斷
-- [ ] 提案通道明訂效力邊界，並載明 AskUserQuestion 可能因 session 快取自動核准、不得作為安全性核准的唯一憑據
-- [ ] 提案通道明訂**觸發條件為封閉集合**（Anchor 衝突、不可逆後果），且規則中含明文條款排除「不確定就先問」的讀法；Default 範圍內的判斷一律以「陳述理由後續行」處理，不得停下等待回覆
-- [ ] `auto-loop.md` 四大錨點在新分層下仍為 Anchor，且規則中無任何可解讀為「可自行判斷是否 review」的措辭
-- [ ] 錨點測試集除四大錨點外，另**明確涵蓋三條可執行的迴圈義務**，防止日後改標籤即繞過：(a) 編輯後須觸發 review 的轉移、(b) tier 只決定審查深度、**永不決定迴圈是否執行**、(c) 任何 code 編輯重置審查週期
-- [ ] `test/rules/discretion-tiers.test.js` 釘住上述封閉集合，任何項目被移除或降級為 Default／Guidance 即測試失敗
-- [ ] Pass /codex-review-doc
-- [ ] Pass /precommit
+- [x] 三級分層在 `rules/` 中有單一權威定義；**12 個 plugin 受管規則檔**的每條指示皆解析為恰好一個層級（含位於首個 `##` 之前的 preamble 指示）— 採需求允許的**單一索引**形式：新檔 `rules/discretion.md` 開頭即定義解析規則「Anchor Register hit → Anchor；否則檔案例外；否則檔案 baseline」，preamble 依同規則解析；12 檔 baseline 表以測試逐格 deepEqual 釘住
+- [x] 兩個 user-owned 覆寫檔的語意在本張完成後**未被改變**，且分層定義明文標示其分類由 R8 處理（`discretion.md` preamble 末句）— 出處證明（AC-trace High 修正）：`git diff HEAD -- rules/testing-project.md` 為**空**；`rules/auto-loop-project.md` 的工作樹 diff 屬 **R6 的變更集**，其單張級出處記錄於 [R6](./2026-07-26-cap-diagnostic-protocol-r6.md) 的 Scope In（`auto-loop-project.md 的設定項更新`）、Related Files（`rules/auto-loop-project.md | Modify | ## Think Harder 語意更新`）與 Development 註記；R7 自身的變更清單（本單 Progress.Development）不含任一覆寫檔
+- [x] 錨點以**封閉清單**列舉（7 項 Anchor Register），涵蓋安全（#1）、資料完整性（#3）、機密記錄（#2，含禁止含 secrets 的 commit）、git 破壞性操作（#4）、auto-loop 四大錨點（#5）；#4 內明列三工作流例外與 `--ai-co-author` 精確白名單行，並載明「例外清單本身屬錨點」
+- [x] `/push-ci`、`/smart-commit --execute`、`/epic-merge` 三個既有核准工作流在改造後仍然有效，且有測試釘住 — 測試釘住 `git-workflow.md` 三條完整 Exception 行 + 各 SKILL.md 的核准契約句 + `pre-push-gate.sh` 主閘門句
+- [x] 改造前後比對可證：無任何現有錨點被降級為 Default 或 Guidance — register 測試斷言七項識別字精確有序，且逐項禁止 `→ Default|Guidance` 降級標記；「改造前」清點另以 `FROZEN_ANCHOR_INVENTORY`（AC-trace High 修正、code review 硬化）為基準：**明示凍結、具日期（2026-07-29）的手寫 before-oracle**，18 條逐項涵蓋 security 全部 5 條 Prohibited、logging never-log、git 四項（forbidden ops／protected branches／force push／secrets commit）、testing 三條 ❌ Never 逐列、auto-loop 終局不變量＋三不等式＋cycle reset、context 兩條；每條同時驗證來源片語存活**且**映射進 register/baseline（刻意不採 runtime 衍生——衍生會隨其欲防之變異一同漂移）
+- [x] 偏離 Default 時的陳述格式有明文定義（`[DEVIATION] rule= default= chosen= reason= signal=`），signal 須為 `[AUTO_LOOP_STATE]` 欄位、量測值或 reviewer verdict，明文「Silent deviation is a violation」
+- [x] 提案通道明訂效力邊界，並載明 AskUserQuestion 可能因 session 快取自動核准、不得作為安全性核准唯一憑據——並區分「工作流內未指名更強機制者（smart-commit/epic-merge）仍必要且充分」與「指名更強機制者（push-ci → `pre-push-gate.sh` 為終局憑據）」
+- [x] 提案通道明訂**觸發條件為封閉集合**（Anchor 衝突、不可逆後果），且明文「Uncertainty is NOT a trigger for this channel」；封閉集合限定於規則偏離核准，明文不限縮 `auto-loop.md` 自身的 Need Human 出口（REQUIREMENT_AMBIGUITY 出口保持以觸頂診斷為前提）
+- [x] `auto-loop.md` 四大錨點在新分層下仍為 Anchor（Register #5），且「Authorization is never a reason to skip review」明文收尾；負向半邊（AC-trace Medium 修正）：`auto-loop.md when scanned` 測試以 8 族禁用樣式（附 12 正 10 反自驗 fixtures）掃描 `rules/auto-loop.md`，任何「可自行判斷是否 review」措辭（may decide whether review、review optional、skip review 等）入檔即失敗（sentinel token 先剝除防誤中）
+- [x] 錨點測試集除四大錨點外，另涵蓋三條迴圈義務（Register #6 (a)(b)(c)：編輯重開閘門、tier 只決定深度、code 編輯重置審查週期），測試釘住其逐字內容
+- [x] `test/rules/discretion-tiers.test.js` 釘住上述封閉集合（19 tests）：strict `parseTable` 消費全部表列、格數精確驗證防走私；register 七項 deepEqual；baseline 12×3 全格 deepEqual；移除或降級即失敗
+- [x] Pass /codex-review-doc — ✅ Mergeable（1 輪修 2 P1：提案通道與 auto-loop 人類出口的矛盾、Register 漏列 secrets commit；1 Nit deferred：`§` 引用指向行內標籤）
+- [x] Pass /precommit — ✅ PASS，0 fail（首跑揪出 `test/rules/` 不在任何 npm 分割腳本，已補進 `test:schema`/`test:fast`）
 
 ## Design Decision
 
@@ -146,9 +146,16 @@ grep -oiE "must|never|必須|不得|禁止|forbidden|prohibited" rules/<f>.md | 
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | 授權語句唯一性、強制語彙密度、AskUserQuestion 效力弱點皆經實測 |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | 單一索引 `rules/discretion.md`（~63 行）＋ 3 份 CLAUDE 模板 import ＋ 6 README／docs/rules.md／project-setup 計數同步；12 受管檔本體零修改（單一索引形式使逐檔標註不必要） |
+| Testing | Done | `test/rules/discretion-tiers.test.js` 19 tests；code review 8 輪 ✅ Ready（結構化封閉性經多輪硬化：resolution-order 逐字釘、register/baseline deepEqual、strict parseTable 防走私、效力邊界 push 分流、REQUIREMENT_AMBIGUITY 觸頂前提）；precommit ✅ PASS |
+| Acceptance | Done | doc review ✅ Mergeable；AC-trace（advisory）⛔ → 2 High + 1 Medium 以測試與出處證據補齊後再審，見 Implementation Notes |
+
+## Implementation Notes
+
+- **單一索引決定**：需求允許「寫在各規則檔內**或單一索引**」；採單一索引（`rules/discretion.md`）使 12 受管檔本體零修改——標註漂移面集中於一檔，且 Related Files 原列的逐檔 Modify 因此不適用（該表為開單時的預估形式）。
+- **封閉性硬化沿革**（code review 8 輪，其中 6 輪有修正）：R1 修 `.claude/CLAUDE.md` gitignored 測試缺口、效力邊界誤撤銷工作流、結構化釘樁不足、attribution 無條件化；R2 修 push-ci「必要且充分」矛盾（引入「未指名更強機制」限定）、baseline 全格 deepEqual、工作流全句釘樁；R3 修 filter+slice 可走私解析 → strict `parseTable`；R4 ✅；R5 修 baseline secrets 指標懸空（#4→#2 拆分）與 REQUIREMENT_AMBIGUITY 觸頂前提；R6 ✅；R7 修 AC-trace 補救測試之清點不完整（凍結 oracle 化＋補全 18 條）；R8 修掃描器假陰陽（8 族樣式＋自驗 fixtures）✅ Ready。
+- **Adequacy（advisory ⛔ → 缺口處置）**：High AC2（覆寫檔出處）以 R6 單張級出處 + 空 diff 補證；High AC5（前後清點）以來源片語為 before 基準的 `legacy anchors when migrated` 測試補齊（regression 類 AC 不得以手動例外處理，per `rules/testing.md`）；Medium AC9（負向措辭）以禁用樣式掃描補齊（初版 4 族，code review R8 擴充為最終 8 族＋自驗 fixtures）。均入測試後送 AC-trace 再審。
+- **`[NIT_DEFERRED]`**（隨下次 `/codex-review-branch` 處理）：separator row 未逐格驗證 `/^:?-+:?$/`（code R4）；`§ Prohibited`/`§ Push safety` 引用行內標籤而非真 heading（doc R2）。
 
 **Status**: Pending / In Progress / Candidate Complete / Completed
 
