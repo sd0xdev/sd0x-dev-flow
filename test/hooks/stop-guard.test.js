@@ -1827,7 +1827,11 @@ for (const [label, eventPlane] of [['event marker', true], ['shared marker', fal
     assert.equal(result.status, 2, 'corrupt counters + a sidecar must block');
     assert.match(result.stderr, /corrupt or tampered/, 'this must be the BLOCKED_REASON renderer, not the MISSING one');
     if (wantNoRetry) {
-      assert.match(result.stderr, /Do not auto-retry/, 'the BLOCKED_REASON renderer must honour the plane fact too');
+      // R6: the BLOCKED renderer is the path cap-hits route through, so its plane fact is phrased
+      // neutrally — the obligation is stated, the disposition is not.
+      assert.match(result.stderr, /Unretireable obligation:.*No review, precommit or edit retires it/,
+        'the BLOCKED_REASON renderer must honour the plane fact too');
+      assert.doesNotMatch(result.stderr, /auto-retry|retry in a loop/i, 'phrased as fact, not imperative (R6 neutrality)');
       assert.doesNotMatch(result.stderr, /Findings are outstanding/, 'the ordinary description must be displaced, not merely appended to');
     } else {
       assert.match(result.stderr, /Findings are outstanding/, 'a shared marker keeps the ordinary corrupt-state description');
@@ -1866,7 +1870,9 @@ test('warn-mode BLOCKED_REASON carries the no-retry fact too (symmetry with the 
   assert.equal(result.status, 0, `a transient reason must not override the user's warn preference; stderr: ${result.stderr}`);
   const json = parseJson(result.stdout);
   assert.equal(json.ok, true, 'warn mode still allows the stop');
-  assert.match(json.description, /Do not auto-retry/, 'but the JSON must still carry why working it off will not help');
+  assert.match(json.description, /Unretireable obligation:.*No review, precommit or edit retires it/,
+    'but the JSON must still carry why working it off will not help');
+  assert.doesNotMatch(json.description, /auto-retry|retry in a loop/i, 'phrased as fact, not imperative (R6 neutrality)');
 });
 
 test('a sidecar is checked BEFORE the unreadable-state and dual branches (what makes those unreachable)', () => {
@@ -4704,7 +4710,127 @@ test('valid numeric counters still take the normal hard-cap path (digit guard is
   const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
   const payload = parseJson(result.stdout);
   assert.equal(payload.ok, false);
-  assert.match(payload.reason || '', /Max review rounds exceeded \(10\/10\)/);
+  assert.match(payload.reason || '', /Review round cap reached \(10\/10\)/);
+});
+
+// === R6: cap-hit message neutrality (executed hook, not source grep) ===
+
+test('cap-hit message is a neutral fact — no disposition verdict, strict exits 2', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-cap-neutral-strict-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      iteration_history: { current_round: 30, max_rounds: 30 },
+    })
+  );
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
+  assert.equal(result.status, 2, 'strict mode still blocks with exit 2 (exit branch unchanged)');
+  const combined = `${result.stdout}\n${result.stderr}`;
+  assert.match(combined, /Review round cap reached \(30\/30\)/, 'reports round/cap as fact');
+  // Pins the BLOCKED_REASON ↔ `grep -q "Review round cap reached"` matcher coupling: if the
+  // matcher drifts, description falls back to the generic findings line and this fails.
+  assert.equal(
+    parseJson(result.stdout).description,
+    'Review round cap reached; see the round/cap values in the reason',
+    'cap-specific BLOCK_DESC is selected (message/matcher in sync)'
+  );
+  assert.match(result.stderr, /\[Stop Guard\] Review round cap reached; see the round\/cap values in the reason/, 'strict stderr carries the same neutral description');
+  assert.ok(!/do not auto-retry/i.test(combined), 'no auto-retry prohibition — disposition belongs to rules');
+  assert.ok(!/escalate to human/i.test(combined), 'no escalation directive — disposition belongs to rules');
+  assert.ok(!/needs human intervention.*cap|cap.*needs human intervention/i.test(combined), 'cap line carries no intervention verdict');
+});
+
+test('cap-hit in warn mode: same neutral message, exit 0 (exit branch unchanged)', () => {
+  const workDir = makeTempDir('sd0x-stop-guard-cap-neutral-warn-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      iteration_history: { current_round: 31, max_rounds: 30 },
+    })
+  );
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'warn' } });
+  assert.equal(result.status, 0, 'warn mode lets the stop through');
+  const combined = `${result.stdout}\n${result.stderr}`;
+  assert.match(combined, /Review round cap reached \(31\/30\)/, 'over-cap value reported verbatim (lower bound semantics)');
+  assert.ok(!/do not auto-retry/i.test(combined), 'warn path is equally neutral');
+  assert.ok(!/escalate to human/i.test(combined), 'warn path is equally neutral');
+});
+
+test('cap-hit WITH an event-plane marker stays neutral in strict mode (the marker fact displaces, never adjudicates)', () => {
+  // AC7's "no context-dependent divergence" reaches its hardest case here: a sidecar marker
+  // coexisting with the cap used to swap the description to `Do not auto-retry:` — an imperative
+  // on a cap-reachable path. The marker fact must still displace the cap description (an
+  // unretireable obligation outranks it), but as a fact, not a verdict.
+  const workDir = makeTempDir('sd0x-stop-guard-cap-marker-strict-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      iteration_history: { current_round: 30, max_rounds: 30 },
+    })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.c0ffee'), 'aggregate_write_failed\n');
+
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'strict' } });
+  assert.equal(result.status, 2, 'strict mode still blocks with exit 2 (exit branch unchanged)');
+  const combined = `${result.stdout}\n${result.stderr}`;
+  assert.match(combined, /Review round cap reached \(30\/30\)/, 'the cap fact (round/cap) survives in the reason');
+  const json = parseJson(result.stdout);
+  assert.match(json.description, /Unretireable obligation:.*sidecar marker is present/,
+    'the marker is reported as a fact — the obligation is stated, the disposition is not');
+  assert.match(json.description, /No review, precommit or edit retires it/, 'why working it off will not help is carried');
+  assert.match(result.stderr, /No review, precommit or edit retires it/, 'the same fact reaches stderr, where the model reads it on exit 2');
+  assert.ok(!/auto-retry|retry in a loop/i.test(combined), 'no retry prohibition even with a marker present');
+  assert.ok(!/escalate to human/i.test(combined), 'no escalation directive even with a marker present');
+  assert.ok(!/is still correct|should|must not/i.test(json.description), 'no action appraisal either — state description only');
+});
+
+test('cap-hit WITH a transient event-plane marker stays neutral in warn mode, exit 0', () => {
+  // Transient marker reason so warn mode is not escalated to strict — this pins the warn-path
+  // printf, which carries its own copy of the marker description string.
+  const workDir = makeTempDir('sd0x-stop-guard-cap-marker-warn-');
+  const binDir = setupStubBin();
+  const transcriptPath = join(workDir, 'transcript.json');
+  writeFileSync(transcriptPath, '[]');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: true,
+      code_review: { passed: true },
+      precommit: { passed: true },
+      iteration_history: { current_round: 31, max_rounds: 30 },
+    })
+  );
+  writeFileSync(join(workDir, '.claude_review_state.json.blocked.event.c0ffee'), 'edit_lock_contention:code\n');
+
+  const result = runHook({ cwd: workDir, binDir, input: { transcript_path: transcriptPath }, env: { STOP_GUARD_MODE: 'warn' } });
+  assert.equal(result.status, 0, `a transient reason must not override the user's warn preference; stderr: ${result.stderr}`);
+  const combined = `${result.stdout}\n${result.stderr}`;
+  assert.match(combined, /Review round cap reached \(31\/30\)/, 'the cap fact survives in the warn reason');
+  const json = parseJson(result.stdout);
+  assert.equal(json.ok, true, 'warn mode still allows the stop');
+  assert.match(json.description, /Unretireable obligation:.*sidecar marker is present/,
+    'warn-path JSON carries the marker as a fact');
+  assert.ok(!/auto-retry|retry in a loop/i.test(combined), 'warn path is equally neutral with a marker present');
+  assert.ok(!/escalate to human/i.test(combined), 'warn path is equally neutral with a marker present');
+  assert.ok(!/is still correct|should|must not/i.test(json.description), 'no action appraisal either — state description only');
 });
 
 test('counters below the cap still allow stop (guard adds no spurious block)', () => {

@@ -656,8 +656,37 @@ test('R10 strategic reset injected at threshold', () => {
     'should inject strategic reset at threshold (7 >= 10-3)'
   );
   assert.ok(
-    result.stdout.includes('Re-read original error'),
-    'should include checklist items'
+    result.stdout.includes('Cap Diagnostic Protocol'),
+    'should point at the closed-set protocol in rules/auto-loop.md'
+  );
+  // R6: the injected content is the diagnostic taxonomy, not the old generic checklist.
+  for (const cls of [
+    'ARCHITECTURE',
+    'DOC_TOO_LONG',
+    'ATTENTION_DIFFUSION',
+    'UNVERIFIED_CLAIM',
+    'TIER_MISMATCH',
+    'REQUIREMENT_AMBIGUITY',
+  ]) {
+    assert.ok(result.stdout.includes(cls), `taxonomy class ${cls} present`);
+  }
+  assert.ok(
+    !result.stdout.includes('Re-read original error'),
+    'old generic checklist is gone'
+  );
+  // R6 AC8: disposition lives entirely in rules/auto-loop.md — the hook may point at the
+  // protocol but must not adjudicate first/second cap-hits or security-change routing itself.
+  assert.ok(
+    result.stdout.includes('is defined by rules/auto-loop.md'),
+    'the reminder defers disposition to the rules layer'
+  );
+  assert.ok(
+    !result.stdout.includes('escalate to human'),
+    'the hook must not adjudicate escalation'
+  );
+  assert.ok(
+    !/[Ss]econd cap-hit/.test(result.stdout),
+    'first-vs-second cap-hit routing is the rules layer’s call, not the hook’s'
   );
 });
 
