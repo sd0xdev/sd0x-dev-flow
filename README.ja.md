@@ -6,13 +6,70 @@
 
 > Claude Code のための harness レイヤー。
 
-**AI がスキップできない品質ゲート。** [Claude Code](https://claude.com/claude-code) のための AI Agent Harness Engineering の reference implementation — Hook 強制のレビューゲート、context compaction を乗り越える state machine ゲート、そして本当に必要な箇所での fail-closed な安全性。
+**モデルに経路を選ばせる。「完了」は検証可能なままに。**
+
+v4 は、テストで固定された閉じた Anchor セットの内側で Claude に裁量を与えます。フックが compaction をまたいでゲートの受領記録（receipts）を保持し、Codex が独立してレビューします。
+
+Claude Code ではフルコントロールプレーン。Codex CLI やその他の互換エージェントにはスキルのみを配布します。
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — Claude の context window のわずか ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
+
+## クイックスタート
+
+```bash
+# Claude Code — フルコントロールプレーン
+/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
+
+# プロジェクトを設定
+/project-setup
+```
+
+1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには 15 ルール + 8 フックが含まれます。`--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
+
+```bash
+# Codex CLI / Cursor / Windsurf / Aider — スキルのみ
+npx skills add sd0xdev/sd0x-dev-flow
+
+# AGENTS.md を生成 + git フックをインストール（Claude Code 内で実行）
+/codex-setup init
+```
+
+<!-- BEGIN:INSTALL-COVERAGE -->
+| 方法 | 対応ツール | カバー範囲 |
+|------|-----------|-----------|
+| プラグインインストール | Claude Code | フル（96 bundled skills、フック、ルール、auto-loop） |
+| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | スキルのみ（96 public skills） |
+| `/codex-setup init` | Codex CLI | AGENTS.md カーネル + git フック |
+<!-- END:INSTALL-COVERAGE -->
+
+**必要環境**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（プラグインのインストール自体は不要ですが、`/codex-*` のレビューゲートには必須です — Codex がその唯一のレビューアーなので、未インストール時はフォールバックせず `⛔ Blocked` + `⚠️ Need Human` を出します）
+
+## なぜ v4 なのか
+
+フロンティアモデルはプランニング、バッチ処理、構造化された状態からの復帰ができるようになり、harness が次のコマンドを逐一指示する必要はなくなりました。v4 は**振り付け（choreography）から契約（contracts）へ**移行します：harness はモデルの動きを台本化するのをやめ、「作業が完了と宣言される時点で何が真でなければならないか」を定義するようになりました — 安全とレビューの Anchor は 1 つも緩めていません。
+
+| 次元 | v3（choreography） | v4（contracts） |
+|------|-------------------|----------------|
+| Hook の役割 | 次に実行するコマンドを発行 | `[AUTO_LOOP_STATE]` のファクトを公開 — 変更クラス、ゲート receipts、ラウンド/上限、tier |
+| 完了 | 台本化されたステップ列（「修正 → 直ちに再レビュー」） | Terminal completion invariant：変更クラスが要求するすべてのゲートが、最後の編集の後にパスしている |
+| ルールの拘束力 | 一律 — すべてのルールが必須として読める | 3 つの tier：**Anchor**（逸脱不可）、**Default**（シグナルを明示して逸脱可）、**Guidance**（助言） |
+| レビュー深度 | デフォルトで最大 | リスクに応じた tier（`fast` / `standard` / `thorough`）。セキュリティとデータ整合性は常にエスカレーション |
+| ラウンド上限到達 | 人間へハンドオフ | 初回到達：構造化された自己診断 + 1 回の限定的な調整で再開 — ただし cap 固有の human exit（セキュリティ/データ整合性、アーキテクチャレベルの変更、要件の曖昧さ）が該当する場合を除く。同じ変更が診断後に再度上限へ到達した場合：常に人間へ |
+
+交渉不可能なコアは、どのプロジェクトオーバーライドもダウングレードできない**閉じた Anchor Register**（`rules/discretion.md`）に収められています — 解決は Anchor-first で、Register のエントリが削除されるとテストスイートが設計どおり失敗します。その境界の内側では、所有権が明示されています：
+
+| 所有者 | 所有するもの |
+|-------|------|
+| **モデル** | バッチ処理、タイミング、レビュー深度のエスカレーション、Default tier の逸脱（明示してから作業を続行） |
+| **Harness** | ゲートの鮮度、compaction をまたぐ receipts、strict モードでのブロック、閉じた Anchor セット |
+| **人間** | 不可逆な承認（push、commit、merge）と列挙された exit ポイント |
+
+モデルは経路を所有します。harness は証拠と交渉不可能な境界を所有します。人間は不可逆の権限を保持します。
 
 ## この harness は何をするのか
 
@@ -22,42 +79,18 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 
 | # | Harness のサブ問題 | sd0x-dev-flow の実装 | コード証拠 |
 |---|---------------------|------------------------------|---------------|
-| 1 | **Tool loop control** | `/codex-review-fast` → `/precommit` の auto-loop、sentinel 駆動で状態遷移 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `✅ All Pass` のゲートマーカーを永続状態へパース | [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (producer) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser) |
+| 1 | **Tool loop control** | Terminal completion invariant — 変更クラスが要求するすべてのゲートが最後の編集の後にパスしていなければならない。いつ・どのように実行するかはモデルが選ぶ | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
+| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` のゲート sentinel をそれぞれの永続状態プレーンへパース。オプトインのデュアルレビューでは、機械向けの `REVIEW_GATE=` マーカーによる集約を追加で行う | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (sentinel parser) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (dual-review `REVIEW_GATE=` producer) |
 | 3 | **Context recovery across compaction** | SessionStart(compact) 後に `[AUTO_LOOP_RESUME]` を stdout へ注入 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 種類の hook event を 8 本のスクリプトへディスパッチ: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 95 個の公開 skill のうち 86 個が `allowed-tools` を宣言 |
+| 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 98 個の公開 skill のうち 89 個が `allowed-tools` を宣言 |
 | 6 | **Defense-in-depth safety** | 5 層構成: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex が Claude の書いたコードをレビュー。リポジトリを自力で調査し、結論を渡されて追認することはない | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + 収束プラトー検出 | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
-| 9 | **Human-in-the-loop safety gates** | 破壊的操作に対する `/dev/tty` 確認 + `AskUserQuestion` | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 8 | **Incremental progress tracking** | Tier ごとのラウンド予算（デフォルト 3 / 5 / 30、3〜50 でオーバーライド可）+ cap 診断：初回の上限到達で構造化されたストール分類と 1 回の限定的な調整を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 9 | **Human-in-the-loop safety gates** | すべての `/push-ci` push の前に `AskUserQuestion` で承認。保護ブランチへの push では `/dev/tty` による pre-push 確認が最終的な資格情報（加えて non-fast-forward 検出） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 是正 → lesson として記録 → 3 回以上の再発で rule に昇格 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 多くの harness プロジェクトはこれらのうち 2〜4 個しかカバーしません。sd0x-dev-flow は 10 個すべてをカバーしており、単なるツールではなく学習対象として読めるコードになっています。
-
-## なぜ sd0x-dev-flow？
-
-| ガードレールなし | sd0x-dev-flow あり |
-|---|---|
-| コンテキストが長いと AI がレビューをスキップ | **Hook 強制**: stop-guard が未完了レビューをブロック |
-| 自己レビューは追認にしかならない | **独立レビューアー**: Codex がリポジトリを自力で調査。深く見たいときだけ `--dual` をオプトイン |
-| 「修正済み」なのに再検証なし | **Auto-loop**: 修正 → 再レビュー → パス → 続行 |
-| compact 後にレビュー状態が消失 | **状態追跡**: SessionStart hook が再注入 |
-
-## クイックスタート
-
-```bash
-# プラグインをインストール
-/plugin marketplace add sd0xdev/sd0x-dev-flow
-/plugin install sd0x-dev-flow@sd0xdev-marketplace
-
-# プロジェクトを設定
-/project-setup
-```
-
-1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには15ルール + 8フックが含まれます。
-
-`--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
 
 ## 仕組み
 
@@ -73,7 +106,18 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-Loop エンジン**が品質ゲートを自動的に実行します。コード編集後、レビューコマンドが同じ応答内で **Codex** をディスパッチします。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る Findings は記録するだけで、ループは次に進み、追加のラウンドは開きません。strict モードでは、Hooks が fail-closed を強制：ゲートが未完了なら stop-guard がブロックします。2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。詳細は [docs/hooks.md](docs/hooks.md) を参照。
+すべては 1 つのルール — **terminal completion invariant** — を中心に回ります：ある変更の作業は、その変更クラスが要求するすべてのゲートが*そのクラスの最後の編集の後に*パスして初めて完了と宣言できます。コード編集には独立した Codex レビューとその後の `/precommit` が、`.md` ドキュメントには `/codex-review-doc` が必要です。いつ実行するか、編集をどうバッチするか、どれだけ深くレビューするかはモデルの判断です — invariant が制約するのは最終状態であって、手順の振り付けではありません。
+
+フックは**命令ではなくファクト**を報告します：`[AUTO_LOOP_STATE]` ブロック（変更クラス、ゲート receipts、ラウンド/上限、tier）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ラウンド上限に達すると、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します — ただし cap 固有の human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
+
+強制には 2 つのモードがあります：
+
+| モード | 停止時にゲートが未完了の場合 | 強制する層 |
+|------|-------------------|-------------|
+| `warn`（プラグインランタイムのフォールバック） | 警告を出力。ゲートを閉じる義務はモデル側に残る | 動作レイヤー |
+| `strict`（`/project-setup` でインストールした場合のデフォルト） | ゲートがパスするまで停止をブロック — fail-closed | Hook |
+
+2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。モードと依存関係の詳細は [docs/hooks.md](docs/hooks.md) を参照してください。
 
 <details>
 <summary>詳細：レビューループ シーケンス図</summary>
@@ -116,23 +160,15 @@ sequenceDiagram
 | `standard` **（デフォルト）** | 通常の機能開発とバグ修正 | P0、P1 | 5 |
 | `thorough` | セキュリティ、データ整合性、リリース、公開 API | P0、P1、P2 | 30 |
 
+設定された tier は天井ではなくベースラインです — 変更がそれを正当化するなら、モデルはエスカレーションします。セキュリティまたはデータ整合性の変更は、何が設定されていようと常に `thorough` でレビューされます。
+
 **80 点で合格です。** tier の blocking 閾値を下回る findings は記録され（`[NIT_DEFERRED]`。TTL 付きで永続化されるため、次のセッションで蒸し返されません）、ループはそのまま `/precommit` へ進みます — 追加の修正パスも、追加のレビューラウンドもありません。これらは次に `/codex-review-branch` で深くレビューする際に拾われます。
 
-2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、**フラグを渡さない限り無効**です — 1 ラウンドあたりのトークンと実時間のコストが倍になるため、リリースやセキュリティレビューには見合っても、通常の修正には見合いません。`--dual` 使用時、findings は重要度正規化、重複排除（ファイル + issue キー、±5 行許容）、ソース帰属が行われます。
+上のラウンド上限は tier のデフォルトです — プロジェクトの `## Max Rounds` オーバーライド（3〜50）が優先されます。上限到達は診断ポイントであって、自動的なハンドオフではありません：モデルがストールを分類し（アーキテクチャ、ドキュメントが長すぎる、注意の拡散、未検証の主張、tier の不一致、要件の曖昧さ）、1 回の限定的な調整を行って再開します。cap 固有の human exit は拘束力を持ち続けます：セキュリティ/データ整合性の変更は診断をスキップして直接人間へ、アーキテクチャレベルまたは要件の曖昧さと分類されたストールは人間への exit となり、同じ変更が診断後に 2 度目の上限へ達した場合は常に人間へ向かいます。（アーキテクチャレベルの変更、機能の削除、ユーザーによる停止要求は、上限とは無関係にいつでも人間への exit になります。）
+
+2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、**フラグを渡さない限り無効**です — トークンと実時間のコストが倍になるため、リリースやセキュリティレビューには見合っても、通常の修正には見合いません。`--dual` 使用時、findings は重要度正規化、重複排除（ファイル + issue キー、±5 行許容）、ソース帰属が行われます。
 
 ゲート：`✅ Ready` または `⛔ Blocked` — strict モードでは、未完了ゲート = ブロック。
-
-## 比較表
-
-| 機能 | sd0x-dev-flow | gstack | 汎用プロンプト |
-|---|---|---|---|
-| 強制レビューゲート | Hook + 動作レイヤー | 提案のみ | なし |
-| 独立レビューアー | Codex が自力で調査。`--dual` はオプトイン | 単一 /review | なし |
-| 自動修正ループ | 修正 → 再レビュー → パス | 手動 | なし |
-| マルチエージェントリサーチ | /deep-research（3 エージェント） | なし | なし |
-| 敵対的検証 | ナッシュ均衡ディベート | なし | なし |
-| 自己改善 | 教訓ログ + ルール昇格 | /retro 統計のみ | なし |
-| クロスツールサポート | Codex/Cursor/Windsurf | Claude/Codex/Gemini/Cursor | N/A |
 
 ## 使用に適したケース
 
@@ -143,36 +179,14 @@ sequenceDiagram
 | Codex CLI / Cursor / Windsurf ユーザー（skills サブセット） | カスタム LLM プロバイダーが必要なプロジェクト |
 | 品質ゲートでリグレッションを防ぐリポジトリ | テストインフラがないリポジトリ |
 
-## インストール
-
-### Codex CLI / その他の AI エージェント
-
-```bash
-# Agent Skills 標準で個別スキルをインストール
-npx skills add sd0xdev/sd0x-dev-flow
-
-# AGENTS.md を生成 + フックをインストール（Claude Code 内で実行）
-/codex-setup init
-```
-
-<!-- BEGIN:INSTALL-COVERAGE -->
-| 方法 | 対応ツール | カバー範囲 |
-|------|-----------|-----------|
-| プラグインインストール | Claude Code | フル（96 bundled skills、フック、ルール、auto-loop） |
-| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | スキルのみ（96 public skills） |
-| `/codex-setup init` | Codex CLI | AGENTS.md カーネル + git フック |
-<!-- END:INSTALL-COVERAGE -->
-
-**必要環境**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（プラグインのインストール自体は不要ですが、`/codex-*` のレビューゲートには必須です — Codex がその唯一のレビューアーなので、未インストール時はフォールバックせず `⛔ Blocked` + `⚠️ Need Human` を出します）
-
 ## ワークフロートラック
 
-| ワークフロー | コマンド | ゲート | 実行レイヤー |
+| ワークフロー | コマンド | ゲート | 受領記録（Receipts） |
 |-------------|----------|------|-------------|
-| 機能開発 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
-| バグ修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + 動作レイヤー |
-| Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | Hook |
+| 機能開発 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
+| バグ修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
+| Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
+| ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
 | プランニング | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | オンボーディング | `/project-setup` → `/repo-intake` | — | — |
 
@@ -415,7 +429,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 
 ## ルール & フック
 
-15 ルール（常時読み込みの規約）+ 8 フック（自動ガードレール）。
+15 ルール + 8 フック。ルールは tier 付きの契約です：`discretion.md` が、プラグイン管理の 12 のルールファイル内のすべての指示を Anchor / Default / Guidance のいずれかちょうど 1 つに解決し、ユーザー所有の 2 つのオーバーライドファイルは親ルールの下で Anchor-first に解決されます。フックはファクトの発行者でありガードレールです：ゲートの receipts を記録し、compaction 後に状態を再注入します。stop-guard は strict モードでレビュー未完了の停止をブロックし、pre-edit-guard はどのモードでも機密パスへの編集を拒否します。
 
 > **カスタマイズ**：`auto-loop-project.md` を編集してプロジェクトの auto-loop 動作をオーバーライドできます。プラグイン更新と競合しません — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 参照。
 
@@ -437,6 +451,8 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | `{BUILD_COMMAND}` | ビルドコマンド | yarn build |
 | `{TYPECHECK_COMMAND}` | 型チェック | yarn typecheck |
 
+オーバーライドは **Anchor-first** で解決されます：ユーザー所有のオーバーライドファイル（`auto-loop-project.md`、`testing-project.md`）がカスタマイズできるのは Default tier と Guidance tier の動作のみです — どのプロジェクトオーバーライドも Anchor Register のエントリをダウングレードできず、その試みは黙って受け入れられるのではなく競合として報告されます。
+
 ## ショーケース：マルチエージェントリサーチ
 
 `/deep-research` を実行すると、2-3 の並列リサーチエージェントが Web ソース、コードベース、コミュニティ知識を横断して調査します — claim registry による統合と条件付き敵対的ディベートを備えています。
@@ -452,17 +468,18 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 
 ## アーキテクチャ
 
-```
-Command (entry) → Skill (capability) → Agent (environment)
-```
+6 つの層があり、それぞれが 1 つの関心事を所有します：
 
-- **コマンド**：ユーザーが `/...` で起動
-- **スキル**：オンデマンドで読み込まれるナレッジベース
-- **エージェント**：専用ツールを持つ隔離されたサブエージェント
-- **フック**：自動ガードレール（フォーマット、レビュー状態、ストップガード）
-- **ルール**：常時有効な規約（自動読み込み）
+| 層 | 所有するもの |
+|-------|------|
+| **スキル** | オンデマンドで読み込まれる能力 — 動詞（`/feature-dev`、`/codex-review-fast`、…） |
+| **モデル** | 経路：バッチ処理、タイミング、レビュー深度のエスカレーション、Default tier の逸脱 |
+| **ルール** | 毎セッション読み込まれる tier 付きの契約（Anchor / Default / Guidance） |
+| **フック + 状態** | `[AUTO_LOOP_STATE]` のファクト、永続的なゲート receipts、compaction をまたぐ復帰 |
+| **Codex** | 独立レビュー — リポジトリを自力で調査し、結論を渡されることはない |
+| **スクリプト + エージェント** | 決定論的チェック（precommit、ガード）と隔離されたサブエージェント |
 
-高度なアーキテクチャの詳細（agentic control stack、制御ループ理論、サンドボックスルール）については [docs/architecture.md](docs/architecture.md) を参照してください。
+高度なアーキテクチャの詳細（agentic control stack、制御ループ理論、サンドボックスルール）は [docs/architecture.md](docs/architecture.md) を参照してください — ただし、その一部は v4 以前に書かれ、いまだ v3 の choreography を記述しています。現在の source of truth は `rules/auto-loop.md` と `rules/discretion.md` です。
 
 ## コントリビュート
 

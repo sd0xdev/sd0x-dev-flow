@@ -6,13 +6,70 @@
 
 > The harness layer for Claude Code.
 
-**Quality gates that AI can't skip.** A reference implementation of AI Agent Harness Engineering for [Claude Code](https://claude.com/claude-code) — hook-enforced review gates, state-machine gates that survive context compaction, and fail-closed safety where it counts.
+**Let the model choose the path. Keep "done" verifiable.**
+
+v4 gives Claude discretion inside a closed, test-pinned anchor set; hooks preserve gate receipts across compaction, and Codex reviews independently.
+
+Full control plane on Claude Code. Skills-only distribution for Codex CLI and other compatible agents.
 
 <!-- BEGIN:HERO-COUNT -->
 98 bundled · 98 public skills · 15 agents — ~4% of Claude's context window
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
+
+## Quick Start
+
+```bash
+# Claude Code — full control plane
+/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
+
+# Configure your project
+/project-setup
+```
+
+One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 15 rules + 8 hooks. Use `--lite` to only configure CLAUDE.md (skip rules/hooks).
+
+```bash
+# Codex CLI / Cursor / Windsurf / Aider — skills only
+npx skills add sd0xdev/sd0x-dev-flow
+
+# Generate AGENTS.md + install git hooks (run inside Claude Code)
+/codex-setup init
+```
+
+<!-- BEGIN:INSTALL-COVERAGE -->
+| Method | Tools | Coverage |
+|--------|-------|----------|
+| Plugin install | Claude Code | Full (98 bundled skills, hooks, rules, auto-loop) |
+| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (98 public skills) |
+| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+<!-- END:INSTALL-COVERAGE -->
+
+**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
+
+## Why v4
+
+Frontier models can plan, batch, and recover from structured state — they no longer need the harness to dictate every next command. v4 moves from **choreography to contracts**: the harness stopped scripting the model's moves and started defining what must be true when the work is declared done, without relaxing a single safety or review anchor.
+
+| Dimension | v3 (choreography) | v4 (contracts) |
+|-----------|-------------------|----------------|
+| Hook role | Emit the next command to run | Publish `[AUTO_LOOP_STATE]` facts — change class, gate receipts, round/cap, tier |
+| Completion | Scripted step sequence ("fix → immediately re-review") | Terminal completion invariant: every gate the change class requires has passed after the last edit |
+| Rule force | Uniform — every rule reads as mandatory | Three tiers: **Anchor** (never), **Default** (deviate with a stated signal), **Guidance** (advisory) |
+| Review depth | Maximum by default | Risk-scaled tiers (`fast` / `standard` / `thorough`); security and data integrity always escalate |
+| Round cap hit | Hand off to the human | First hit: structured self-diagnosis + one bounded adjustment, then resume — unless a cap-specific human exit applies (security/data-integrity, architecture-level change, requirement ambiguity); the same change hitting the cap again after its diagnosis: always human |
+
+The non-negotiable core lives in a **closed Anchor Register** (`rules/discretion.md`) that no project override can downgrade — resolution is Anchor-first, and a test suite fails by design if a Register entry is removed. Inside that boundary, ownership is explicit:
+
+| Owner | Owns |
+|-------|------|
+| **Model** | Batching, timing, review depth escalation, Default-tier deviations (stated, then keep working) |
+| **Harness** | Gate freshness, receipts across compaction, strict-mode blocking, the closed anchor set |
+| **Human** | Irreversible approvals (push, commit, merge) and the enumerated exit points |
+
+The model owns the path. The harness owns the evidence and non-negotiable boundaries. The human retains irreversible authority.
 
 ## What This Harness Does
 
@@ -22,42 +79,18 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 
 | # | Harness sub-problem | sd0x-dev-flow implementation | Code evidence |
 |---|---------------------|------------------------------|---------------|
-| 1 | **Tool loop control** | `/codex-review-fast` → `/precommit` auto-loop with sentinel-driven transitions | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `✅ All Pass` gate markers parsed into durable state | [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (producer) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser) |
+| 1 | **Tool loop control** | Terminal completion invariant — every gate a change class requires must pass after the last edit; the model chooses when and how to run them | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
+| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` gate sentinels parsed into their respective durable state planes; opt-in dual review additionally aggregates via a machine-facing `REVIEW_GATE=` marker | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (sentinel parser) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (dual-review `REVIEW_GATE=` producer) |
 | 3 | **Context recovery across compaction** | `[AUTO_LOOP_RESUME]` stdout injection after SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 hook event types dispatched to 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 89 of 98 public skills declare `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex reviews what Claude wrote, researching the repo independently — never handed a conclusion to confirm | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + convergence plateau detection | [`rules/auto-loop.md`](rules/auto-loop.md) (exit conditions + strategic reset) |
-| 9 | **Human-in-the-loop safety gates** | `/dev/tty` confirmation + `AskUserQuestion` for destructive ops | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 8 | **Incremental progress tracking** | Per-tier round budget (default 3 / 5 / 30, overridable 3–50) + cap diagnostic: first cap hit triggers a structured stall classification and one bounded adjustment, with enumerated human exits | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 9 | **Human-in-the-loop safety gates** | `AskUserQuestion` approval before every `/push-ci` push; `/dev/tty` pre-push confirmation is the terminal credential for protected-branch pushes (plus non-fast-forward detection) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Correction → record lesson → promote to rule after 3+ recurrences | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 Most harness projects cover 2–4 of these. sd0x-dev-flow covers all 10 — which makes the code useful as a study target, not just a tool.
-
-## Why sd0x-dev-flow?
-
-| Without guardrails | With sd0x-dev-flow |
-|---|---|
-| AI skips review when context is long | **Hook-enforced**: stop-guard blocks incomplete reviews |
-| Self-review rubber-stamps its own work | **Independent reviewer**: Codex researches the repo itself, opt-in `--dual` for depth |
-| "Fixed it" without re-verification | **Auto-loop**: fix → re-review → pass → continue |
-| Review state lost after compact | **State tracking**: SessionStart hook re-injects |
-
-## Quick Start
-
-```bash
-# Install plugin
-/plugin marketplace add sd0xdev/sd0x-dev-flow
-/plugin install sd0x-dev-flow@sd0xdev-marketplace
-
-# Configure your project
-/project-setup
-```
-
-One command auto-detects framework, package manager, database, entrypoints, and scripts. Installs a subset of rules and hooks; the full plugin bundles 15 rules + 8 hooks.
-
-Use `--lite` to only configure CLAUDE.md (skip rules/hooks).
 
 ## How It Works
 
@@ -73,7 +106,18 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-The **auto-loop engine** enforces quality gates automatically — after code edits, the review command dispatches **Codex** in the same reply. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. In strict mode, hooks enforce fail-closed semantics: if the gate is incomplete, stop-guard blocks. A second reviewer is available via `/codex-review-branch --dual` and is off by default. See [docs/hooks.md](docs/hooks.md) for mode and dependency details.
+Everything orbits one rule — the **terminal completion invariant**: work on a change may be declared complete only when every gate its change class requires has passed *after the last edit in that class*. Code edits require an independent Codex review then `/precommit`; `.md` docs require `/codex-review-doc`. When to run them, how to batch edits, and how deep to review are the model's calls — the invariant constrains the end state, not the choreography.
+
+Hooks report **facts, not orders**: they emit `[AUTO_LOOP_STATE]` blocks (change class, gate receipts, round/cap, tier) and the model owns the decision. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. Hitting the round cap triggers a structured self-diagnosis (architecture problem? doc too long? attention diffusion?) and one bounded adjustment before the loop resumes — rather than an automatic hand-off, though the cap-specific human exits stay in force (security and data-integrity changes skip the diagnosis entirely; a stall diagnosed as architecture-level or requirement ambiguity goes to the human).
+
+Enforcement has two modes:
+
+| Mode | Open gate at stop | Enforced by |
+|------|-------------------|-------------|
+| `warn` (plugin-runtime fallback) | Warning emitted; closing the gate stays the model's obligation | Behavior layer |
+| `strict` (default when installed via `/project-setup`) | Stop is blocked until the gate passes — fail-closed | Hook |
+
+A second reviewer is available via `/codex-review-branch --dual` and is off by default. See [docs/hooks.md](docs/hooks.md) for mode and dependency details.
 
 <details>
 <summary>Detailed: Review Loop Sequence Diagram</summary>
@@ -116,23 +160,15 @@ One reviewer — Codex — runs everywhere by default. The **tier** decides how 
 | `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
 | `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
+The configured tier is a baseline, not a ceiling — the model escalates when the change warrants it, and security or data-integrity changes are always reviewed at `thorough` whatever is configured.
+
 **80 is a passing grade.** Findings below the tier's blocking severity are logged (`[NIT_DEFERRED]`, persisted with a TTL so they are not re-raised next session) and the loop proceeds to `/precommit` — no extra fix pass, no extra review round. `/codex-review-branch` picks them up when the change is next reviewed at depth.
+
+The round caps above are the tier defaults — a project `## Max Rounds` override (3–50) takes precedence. Hitting the cap is a diagnosis point, not an automatic hand-off: the model classifies the stall (architecture, doc too long, attention diffusion, unverified claims, tier mismatch, requirement ambiguity), makes one bounded adjustment, and resumes. The cap-specific human exits stay binding: security/data-integrity changes skip the diagnosis and go straight to the human, a stall classified as architecture-level or requirement ambiguity exits to the human, and the same change hitting the cap a second time after its diagnosis always does. (Architecture-level changes, feature removal, or a user request to stop exit to the human at any point — cap or no cap.)
 
 A second reviewer is available via `/codex-review-branch --dual` and is **off unless the flag is passed** — worth its doubled token and wall-clock cost on a release or a security review, not on a typical fix. Under `--dual`, findings are severity-normalized, deduplicated (file + issue key, ±5 line tolerance) and source-attributed.
 
 Gate: `✅ Ready` or `⛔ Blocked` — in strict mode, incomplete gate = blocked.
-
-## How We Compare
-
-| Capability | sd0x-dev-flow | gstack | Generic prompts |
-|---|---|---|---|
-| Enforced review gates | Hook + behavior layer | Suggestion only | None |
-| Independent reviewer | Codex, self-researching; `--dual` opt-in | Single /review | None |
-| Auto-fix loop | Fix → re-review → pass | Manual | None |
-| Multi-agent research | /deep-research (3 agents) | None | None |
-| Adversarial validation | Nash equilibrium debate | None | None |
-| Self-improvement | Lesson log + rule promotion | /retro stats only | None |
-| Cross-tool support | Codex/Cursor/Windsurf | Claude/Codex/Gemini/Cursor | N/A |
 
 ## When to Use
 
@@ -143,36 +179,14 @@ Gate: `✅ Ready` or `⛔ Blocked` — in strict mode, incomplete gate = blocked
 | Codex CLI / Cursor / Windsurf users (skills subset) | Projects requiring custom LLM providers |
 | Repos where quality gates prevent regressions | Repos with no test infrastructure |
 
-## Install
-
-### Codex CLI / Other AI Agents
-
-```bash
-# Install individual skills via Agent Skills standard
-npx skills add sd0xdev/sd0x-dev-flow
-
-# Generate AGENTS.md + install hooks (in Claude Code)
-/codex-setup init
-```
-
-<!-- BEGIN:INSTALL-COVERAGE -->
-| Method | Tools | Coverage |
-|--------|-------|----------|
-| Plugin install | Claude Code | Full (98 bundled skills, hooks, rules, auto-loop) |
-| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (98 public skills) |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
-<!-- END:INSTALL-COVERAGE -->
-
-**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
-
 ## Workflow Tracks
 
-| Workflow | Commands | Gate | Enforced By |
-|----------|----------|------|-------------|
-| Feature | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Behavior |
-| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + Behavior |
-| Auto-Loop | Code edit → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| Doc Review | `.md` edit → `/codex-review-doc` | ✅/⛔ | Hook |
+| Workflow | Commands | Gate | Receipts |
+|----------|----------|------|----------|
+| Feature | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook-tracked (blocks in strict mode) |
+| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook-tracked (blocks in strict mode) |
+| Auto-Loop | Code edit → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook-tracked (blocks in strict mode) |
+| Doc Review | `.md` edit → `/codex-review-doc` | ✅/⛔ | Hook-tracked (blocks in strict mode) |
 | Planning | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | Onboarding | `/project-setup` → `/repo-intake` | — | — |
 
@@ -417,7 +431,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 ## Rules & Hooks
 
-15 rules (always-loaded conventions) + 8 hooks (automated guardrails).
+15 rules + 8 hooks. The rules are tiered contracts: `discretion.md` resolves every instruction in the 12 plugin-managed rule files to exactly one of Anchor / Default / Guidance, and the 2 user-owned override files resolve Anchor-first under their parent rules. The hooks are fact publishers and guardrails: they record gate receipts and re-inject state after compaction; stop-guard blocks incomplete-review stops in strict mode, while pre-edit-guard rejects sensitive-path edits in any mode.
 
 > **Customization**: Edit `auto-loop-project.md` to override auto-loop behavior per project. Plugin updates won't conflict — see [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
@@ -439,6 +453,8 @@ Run `/project-setup` to auto-detect and configure all placeholders, or manually 
 | `{BUILD_COMMAND}` | Build command | yarn build |
 | `{TYPECHECK_COMMAND}` | Type checking | yarn typecheck |
 
+Overrides resolve **Anchor-first**: user-owned override files (`auto-loop-project.md`, `testing-project.md`) customize Default- and Guidance-tier behavior only — no project override can downgrade an entry in the Anchor Register, and an attempt is reported as a conflict rather than honoured.
+
 ## Showcase: Multi-Agent Research
 
 Run `/deep-research` to orchestrate 2-3 parallel researcher agents across web sources, codebase, and community knowledge — with claim registry synthesis and conditional adversarial debate.
@@ -454,17 +470,18 @@ Run `/deep-research` to orchestrate 2-3 parallel researcher agents across web so
 
 ## Architecture
 
-```
-Command (entry) → Skill (capability) → Agent (environment)
-```
+Six layers, each owning one concern:
 
-- **Commands**: User-triggered via `/...`
-- **Skills**: Knowledge bases loaded on demand
-- **Agents**: Isolated subagents with specific tools
-- **Hooks**: Automated guardrails (format, review state, stop guard)
-- **Rules**: Always-on conventions (auto-loaded)
+| Layer | Owns |
+|-------|------|
+| **Skills** | Capabilities loaded on demand — the verbs (`/feature-dev`, `/codex-review-fast`, …) |
+| **Model** | The route: batching, timing, review depth escalation, Default-tier deviations |
+| **Rules** | Tiered contracts (Anchor / Default / Guidance) loaded every session |
+| **Hooks + state** | `[AUTO_LOOP_STATE]` facts, durable gate receipts, recovery across compaction |
+| **Codex** | Independent review — researches the repo itself, never handed a conclusion |
+| **Scripts + agents** | Deterministic checks (precommit, guards) and isolated subagents |
 
-For advanced architecture details (agentic control stack, control loop theory, sandbox rules), see [docs/architecture.md](docs/architecture.md).
+For advanced architecture details (agentic control stack, control loop theory, sandbox rules), see [docs/architecture.md](docs/architecture.md) — note that parts of it predate v4 and still describe the v3 choreography; `rules/auto-loop.md` and `rules/discretion.md` are the current source of truth.
 
 ## Contributing
 

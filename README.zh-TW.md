@@ -6,13 +6,70 @@
 
 > 給 Claude Code 的 harness 層。
 
-**AI 跳不過的品質關卡。** [Claude Code](https://claude.com/claude-code) 的 AI Agent Harness Engineering reference implementation — hook 強制的 review gate、能在 context compaction 後續存的 state-machine gates，以及在關鍵處 fail-closed 的安全防線。
+**讓模型自己選路，讓「完成」可被驗證。**
+
+v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量權；hooks 在 compaction 之後仍保留 gate 憑證，Codex 則獨立進行 review。
+
+在 Claude Code 上提供完整 control plane；對 Codex CLI 與其他相容 agent 則以 skills-only 形式發佈。
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — 僅佔 Claude context window 的 ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
+
+## 快速開始
+
+```bash
+# Claude Code — 完整 control plane
+/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
+
+# 設定你的專案
+/project-setup
+```
+
+一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 15 條 rules + 8 個 hooks。使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
+
+```bash
+# Codex CLI / Cursor / Windsurf / Aider — 僅 skills
+npx skills add sd0xdev/sd0x-dev-flow
+
+# 產生 AGENTS.md + 安裝 git hooks（在 Claude Code 內執行）
+/codex-setup init
+```
+
+<!-- BEGIN:INSTALL-COVERAGE -->
+| 方式 | 適用工具 | 涵蓋範圍 |
+|------|---------|---------|
+| Plugin 安裝 | Claude Code | 完整（96 bundled skills、hooks、rules、auto-loop） |
+| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 僅 Skills（96 public skills） |
+| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+<!-- END:INSTALL-COVERAGE -->
+
+**需求**：Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝，但 `/codex-*` review gate 必須有——Codex 本身就是那位唯一的 reviewer，未安裝時 review 會直接輸出 `⛔ Blocked` + `⚠️ Need Human`，沒有可降級的對象）
+
+## 為什麼是 v4
+
+前沿模型已經能規劃、批次處理，並從結構化狀態中復原——它們不再需要 harness 指定下一步要執行哪個指令。v4 從**編排（choreography）走向契約（contracts）**：harness 不再替模型編排每一步動作，而是定義「宣告完成」時必須為真的條件，同時不放鬆任何一條安全或 review anchor。
+
+| 面向 | v3（choreography） | v4（contracts） |
+|------|-------------------|----------------|
+| Hook 角色 | 直接發出下一個要執行的指令 | 發布 `[AUTO_LOOP_STATE]` 事實——change class、gate 憑證、round/cap、tier |
+| 完成定義 | 腳本化的步驟序列（「修正 → 立即重新 review」） | Terminal completion invariant：change class 所需的每個 gate 都在最後一次編輯之後通過 |
+| 規則強度 | 一律相同——每條規則讀起來都是強制 | 三個層級：**Anchor**（絕不偏離）、**Default**（陳述訊號後可偏離）、**Guidance**（建議性） |
+| Review 深度 | 預設就是最深 | 依風險分級的 tier（`fast` / `standard` / `thorough`）；安全性與資料完整性一律升級 |
+| 輪次上限觸頂 | 交還給人類 | 第一次觸頂：結構化自我診斷 + 一次有界調整後繼續——除非命中 cap 專屬的人類出口（安全性／資料完整性、架構層級變更、需求歧義）；同一改動在診斷後再次觸頂：一律交給人類 |
+
+不可協商的核心放在一個**封閉的 Anchor Register**（`rules/discretion.md`）裡，任何專案覆寫都無法將其降級——解析採 Anchor-first，而且移除任何一條 Register 條目都會讓測試套件刻意失敗。在這個邊界之內，所有權是明確的：
+
+| 擁有者 | 擁有的範圍 |
+|--------|-----------|
+| **模型** | 批次、時機、review 深度升級、Default 層級的偏離（陳述後繼續工作） |
+| **Harness** | Gate 新鮮度、跨 compaction 的憑證、strict 模式阻擋、封閉的 anchor 集合 |
+| **人類** | 不可逆的核准（push、commit、merge）與列舉的出口點 |
+
+模型擁有路徑。Harness 擁有證據與不可協商的邊界。人類保留不可逆的權力。
 
 ## 這個 harness 做了什麼
 
@@ -22,42 +79,18 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 
 | # | Harness 子問題 | sd0x-dev-flow 實作 | 程式碼佐證 |
 |---|---------------|-------------------|-----------|
-| 1 | **Tool loop control** | `/codex-review-fast` → `/precommit` auto-loop,以 sentinel 驅動狀態轉換 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `✅ All Pass` 等 gate 標記解析為持久化狀態 | [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh)(producer)+ [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh)(parser) |
+| 1 | **Tool loop control** | Terminal completion invariant——change class 所需的每個 gate 都必須在最後一次編輯之後通過；何時、如何執行由模型決定 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
+| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` 等 gate sentinel 被解析進各自的持久化 state plane；opt-in 的雙 review 另外透過機器可讀的 `REVIEW_GATE=` 標記彙總 | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh)（sentinel parser）+ [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh)（雙 review 的 `REVIEW_GATE=` producer） |
 | 3 | **Context recovery across compaction** | SessionStart(compact) 後透過 `[AUTO_LOOP_RESUME]` stdout 注入復原狀態 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 種 hook 事件分派到 8 支腳本:PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/)(8 支腳本)+ [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 95 個公開 skill 中有 86 個宣告 `allowed-tools` |
+| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 98 個公開 skill 中有 89 個宣告 `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 層防線:pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 審查 Claude 寫的東西,自行研究 repo——絕不餵結論要它確認 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Review Dispatch) |
-| 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + 收斂平台期偵測 | [`rules/auto-loop.md`](rules/auto-loop.md)(exit conditions 與 strategic reset) |
-| 9 | **Human-in-the-loop safety gates** | 對破壞性操作使用 `/dev/tty` 確認 + `AskUserQuestion` | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 8 | **Incremental progress tracking** | 每個 tier 有各自的輪次預算（預設 3 / 5 / 30，可覆寫為 3–50）+ cap 診斷：第一次觸頂會觸發結構化的停滯分類與一次有界調整，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Cap Diagnostic Protocol） |
+| 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 前都需 `AskUserQuestion` 核准；`/dev/tty` pre-push 確認是保護分支 push 的最終憑證（外加 non-fast-forward 偵測） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 被糾正 → 記錄 lesson → 重複 3 次以上後提升為 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 大多數 harness 專案只涵蓋其中的 2–4 項,sd0x-dev-flow 把 10 項全部做齊 — 這也是為什麼它的程式碼不只是工具,更值得當成學習對象。
-
-## 為什麼選擇 sd0x-dev-flow？
-
-| 沒有護欄時 | 有 sd0x-dev-flow |
-|---|---|
-| Context 過長時 AI 跳過 review | **Hook 強制**：stop-guard 阻止未完成的 review |
-| 自我審查等於蓋橡皮圖章 | **獨立 reviewer**：Codex 自行研究 repo，需要深度時再 opt-in `--dual` |
-| 「已修正」卻沒有重新驗證 | **Auto-loop**：修正 → 重新 review → 通過 → 繼續 |
-| Review 狀態在 compact 後遺失 | **狀態追蹤**：SessionStart hook 重新注入 |
-
-## 快速開始
-
-```bash
-# 安裝 plugin
-/plugin marketplace add sd0xdev/sd0x-dev-flow
-/plugin install sd0x-dev-flow@sd0xdev-marketplace
-
-# 設定你的專案
-/project-setup
-```
-
-一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 15 條 rules + 8 個 hooks。
-
-使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
 
 ## 運作方式
 
@@ -73,7 +106,18 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-**Auto-loop 引擎**自動執行品質關卡——程式碼編輯後，review 指令會在同一則回覆內分派 **Codex**。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。在 strict 模式下，Hooks 強制 fail-closed 語意：gate 未完成時，stop-guard 會阻止停止。第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。詳見 [docs/hooks.md](docs/hooks.md)。
+一切繞著一條規則運轉——**terminal completion invariant**：唯有當某項改動的 change class 所需的每個 gate，都在*該 class 的最後一次編輯之後*通過，這項改動才能被宣告完成。程式碼編輯需要一次獨立的 Codex review，接著 `/precommit`；`.md` 文件需要 `/codex-review-doc`。何時執行、如何批次編輯、review 要多深，都是模型的決定——invariant 約束的是終點狀態，不是編排過程。
+
+Hooks 回報的是**事實，不是命令**：它們發出 `[AUTO_LOOP_STATE]` 區塊（change class、gate 憑證、round/cap、tier），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。觸及輪次上限會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續——而不是自動交接；但 cap 專屬的人類出口仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
+
+強制執行有兩種模式：
+
+| 模式 | 停止時 gate 未完成 | 執行者 |
+|------|-------------------|--------|
+| `warn`（plugin 執行期的 fallback） | 發出警告；關閉 gate 仍是模型的義務 | 行為層 |
+| `strict`（透過 `/project-setup` 安裝時的預設） | 在 gate 通過前阻止停止——fail-closed | Hook |
+
+第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。模式與相依細節詳見 [docs/hooks.md](docs/hooks.md)。
 
 <details>
 <summary>詳細：Review Loop 時序圖</summary>
@@ -116,23 +160,15 @@ sequenceDiagram
 | `standard` **（預設）** | 一般功能與 bug fix | P0、P1 | 5 |
 | `thorough` | 安全性、資料完整性、release、public API | P0、P1、P2 | 30 |
 
+設定的 tier 是底線，不是天花板——當改動的性質需要時，模型會往上升級；而安全性或資料完整性改動無論設定為何，一律以 `thorough` 進行 review。
+
 **80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`，帶 TTL 持久化，下次 session 不會重複被提），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
+
+上表的輪次上限是各 tier 的預設值——專案的 `## Max Rounds` 覆寫（3–50）優先。觸頂是一個診斷點，不是自動交接：模型會分類停滯原因（架構、文件太長、注意力發散、未驗證的宣稱、tier 不匹配、需求歧義），做一次有界調整後繼續。cap 專屬的人類出口仍然具約束力：安全性／資料完整性改動跳過診斷直接交給人類；被分類為架構層級或需求歧義的停滯會退出交給人類；同一改動在診斷後第二次觸頂也一律交給人類。（架構層級變更、功能移除、或使用者要求停止，在任何時點都會退出交給人類——無論是否觸頂。）
 
 第二位 reviewer 走 `/codex-review-branch --dual`，**不加旗標就不啟用**——它讓每輪的 token 與時間成本翻倍，值得花在 release 或安全審查上，不值得花在日常修正。啟用 `--dual` 時，findings 會做嚴重度正規化、去重（file + issue key，±5 行容差）與來源標記。
 
 Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blocked。
-
-## 如何比較
-
-| 能力 | sd0x-dev-flow | gstack | 通用 prompts |
-|---|---|---|---|
-| 強制 review 關卡 | Hook + 行為層 | 僅建議 | 無 |
-| 獨立 reviewer | Codex 自行研究；`--dual` opt-in | 單一 /review | 無 |
-| 自動修正迴圈 | 修正 → 重新 review → 通過 | 手動 | 無 |
-| 多 Agent 研究 | /deep-research（3 agents） | 無 | 無 |
-| 對抗式驗證 | Nash 均衡辯論 | 無 | 無 |
-| 自我改進 | 教訓記錄 + 規則提升 | 僅 /retro 統計 | 無 |
-| 跨工具支援 | Codex/Cursor/Windsurf | Claude/Codex/Gemini/Cursor | N/A |
 
 ## 適用場景
 
@@ -143,36 +179,14 @@ Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blo
 | Codex CLI / Cursor / Windsurf 使用者（skills 子集） | 需要自訂 LLM provider 的專案 |
 | 品質關卡可防止 regression 的 repo | 沒有測試基礎建設的 repo |
 
-## 安裝
-
-### Codex CLI / 其他 AI Agent
-
-```bash
-# 透過 Agent Skills 標準安裝個別 skill
-npx skills add sd0xdev/sd0x-dev-flow
-
-# 產生 AGENTS.md + 安裝 hooks（在 Claude Code 中執行）
-/codex-setup init
-```
-
-<!-- BEGIN:INSTALL-COVERAGE -->
-| 方式 | 適用工具 | 涵蓋範圍 |
-|------|---------|---------|
-| Plugin 安裝 | Claude Code | 完整（96 bundled skills、hooks、rules、auto-loop） |
-| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 僅 Skills（96 public skills） |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
-<!-- END:INSTALL-COVERAGE -->
-
-**需求**：Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝，但 `/codex-*` review gate 必須有——Codex 本身就是那位唯一的 reviewer，未安裝時 review 會直接輸出 `⛔ Blocked` + `⚠️ Need Human`，沒有可降級的對象）
-
 ## Workflow Tracks
 
-| Workflow | 指令 | Gate | 執行層 |
-|----------|------|------|--------|
-| 功能開發 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + 行為層 |
-| Bug 修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + 行為層 |
-| Auto-Loop | Code 編輯 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| 文件 Review | `.md` 編輯 → `/codex-review-doc` | ✅/⛔ | Hook |
+| Workflow | 指令 | Gate | 憑證 |
+|----------|------|------|------|
+| 功能開發 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
+| Bug 修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
+| Auto-Loop | Code 編輯 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
+| 文件 Review | `.md` 編輯 → `/codex-review-doc` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
 | 規劃 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | 上手流程 | `/project-setup` → `/repo-intake` | — | — |
 
@@ -415,7 +429,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## Rules & Hooks
 
-15 條 rules（常駐載入的慣例）+ 8 個 hooks（自動化護欄）。
+15 條 rules + 8 個 hooks。Rules 是分層的契約：`discretion.md` 把 12 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hooks 是事實發布者與護欄：它們記錄 gate 憑證並在 compaction 後重新注入狀態；stop-guard 在 strict 模式下阻擋 review 未完成的停止，pre-edit-guard 則在任何模式下拒絕敏感路徑的編輯。
 
 > **客製化**：編輯 `auto-loop-project.md` 可覆寫專案的 auto-loop 行為。Plugin 更新不會衝突 — 詳見 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 
@@ -437,6 +451,8 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | `{BUILD_COMMAND}` | Build 指令 | yarn build |
 | `{TYPECHECK_COMMAND}` | Type check | yarn typecheck |
 
+覆寫採 **Anchor-first** 解析：使用者擁有的 override 檔（`auto-loop-project.md`、`testing-project.md`）只能客製 Default 與 Guidance 層級的行為——任何專案覆寫都無法降級 Anchor Register 中的條目，嘗試這麼做會被回報為衝突，而不是被接受。
+
 ## 展示：多 Agent 研究
 
 執行 `/deep-research` 可調度 2-3 個並行研究 agent，跨越網路來源、程式碼庫與社群知識 — 搭配 claim registry 綜合與條件式對抗辯論。
@@ -452,17 +468,18 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## 架構
 
-```
-Command（入口）→ Skill（能力）→ Agent（環境）
-```
+六個層，每層各自擁有一項關注點：
 
-- **Commands**：使用者透過 `/...` 觸發
-- **Skills**：按需載入的知識庫
-- **Agents**：擁有特定工具的隔離 sub-agent
-- **Hooks**：自動化 guardrails（format、review 狀態、stop guard）
-- **Rules**：始終啟用的慣例（自動載入）
+| 層 | 擁有的範圍 |
+|----|-----------|
+| **Skills** | 按需載入的能力——動詞（`/feature-dev`、`/codex-review-fast`、…） |
+| **Model** | 路徑：批次、時機、review 深度升級、Default 層級的偏離 |
+| **Rules** | 每個 session 都載入的分層契約（Anchor / Default / Guidance） |
+| **Hooks + state** | `[AUTO_LOOP_STATE]` 事實、持久化的 gate 憑證、跨 compaction 的復原 |
+| **Codex** | 獨立 review——自行研究 repo，絕不被餵結論 |
+| **Scripts + agents** | 確定性的檢查（precommit、guards）與隔離的 subagent |
 
-進階架構細節（agentic control stack、控制迴圈理論、sandbox 規則）請參閱 [docs/architecture.md](docs/architecture.md)。
+進階架構細節（agentic control stack、控制迴圈理論、sandbox 規則）請參閱 [docs/architecture.md](docs/architecture.md)——注意其中部分內容早於 v4，仍在描述 v3 的 choreography；`rules/auto-loop.md` 與 `rules/discretion.md` 才是目前的 source of truth。
 
 ## 貢獻
 

@@ -6,13 +6,70 @@
 
 > La capa harness para Claude Code.
 
-**Gates de calidad que la IA no puede saltarse.** Una reference implementation de AI Agent Harness Engineering para [Claude Code](https://claude.com/claude-code) — gates de review forzados por hooks, gates de state-machine que sobreviven a la compactación del contexto y seguridad fail-closed donde importa.
+**Deja que el modelo elija el camino. Mantén el «hecho» verificable.**
+
+v4 da a Claude discreción dentro de un conjunto cerrado de anchors fijado por tests; los hooks preservan los gate receipts a través de la compactación, y Codex revisa de forma independiente.
+
+Control plane completo en Claude Code. Distribución solo de skills para Codex CLI y otros agentes compatibles.
 
 <!-- BEGIN:HERO-COUNT -->
 96 bundled · 96 public skills · 15 agents — ~4% de la ventana de context de Claude
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
+
+## Inicio rápido
+
+```bash
+# Claude Code — control plane completo
+/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin install sd0x-dev-flow@sd0xdev-marketplace
+
+# Configurar tu proyecto
+/project-setup
+```
+
+Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 15 rules + 8 hooks. Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
+
+```bash
+# Codex CLI / Cursor / Windsurf / Aider — solo skills
+npx skills add sd0xdev/sd0x-dev-flow
+
+# Generar AGENTS.md + instalar git hooks (ejecutar dentro de Claude Code)
+/codex-setup init
+```
+
+<!-- BEGIN:INSTALL-COVERAGE -->
+| Método | Herramientas | Cobertura |
+|--------|-------------|-----------|
+| Instalar plugin | Claude Code | Completa (96 bundled skills, hooks, rules, auto-loop) |
+| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Solo Skills (96 public skills) |
+| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+<!-- END:INSTALL-COVERAGE -->
+
+**Requisitos**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
+
+## Por qué v4
+
+Los modelos frontier pueden planificar, agrupar y recuperarse a partir de estado estructurado — ya no necesitan que el harness dicte cada siguiente comando. v4 pasa de la **coreografía a los contratos**: el harness dejó de guionizar los movimientos del modelo y empezó a definir qué debe ser cierto cuando el trabajo se declara terminado, sin relajar ni un solo anchor de seguridad o de review.
+
+| Dimensión | v3 (coreografía) | v4 (contratos) |
+|-----------|------------------|----------------|
+| Rol del hook | Emitir el siguiente comando a ejecutar | Publicar hechos `[AUTO_LOOP_STATE]` — clase de cambio, gate receipts, ronda/tope, tier |
+| Terminación | Secuencia de pasos guionizada («fix → re-review inmediato») | Invariante de terminación (terminal completion invariant): todo gate que la clase de cambio requiere ha pasado después de la última edición |
+| Fuerza de las reglas | Uniforme — cada regla se lee como obligatoria | Tres tiers: **Anchor** (nunca), **Default** (desviarse declarando una señal), **Guidance** (consultivo) |
+| Profundidad de review | Máxima por defecto | Tiers escalados por riesgo (`fast` / `standard` / `thorough`); seguridad e integridad de datos siempre escalan |
+| Al alcanzar el tope de rondas | Traspaso al humano | Primer hit: autodiagnóstico estructurado + un ajuste acotado, y luego continuar — salvo que aplique una salida humana específica del tope (seguridad/integridad de datos, cambio a nivel de arquitectura, ambigüedad de requisitos); el mismo cambio alcanzando el tope de nuevo tras su diagnóstico: siempre humano |
+
+El núcleo no negociable vive en un **Anchor Register cerrado** (`rules/discretion.md`) que ningún override de proyecto puede degradar — la resolución es Anchor-first, y una suite de tests falla por diseño si se elimina una entrada del Register. Dentro de ese límite, la propiedad es explícita:
+
+| Propietario | Posee |
+|-------------|-------|
+| **Modelo** | Agrupación, timing, escalado de la profundidad de review, desviaciones de tier Default (declaradas, y luego seguir trabajando) |
+| **Harness** | Frescura de los gates, receipts a través de la compactación, bloqueo en modo strict, el conjunto cerrado de anchors |
+| **Humano** | Aprobaciones irreversibles (push, commit, merge) y los puntos de salida enumerados |
+
+El modelo posee el camino. El harness posee la evidencia y los límites no negociables. El humano conserva la autoridad irreversible.
 
 ## Lo que hace este harness
 
@@ -22,42 +79,18 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 
 | # | Subproblema de harness | Implementación en sd0x-dev-flow | Evidencia de código |
 |---|------------------------|--------------------------------|---------------------|
-| 1 | **Tool loop control** | Auto-loop `/codex-review-fast` → `/precommit` con transiciones guiadas por sentinels | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | Marcadores de gate `✅ Ready` / `⛔ Blocked` / `✅ All Pass` parseados a estado persistente | [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (productor) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser) |
+| 1 | **Tool loop control** | Invariante de terminación (terminal completion invariant) — todo gate que una clase de cambio requiere debe pasar después de la última edición; el modelo elige cuándo y cómo ejecutarlos | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
+| 2 | **Sentinel-driven state machine** | Sentinels de gate `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` parseados a sus respectivos planos de estado persistentes; el dual review opt-in agrega además vía un marcador `REVIEW_GATE=` orientado a máquina | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser de sentinels) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (productor del `REVIEW_GATE=` de dual review) |
 | 3 | **Context recovery across compaction** | Inyección por stdout de `[AUTO_LOOP_RESUME]` tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 86 de 95 skills públicas declaran `allowed-tools` |
+| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 89 de 98 skills públicas declaran `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 capas: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | `iteration_history.current_round` + `max_rounds` + detección de convergence plateau | [`rules/auto-loop.md`](rules/auto-loop.md) (condiciones de salida + strategic reset) |
-| 9 | **Human-in-the-loop safety gates** | Confirmación por `/dev/tty` + `AskUserQuestion` para operaciones destructivas | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 8 | **Incremental progress tracking** | Presupuesto de rondas por tier (por defecto 3 / 5 / 30, sobrescribible 3–50) + diagnóstico de tope: el primer hit del tope dispara una clasificación estructurada del estancamiento y un ajuste acotado, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 9 | **Human-in-the-loop safety gates** | Aprobación por `AskUserQuestion` antes de cada push de `/push-ci`; la confirmación pre-push por `/dev/tty` es la credencial terminal para pushes a ramas protegidas (más detección de non-fast-forward) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Corrección → registrar lesson → promover a regla tras 3+ recurrencias | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 La mayoría de proyectos de harness cubren 2–4 de estos subproblemas. sd0x-dev-flow cubre los 10 — lo que hace el código útil como objeto de estudio, no solo como herramienta.
-
-## ¿Por qué sd0x-dev-flow?
-
-| Sin barreras de seguridad | Con sd0x-dev-flow |
-|---|---|
-| La IA salta el review cuando el contexto es largo | **Forzado por Hook**: stop-guard bloquea reviews incompletos |
-| La autorrevisión solo sella lo ya hecho | **Reviewer independiente**: Codex investiga el repositorio por su cuenta; `--dual` opcional cuando hace falta profundidad |
-| "Arreglado" sin re-verificación | **Auto-loop**: fix → re-review → pass → continuar |
-| Estado de review perdido tras compact | **Seguimiento de estado**: SessionStart hook re-inyecta |
-
-## Inicio rápido
-
-```bash
-# Instalar plugin
-/plugin marketplace add sd0xdev/sd0x-dev-flow
-/plugin install sd0x-dev-flow@sd0xdev-marketplace
-
-# Configurar tu proyecto
-/project-setup
-```
-
-Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 15 rules + 8 hooks.
-
-Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
 
 ## Cómo funciona
 
@@ -73,7 +106,18 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-El **motor auto-loop** aplica quality gates automáticamente — tras ediciones de código, el comando de review despacha **Codex** en la misma respuesta. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de ese umbral se registran y el bucle continúa, sin abrir otra ronda. En modo strict, los hooks aplican semántica fail-closed: si el gate está incompleto, stop-guard bloquea. Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado. Ver [docs/hooks.md](docs/hooks.md) para detalles.
+Todo orbita alrededor de una sola regla — el **terminal completion invariant** (invariante de terminación): el trabajo sobre un cambio solo puede declararse completo cuando todo gate que su clase de cambio requiere ha pasado *después de la última edición en esa clase*. Las ediciones de código requieren un review independiente de Codex y luego `/precommit`; los docs `.md` requieren `/codex-review-doc`. Cuándo ejecutarlos, cómo agrupar las ediciones y con qué profundidad revisar son decisiones del modelo — el invariante restringe el estado final, no la coreografía.
+
+Los hooks reportan **hechos, no órdenes**: emiten bloques `[AUTO_LOOP_STATE]` (clase de cambio, gate receipts, ronda/tope, tier) y el modelo es dueño de la decisión. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de esa línea se registran y el bucle continúa en lugar de abrir otra ronda. Alcanzar el tope de rondas dispara un autodiagnóstico estructurado (¿problema de arquitectura? ¿doc demasiado largo? ¿difusión de atención?) y un ajuste acotado antes de que el bucle se reanude — en lugar de un traspaso automático, aunque las salidas humanas específicas del tope siguen vigentes (los cambios de seguridad e integridad de datos se saltan el diagnóstico por completo; un estancamiento diagnosticado como de nivel de arquitectura o como ambigüedad de requisitos va al humano).
+
+La aplicación (enforcement) tiene dos modos:
+
+| Modo | Gate abierto al detenerse | Aplicado por |
+|------|---------------------------|--------------|
+| `warn` (fallback del runtime del plugin) | Se emite una advertencia; cerrar el gate sigue siendo obligación del modelo | Capa de comportamiento |
+| `strict` (por defecto al instalar vía `/project-setup`) | El stop se bloquea hasta que el gate pase — fail-closed | Hook |
+
+Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado por defecto. Ver [docs/hooks.md](docs/hooks.md) para detalles de modos y dependencias.
 
 <details>
 <summary>Detalle: Diagrama de secuencia del bucle de review</summary>
@@ -116,23 +160,15 @@ Un solo reviewer — Codex — por defecto en todas partes. El **tier** decide c
 | `standard` **(por defecto)** | Funcionalidades y correcciones ordinarias | P0, P1 | 5 |
 | `thorough` | Seguridad, integridad de datos, releases, API pública | P0, P1, P2 | 30 |
 
+El tier configurado es una línea base, no un techo — el modelo escala cuando el cambio lo amerita, y los cambios de seguridad o de integridad de datos siempre se revisan en `thorough` sea cual sea la configuración.
+
 **80 es nota de aprobado.** Los hallazgos por debajo del umbral de bloqueo del tier se registran (`[NIT_DEFERRED]`, persistido con TTL para que no se vuelvan a plantear en la siguiente sesión) y el bucle avanza a `/precommit` — sin pasada extra de correcciones ni ronda extra de review. `/codex-review-branch` los retoma cuando el cambio se revise en profundidad.
+
+Los topes de rondas de arriba son los valores por defecto del tier — un override de proyecto `## Max Rounds` (3–50) tiene precedencia. Alcanzar el tope es un punto de diagnóstico, no un traspaso automático: el modelo clasifica el estancamiento (arquitectura, doc demasiado largo, difusión de atención, afirmaciones no verificadas, tier desajustado, ambigüedad de requisitos), hace un ajuste acotado y se reanuda. Las salidas humanas específicas del tope siguen siendo vinculantes: los cambios de seguridad/integridad de datos se saltan el diagnóstico y van directo al humano, un estancamiento clasificado como de nivel de arquitectura o como ambigüedad de requisitos sale al humano, y el mismo cambio alcanzando el tope una segunda vez tras su diagnóstico siempre lo hace. (Los cambios a nivel de arquitectura, la eliminación de funcionalidades o una petición del usuario de detenerse salen al humano en cualquier momento — con tope o sin él.)
 
 Un segundo reviewer está disponible vía `/codex-review-branch --dual` y está **desactivado salvo que se pase el flag** — duplica el coste en tokens y en tiempo de cada ronda, algo que vale la pena en un release o una revisión de seguridad, no en una corrección corriente. Bajo `--dual`, los hallazgos se normalizan por severidad, se deduplican (archivo + clave de issue, tolerancia ±5 líneas) y se atribuyen por fuente.
 
 Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloqueado.
-
-## Comparación
-
-| Capacidad | sd0x-dev-flow | gstack | Prompts genéricos |
-|---|---|---|---|
-| Gates de review forzados | Hook + capa de comportamiento | Solo sugerencia | Ninguno |
-| Reviewer independiente | Codex, autoinvestiga; `--dual` opcional | Un solo /review | Ninguno |
-| Bucle de auto-fix | Fix → re-review → pass | Manual | Ninguno |
-| Investigación multi-agente | /deep-research (3 agentes) | Ninguno | Ninguno |
-| Validación adversarial | Debate equilibrio Nash | Ninguno | Ninguno |
-| Auto-mejora | Log de lecciones + promoción de reglas | Solo /retro stats | Ninguno |
-| Soporte multi-herramienta | Codex/Cursor/Windsurf | Claude/Codex/Gemini/Cursor | N/A |
 
 ## Cuándo usar
 
@@ -141,38 +177,16 @@ Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloquead
 | Proyectos individuales o de equipos pequeños con Claude Code | Equipos que no usan Claude Code |
 | Proyectos que necesitan gates de review automatizados | Scripts únicos sin CI |
 | Usuarios de Codex CLI / Cursor / Windsurf (subconjunto de skills) | Proyectos que requieren proveedores de LLM personalizados |
-| Repos donde los quality gates previenen regresiones | Repos sin infraestructura de testing |
-
-## Instalación
-
-### Codex CLI / Otros Agentes de IA
-
-```bash
-# Instalar skills individuales vía Agent Skills standard
-npx skills add sd0xdev/sd0x-dev-flow
-
-# Generar AGENTS.md + instalar hooks (en Claude Code)
-/codex-setup init
-```
-
-<!-- BEGIN:INSTALL-COVERAGE -->
-| Método | Herramientas | Cobertura |
-|--------|-------------|-----------|
-| Instalar plugin | Claude Code | Completa (96 bundled skills, hooks, rules, auto-loop) |
-| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Solo Skills (96 public skills) |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
-<!-- END:INSTALL-COVERAGE -->
-
-**Requisitos**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
+| Repos donde los gates de calidad previenen regresiones | Repos sin infraestructura de testing |
 
 ## Tracks de workflow
 
-| Workflow | Comandos | Gate | Aplicado por |
-|----------|----------|------|--------------|
-| Funcionalidad | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook + Comportamiento |
-| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook + Comportamiento |
-| Auto-Loop | Edición de código → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook |
-| Doc Review | Edición `.md` → `/codex-review-doc` | ✅/⛔ | Hook |
+| Workflow | Comandos | Gate | Receipts |
+|----------|----------|------|----------|
+| Funcionalidad | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
+| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
+| Auto-Loop | Edición de código → `/codex-review-fast` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
+| Doc Review | Edición `.md` → `/codex-review-doc` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
 | Planificación | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | Onboarding | `/project-setup` → `/repo-intake` | — | — |
 
@@ -415,7 +429,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 ## Reglas & Hooks
 
-15 reglas (convenciones siempre cargadas) + 8 hooks (guardrails automatizados).
+15 reglas + 8 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 12 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. Los hooks son publicadores de hechos y guardrails: registran los gate receipts y re-inyectan el estado tras la compactación; stop-guard bloquea en modo strict los stops con review incompleto, mientras que pre-edit-guard rechaza ediciones de rutas sensibles en cualquier modo.
 
 > **Personalización**: Edita `auto-loop-project.md` para sobrescribir el comportamiento de auto-loop por proyecto. Las actualizaciones del plugin no conflictuarán — ver [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
@@ -437,6 +451,8 @@ Ejecuta `/project-setup` para autodetectar y configurar todos los placeholders, 
 | `{BUILD_COMMAND}` | Comando de build | yarn build |
 | `{TYPECHECK_COMMAND}` | Type checking | yarn typecheck |
 
+Los overrides se resuelven **Anchor-first**: los archivos de override propiedad del usuario (`auto-loop-project.md`, `testing-project.md`) personalizan solo el comportamiento de tier Default y Guidance — ningún override de proyecto puede degradar una entrada del Anchor Register, y un intento se reporta como conflicto en lugar de aceptarse.
+
 ## Demostración: Investigación Multi-Agente
 
 Ejecuta `/deep-research` para orquestar 2-3 agentes de investigación en paralelo a través de fuentes web, codebase y conocimiento de la comunidad — con síntesis de claim registry y debate adversarial condicional.
@@ -452,17 +468,18 @@ Ejecuta `/deep-research` para orquestar 2-3 agentes de investigación en paralel
 
 ## Arquitectura
 
-```
-Command (entrada) → Skill (capacidad) → Agent (entorno)
-```
+Seis capas, cada una dueña de una responsabilidad:
 
-- **Commands**: El usuario los ejecuta con `/...`
-- **Skills**: Knowledge bases cargadas bajo demanda
-- **Agents**: Subagentes aislados con herramientas específicas
-- **Hooks**: Guardrails automatizados (formateo, estado de review, stop guard)
-- **Rules**: Convenciones siempre activas (carga automática)
+| Capa | Posee |
+|------|-------|
+| **Skills** | Capacidades cargadas bajo demanda — los verbos (`/feature-dev`, `/codex-review-fast`, …) |
+| **Modelo** | La ruta: agrupación, timing, escalado de la profundidad de review, desviaciones de tier Default |
+| **Rules** | Contratos por tiers (Anchor / Default / Guidance) cargados en cada sesión |
+| **Hooks + estado** | Hechos `[AUTO_LOOP_STATE]`, gate receipts persistentes, recuperación a través de la compactación |
+| **Codex** | Review independiente — investiga el repositorio por su cuenta, nunca recibe una conclusión |
+| **Scripts + agents** | Checks deterministas (precommit, guards) y subagentes aislados |
 
-Para detalles avanzados de arquitectura (agentic control stack, teoría de bucle de control, reglas de sandbox), consulta [docs/architecture.md](docs/architecture.md).
+Para detalles avanzados de arquitectura (agentic control stack, teoría de bucle de control, reglas de sandbox), consulta [docs/architecture.md](docs/architecture.md) — ten en cuenta que partes de ese documento son anteriores a v4 y aún describen la coreografía de v3; `rules/auto-loop.md` y `rules/discretion.md` son la fuente de verdad actual.
 
 ## Contribuir
 
