@@ -325,8 +325,10 @@ function medianMs(times) {
 
 test('classification of the SHIPPED config stays under the 50ms budget (median of 11, full miss)', () => {
   // The absolute budget is asserted against the config the plugin actually ships — not a reduced
-  // fixture — and on a MISS, which walks every rule to the end (worst case). The extreme-scale
-  // test below owns the "no per-rule traversal" scaling property; this one owns the 50ms contract.
+  // fixture — and on a MISS, which walks every rule to the end. That is a full-rule miss, not the
+  // matcher's absolute worst case: a clean miss skips every exclude loop, so a path that hits a
+  // late include and is then rejected by a late exclude can make more comparisons. The
+  // extreme-scale test below owns the scaling property; this one owns the 50ms contract.
   const shippedText = readFileSync(resolve(root, 'scripts/config/sensitive-paths.json'), 'utf8');
   withConfig(shippedText, ({ dir, script }) => {
     assert.equal(run(script, dir, 'src/plain/helper.ts'), 'sensitivity=none', 'fixture must be a full miss');
@@ -352,9 +354,20 @@ test('an extreme valid config (100 rules × 10 segments) scales flat relative to
   // either). Measurements are PAIRED and interleaved in AB/BA order so scheduler drift lands on
   // adjacent numerator and denominator alike and cancels in each pair's ratio; disjoint windows
   // would not cancel (load can shift between them). What the ratio catches is an introduced
-  // per-rule traversal (find/grep, one jq per rule), which multiplies the extreme config's cost
-  // while leaving the 2-rule config's untouched. The absolute 50ms contract stays owned by the
-  // test above; the loose ceiling here is a runaway backstop, not a budget.
+  // per-rule traversal (find/grep, one jq per rule): it runs 100 times here against 2 in the
+  // control, so the extreme cost grows ~50× faster, not that the control is left untouched. The
+  // absolute 50ms contract stays owned by the test above; the ceiling here is a runaway backstop.
+  //
+  // Why the ceiling is 8 and not one platform's observed ratio: 2.5 was calibrated on macOS, where
+  // the fixed spawn cost dominates both sides and compresses the ratio toward 1. The same
+  // in-process scan measured a 3.89× median on Linux CI (control 8–11ms, extreme 31–45ms), where
+  // that fixed cost is smaller. A failure region survives the loosening because a per-rule
+  // subprocess runs 100 times here against 2 in the control, so it inflates the numerator ~50×
+  // faster than the denominator. The paired arithmetic behind 8, the CI arrays it was derived from,
+  // and the deferred replacement of this ratio by an external-process count are recorded in
+  // docs/features/auto-loop-autonomy/requests/2026-07-26-sensitive-path-advisory-hints-r4.md.
+  // Timings print only in the failure message: to measure this machine, set the ceiling to 1 and
+  // run `node --test test/hooks/sensitive-paths.test.js`.
   const big = JSON.stringify({
     version: 1,
     rules: Array.from({ length: 100 }, (_, i) => ({
@@ -390,7 +403,7 @@ test('an extreme valid config (100 rules × 10 segments) scales flat relative to
       }
       const ratio = medianMs(ratios); // medianMs sorts and takes the middle — works for ratios too
       const detail = `extreme runs: ${extTimes.map((t) => t.toFixed(0)).join(',')}; control runs: ${ctrlTimes.map((t) => t.toFixed(0)).join(',')}`;
-      assert.ok(ratio < 2.5,
+      assert.ok(ratio < 8,
         `100×10 config costs ${ratio.toFixed(2)}× the 2-rule example config per paired run (${detail}) — a per-rule traversal has likely been introduced`);
       const extMed = medianMs(extTimes);
       assert.ok(extMed < 250, `runaway backstop: median ${extMed.toFixed(1)}ms at 100×10 scale (${detail})`);

@@ -49,7 +49,15 @@
 - [x] 設定檔缺失或格式錯誤時輸出 `sensitivity=unknown`，不靜默視為未命中 — 驗證為 all-or-nothing：單一 rule 不合 schema 即整份 INVALID（含 `false`/`null` optional 欄位、傳輸保留值 `,`/`-`/`VALID`/tab/newline/CR/backslash）；空 rules 陣列合法 → `none`
 - [x] 命中時僅輸出 `sensitivity_hint` / `rule` / `path` / `suggested_tier` / `suggested_route` 等建議欄位 — `path` 載體為事實行既有的 `file=` 欄位（同一行、同一路徑，不重複輸出）；端對端測試釘住整條 `[AUTO_LOOP_STATE]` line 契約
 - [x] 全 diff 可證：未寫入 `review_mode`，未寫入任何 enforcement 狀態欄位 — helper 為 file-local 唯讀；測試以禁用 token 清單（`STATE_FILE`/`review_mode`/`update_*`/`invalidate_*`/sidecar/`mktemp`/重導向）掃 helper 本體，並斷言其位於六 hook 共用 byte-identical 區塊之外
-- [x] 比對成本 < 50ms（實測為證），不引入任何全庫掃描 — 單次 jq 呼叫，無任何 find/grep 遍歷；50ms 絕對預算由**實際 shipped config**（`scripts/config/sensitive-paths.json`，4 rules）全 miss 最壞情況測試持有（暖機後 11 次取**中位數**）；100 rules × 10 segments 全 miss 極端基準改為**成對交錯（AB/BA）相對縮放斷言**（對 2-rule example config 的比值中位數 < 2.5× + 250ms runaway backstop）——絕對牆鐘在該規模量的是 /precommit 平行負載而非 hook（實測 47–68ms vs 單獨 <40ms），成對交錯降低量測間的系統性順序偏差，並直接保護「不引入 per-rule 遍歷」性質（2026-07-29 調整，經 code review 驗證）。實測環境為本機 macOS；Codex 沙箱因 mkdtemp EPERM 無法重跑行為測試，屬環境限制而非產品缺陷
+- [x] 比對成本 < 50ms（實測為證），不引入任何全庫掃描 — 單次 jq 呼叫，無任何 find/grep 遍歷。三項斷言各自持有一個契約：
+
+  | 斷言 | 量測對象 | 界限 |
+  |------|---------|------|
+  | 絕對預算 | shipped config（4 rules / 18 include / 13 exclude）全規則 miss，暖機後 11 次 | **中位數** < 50ms |
+  | 相對縮放 | 100 rules × 10 segments 對 2-rule control 的成對交錯（AB/BA）比值 | **中位數** < 8× |
+  | Runaway backstop | 同上極端配置的耗時 | **中位數** < 250ms |
+
+  界限的推導、2026-07-30 由 2.5× 改為 8× 的原委與已知侷限見 § Implementation Notes。實測環境為本機 macOS 與 Linux CI；Codex 沙箱因 mkdtemp EPERM 無法重跑行為測試，屬環境限制而非產品缺陷
 - [x] 內建預設規則以「範例」呈現，文件明確聲明非完整安全涵蓋 — `_comment` 明示 EXAMPLE only / NOT complete security coverage / 語意升級不依賴路徑命中；測試釘住此聲明
 - [x] Pass /codex-review-fast — 4 輪（R1 ⛔ 1P1：malformed rule 靜默丟棄；R2 ⛔ 1P1：`//` 對 `false` 取右值繞過驗證；R3 ✅ Ready；R4 ✅ Ready 驗證測試補強）
 - [x] Pass /precommit — ✅ PASS，2928 tests / 2922 pass / 0 fail / 6 skipped
@@ -83,6 +91,8 @@
 - **`path` 欄位載體決定**：AC4 的欄位列表為例示（「等建議欄位」）。事實行既有 `file=` 欄位即路徑載體，helper 不重複輸出 `path=`——同一行出現兩份路徑只會製造漂移面。此等價由 e2e 測試釘住整行契約（`file=` + hint tokens 同行、無 `review_mode`）。
 - **驗證策略沿革**：初版對 malformed rule 採 per-rule 丟棄（審查 R1 P1）；改為 all-or-nothing 後又發現 jq `//` 對 `false` 取右值可繞過型別檢查（R2 P1），最終以 `has()` 存在性檢查 + 傳輸保留值拒絕（`,`、`-`、`VALID`、tab/newline/CR/backslash）收斂。`sensitivity=unknown`（config 不可信）與 `sensitivity=none`（檢查過且乾淨）嚴格區分。
 - **審查中當場修正（sub-threshold 例外）**：R3 輪 deferred P2「`VALID`/`-` 線路協定保留值碰撞」屬已開檔一行修正，於同 pass 內修畢並補測試，未另開輪次。
+- **相對比值上限：2.5× → 8×（2026-07-30）**：2.5 是在 macOS 校準的，該平台固定 spawn 成本淹沒兩側並把比值壓向 1；同一份 in-process 掃描在 Linux CI 量到 3.89× 而使 CI 轉紅（run `30512049286`）。CI 診斷陣列為 control `8,10,10,10,11,8,9` ms、extreme `31,34,38,31,45,32,45` ms。**這些是取整到毫秒的診斷輸出，不足以重現 3.89**——測試以未取整計時算比值（`sensitive-paths.test.js`），用整數陣列重建只得約 `3.875`（其本身四捨五入為 3.88），故 3.89 出自原始計時，整數重建僅為近似。以代表性配對 `C=10, E=38` 代入 `(38+100p)/(10+2p) >= 8` 得 p >= 0.5ms，同屬近似而非精確驗證。
+- **8× 是務實的牆鐘代理量，非唯一解**：per-rule 子行程成本 p 同時放大兩側（extreme 100p、control 2p），故比值上界漸近於 ~50×，任何顯著低於它的有限界限都保有失敗區間——8 未由完整判別需求唯一推導出來。**未主張**任何平台的 process launch 必然超過 0.5ms，因此「不引入 per-rule 遍歷」在足夠便宜的子行程下仍可能通過。要移除牆鐘依賴須改為**外部行程計數的結構斷言**（PATH 置入 instrumented `jq`/`find`/`grep`，斷言 rule 迴圈外恰一次 `jq`、迴圈內零次 `find`/`grep`），已記錄為 deferred 改進；50ms 絕對契約仍由 shipped-config 測試獨立持有。
 - **Adequacy（advisory ⛔ → 缺口處置）**：High×2（`path` 欄位、<50ms 極端規模）與 Medium（無 e2e）以測試補齊；Codex 沙箱 mkdtemp EPERM 導致其無法重跑行為測試，<50ms 證據為本機實測（記錄於 AC 附註）。Low（shipped-config 測試斷言數超過 ≤7 慣例、測試命名部分未依 `'<unit> <condition> → <expected>'`）屬既有測試風格議題，deferred 待 `/codex-review-branch` 深度審查一併處理。
 
 ## References
