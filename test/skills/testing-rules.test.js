@@ -62,7 +62,10 @@ test('testing-project.md exists with precedence header', () => {
   const path = resolve(root, 'rules/testing-project.md');
   assert.ok(existsSync(path), 'testing-project.md should exist');
   const content = readFileSync(path, 'utf8');
-  assert.match(content, /Precedence:.*this file.*takes precedence/i, 'should have precedence header');
+  // R8: the precedence declaration is LIVE text (comments never reach the model) and is
+  // tier-scoped — the old unconditional "this file takes precedence" wording is retired.
+  assert.match(content, /^Precedence: /m, 'should have a live precedence header');
+  assert.match(content, /Anchor-tier instructions[\s\S]{0,200}cannot be overridden/, 'precedence carries the Anchor exception');
   assert.match(content, /user-owned/i, 'should state user-owned');
 });
 

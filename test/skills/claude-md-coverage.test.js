@@ -1,42 +1,36 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readdirSync, readFileSync } = require('node:fs');
+const { readdirSync, readFileSync, existsSync } = require('node:fs');
 const { resolve } = require('node:path');
 
 const root = resolve(__dirname, '../..');
 const skillsDir = resolve(root, 'skills');
 const templatePath = resolve(root, 'CLAUDE.template.md');
 const claudeMdPath = resolve(root, 'CLAUDE.md');
+const catalogPath = resolve(root, 'docs/skill-catalog.yml');
+
+// --- Catalog/frontmatter registration contract ---
+//
+// R3 (auto-loop prose reduction) removed the 90+-row command table from the tracked CLAUDE
+// files. Registration now has ONE surface: docs/skill-catalog.yml, with each skill's
+// frontmatter `description` as the dispatcher-facing discovery text. These tests replace the
+// old table-shape assertions with the catalog contract.
 
 /**
-* Extract the Command Quick Reference section from markdown content.
+ * Extract command names from docs/skill-catalog.yml entries (preserving duplicates).
+ * Matches lines like: `  - command: /some-command`
  */
-function extractCommandSection(content) {
-  const start = content.indexOf('## Command Quick Reference');
-  if (start === -1) return '';
-  const rest = content.slice(start);
-  const nextSection = rest.indexOf('\n## ', 1);
-  return nextSection === -1 ? rest : rest.slice(0, nextSection);
-}
-
-/**
-* Extract command names from a CLAUDE.md-style Command Quick Reference table.
-* Returns an array (preserving duplicates for detection).
-* Matches rows like: | `/some-command` | description | when |
- */
-function extractTableCommands(content) {
-  const section = extractCommandSection(content);
+function catalogCommands() {
+  const content = readFileSync(catalogPath, 'utf8');
   const commands = [];
-  const re = /^\|\s*`\/([^`]+)`\s*\|/gm;
+  const re = /^ {2}- command: \/(\S+)$/gm;
   let m;
-  while ((m = re.exec(section)) !== null) {
-    commands.push(m[1]);
-  }
+  while ((m = re.exec(content)) !== null) commands.push(m[1]);
   return commands;
 }
 
 /**
-* Get all skill directory names from skills/ dir.
+ * Get all skill directory names from skills/ dir.
  */
 function getSkillDirs() {
   return readdirSync(skillsDir, { withFileTypes: true })
@@ -44,72 +38,151 @@ function getSkillDirs() {
     .map((d) => d.name);
 }
 
-// Parent/internal skills that are invoked by alias skills, not directly via slash-command.
-// These don't need entries in the Command Quick Reference table.
-const INTERNAL_SKILLS = new Set([
-  'codex-code-review', 'doc-review', 'security-review', 'test-review',
-  'portfolio', 'request-tracking', 'req-analyze', 'dev-security-audit',
-  'readme-i18n-sync', // local-only skill, not committed to repo
-  'update-readme', // local-only skill, not committed to repo
-]);
+// Local-only skills: present in this machine's skills/ dir but deliberately kept out of the
+// committed catalog (not shipped with the plugin).
+const LOCAL_ONLY_SKILLS = new Set(['readme-i18n-sync', 'update-readme']);
 
-test('every skill directory is listed in CLAUDE.template.md', () => {
-  const templateContent = readFileSync(templatePath, 'utf8');
-  const tableCommands = new Set(extractTableCommands(templateContent));
-  const skills = getSkillDirs();
-
-  const missing = skills.filter((skill) => !tableCommands.has(skill) && !INTERNAL_SKILLS.has(skill));
+test('every skill directory is registered in docs/skill-catalog.yml', () => {
+  const catalogued = new Set(catalogCommands());
+  const missing = getSkillDirs().filter((s) => !catalogued.has(s) && !LOCAL_ONLY_SKILLS.has(s));
   assert.deepStrictEqual(
     missing,
     [],
-    `skills/ directories missing from CLAUDE.template.md table: ${missing.join(', ')}`
+    `skills/ directories missing from docs/skill-catalog.yml: ${missing.join(', ')}`
   );
 });
 
-test('every CLAUDE.template.md table entry has a skills/<dir>/ directory', () => {
-  const templateContent = readFileSync(templatePath, 'utf8');
-  const tableCommands = extractTableCommands(templateContent);
+test('every catalog entry has a skills/<dir>/ directory', () => {
   const fileSkills = new Set(getSkillDirs());
-
-  const orphaned = tableCommands.filter((cmd) => !fileSkills.has(cmd));
+  const orphaned = catalogCommands().filter((cmd) => !fileSkills.has(cmd));
   assert.deepStrictEqual(
     orphaned,
     [],
-    `CLAUDE.template.md table entries without skills/ directory: ${orphaned.join(', ')}`
+    `docs/skill-catalog.yml entries without skills/ directory: ${orphaned.join(', ')}`
   );
 });
 
-test('no duplicate commands in CLAUDE.template.md table', () => {
-  const templateContent = readFileSync(templatePath, 'utf8');
-  const tableCommands = extractTableCommands(templateContent);
+test('no duplicate commands in docs/skill-catalog.yml', () => {
   const seen = new Set();
   const duplicates = [];
-  for (const cmd of tableCommands) {
+  for (const cmd of catalogCommands()) {
     if (seen.has(cmd)) duplicates.push(cmd);
     seen.add(cmd);
   }
+  assert.deepStrictEqual(duplicates, [], `Duplicate commands in docs/skill-catalog.yml: ${duplicates.join(', ')}`);
+});
+
+test('every skill carries a non-empty frontmatter description (the discovery interface)', () => {
+  const bare = [];
+  for (const dir of getSkillDirs()) {
+    const skillPath = resolve(skillsDir, dir, 'SKILL.md');
+    if (!existsSync(skillPath)) { bare.push(`${dir} (no SKILL.md)`); continue; }
+    const fm = readFileSync(skillPath, 'utf8').replace(/\r\n/g, '\n').match(/^---\n([\s\S]*?)\n---/);
+    if (!fm || !/^description:\s*\S+/m.test(fm[1])) bare.push(dir);
+  }
   assert.deepStrictEqual(
-    duplicates,
+    bare,
     [],
-    `Duplicate commands in CLAUDE.template.md: ${duplicates.join(', ')}`
+    `skills without a frontmatter description (frontmatter IS the dispatcher interface): ${bare.join(', ')}`
   );
 });
 
-test('CLAUDE.md table matches CLAUDE.template.md table', () => {
-  const templateContent = readFileSync(templatePath, 'utf8');
-  const claudeContent = readFileSync(claudeMdPath, 'utf8');
-
-  const templateCommands = [...extractTableCommands(templateContent)].sort();
-  const claudeCommands = [...extractTableCommands(claudeContent)].sort();
-
-  assert.deepStrictEqual(
-    claudeCommands,
-    templateCommands,
-    `CLAUDE.md and CLAUDE.template.md command tables differ.\n` +
-      `Only in template: ${templateCommands.filter((c) => !claudeCommands.includes(c)).join(', ') || 'none'}\n` +
-      `Only in CLAUDE.md: ${claudeCommands.filter((c) => !templateCommands.includes(c)).join(', ') || 'none'}`
-  );
+test('tracked CLAUDE files carry no command table', () => {
+  for (const [label, path] of [['CLAUDE.md', claudeMdPath], ['CLAUDE.template.md', templatePath]]) {
+    const content = readFileSync(path, 'utf8');
+    assert.ok(!content.includes('## Command ' + 'Quick Reference'),
+      `${label} must not re-grow the command quick-reference section`);
+    const rows = content.match(/^\| *`\//gm) || [];
+    assert.deepStrictEqual(rows, [],
+      `${label} must not carry command-registration table rows (found ${rows.length}); register in docs/skill-catalog.yml instead`);
+  }
 });
+
+// --- Regression guard: tests must not re-couple to a CLAUDE command table ---
+//
+// Three assertion shapes historically coupled 14 test files to the removed table:
+//   (a) section assertions on the '## Command Quick Reference' heading
+//   (b) bare-command regexes run against CLAUDE*.md content (e.g. /\/ask/)
+//   (c) table-row regexes (e.g. matching a `| \`/recap-ask\` | ... |` row)
+// Shape (a) is scanned for globally. Shapes (b) and (c) only mean anything after reading a
+// tracked CLAUDE file, so the choke point is the reader set: any test file that reads one must
+// be classified below, which forces every future CLAUDE consumer to make an explicit decision
+// instead of silently re-growing a registration dependency.
+
+// Non-registration consumers: allowed to read CLAUDE*.md because they pin prose contracts
+// (rule references, sanitization wording, terminal-gate routing) — not command registration.
+const ALLOWED_CLAUDE_READERS = new Set([
+  'claude-health.test.js',             // pins claude-health S2.5, whose check #3 names `.claude/CLAUDE.md` as a detection input (R8)
+  'claude-md-coverage.test.js',        // this file — terminal-gate routing below
+  'context-management-rule.test.js',   // pins @rules/context-management.md references
+  'create-pr-sanitization.test.js',    // pins Development Rules #3 wording
+  'discretion-tiers.test.js',          // pins @rules/discretion.md import in the two tracked CLAUDE templates (R7)
+  'remind.test.js',                    // pins /remind extraction targets (section headings, not registration)
+  'review-dispatch.test.js',           // pins {TEST_COMMAND} placeholder + comments-only honesty prose
+  'testing-rules.test.js',             // pins testing-project.md references
+]);
+
+// Anchored to a trailing quote (', ", or `) so all three JS string-literal quote styles
+// classify as readers. Deliberately conservative: ANY quoted mention (even quoted prose or an
+// object key) classifies and forces an explicit allowlist decision; only unquoted mentions pass.
+const READER_PATTERN = /CLAUDE(?:\.template)?\.md['"`]/;
+
+function allTestFiles() {
+  return readdirSync(resolve(root, 'test'), { recursive: true, withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith('.test.js'))
+    .map((d) => ({ name: d.name, path: resolve(d.parentPath || d.path, d.name) }));
+}
+
+test('no test file asserts on the removed command quick-reference section', () => {
+  const offenders = allTestFiles()
+    .filter(({ name }) => name !== 'claude-md-coverage.test.js')
+    .filter(({ path }) => readFileSync(path, 'utf8').includes('Command ' + 'Quick Reference'))
+    .map(({ name }) => name);
+  assert.deepStrictEqual(offenders, [],
+    `test files referencing the removed section (register skills in docs/skill-catalog.yml instead): ${offenders.join(', ')}`);
+});
+
+test('every test file reading a tracked CLAUDE file is a classified non-registration consumer', () => {
+  const readers = allTestFiles()
+    .filter(({ path }) => READER_PATTERN.test(readFileSync(path, 'utf8')))
+    .map(({ name }) => name);
+  const unclassified = readers.filter((name) => !ALLOWED_CLAUDE_READERS.has(name));
+  assert.deepStrictEqual(unclassified, [],
+    'these test files read CLAUDE.md/CLAUDE.template.md but are not classified as '
+    + 'non-registration consumers. Command registration assertions (bare-command regexes, '
+    + 'table-row regexes) belong in docs/skill-catalog.yml contracts; if the file pins prose '
+    + `instead, add it to ALLOWED_CLAUDE_READERS with a justification: ${unclassified.join(', ')}`);
+});
+
+test('READER_PATTERN classifies all three string-literal quote styles and ignores bare mentions', () => {
+  // Mutation-style fixtures for the guard itself: each historical assertion shape only matters
+  // after reading a CLAUDE file, and JS offers three ways to spell that read. A pattern anchored
+  // to one quote style lets a double-quoted or template-literal reader re-couple silently.
+  const readerFixtures = [
+    "readFileSync(resolve(root, 'CLAUDE.md'), 'utf8')",           // single quotes
+    'readFileSync(resolve(root, "CLAUDE.template.md"), "utf8")',  // double quotes
+    'readFileSync(resolve(root, `CLAUDE.md`), `utf8`)',           // template literal
+  ];
+  for (const fixture of readerFixtures) {
+    assert.ok(READER_PATTERN.test(fixture), `must classify as reader: ${fixture}`);
+  }
+  // Unquoted prose mention must NOT classify — quoted mentions deliberately do (conservative).
+  assert.ok(!READER_PATTERN.test('// see CLAUDE.md for the routing table'),
+    'an unquoted prose mention must not classify as a reader');
+});
+
+test('the classified non-registration consumers still exist and still read CLAUDE files', () => {
+  // Pins the allowlist itself: an entry that stops reading (or is deleted) is stale and must be
+  // removed, so the classification stays a live decision rather than an inert list.
+  const byName = new Map(allTestFiles().map(({ name, path }) => [name, path]));
+  for (const name of ALLOWED_CLAUDE_READERS) {
+    const path = byName.get(name);
+    assert.ok(path, `ALLOWED_CLAUDE_READERS entry no longer exists: ${name}`);
+    assert.ok(READER_PATTERN.test(readFileSync(path, 'utf8')),
+      `ALLOWED_CLAUDE_READERS entry no longer reads a tracked CLAUDE file — remove the stale entry: ${name}`);
+  }
+});
+
 
 // --- Auto-loop terminal-gate routing consistency ---
 
@@ -142,7 +215,7 @@ test('auto-loop terminal gate routes to one precommit variant across rules, trac
   // The row wording tracks the tier model (`auto-loop.md` § Tiers): the Ready row is keyed on
   // "no blocking findings", not on a hard-coded P2/Nit list, because what blocks is per-tier.
   const canonical = routedPrecommit(rules, /review Ready \(no blocking findings\)/);
-  assert.ok(canonical, 'rules/auto-loop.md Auto-Trigger table should route the no-blocking-findings Ready row');
+  assert.ok(canonical, 'rules/auto-loop.md gate-sequence paragraph should route the no-blocking-findings Ready row');
 
   // EVERY precommit reference in the normative file, not just the row `canonical` is read from.
   // Deriving the answer from one row and checking only the other files left the source of truth

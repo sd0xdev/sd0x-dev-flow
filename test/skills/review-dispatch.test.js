@@ -10,12 +10,57 @@ const read = (p) => readFileSync(resolve(root, p), 'utf8');
 // every cycle with "no skip exception". Dual is now opt-in on the branch variant only, so those
 // assertions were not merely stale — they asserted the behaviour this suite forbids.
 
-// --- rules/auto-loop.md: the four behavioural anchors ---
+// --- rules/auto-loop.md: the terminal invariant and its corollaries ---
+// R3 replaced the imperative "same reply" choreography with a terminal completion invariant;
+// the three corollaries below are what survive of the old behavioural anchors.
 
-test('auto-loop.md keeps all four behavioural anchors', () => {
+test('auto-loop.md states the terminal completion invariant and its corollaries', () => {
   const content = read('rules/auto-loop.md');
-  for (const anchor of ['Declaring ≠ Executing', 'Summary ≠ Completion', 'Fixing ≠ Verifying', 'Same reply']) {
-    assert.ok(content.includes(anchor), `anchor "${anchor}" must survive any rewrite of auto-loop.md`);
+  assert.match(content, /Terminal completion invariant/,
+    'the invariant is the load-bearing sentence — a rewrite must keep it named');
+  assert.match(content, /every gate its change class requires has passed after the last edit in that gate's change class/,
+    'the invariant must bind completion to per-plane freshness — the planeless wording was a doc-review finding');
+  assert.match(content, /a doc edit re-opens the doc gate, not the code gates/,
+    'the per-plane separation must stay spelled out, matching hook receipt invalidation');
+  for (const anchor of ['Declaring ≠ Executing', 'Summary ≠ Completion', 'Fixing ≠ Verifying']) {
+    assert.ok(content.includes(anchor), `corollary "${anchor}" must survive any rewrite of auto-loop.md`);
+  }
+});
+
+test('auto-loop.md contains no same-reply imperative (AC1 negative pin)', () => {
+  const content = read('rules/auto-loop.md');
+  assert.ok(!/same reply/i.test(content),
+    'the "same reply" choreography was removed by R3 — the invariant constrains the end state, not timing');
+});
+
+test('auto-loop.md keeps the human-escalation exits (AC2: 人工升級)', () => {
+  const content = read('rules/auto-loop.md');
+  assert.match(content, /max_rounds.*Need Human|Need Human.*max_rounds/,
+    'hitting the round cap must route to a human, not loop forever');
+  assert.match(content, /Architecture-level changes, feature removal, or the user asking to stop/,
+    'the three unconditional human exits must survive any rewrite');
+});
+
+test('CLAUDE.template.md keeps the {TEST_COMMAND} placeholder unbaked (AC3)', () => {
+  // Anchored to the operational Development Rules line, not just any occurrence: the placeholder
+  // also appears in the customization table, so a bare /\{TEST_COMMAND\}/ stays green even after
+  // the rule line itself is baked to a concrete command.
+  const template = read('CLAUDE.template.md');
+  assert.match(template, /^2\. \*\*Test command\*\* -- `\{TEST_COMMAND\}`$/m,
+    'the template ships to host projects — the test-command rule line must stay a placeholder, not this repo\'s find-form');
+});
+
+test('comments-only honesty stays in sync between CLAUDE.md and hooks/stop-check.md (AC8)', () => {
+  // Both surfaces must state the conservative classification; the old "comments-only skips all
+  // gates" promise had zero implementation behind it and was removed by R3.
+  for (const file of ['CLAUDE.md', 'hooks/stop-check.md']) {
+    const content = read(file);
+    assert.match(content, /conservatively classified as code/,
+      `${file} must state that comment-only edits to code files stay classified as code`);
+    // Structural rejection of ANY comments-only table row — the historical row was
+    // `| Comments only | - | All |`, which contains no "Skip" wording to key on.
+    assert.ok(!/^\|\s*Comments only\s*\|/mi.test(content),
+      `${file} must not resurrect the unimplemented comments-only free-pass row`);
   }
 });
 
