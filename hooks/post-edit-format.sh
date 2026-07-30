@@ -133,6 +133,108 @@ _alf_common() {
     "$(_alf_read_tier)"
 }
 
+# === Sensitive-path advisory hint (R4) ===
+# FILE-LOCAL — deliberately OUTSIDE the shared [AUTO_LOOP_STATE] emitter block above, which is
+# byte-identical-pinned across six hooks; only this hook classifies edit paths, so widening the
+# shared block for it would force five no-op copies. ADVISORY ONLY: the output is extra key=value
+# tokens on the code_edit fact line. It never writes review_mode, tier, or any enforcement state —
+# the model reads the hint and decides; see
+# docs/features/auto-loop-autonomy/requests/2026-07-26-sensitive-path-advisory-hints-r4.md.
+#
+# Matching is anchored path-SEGMENT matching on the root-relative path: entry `auth` matches
+# `auth`, `auth/login.ts`, `src/auth/login.ts` but not `author/index.ts`. Multi-segment entries
+# (`config/secrets`) match that exact segment run. Exclude wins over include; first rule wins.
+# Config missing or invalid → `sensitivity=unknown` (fail-loud, distinguishable from a clean
+# miss `sensitivity=none` — collapsing them would make a deleted config read as "nothing
+# sensitive here", the inverse of what the reader needs).
+_alf_sensitivity() {
+  local fp="$1" cfg="" c root out
+  root="${CLAUDE_PROJECT_DIR:-$PWD}"
+  fp="${fp#"${root}/"}"
+  for c in ".claude/scripts/config/sensitive-paths.json" "scripts/config/sensitive-paths.json"; do
+    [[ -f "$c" ]] && { cfg="$c"; break; }
+  done
+  if [[ -z "$cfg" ]]; then
+    printf 'sensitivity=unknown'
+    return 0
+  fi
+  # Single jq call: first line is the validity verdict, remaining lines one TSV row per rule.
+  # Validation is ALL-OR-NOTHING: one schema-invalid rule invalidates the whole config
+  # (→ `sensitivity=unknown`). Dropping just the bad rule would let a typo'd config emit
+  # `sensitivity=none` — the fail-open reading the ticket explicitly prohibits, since `none`
+  # asserts "checked and clean" while the config was never fully honored.
+  # Segments must also survive the transport encoding below: `,` joins the segment list (a
+  # comma inside a segment would split it into two rules), `-` is the empty-field
+  # placeholder (tab is IFS *whitespace* to bash `read`, so a genuinely empty column would
+  # shift every field after it), and tab/newline/CR/backslash are characters `@tsv` escapes
+  # but the bash reader never decodes — any of these in a value is rejected as invalid
+  # rather than silently mis-decoded. Optional fields are checked by PRESENCE (`has`), not
+  # by `//` defaulting: jq `//` selects its right operand for `false` as well as `null`, so
+  # `exclude:false` would otherwise default to `[]` and validate — the same trap
+  # `_alf_receipt` documents above. Two values are reserved by the line protocol itself and
+  # rejected everywhere: `VALID` (the verdict line, which the row parser skips by name) and
+  # `-` (the empty-field placeholder decoded back to empty).
+  out=$(jq -r '
+    def tsv_ok: (contains("\t") or contains("\n") or contains("\r") or contains("\\")) | not;
+    def seg_ok: type == "string" and length > 0
+      and tsv_ok and (contains(",") | not) and . != "-";
+    def str_ok: type == "string" and tsv_ok and . != "-" and . != "VALID";
+    def opt_arr(k): (has(k) | not) or (.[k] | type == "array" and all(seg_ok));
+    def opt_str(k): (has(k) | not) or (.[k] | str_ok);
+    def rule_ok: type == "object"
+      and (.name | str_ok and length > 0)
+      and has("include") and (.include | type == "array" and length > 0 and all(seg_ok))
+      and opt_arr("exclude") and opt_str("suggested_tier") and opt_str("suggested_route");
+    def nz: if . == "" then "-" else . end;
+    if (.version == 1) and ((.rules // null) | type == "array") and (.rules | all(rule_ok)) then
+      "VALID",
+      (.rules[]
+        | [.name,
+           (.include | join(",")),
+           ((.exclude // []) | join(",") | nz),
+           ((.suggested_tier // "") | nz), ((.suggested_route // "") | nz)]
+        | @tsv)
+    else "INVALID" end
+  ' "$cfg" 2>/dev/null) || out="INVALID"
+  if [[ "${out%%$'\n'*}" != "VALID" ]]; then
+    printf 'sensitivity=unknown'
+    return 0
+  fi
+  local wrapped="/${fp}/" line name inc exc tier route seg _hit
+  while IFS=$'\t' read -r name inc exc tier route; do
+    [[ -n "$name" && "$name" != "VALID" ]] || continue
+    # Decode the `-` empty-field placeholder (see the jq `nz` note above).
+    [[ "$inc" == "-" ]] && inc=""
+    [[ "$exc" == "-" ]] && exc=""
+    [[ "$tier" == "-" ]] && tier=""
+    [[ "$route" == "-" ]] && route=""
+    _hit=""
+    # `IFS=',' read -ra` scopes the IFS change to the read builtin; the outer TSV read is untouched.
+    if [[ -n "$inc" ]]; then
+      local _segs
+      IFS=',' read -ra _segs <<< "$inc"
+      for seg in "${_segs[@]}"; do
+        [[ -n "$seg" && "$wrapped" == *"/${seg}/"* ]] && { _hit=1; break; }
+      done
+    fi
+    [[ -n "$_hit" ]] || continue
+    if [[ -n "$exc" ]]; then
+      local _xsegs
+      IFS=',' read -ra _xsegs <<< "$exc"
+      for seg in "${_xsegs[@]}"; do
+        [[ -n "$seg" && "$wrapped" == *"/${seg}/"* ]] && { _hit=""; break; }
+      done
+    fi
+    [[ -n "$_hit" ]] || continue
+    printf 'sensitivity_hint=high rule=%s suggested_tier=%s suggested_route=%s' \
+      "$(_alf_val "$name")" \
+      "$(_alf_val "${tier:-thorough}")" \
+      "$(_alf_val "${route:-/codex-review-branch}")"
+    return 0
+  done <<< "$out"
+  printf 'sensitivity=none'
+}
+
 # === Portable mkdir locking (shared protocol with post-tool-review-state.sh) ===
 LOCKDIR="${STATE_FILE}.lockdir"
 # Honor REVIEW_STATE_LOCK_TIMEOUT so both writers of this shared lock protocol read
@@ -502,46 +604,10 @@ _sidecar_unlock() {
 }
 
 # --- Per-event emergency markers ---------------------------------------------------------------
-#
-# `.blocked` is a SHARED file, and clearers rewrite or remove it WHOLESALE while holding the lock.
-# That is only sound if every writer is serialized too — and the setter's last-resort path once was
-# deliberately not. It APPENDED when its lock wait expired (past tense throughout this paragraph),
-# because dropping a marker is worse than duplicating one, and a marker exists only because a
-# blocking verdict was already lost.
-#
-# A whole-file rewrite therefore raced an unserialized append, and re-reading cannot close it: the
-# clearer's final `_sidecar_snapshot` is a subprocess, so an append landing between that read
-# returning and the `rm`/`mv` is invisible to it and is then erased. Successive rounds narrowed
-# that window without removing it, which is what check-then-act always does.
-#
-# So the last-resort path stops writing to the shared file. It creates its OWN file, under a name no
-# other writer will ever choose. Creation and retirement then act on DISJOINT names and cannot
-# destroy one another — there is no window left to narrow.
-#
-# That closed the TIMEOUT writer. It did not, on its own, make the shared file free of unserialized
-# writers, and the claim stood here for a while while it was false: a setter that ACQUIRED the lock
-# and was then displaced (age-based reclamation, and setters run inside the state lock with the same
-# 30s TTL) appended without re-reading the owner token. `_set_own_sidecar_locked` now re-checks
-# ownership immediately before its first mutating statement and returns rc=3, which the caller
-# diverts to one of these same markers. With BOTH gone the shared `.blocked` file has no
-# unserialized writers, which is what finally makes the clearers' snapshot comparison sufficient
-# rather than merely narrow.
-#
-# Those markers are SIBLING FILES (`<state>.blocked.event.<stem>`), not entries in a marker
-# DIRECTORY. The distinction is a security boundary, not a layout preference. `rm -f "$dir"/x`
-# resolves THROUGH a symlink at `$dir` and unlinks the TARGET's file, so a symlink planted at
-# `.blocked.d` turned session-init's orphan clear into "delete every regular file in an arbitrary
-# directory". Git stores symlinks and `.claude_review_state.json.*` is ignored, so cloning a repo
-# was enough to arm it; reproduced end-to-end before this change. `rm -f` on a symlink FILE unlinks
-# the link itself and never its target, so the same accident against a sibling name destroys
-# nothing. An `lstat` guard on the directory could not have offered that — it is check-then-act,
-# and the sibling layout has no window to lose.
-#
-# Retirement is deliberately coarse. Per-event markers are cleared only by session-init's orphan
-# sweep, which fires when a NEW session finds no dirty reviewable file — the one precondition under
-# which every marker, whatever plane wrote it, is an orphan by definition. They are rare (each needs
-# ~2s of lock contention — 20 spins x 0.1s, the setter budget since it came back down from 70), so
-# holding one until the next clean session over-blocks briefly and in the safe direction.
+# Sibling files `<state>.blocked.event.<stem>`, written when the shared `.blocked` file cannot be
+# safely appended (lock timeout, displaced owner, unwritable path). Why the private-name design,
+# the symlink security boundary of sibling-files-not-a-directory, and the coarse
+# session-init-only retirement: see docs/features/auto-loop-evolution/4-implementation.md §3.1–§3.4.
 SIDECAR_EVENT_PREFIX="${STATE_FILE}.blocked.event."
 
 # Is this path a marker THIS plane could have written?
@@ -1288,7 +1354,7 @@ if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|k
     # reader who assumes the counter tracks edits will misjudge how close the cap is.
     _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
       "receipts=code_review:false,precommit:false $(_alf_common)" \
-      "pending=code_review,precommit" >&2
+      "pending=code_review,precommit $(_alf_sensitivity "${file_path}")" >&2
   else
     # Fail-closed: sidecar marker (atomic) + best-effort unlocked writes
     _set_own_sidecar "edit_lock_contention:${_EDIT_PLANE}" || true
@@ -1303,7 +1369,7 @@ if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|k
     # states the intent and `degraded` states that the sidecar, not the state file, is holding it.
     _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
       "receipts=code_review:false,precommit:false $(_alf_common)" \
-      "pending=code_review,precommit degraded=edit_lock_contention" >&2
+      "pending=code_review,precommit degraded=edit_lock_contention $(_alf_sensitivity "${file_path}")" >&2
   fi
 fi
 

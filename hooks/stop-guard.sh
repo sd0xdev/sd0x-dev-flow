@@ -248,7 +248,11 @@ _sidecar_event_any() {
 # exits below and both renderers at the end of the file. Kept free of `"` and `\` by construction
 # so the early exits, which run before `_json_safe` is defined, can interpolate it directly;
 # `test/hooks/stop-guard.test.js` pins that property.
-SIDECAR_EVENT_NORETRY="a per-event sidecar marker is present. No review, precommit or edit retires it — only a later session whose SessionStart finds no dirty code or doc file. Finishing the pending work is still correct, but it will NOT stop this objection; do not retry in a loop."
+# Stated as facts only (R6): the sentence is reused verbatim by the BLOCKED renderer, which the
+# cap path routes through, so it must carry no imperative. The branches that ARE allowed an
+# imperative (the early sidecar exits and the MISSING branch — R2's degraded-path messaging)
+# add their own "Do NOT auto-retry:" prefix around it.
+SIDECAR_EVENT_NORETRY="a per-event sidecar marker is present. No review, precommit or edit retires it; the objection remains until a later session whose SessionStart finds no dirty code or doc file."
 
 
 # Check if jq is available
@@ -545,48 +549,11 @@ if [[ -f "$STATE_FILE" ]]; then
   fi
 
   # === Sidecar fail-closed marker (race-safe lock-failure signal) ===
-  # The fail-closed GATE VALUES below always apply — a sidecar means this update did not land,
-  # so no verdict in the JSON can be trusted. Whether that also ESCALATES the user's guard mode
-  # depends on the reason, because the two classes are not equivalent:
-  #
-  #   edit_lock_contention:code / edit_lock_contention:doc / lock_failure
-  #                      — TRANSIENT, and this is a CLOSED ALLOWLIST. The state file exists and one
-  #                        write lost a lock RACE — a race that by definition already resolved in
-  #                        someone's favour, so the file's content is a real write, just possibly
-  #                        not ours. Each is retired by the plane that OWNS it —
-  #                        `edit_lock_contention:<plane>` by the next successful EDIT transaction
-  #                        IN THAT SAME PLANE (post-edit-format.sh) and `lock_failure` by the next
-  #                        committed AGGREGATE transition (post-tool-review-state.sh's
-  #                        `update_aggregate_gate`) — or by session start (session-init.sh). The
-  #                        `:code` / `:doc` suffix is what makes the first retirement sound: the
-  #                        marker stands for a lost *code* or lost *doc* invalidation, and a
-  #                        successful edit in the OTHER plane invalidates different gates entirely,
-  #                        so it supersedes nothing. Note post-tool-review-state.sh does NOT
-  #                        clear `edit_lock_contention`: its ownership table names that marker
-  #                        "EDIT plane, never cleared from this file", because a review verdict
-  #                        proves nothing about an edit that may have preceded it. Naming that file
-  #                        as a general retirer of the whole transient class was wrong, and the code
-  #                        briefly implemented the wrong version — a verdict write overwrote the
-  #                        edit-plane marker and then cleared it as its own.
-  #                        Escalating a momentary race to strict silently overrides an
-  #                        explicit `warn` choice and blocks the stop — the exact behavior warn
-  #                        users opted out of. Keep fail-closed values, keep the user's mode.
-  #   everything else    — ESCALATE to strict. This was a denylist naming only `state_init_failed`,
-  #                        which meant every reason the producers added later defaulted to the
-  #                        LENIENT branch — and they added three that are not races at all:
-  #                          state_write_failed     a needed write FAILED mid edit-transaction, so a
-  #                                                 stale PASS may sit over an unreviewed edit
-  #                          verdict_write_failed:<gate>
-  #                                                 a BLOCKING verdict was lost over a prior ✅
-  #                                                 (keyed by gate — see post-tool-review-state.sh)
-  #                          aggregate_write_failed a BLOCKED aggregate transition never committed
-  #                        None self-heals without another successful write, and each describes a
-  #                        state whose recorded verdict is known to be wrong in the UNSAFE
-  #                        direction. `unknown` (unreadable or empty marker) lands here too: an
-  #                        unrecognized marker is unverifiable by definition, and a marker written
-  #                        by a producer this version does not know about must not be treated as
-  #                        SAFER than the ones it does. Default-deny, so adding a reason cannot
-  #                        silently weaken the gate again.
+  # The fail-closed GATE VALUES below always apply — a sidecar means this update did not land, so
+  # no verdict in the JSON can be trusted. Whether it also ESCALATES the user's guard mode depends
+  # on the reason: the transient allowlist below is a CLOSED, default-deny set. Classification
+  # rationale, per-marker ownership, and retirement:
+  # docs/features/auto-loop-evolution/4-implementation.md §3.5–§3.6.
   SIDECAR_ESCALATE=false
   # Reset OUTSIDE the conditional. With no sidecar the block below never runs, and an inherited
   # environment value of either name would then reach the routing block and fabricate an obligation
@@ -594,36 +561,10 @@ if [[ -f "$STATE_FILE" ]]; then
   _SIDECAR_RAW=""
   _SIDECAR_EVENT_PRESENT=false
   if _sidecar_any; then
-    # The marker file holds a SET of reasons, one per LINE — writers append their own instead of
-    # overwriting (post-tool-review-state.sh `_set_own_sidecar`), because a last-writer-wins file
-    # let one plane erase another's evidence and produced an allowed Stop in strict mode. Classify
-    # accordingly: transient only when EVERY line is transient. Reading the file as one blob would
-    # have sent any multi-reason marker to the `*)` branch — safe, but it would report a plain
-    # `edit_lock_contention` + `lock_failure` pair as unverifiable and force strict on users who
-    # chose warn, which is the escalation this allowlist exists to avoid.
-    #
-    # READ IT ONCE, AND LET `cat` DO THE OPENING. `tr '\n' ',' < "$f"` looks equivalent and is not:
-    # the `< "$f"` redirection is performed by the SHELL, so its failure is reported by the shell
-    # before `tr` ever runs and `2>/dev/null` (which redirects tr's stderr) does not suppress it.
-    # Under `set -euo pipefail` that non-zero substitution ABORTS the hook — exit 1 with no JSON on
-    # stdout, which the harness treats as a hook error and ALLOWS the Stop. A sidecar exists only
-    # because a blocking verdict was lost, so that is the worst possible moment to fail open, and it
-    # is the one case this whole block was written to catch. `cat` opens the file itself, so both
-    # `2>/dev/null` and the `||` fallback apply to the open failure — which is what the pre-existing
-    # form did before it was "simplified".
-    #
-    # The same reasoning retires the second open PER SOURCE: the classification loop used to be fed
-    # by `done < "${STATE_FILE}.blocked"`, a second shell-performed redirection with the identical
-    # abort. It now iterates the text already in hand, so each source is opened exactly once and has
-    # exactly one failure path.
-    #
-    # BOTH planes are read here, and deliberately NOT through the writers' `_sidecar_read_all`.
-    # That helper absorbs per-source errors with `|| true` so its callers under `set -e` are not
-    # aborted by an unreadable marker — which is right for them and wrong here, because it would
-    # pin `_SIDECAR_READABLE` to `true` forever and turn the "unreadable marker is unknown, and
-    # unknown default-denies" rule into dead code. The distinction the comment block above draws
-    # between "nothing was written" and "something was written and we cannot see it" only survives
-    # if the read reports its own failure, so the loop keeps that signal per source.
+    # The marker file holds a SET of reasons, one per LINE — writers append their own, so classify
+    # transient only when EVERY line is transient. Why the reads use `cat` (a shell redirection
+    # aborts the hook under `set -euo pipefail` and fails OPEN at the worst moment) and why they
+    # bypass `_sidecar_read_all`: see docs/features/auto-loop-evolution/4-implementation.md §3.8.
     _SIDECAR_READABLE=true
     # `_sidecar_is_marker`, not a bare `-f`, and the same test `_sidecar_any` uses to decide there
     # is anything here at all. A bare `-f` follows symlinks, so the two would disagree exactly when
@@ -1353,9 +1294,14 @@ if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
       echo "[Debug] Iteration counters rejected (jq validation: ${ITER_PARSED:0:32})" >&2
     fi
   elif [[ "$ITER_ROUND" -ge "$ITER_MAX" ]]; then
-    # Hard cap: override MISSING — human intervention needed, not more review cycles
+    # Hard cap: override MISSING — the cap outranks the per-gate list. The message is a NEUTRAL
+    # FACT (R6): the hook cannot tell a first cap-hit from a second, nor a routine change from a
+    # security one (only ITER_ROUND/ITER_MAX are in scope here), so the first-hit-diagnose /
+    # second-hit-escalate split lives entirely in rules/auto-loop.md § Cap Diagnostic Protocol.
+    # A conditional imperative here would need state this branch does not have — and would
+    # reinstate the command-style signal R2 removed from the emitters.
     MISSING=""
-    BLOCKED_REASON="Max review rounds exceeded ($ITER_ROUND/$ITER_MAX) — needs human intervention"
+    BLOCKED_REASON="Review round cap reached ($ITER_ROUND/$ITER_MAX)"
     if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
       echo "[Debug] Iteration hard cap: round=$ITER_ROUND, max=$ITER_MAX" >&2
     fi
@@ -1427,8 +1373,9 @@ if [[ -n "${MISSING:-}" ]]; then
     if [[ -n "$UNRETIREABLE_REASON" ]]; then
       # Still exit 2 — the gate is genuinely shut and fail-closed is the point. What changes is the
       # instruction: "invoke the command now" against an obligation nothing retires is a loop with
-      # no terminating state. Same shape as the max-rounds branch below, which blocks and tells the
-      # model to escalate rather than retry.
+      # no terminating state. The BLOCKED_REASON renderer below carries the same fact in neutral
+      # phrasing (R6) because the cap path routes through it; here the imperative is R2-sanctioned
+      # degraded-path messaging and stays.
       UNRETIREABLE_JSON=$(_json_safe "$UNRETIREABLE_REASON")
       echo "[Stop Guard] Do NOT auto-retry: ${UNRETIREABLE_REASON}" >&2
       printf '{"ok":false,"reason":"Blocked on an obligation no command retires","description":"Do not auto-retry: %s"}\n' "${UNRETIREABLE_JSON}"
@@ -1450,17 +1397,21 @@ if [[ -n "${MISSING:-}" ]]; then
     exit 0
   fi
 elif [[ -n "${BLOCKED_REASON:-}" ]]; then
-  # Use cap-specific description when max rounds exceeded
+  # Use cap-specific description when the round cap is reached. Neutral fact only (R6) — the
+  # disposition (diagnose vs escalate) is rules/auto-loop.md's call, not this hook's.
   BLOCK_DESC="Findings are outstanding; the review gate has not passed"
-  if grep -q "Max review rounds" <<< "${BLOCKED_REASON}"; then
-    BLOCK_DESC="Max rounds reached; escalate to human, do not auto-retry"
+  if grep -q "Review round cap reached" <<< "${BLOCKED_REASON}"; then
+    BLOCK_DESC="Review round cap reached; see the round/cap values in the reason"
   fi
   # Reachable with an event marker: corrupt iteration counters CLEAR `MISSING` and set
   # `BLOCKED_REASON` instead (see the ITER_ROUND branch above), so this renderer inherits the same
   # obligation the other one just learned to describe honestly. Checked last — an unretireable
   # obligation outranks both descriptions above, since neither retry nor escalation ends it.
+  # Neutral phrasing (R6): the cap path routes through THIS renderer, so an imperative here would
+  # re-introduce a disposition on cap-hits. The sentence already states the facts — marker present,
+  # nothing retires it, how it eventually clears; what to do about it is rules/auto-loop.md's call.
   if [[ -n "$UNRETIREABLE_REASON" ]]; then
-    BLOCK_DESC="Do not auto-retry: ${UNRETIREABLE_REASON}"
+    BLOCK_DESC="Unretireable obligation: ${UNRETIREABLE_REASON}"
   fi
   BLOCKED_JSON=$(_json_safe "$BLOCKED_REASON")
   if [[ "$GUARD_MODE" == "strict" ]]; then
@@ -1475,8 +1426,8 @@ elif [[ -n "${BLOCKED_REASON:-}" ]]; then
     # the MISSING warn branch, and for the JSON-only consumer that would otherwise see a plain
     # blocked reason and try to work it off.
     if [[ -n "$UNRETIREABLE_REASON" ]]; then
-      echo "[Stop Guard] Do NOT auto-retry: ${UNRETIREABLE_REASON}" >&2
-      printf '{"ok":true,"reason":"%s (warn mode)","description":"Do not auto-retry: %s"}\n' "${BLOCKED_JSON}" "${UNRETIREABLE_REASON}"
+      echo "[Stop Guard] Unretireable obligation: ${UNRETIREABLE_REASON}" >&2
+      printf '{"ok":true,"reason":"%s (warn mode)","description":"Unretireable obligation: %s"}\n' "${BLOCKED_JSON}" "${UNRETIREABLE_REASON}"
     else
       printf '{"ok":true,"reason":"%s (warn mode)"}\n' "${BLOCKED_JSON}"
     fi

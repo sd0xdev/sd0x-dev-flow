@@ -667,74 +667,12 @@ _migrate_state_plan_review() {
 }
 
 # Clear the `.blocked` fail-closed marker ONLY from the plane that OWNS it, and only when the
-# owning operation actually committed. The previous behavior — `rm -f` after any successful locked
-# write — let a REVIEW VERDICT erase an EDIT-plane marker, and a verdict proves nothing about that
-# edit: the review may have started before it. Concretely: edit → lock contention → sidecar +
-# best-effort UNLOCKED change-flag/invalidations that may be lost → an in-flight reviewer's
-# `✅ Ready` lands → verdict recorded, sidecar deleted → the unrecorded edit is now invisible.
-#
-# Ownership table:
-#   edit_lock_contention  — EDIT plane. Never cleared from this file. `has_*_change == true` was
-#   state_init_failed       tried as proof that the degraded write landed, but those booleans
-#   state_write_failed      routinely PREDATE the edit in question (they stay true across a whole
-#                           review cycle), so they cannot distinguish "this edit was recorded" from
-#                           "some earlier edit was". Recovery is a successful edit-plane
-#                           transaction (post-edit-format.sh, which clears its own marker) or
-#                           session-init.sh's clean-tree check at the next session.
-#   lock_failure          — AGGREGATE-GATE plane: written by update_aggregate_blocked when the
-#   aggregate_write_failed  lock was lost during an aggregate transition, or by
-#                           update_aggregate_gate when no branch committed. Only a COMMITTED
-#                           aggregate transition supersedes either, so both are cleared from
-#                           update_aggregate_gate alone — an unrelated single-review write must
-#                           not erase the evidence of a lost dual-gate transition.
-#   verdict_write_failed  — VERDICT plane, KEYED by the gate that was lost:
-#   :<gate>                 `verdict_write_failed:code_review`, `:doc_review`, `:precommit`. The
-#                           key is not decoration — the other writer of this sidecar
-#                           (post-edit-format.sh) invalidates DIFFERENT gates in its code branch
-#                           (code_review + precommit) than in its doc branch (doc_review), so
-#                           without the key neither branch can tell whether its own transaction
-#                           actually supersedes the lost verdict. An unkeyed marker made a DOC edit
-#                           erase the evidence of a lost blocking CODE verdict while leaving
-#                           `code_review.passed=true` untouched — a fail-OPEN. Cleared by the next
-#                           committing write of the SAME gate, which is exactly what supersedes it.
+# owning operation actually committed. Ownership table, set semantics, and the clearer/setter
+# serialization protocol (dedicated sidecar lock, asymmetric fallback): see
+# docs/features/auto-loop-evolution/4-implementation.md §3.1, §3.6, §3.7.
 #
 # $1 = the marker reason this caller is entitled to clear.
 # The sidecar holds a SET of reasons, one per line, not a single value.
-#
-# It used to hold one, and every writer overwrote it. That silently destroyed evidence across
-# planes: with `edit_lock_contention` on file (a lost edit, and the only thing holding the gate,
-# since `has_code_change` never got written), a failed verdict write replaced it with
-# `verdict_write_failed:code_review` — and the NEXT verdict write that succeeded cleared that
-# marker as its own. Net result: an edit-plane marker deleted from this file, which the ownership
-# table above explicitly forbids, and a Stop allowed in STRICT mode over an unrecorded edit
-# (reproduced end-to-end: two lock races in one session, `{"ok":true}` exit 0).
-#
-# Accumulating fixes it without weakening anything: each writer adds only its own reason, each
-# clearer removes only its own, and the file disappears when the last one is retired. Severity also
-# survives — stop-guard classifies the sidecar as transient only when EVERY line is transient, so a
-# `verdict_write_failed:*` line still escalates even while an `edit_lock_contention` line is
-# present.
-#
-# Serialization. The accumulate/retire pair is a read-modify-write on a shared file, and the MAIN
-# state lock cannot order it: setters run precisely BECAUSE they lost that lock, while clearers run
-# holding it, so the two classes are never mutually excluded by it. The losing interleaving is
-# specific and destructive — a clearer computes an empty remainder, a setter appends a new reason,
-# and the clearer's `rm -f` then deletes a marker it never read:
-#
-#   clearer: rest=$(grep -vxF verdict_write_failed:code_review …)   → ""
-#   setter :                        echo "edit_lock_contention:doc" >> sidecar
-#   clearer: rm -f sidecar                                          → the doc marker is gone
-#
-# If that edit's own best-effort JSON write was also lost — the reason its marker existed — strict
-# Stop then sees a passing state and no marker, and allows the unreviewed edit.
-#
-# Hence a dedicated lock covering BOTH operations, with a deliberately asymmetric fallback:
-#   - a setter that cannot take the lock still records the reason, but to a PRIVATE per-event file
-#     rather than to the shared one (a MISSING marker is the fail-open this whole file exists to
-#     prevent; it appended to the shared file until that append was found to be erasable)
-#   - a clearer that cannot take the lock does nothing (a retained marker is merely noisy)
-# The clearer also re-reads under the lock and commits via temp+rename, so a concurrent reader
-# never observes a partially rewritten set.
 SIDECAR_LOCKDIR="${STATE_FILE}.blocked.lockdir"
 SIDECAR_LOCK_TTL=30
 # Process-wide CUMULATIVE spin budget, spent across every `_sidecar_lock` call this hook makes.
@@ -867,46 +805,10 @@ _sidecar_unlock() {
 }
 
 # --- Per-event emergency markers ---------------------------------------------------------------
-#
-# `.blocked` is a SHARED file, and clearers rewrite or remove it WHOLESALE while holding the lock.
-# That is only sound if every writer is serialized too — and the setter's last-resort path once was
-# deliberately not. It APPENDED when its lock wait expired (past tense throughout this paragraph),
-# because dropping a marker is worse than duplicating one, and a marker exists only because a
-# blocking verdict was already lost.
-#
-# A whole-file rewrite therefore raced an unserialized append, and re-reading cannot close it: the
-# clearer's final `_sidecar_snapshot` is a subprocess, so an append landing between that read
-# returning and the `rm`/`mv` is invisible to it and is then erased. Successive rounds narrowed
-# that window without removing it, which is what check-then-act always does.
-#
-# So the last-resort path stops writing to the shared file. It creates its OWN file, under a name no
-# other writer will ever choose. Creation and retirement then act on DISJOINT names and cannot
-# destroy one another — there is no window left to narrow.
-#
-# That closed the TIMEOUT writer. It did not, on its own, make the shared file free of unserialized
-# writers, and the claim stood here for a while while it was false: a setter that ACQUIRED the lock
-# and was then displaced (age-based reclamation, and setters run inside the state lock with the same
-# 30s TTL) appended without re-reading the owner token. `_set_own_sidecar_locked` now re-checks
-# ownership immediately before its first mutating statement and returns rc=3, which the caller
-# diverts to one of these same markers. With BOTH gone the shared `.blocked` file has no
-# unserialized writers, which is what finally makes the clearers' snapshot comparison sufficient
-# rather than merely narrow.
-#
-# Those markers are SIBLING FILES (`<state>.blocked.event.<stem>`), not entries in a marker
-# DIRECTORY. The distinction is a security boundary, not a layout preference. `rm -f "$dir"/x`
-# resolves THROUGH a symlink at `$dir` and unlinks the TARGET's file, so a symlink planted at
-# `.blocked.d` turned session-init's orphan clear into "delete every regular file in an arbitrary
-# directory". Git stores symlinks and `.claude_review_state.json.*` is ignored, so cloning a repo
-# was enough to arm it; reproduced end-to-end before this change. `rm -f` on a symlink FILE unlinks
-# the link itself and never its target, so the same accident against a sibling name destroys
-# nothing. An `lstat` guard on the directory could not have offered that — it is check-then-act,
-# and the sibling layout has no window to lose.
-#
-# Retirement is deliberately coarse. Per-event markers are cleared only by session-init's orphan
-# sweep, which fires when a NEW session finds no dirty reviewable file — the one precondition under
-# which every marker, whatever plane wrote it, is an orphan by definition. They are rare (each needs
-# ~2s of lock contention — 20 spins x 0.1s, the setter budget since it came back down from 70), so
-# holding one until the next clean session over-blocks briefly and in the safe direction.
+# Sibling files `<state>.blocked.event.<stem>`, written when the shared `.blocked` file cannot be
+# safely appended (lock timeout, displaced owner, unwritable path). Why the private-name design,
+# the symlink security boundary of sibling-files-not-a-directory, and the coarse
+# session-init-only retirement: see docs/features/auto-loop-evolution/4-implementation.md §3.1–§3.4.
 SIDECAR_EVENT_PREFIX="${STATE_FILE}.blocked.event."
 
 # Is this path a marker THIS plane could have written?
@@ -1354,48 +1256,12 @@ update_state() {
               else . end
           end' \
        "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _own_lock && mv "$tmp" "$STATE_FILE"; then
-      # ^ The reset guard MIRRORS stop-guard.sh's `ITER_PARSED` validation field for field. It has
-      # to: this writer runs BEFORE the reader, so anything the writer is willing to launder is
-      # gone by the time the reader would have refused it. Two concrete escapes closed here, both
-      # of which the reader catches and the old guard did not:
-      #
-      #   • `{current_round: 51, max_rounds: 100000}` — the old guard compared against the RAW cap
-      #     (51 < 100000 → reset). The reader CLAMPS the cap to the producer contract 3..50, so it
-      #     reads the same state as 51/50 = budget EXHAUSTED → ⚠️ Need Human. The writer therefore
-      #     refunded, from under the reader, the only convergence exit actually enforced today.
-      #   • `{current_round: 3.5}` — jq has no integer type, so `type == "number"` admits it. The
-      #     reader rejects a fractional counter as `corrupt` (bash arithmetic would mis-parse it).
-      #     Resetting it to a clean `0` destroyed the very corruption the reader fails closed on.
-      #
-      # A third escape, subtler than either: jq PRESERVES THE LITERAL NUMBER REPRESENTATION from the
-      # input (jq 1.8: `1e1` round-trips as `1E+1`, `-0` stays `-0`). The reader's final gate is a
-      # BASH regex over the emitted pair — `^([0-9]+)[[:space:]]([0-9]+)$` — so `1E+1` and `-0` are
-      # `corrupt` to it while every numeric test here passed them. The `tostring | test("^[0-9]+$")`
-      # clauses below are that bash regex, expressed in jq. Without them the two filters disagreed
-      # on inputs that no object-literal fixture can even express, which is why the differential
-      # test feeds RAW JSON TEXT rather than JSON.stringify'd objects.
-      #
-      # CRITICALLY, the two operands are canonicality-tested at DIFFERENT points, because the reader
-      # emits them at different points. `$r` reaches the bash regex verbatim, so its RAW literal is
-      # what must be digits-only. `$m` does NOT: the reader clamps it to 3..50 first, and only the
-      # clamp's OUTPUT is interpolated. Testing the raw `$m` — the first version of this clause —
-      # reintroduced the very divergence it was added to close, just pointed the other way:
-      # `{current_round: 4, max_rounds: 1e2}` reads to the reader as a perfectly valid `4 50`
-      # (unspent budget, no warning), while the writer refused to reset on the raw `1E+2` — so the
-      # loop walked to the clamped cap and latched on ⚠️ Need Human with no user-visible cause.
-      # A literal inside 3..50 (`4e1` → `4E+1`) survives the clamp unchanged and IS rejected by both,
-      # which is correct; testing the clamped value gets both cases right, testing the raw one does not.
-      #
-      # Hence the full mirror: object-typed parent, null→documented default, number, canonical
-      # digits-only literal, integral, in range, and below the CLAMPED cap. `// ` is still deliberately absent — jq's alternative
-      # operator treats BOTH `null` and `false` as "missing", so `(.current_round // 0)` mapped a
-      # `current_round: false` to 0 and one passing `/precommit` rewrote it to a clean `0`. An
-      # invalid counter now simply does not qualify for the reset, so it survives for stop-guard to
-      # keep flagging — fail-closed, and self-healing only through a deliberate human edit.
-      #
-      # Kept as an inline mirror rather than a shared extraction because the two run in different
-      # hooks with different failure modes (reader: classify → warn/block; writer: qualify → reset).
-      # `test/hooks/jq-filter-fidelity.test.js` pins them to the same answers with REAL jq.
+      # ^ The reset guard MIRRORS stop-guard.sh's `ITER_PARSED` validation field for field: this
+      # writer runs BEFORE the reader, so anything it launders is gone before the reader could
+      # refuse it. Why each clause exists (clamped-cap comparison, canonical-literal asymmetry,
+      # integral check, the deliberate absence of `//`): see
+      # docs/features/auto-loop-evolution/4-implementation.md §2.3.
+      # `test/hooks/jq-filter-fidelity.test.js` pins both filters to the same answers with real jq.
       #
       # Clears exactly ONE marker: the `verdict_write_failed` this plane sets below. The edit-plane
       # markers belong to post-edit-format.sh and `lock_failure` belongs to the aggregate
@@ -2042,62 +1908,12 @@ _skill_output_has_verdict() {
   grep -qE '## Gate:|"gate"[[:space:]]*:|## Overall:|✅ All Pass|✅ Mergeable|⛔' <<< "$1"
 }
 
-# True ONLY when the ENTIRE Bash command is a standalone precommit-runner.js invocation:
-# optional `HOOK_*=val` env prefixes, then `node <trusted>/precommit-runner.js`, then only
-# plain option ARGUMENTS — anchored ^...$ with NO embedded newline. This is the sole form the
-# /precommit skill emits (`node .claude/scripts/precommit-runner.js --mode full --tail 80`).
-#
-# Why anchor the WHOLE command instead of matching a command-position substring: a raw-text
-# regex can never prove the runner EXECUTED, only that its text appears. Anchoring ^...$ is
-# what defeats fabrication — the runner text cannot hide inside a quoted
-# `printf '...node .../precommit-runner.js ... ## Overall: ✅ PASS ...'`, a never-run
-# `false && node ...; printf '## Overall: PASS'` branch, or a trailing
-# `node ...; printf '## Overall: PASS'` chain: in every such case the command is NOT SOLELY
-# the runner, so the match fails and no verdict is recorded. Fail-closed: /precommit re-runs
-# the runner cleanly. The multiline guard closes the newline-separated variant.
-#
-# CRITICAL — four defenses. Defenses 1-3 (the structural grep) close TEXT fabrication a looser
-# matcher would admit; defense 4 (the mode allowlist, in the function body below) closes a
-# SEMANTIC bypass where a structurally-valid invocation skips the build yet still emits PASS:
-#   1. PATH BINDING: the script operand is pinned to the trusted install roots
-#      `.claude/scripts/` or `.sd0x/scripts/` (optional `./`). A basename-only match
-#      (`<anypath>/precommit-runner.js`) would let a worker drop `/tmp/precommit-runner.js`
-#      that prints `## Overall: ✅ PASS` and have the hook record a pass the real checks never ran.
-#   2. ENV ALLOWLIST: only `HOOK_*=<word>` prefixes (this project's own debug vars, e.g.
-#      HOOK_DEBUG=1) are accepted. A general `VAR=val` prefix would admit execution-affecting
-#      overrides — `PATH=/tmp` (shadow `node`), `NODE_OPTIONS=--require=/tmp/evil.js`,
-#      `LD_PRELOAD=...` — that run attacker code before/instead of the runner. The value is
-#      `[A-Za-z0-9_]` only (no `/` `.` `=` `-`), so even a HOOK_* name cannot smuggle a payload.
-#   3. METACHARACTER-FREE ARGS: the arg tokens are a RESTRICTIVE allowlist, not `[^;|&]`.
-#      A `[^;|&]*` suffix still accepts redirection/process-sub: e.g.
-#      `node .../precommit-runner.js > >(printf '## Overall: ✅ PASS')` has no `;`/`|`/`&`, so the
-#      runner's real stdout is redirected away while `printf` supplies a fake PASS. The arg
-#      charset cannot form a redirection (`<`/`>`), substitution (`$(`/backtick/`>(`), glob/brace,
-#      or quote. `--mode full`, `--tail 80`, `--mode=full` all pass the STRUCTURAL grep; any
-#      metacharacter fails-closed (verdict dropped → /precommit re-runs cleanly).
-#   4. MODE ALLOWLIST (function body): the structural grep accepts any metachar-free arg, so
-#      `--mode bogus` passes it — but precommit-runner.js runs the BUILD only when mode === 'full',
-#      so an unknown/typo mode skips build while lint+test can still print `## Overall: ✅ PASS`.
-#      Recording that as passed=true bypasses a required failing build. So an explicit `--mode` must
-#      be present and EVERY operand exactly `full` or `fast`; anything else drops the verdict.
-#
-# RESIDUAL (accepted, documented): the three defenses close TEXT-LEVEL fabrication — a
-# command string engineered to look like a clean runner run without executing the real
-# checks. They do NOT prove the FILE at `.claude/scripts/precommit-runner.js` is the genuine
-# runner: an in-place replacement or a symlink repointed to a stub that prints `## Overall:
-# ✅ PASS` would still be trusted by this lexical match. This is out of scope by design, not
-# an oversight:
-#   • Shared trust root — the runner lives under `.claude/`, the SAME tree as this hook. An
-#     attacker who can rewrite the runner can equally rewrite the hook (or stop-guard), so
-#     runner-identity verification adds no security margin the hook does not already assume.
-#   • No exit-code corroboration — the PostToolUse payload is `{stdout,stderr,interrupted}`
-#     with no process exit code, so the hook cannot confirm the runner actually ran and
-#     exited 0; it can only inspect the command text and stdout it is handed.
-#   • No out-of-repo anchor — a manifest-hash check of the runner would itself live in
-#     `.claude/`, sharing the same trust root, so it merely moves the problem, not closes it.
-# Threat model here is COOPERATIVE (Claude's own auto-loop discipline; trust root = `.claude/`
-# integrity), unlike run-verify.js which is ADVERSARIAL (a fanout worker mutating the repo).
-# Under the cooperative model, closing text fabrication is the right boundary.
+# True ONLY when the ENTIRE Bash command is a standalone precommit-runner.js invocation — optional
+# `HOOK_*=val` env prefixes, then `node <trusted-root>/precommit-runner.js`, then plain option
+# arguments, anchored ^...$ with NO embedded newline (the sole form /precommit emits). Whole-command
+# anchoring, the four defenses (path binding, env allowlist, metacharacter-free args, mode
+# allowlist), and the accepted runner-identity residual are documented in
+# docs/features/auto-loop-evolution/4-implementation.md §4.6.
 _is_clean_runner_invocation() {
   local cmd="$1"
   [[ "$cmd" == *$'\n'* ]] && return 1
@@ -2967,36 +2783,10 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
     _alf_emit "event=code_review_verdict change=code source=mcp $(_alf_transition code_review "$_alf_old" "$_alf_new" "$passed")" \
       "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo precommit || echo code_review)" >&2
   fi
-  # Priority 3 (MCP `^## Overall:` → precommit verdict) REMOVED — MCP is not a precommit
-  # producer, so every sentinel reaching this path is QUOTED text, never a run.
-  #
-  # The doc / plan / code branches above are namespace-gated but legitimate: codex MCP really
-  # IS the reviewer that produces those verdicts, so `## Document Review` + `✅ Mergeable`
-  # attests to work codex performed. Precommit has no such producer. `skills/precommit/SKILL.md:4`
-  # declares `allowed-tools: Bash(node:*), …` and `:37` runs
-  # `node .claude/scripts/precommit-runner.js` — precommit executes over Bash (or the Skill's own
-  # final output), never over an MCP call. A verdict line inside an MCP response can therefore
-  # only be codex QUOTING output: reviewing precommit-runner.js, reading a build log, or echoing
-  # `skills/precommit/SKILL.md:86` (`## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN`).
-  #
-  # That made the branch a live gate bypass, proven end-to-end against the real hooks with a
-  # dirty unreviewed tree: feed one mcp__codex__codex response quoting that SKILL.md line and
-  # stop-guard flips from `Execute immediately: /precommit` to `All steps completed` without
-  # /precommit ever running. A namespace guard (requiring runner section headers like `## Steps`)
-  # does NOT fix it — those headers are exactly what codex reproduces when asked to analyze a
-  # precommit log, so the guard cannot distinguish "ran it" from "quoted it".
-  #
-  # Dropping the branch is fail-CLOSED in both directions: a passing precommit is simply not
-  # recorded from MCP (precommit.passed stays false → stop-guard re-requests /precommit, which
-  # the Bash/Skill path then records correctly), and a quoted FAIL can no longer spuriously
-  # revoke a genuine Bash-recorded pass. Verdicts belong to their producer.
-  #
-  # Priority 4 (generic `✅ All Pass` → code_review pass) REMOVED. `✅ All Pass` is the
-  # PRECOMMIT sentinel (rules/auto-loop.md "Gate Sentinels"), not a code-review
-  # verdict. Routing it to code_review conflated two independent gates: any precommit
-  # output reaching MCP could bank a code_review pass AND reset changed_files, clearing
-  # the very tracking the code gate depends on. Precommit verdicts are recorded ONLY by the
-  # Bash/Skill path (see Priority 3 above); code verdicts by the namespace-gated branch.
+  # Priority 3 (MCP `^## Overall:` → precommit verdict) and Priority 4 (generic `✅ All Pass` →
+  # code_review pass) both REMOVED — MCP is not the producer of either verdict, and each removed
+  # branch was a proven live gate bypass. Full account:
+  # docs/features/auto-loop-evolution/4-implementation.md §4.7.
   # Bare ## Gate: ✅/⛔ alone → skip (ambiguity rule)
 fi
 

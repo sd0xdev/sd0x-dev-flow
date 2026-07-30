@@ -320,46 +320,10 @@ _sidecar_unlock() {
 }
 
 # --- Per-event emergency markers ---------------------------------------------------------------
-#
-# `.blocked` is a SHARED file, and clearers rewrite or remove it WHOLESALE while holding the lock.
-# That is only sound if every writer is serialized too — and the setter's last-resort path once was
-# deliberately not. It APPENDED when its lock wait expired (past tense throughout this paragraph),
-# because dropping a marker is worse than duplicating one, and a marker exists only because a
-# blocking verdict was already lost.
-#
-# A whole-file rewrite therefore raced an unserialized append, and re-reading cannot close it: the
-# clearer's final `_sidecar_snapshot` is a subprocess, so an append landing between that read
-# returning and the `rm`/`mv` is invisible to it and is then erased. Successive rounds narrowed
-# that window without removing it, which is what check-then-act always does.
-#
-# So the last-resort path stops writing to the shared file. It creates its OWN file, under a name no
-# other writer will ever choose. Creation and retirement then act on DISJOINT names and cannot
-# destroy one another — there is no window left to narrow.
-#
-# That closed the TIMEOUT writer. It did not, on its own, make the shared file free of unserialized
-# writers, and the claim stood here for a while while it was false: a setter that ACQUIRED the lock
-# and was then displaced (age-based reclamation, and setters run inside the state lock with the same
-# 30s TTL) appended without re-reading the owner token. `_set_own_sidecar_locked` now re-checks
-# ownership immediately before its first mutating statement and returns rc=3, which the caller
-# diverts to one of these same markers. With BOTH gone the shared `.blocked` file has no
-# unserialized writers, which is what finally makes the clearers' snapshot comparison sufficient
-# rather than merely narrow.
-#
-# Those markers are SIBLING FILES (`<state>.blocked.event.<stem>`), not entries in a marker
-# DIRECTORY. The distinction is a security boundary, not a layout preference. `rm -f "$dir"/x`
-# resolves THROUGH a symlink at `$dir` and unlinks the TARGET's file, so a symlink planted at
-# `.blocked.d` turned session-init's orphan clear into "delete every regular file in an arbitrary
-# directory". Git stores symlinks and `.claude_review_state.json.*` is ignored, so cloning a repo
-# was enough to arm it; reproduced end-to-end before this change. `rm -f` on a symlink FILE unlinks
-# the link itself and never its target, so the same accident against a sibling name destroys
-# nothing. An `lstat` guard on the directory could not have offered that — it is check-then-act,
-# and the sibling layout has no window to lose.
-#
-# Retirement is deliberately coarse. Per-event markers are cleared only by session-init's orphan
-# sweep, which fires when a NEW session finds no dirty reviewable file — the one precondition under
-# which every marker, whatever plane wrote it, is an orphan by definition. They are rare (each needs
-# ~2s of lock contention — 20 spins x 0.1s, the setter budget since it came back down from 70), so
-# holding one until the next clean session over-blocks briefly and in the safe direction.
+# Sibling files `<state>.blocked.event.<stem>`, written when the shared `.blocked` file cannot be
+# safely appended (lock timeout, displaced owner, unwritable path). Why the private-name design,
+# the symlink security boundary of sibling-files-not-a-directory, and the coarse
+# session-init-only retirement: see docs/features/auto-loop-evolution/4-implementation.md §3.1–§3.4.
 SIDECAR_EVENT_PREFIX="${STATE_FILE}.blocked.event."
 
 # Is this path a marker THIS plane could have written?

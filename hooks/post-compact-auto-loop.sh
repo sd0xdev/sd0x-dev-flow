@@ -418,12 +418,14 @@ if [[ -n "$NEXT" ]]; then
     THRESHOLD=$(( ITER_MAX - 3 ))
     [[ "$THRESHOLD" -lt 1 ]] && THRESHOLD=1
     if [[ "$TOTAL_SESSION" -ge "$THRESHOLD" ]] && [[ "$RESET_FIRED" != "true" ]]; then
-      THINK_HARDER="[STRATEGIC_RESET] Approaching iteration cap (${TOTAL_SESSION}/${ITER_MAX}). Before escalating:
-1) Re-read original error/requirement from conversation start
-2) Challenge current assumption — what if the opposite is true?
-3) Search for similar patterns: grep -r \"keyword\" --include=\"*.ts\" -l
-4) Try fundamentally different approach (not incremental fix)
-5) If still blocked after reset, escalate at max_rounds"
+      THINK_HARDER="[STRATEGIC_RESET] Approaching iteration cap (${TOTAL_SESSION}/${ITER_MAX}). Diagnose the stall — one class from the closed set (rules/auto-loop.md § Cap Diagnostic Protocol):
+ARCHITECTURE: same defect recurs across files, fixing A breaks B -> stop patching, back to design
+DOC_TOO_LONG: target over the docs-numbering limit, repeated inconsistency findings -> split or shrink first
+ATTENTION_DIFFUSION: fixes introduce new defects -> shrink the batch, verify per item
+UNVERIFIED_CLAIM: blockers cluster on unmeasured claims -> measure first, record the command
+TIER_MISMATCH: findings persistently below the blocking threshold -> converge per tier, next gate
+REQUIREMENT_AMBIGUITY: reviewer and implementer disagree on correct -> ask the human
+Then ONE bounded adjustment, then back to the loop. Disposition — including every exception and the anti-loop cap — is defined by rules/auto-loop.md § Cap Diagnostic Protocol; this reminder adjudicates nothing."
       # Mark as fired (write to state file). Same-dir mktemp + size guard + cleanup, matching the
       # writers in post-tool-review-state.sh: a FIXED `${STATE_FILE}.tmp` name collides when two
       # sessions compact at once (one truncates the other's partial write, then both rename), and

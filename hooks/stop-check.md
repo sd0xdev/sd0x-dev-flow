@@ -9,7 +9,7 @@ The script `stop-guard.sh` will:
 1. Read the conversation transcript
 2. Check for code/doc changes
 3. Check whether required commands have been executed
-4. **Check if reviews passed** (✅ Pass / ⛔ Blocked)
+4. **Check if reviews passed** (gate sentinels below / ⛔ Blocked)
 5. **Exit 0** = allow stop, **Exit 2** = block stop
 
 ## Check Rules
@@ -18,7 +18,9 @@ The script `stop-guard.sh` will:
 | ----------------- | ----------------------------------- | ---------------- |
 | code files        | `/codex-review-fast` + `/precommit` | Review must ✅   |
 | `.md` docs        | `/codex-review-doc`                 | Review must ✅   |
-| Comments only/none | -                                  | -                |
+| No changes        | -                                   | -                |
+
+Comment-only edits are conservatively classified as code: comments can carry compiler/lint/build directives, and no semantic-inertness classifier exists, so an edit to a code file requires the code gates even when only comments changed.
 
 ## Block Conditions
 
@@ -30,10 +32,17 @@ The script `stop-guard.sh` will:
 
 ## Pass Markers
 
-The script detects the following pass markers:
+The canonical sentinels a model should emit (per `rules/auto-loop.md` § Gate Sentinels):
 
-- `✅ Pass` / `✅ Ready` / `✅ All pass`
-- `Merge Gate.*✅`
+| Gate | Pass sentinel |
+|------|---------------|
+| Code review | `✅ Ready` |
+| Doc review | `✅ Mergeable` |
+| Precommit | `## Overall: ✅ PASS` (owns its whole line at column 0) |
+
+The transcript-fallback parser additionally recognizes the structured code-review form `## Gate: ✅` — a parser-supported alias, not a form to emit deliberately.
+
+`✅ All Pass` (and variants like `✅ Pass`) are behaviour-layer prose — no hook classifies them as a verdict, and emitting them satisfies no gate.
 
 ## Escalation Marker (behavior-layer, not hook-parsed)
 

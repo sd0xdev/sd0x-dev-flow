@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "_comment": "EXAMPLE rules only — NOT complete security coverage. Sensitive paths are highly project-specific: tune include/exclude per project. Matching is advisory: a hit appends hint fields to the [AUTO_LOOP_STATE] fact line; nothing here writes review_mode or any enforcement state. Security semantics often live in generic paths (e.g. src/services/user.ts) that no path rule can catch — the model may and should escalate to thorough on semantics even with zero hits.",
+  "_matching": "Entries are anchored path-segment sequences matched root-relative: entry 'auth' matches 'auth', 'auth/login.ts', 'src/auth/login.ts' but NOT 'author/index.ts' (segment-anchored, not substring). Multi-segment entries like 'config/secrets' match that exact segment run. Exclude wins over include; first matching rule wins.",
+  "rules": [
+    {
+      "name": "auth",
+      "include": ["auth", "authn", "authz", "oauth", "login", "session"],
+      "exclude": ["docs", "test", "tests", "__tests__"],
+      "suggested_tier": "thorough",
+      "suggested_route": "/codex-security"
+    },
+    {
+      "name": "payments",
+      "include": ["payment", "payments", "billing", "checkout"],
+      "exclude": ["docs", "test", "tests", "__tests__"],
+      "suggested_tier": "thorough",
+      "suggested_route": "/codex-review-branch"
+    },
+    {
+      "name": "secrets",
+      "include": ["secrets", "keys", "wallet", "signer", "kms", "credentials"],
+      "exclude": ["docs", "test", "tests", "__tests__"],
+      "suggested_tier": "thorough",
+      "suggested_route": "/codex-security"
+    },
+    {
+      "name": "migrations",
+      "include": ["migrations", "migration"],
+      "exclude": ["docs"],
+      "suggested_tier": "thorough",
+      "suggested_route": "/codex-review-branch"
+    }
+  ]
+}
