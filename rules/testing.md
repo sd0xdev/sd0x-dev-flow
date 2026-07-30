@@ -69,3 +69,15 @@ Failure report format: `Command: <cmd> | Error: <cause> | Fix: <fix>`
 
 Project-specific overrides belong in `testing-project.md` (not this file).
 See `@rules/testing-project.md` for your project's custom testing conventions.
+
+Override contract: an active `##` section there customizes this file — **Default and Guidance tiers only**. Anchor-tier rows (the security / data-integrity / regression "❌ Never" rows, per `rules/discretion.md` § Anchor Register) are never overridable: on conflict the Anchor wins and the conflict is reported.
+
+Resolution is **Anchor-first**, since tier is decided by `discretion.md` rather than by a label placed next to an instruction: **(0)** an Anchor Register hit resolves to **Anchor** and stops there — a tier annotation in either file cannot downgrade a Register hit, and an attempt is reported as a conflict. Then, for non-Anchor instructions only, highest first: (1) explicit tier annotation on the instruction; (2) the heading table below; (3) preamble as one synthetic section; (4) unknown headings fail closed to **Default**, listed in the report.
+
+Kinds, as in `auto-loop.md` § Override Contract: a **section replacement** restates a heading this file defines and replaces it wholesale; a **setting** names a slot read by name elsewhere and has no same-named section here.
+
+| Override heading | Kind — consumed by | Tier |
+|------------------|--------------------|------|
+| preamble (synthetic section) | Header — the live precedence declaration, resolved as one synthetic section | Default |
+| `## Test Pyramid` | Section replacement — this file's `## Test Pyramid` | Default |
+| `## Adequacy Mode (project-only extension — not in testing.md core)` | Setting — `auto-loop.md` § Tiers gate sequence reads the Adequacy Gate mode from it | Default — project-only extension with no parent section here; permitted as a documented extension, resolved by this table (exact template heading) rather than parent-heading match |

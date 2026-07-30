@@ -1,12 +1,19 @@
 # {PROJECT_NAME}
 
+**How binding is a line in this file?** Three tiers: **Anchor** (never deviate), **Default** (the normal call; deviate by stating a `[DEVIATION]` line that cites a fact signal, then *keep working*), **Guidance** (advisory). This file's own baseline is **Default** and lines above that baseline are marked inline -- @rules/discretion.md classifies the plugin-managed `rules/*.md`, not this file, but its **Anchor Register is the authority everywhere**: a line here that hits the Register is Anchor no matter how it is worded or where it is restated.
+
+Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask -- the human exits are the enumerated ones in @rules/auto-loop.md, and that file is the closed list, not this sentence.
+
 ## Required Checks (Stop Hook enforced)
+
+This table constrains the **end state**, not your choreography. How you batch edits, how deep you review, and when you run each gate are yours to choose; what is fixed is that every gate a change class requires has passed *after the last edit in that class*.
 
 | Change Type | Must Run | Can Skip |
 |-------------|----------|----------|
 | code files | `/codex-review-fast` -> `/precommit` | - |
 | `.md` docs | `/codex-review-doc` | `/codex-review-fast` |
-| Comments only | - | All |
+
+Comment-only edits get no free pass: comments can carry compiler/lint/build directives, so edits to code files are conservatively classified as code even when only comments changed.
 
 > **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
 >
@@ -23,30 +30,23 @@ Before PR: `/pr-review`
 
 ## Workflow
 
+Reference shapes, not scripts — deviate when the change calls for it:
+
 ```
 Feature: develop -> write tests -> /verify -> /codex-review-fast + /codex-test-review -> /precommit -> /pr-review
 Bug fix: /issue-analyze -> /bug-fix -> investigate -> fix -> regression test -> /verify -> /codex-review-fast -> /precommit
 ```
 
-### Auto-Loop Rule
+### Auto-Loop
 
-After editing code or docs, you **MUST** run the review command **in the same reply** — do not stop, do not ask, do not just summarize.
-
-| After editing... | Immediately run | Then on pass |
-|------------------|----------------|--------------|
+| After editing... | Review | Then on pass |
+|------------------|--------|--------------|
 | code files | `/codex-review-fast` | `/precommit` |
 | `.md` docs | `/codex-review-doc` | (done) |
-| Review found **blocking** issues | Fix all -> re-run same review | - |
-| Review found **sub-threshold** issues | Log `[NIT_DEFERRED]`, do not re-review | continue to the "Then on pass" column |
 
-One reviewer -- Codex. `/codex-review-fast` and `/codex-review-doc` do not launch a secondary; `/codex-review-branch --dual` is the only code-review entry point where two reviewers run, and it is off unless the flag is passed. (`/plan-review --dual` is the plan-mode equivalent, also off by default.)
+The terminal completion invariant, tiers, sub-threshold handling, and sentinels live in @rules/auto-loop.md (highest priority). One reviewer -- Codex -- by default; `--dual` is `/codex-review-branch` opt-in only.
 
-What counts as blocking comes from the **tier** (`fast` P0 / `standard` P0+P1 / `thorough` P0+P1+P2). Unset means `standard`. **80 is a passing grade** -- reach for `thorough` when the change is security, data integrity, a release, or public API, not by default.
-
-**Declaring != Executing**: Saying "should run review" without invoking the Skill tool is a violation.
-**Summary != Completion**: Outputting a table then stopping is a violation.
-
-Full spec: @rules/auto-loop.md (§ Tiers, § Sub-Threshold Findings)
+**What is yours to decide**: the effective tier (escalate above the configured baseline when the change warrants it -- never below), when to batch and when to review, how deep to review, and when 80 is a passing grade rather than another round. **What is not**: the four Anchor corollaries -- Declaring != Executing, Summary != Completion, Fixing != Verifying, and an edit re-opening its own plane's gate. Naming a gate is not running it, and no context or session pressure outranks an open one. Sub-threshold findings are **logged and passed**, not weighed: @rules/auto-loop.md § Sub-Threshold Findings allows exactly two on-the-spot fixes (a one-line fix in a file already open, and a finding whose severity was mis-assigned to something that is really a security or data-integrity defect) -- anything else is a `[DEVIATION]`, not a judgment call.
 
 ## Test Requirements
 
@@ -106,108 +106,20 @@ Full spec: @rules/auto-loop.md (§ Tiers, § Sub-Threshold Findings)
 
 Coverage: happy path + error handling + edge cases (null, empty, extremes)
 
-## Command Quick Reference
+## Skill Discovery
 
-| Command | Description | When |
-|---------|-------------|------|
-| `/codex-brainstorm` | Adversarial brainstorm | Exploration |
-| `/req-analyze` | Requirements analysis + 1-requirements.md | Planning |
-| `/feasibility-study` | Feasibility analysis | Requirements |
-| `/tech-spec` | Generate tech spec | Design |
-| `/review-spec` | Review tech spec | Design |
-| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop | Planning |
-| `/orchestrate` | Agent-driven workflow planning + read-only fanout (report-only v1) | Planning |
-| `/deep-analyze` | Deep analysis + roadmap | Design |
-| `/architecture` | Architecture design + 3-architecture.md | Design |
-| `/project-brief` | PM/CTO executive summary | Design |
-| `/fp-brief` | First-principles briefing | Understanding |
-| `/tech-brief` | Technical briefing for developer sharing | Understanding |
-| `/recap-doc` | Post-development recap document generator | Understanding |
-| `/recap-ask` | Recap-bounded Q&A follow-up | Understanding |
-| `/post-dev-recap` | Guided post-dev recap (scope + doc + Q&A) | Understanding |
-| `/codex-architect` | Architecture advice | Design |
-| `/codex-implement` | Codex writes code | Development |
-| `/bug-fix` | Bug fix workflow | Bug fixing |
-| `/debug` | Interactive debugging | Debugging |
-| `/feature-dev` | Feature development | Development |
-| `/feature-verify` | Feature verification (READ-ONLY) | Development |
-| `/load-pr-review` | Load PR review comments into session | Development |
-| `/pr-comment` | Post review comments to PR | Development |
-| `/ask` | Context-aware Q&A with auto context gathering | Understanding |
-| `/deep-explore` | Multi-wave parallel code exploration | Understanding |
-| `/deep-research` | Universal multi-source research orchestration | Understanding |
-| `/code-explore` | Code exploration | Understanding |
-| `/code-investigate` | Dual-perspective code investigation | Understanding |
-| `/git-investigate` | Track code history | Finding source |
-| `/issue-analyze` | Issue deep analysis | Root cause |
-| `/repo-intake` | One-time project scan | Onboarding |
-| `/next-step` | Change-aware next step advisor | Development |
-| `/remind` | Lightweight model correction with rule loading | Development |
-| `/risk-assess` | Uncommitted code risk assessment | Development |
-| `/test-deep` | Context-aware test orchestration | Development |
-| `/verify` | Run tests | Development |
-| `/codex-review-fast` | Quick review (diff) | **Required** |
-| `/codex-review` | Full review (lint+build) | Important PR |
-| `/codex-review-branch` | Full branch review | Important PR |
-| `/codex-cli-review` | CLI review (full disk) | Deep review |
-| `/codex-review-doc` | Review .md files | Doc changes |
-| `/seek-verdict` | Independent finding verification (dismiss/confirm/clarify) | Review |
-| `/codex-explain` | Explain complex code | Understanding |
-| `/precommit` | lint + typecheck + test | **Required** |
-| `/precommit-fast` | lint + test (no build) | Quick check |
-| `/codex-security` | OWASP Top 10 | Security-sensitive |
-| `/codex-test-gen` | Generate unit tests | Adding tests |
-| `/codex-test-review` | Review test coverage | **Required** |
-| `/post-dev-test` | Post-dev test completion | After feature |
-| `/check-coverage` | Test coverage analysis | Quality |
-| `/test-health` | Holistic test coverage measurement | Quality |
-| `/pre-pr-audit` | Pre-PR confidence audit (5-dimension scoring) | Quality |
-| `/project-audit` | Project health audit with scoring | Quality |
-| `/best-practices` | Industry best practices conformance audit | Quality |
-| `/necessity-audit` | Detect over-engineering in lifecycle specs (6-dim + Codex debate) | Quality |
-| `/dep-audit` | Dependency vulnerability audit | Periodic / PR |
-| `/generate-runner` | Generate customized precommit runner | Tooling |
-| `/update-docs` | Sync docs with code | Doc changes |
-| `/doc-refactor` | Simplify documents | Doc changes |
-| `/runbook` | Generate/update feature release runbook | Operations |
-| `/create-request` | Create/update request docs | Planning |
-| `/safe-remove` | Safely remove plugin assets | Tooling |
-| `/refactor` | Multi-target refactoring orchestrator | Refactoring |
-| `/simplify` | Code simplification | Refactoring |
-| `/ui-first-principles` | Scenario → JTBD → field-priority IA reasoning | Design |
-| `/de-ai-flavor` | Remove AI artifacts | Doc changes |
-| `/zh-tw` | Rewrite in Traditional Chinese | i18n |
-| `/install-rules` | Install plugin rules to .claude/rules/ | Onboarding |
-| `/install-hooks` | Install plugin hooks to .claude/ | Onboarding |
-| `/install-scripts` | Install plugin scripts to .claude/scripts/ | Onboarding |
-| `/codex-setup` | Initialize Codex CLI infrastructure (AGENTS.md + hooks) | Onboarding |
-| `/project-setup` | Auto-detect and configure project | Onboarding |
-| `/claude-health` | Claude Code config health check + plugin sync | Onboarding / After update |
-| `/pr-review` | PR self-review checklist | Before PR |
-| `/smart-commit` | Smart batch commit (identity/signing diagnostics + group + message + commands) | Git |
-| `/bump-version` | Bump package + plugin version in sync | Git |
-| `/git-profile` | Git identity and GPG signing profile manager | Git |
-| `/push-ci` | Push (with approval) + delegate to /watch-ci | Git |
-| `/watch-ci` | Monitor GitHub Actions CI runs | Git |
-| `/create-pr` | Create GitHub PR from branch | Git |
-| `/smart-rebase` | Smart partial rebase (squash-merge repos) | Git |
-| `/epic-merge` | Sequential squash-merge of stacked PR chains into epic branch | Git |
-| `/pr-summary` | PR status summary (grouped by ticket) | Git |
-| `/contract-decode` | EVM contract error/calldata decoder | Blockchain |
-| `/jira` | Jira integration (view/branch/transition) | Jira workflow |
-| `/merge-prep` | Pre-merge analysis and preparation | Git |
-| `/obsidian-cli` | Obsidian vault integration via CLI | Tooling |
-| `/op-session` | Initialize 1Password CLI session | Tooling |
-| `/sharingan` | Analyze external repos + generate skills | Tooling |
-| `/skill-health-check` | Validate skill quality | Tooling |
-| `/statusline-config` | Customize statusline segments and themes | Tooling |
+There is no command table here by design: each skill's frontmatter `description` (`skills/<name>/SKILL.md`) is the dispatcher's discovery interface, and the plugin's `docs/skill-catalog.yml` is the canonical registry. Typical flows: feature work -> `/feature-dev`, bug fixing -> `/bug-fix`, commits -> `/smart-commit`.
 
 ## Development Rules
 
-1. **Reference existing code** -- find similar files first, keep style consistent
+Tier is marked per rule; the unmarked ones are Default and you may deviate with a stated signal.
+
+1. *(Guidance)* **Reference existing code** -- find similar files first, keep style consistent
 2. **Test command** -- `{TEST_COMMAND}`
-3. **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`). Forbidden patterns in commit messages: `Co-Authored-By:.*Claude`, `Co-Authored-By:.*Anthropic`, `Generated with.*Claude`, `🤖.*Claude`. Install `commit-msg-guard.sh` via `/install-scripts` for programmatic enforcement.
-4. **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)
+3. **Anchor** -- **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`). Forbidden patterns in commit messages **and PR title/body** (canonical source: `scripts/commit-msg-guard.sh`): Co-Authored-By AI, Generated-by tags, emoji robot tags. Commits: install `commit-msg-guard.sh` via `/install-scripts`. PRs: `/create-pr` Step 4b enforces sanitization automatically.
+4. **Anchor** -- **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)
+
+Rules 3 and 4 are Anchor Register #4 (@rules/discretion.md); their exception lists are part of the anchor, so adding or removing one is itself an Anchor-level change.
 
 ## Tech Stack
 
@@ -340,11 +252,13 @@ Replace these placeholders with your project values:
 
 ## Rules
 
+- @rules/discretion.md -- **Read this first**: Anchor / Default / Guidance, the Anchor Register, and how to deviate
 - @rules/auto-loop.md -- Auto review loop (highest priority)
 - @rules/auto-loop-project.md -- Project-specific auto-loop overrides (user-owned)
 - @rules/codex-invocation.md -- Codex must independently research (critical)
-- @rules/fix-all-issues.md -- Zero tolerance
-- @rules/testing.md
+- @rules/fix-all-issues.md -- Zero tolerance for blocking findings; sub-threshold ones are logged, not fixed
+- @rules/testing.md -- Test pyramid, conventions, evidence model, adequacy gate
+- @rules/testing-project.md -- Project-specific testing overrides (user-owned)
 - @rules/framework.md
 - @rules/security.md
 - @rules/docs-writing.md

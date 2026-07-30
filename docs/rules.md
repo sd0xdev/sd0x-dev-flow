@@ -5,6 +5,7 @@
 | `auto-loop` | Fix -> re-review -> fix -> ... -> Pass (auto cycle) |
 | `auto-loop-project` | Project-specific auto-loop overrides (user-owned, not plugin-managed) |
 | `codex-invocation` | Codex must independently research, never feed conclusions |
+| `discretion` | Instruction tiers: Anchor / Default / Guidance (single authority) |
 | `fix-all-issues` | Zero tolerance: fix every issue found |
 | `self-improvement` | Corrected → record lesson → prevent recurrence |
 | `framework` | Framework-specific conventions (customizable) |

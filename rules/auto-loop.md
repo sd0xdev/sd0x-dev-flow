@@ -1,23 +1,14 @@
 # Auto-Loop Rule ⚠️ CRITICAL
 
-**Edit → review in the same reply → fix what blocks → re-review → pass → next gate.**
+**Terminal completion invariant** — the one rule everything else serves: *work on a change may be declared complete only when every gate its change class requires has passed after the last edit in that gate's change class* — a doc edit re-opens the doc gate, not the code gates, and vice versa (freshness is tracked per plane; a post-precommit Doc Sync therefore does not re-open code review). For code that is an independent review (`/codex-review-fast` — the reviewer researches on its own, per @rules/codex-invocation.md) and then `/precommit`; for `.md` docs it is `/codex-review-doc`. When to run them, how to batch edits, and how deep to review are yours to judge — the invariant constrains the end state, not the choreography. Hooks emit `[AUTO_LOOP_STATE]` fact blocks (change class, receipts, round/cap, tier, pending obligations); read the facts, own the decision. Corollaries, so they are not re-derived: Declaring ≠ Executing (naming a gate is not running it), Summary ≠ Completion (a report does not close an open gate), Fixing ≠ Verifying (re-running the review is the evidence — Self-assessment is not evidence).
 
-Everything below serves that sentence. Where this rule leaves room for judgment, use it; where it states an anchor, the anchor is not negotiable.
+## Review Dispatch
 
-## The Four Anchors
-
-| Anchor | Violation looks like |
-|--------|---------------------|
-| **Declaring ≠ Executing** | "Next step: run `/codex-review-fast`" — without invoking the tool |
-| **Summary ≠ Completion** | A polished table or checklist, then stopping, while a gate is still open |
-| **Fixing ≠ Verifying** | "Issue fixed" / "already addressed" without re-running the review. Self-assessment is not evidence |
-| **Same reply** | Waiting for the user to say "continue" after an edit |
-
-Corollaries, so they are not re-litigated: never ask "should I re-review?" / "要執行嗎？" before a required step — the loop mandates execution, not permission. Never cite context window, session length, or token budget as grounds to skip or defer a review; if context is genuinely tight, still attempt it (see @rules/context-management.md, and note that `<budget:token_budget>` tags are planning signals only). Brief operational lines ("Fixed 3, re-running review…") are fine mid-loop; terminal summaries are not, until every gate passes.
+**One reviewer — Codex — everywhere by default.** `/codex-review-fast` and `/codex-review-doc` must not launch a secondary. Opt-in dual: `/codex-review-branch --dual` only, off unless the flag is passed. Loop re-review: `--continue` re-dispatches Codex on the same thread. Cycle reset: any code edit invalidates prior verdicts — the reviewer must re-run regardless of prior pass status.
 
 ## Tiers
 
-The tier sets **how much** review a change gets. It never changes *whether* the loop runs, and never relaxes the four anchors.
+The configured tier (`auto-loop-project.md ## Tier`, unset → `standard`) is a **baseline, not a ceiling**: choose the effective tier from the change's semantics, escalating above the baseline when warranted, never dropping below it. A security or data-integrity change is treated as `thorough` whatever is configured — escalate, and say that you did.
 
 | Tier | Use for | Blocks on | Round cap |
 |------|---------|-----------|-----------|
@@ -25,42 +16,30 @@ The tier sets **how much** review a change gets. It never changes *whether* the 
 | `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
 | `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
-Set it in `auto-loop-project.md` under `## Tier`. Unset or unrecognized → `standard`. An explicit `## Max Rounds` (3–50) overrides the tier's cap **and** is the value the hooks persist and check — one setting, both layers. Checking is not blocking: only `strict` or dual mode stops on it (§ Exit Conditions). Left unset the two diverge: you follow the tier while the hook-side cap sits at its default 30. A security or data-integrity change is treated as `thorough` whatever is configured — escalate, and say that you did.
+An explicit `## Max Rounds` (3–50) in `auto-loop-project.md` overrides the tier's cap and is the value the hooks persist. `current_round >= max_rounds` → § Cap Diagnostic Protocol below (the hook reports only the neutral fact "Review round cap reached (n/max)"; the disposition is yours). Architecture-level changes, feature removal, or the user asking to stop exit to ⛔ Need Human at any point. **80 is a passing grade.** When the remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round.
 
-**80 is a passing grade.** `standard` exists to ship a correct, tested change and stop. When the reviewer's remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round. Chasing the last few points is what `thorough` is for — a deliberate choice, not the default gravity.
+Gate sequence: review Ready (no blocking findings) → `/precommit`; precommit Pass → Adequacy Gate → Doc Sync; a precommit failure is fixed and re-run. Adequacy Gate: when a request doc with `## Acceptance Criteria` maps to the change, run `/codex-test-review --ac-trace <request-path>`; mode comes from `testing-project.md ## Adequacy Mode` (advisory by default, strict is opt-in). Doc Sync: when the change maps to a feature under `docs/features/`, sync the tech spec and request doc, then doc-review the result.
 
-## Auto-Trigger
+## Cap Diagnostic Protocol
 
-| Change | Event | Execute immediately |
-|--------|-------|--------------------|
-| code | Fixed a blocking finding | `/codex-review-fast` |
-| code | review Ready (no blocking findings) | `/precommit` |
-| code | review Ready, only sub-threshold findings | Log, then `/precommit` |
-| code | precommit Pass | Adequacy Gate (if request doc) → Doc Sync |
-| code | precommit failure | Fix → re-run |
-| `.md` | Fixed doc issues, or review failed | `/codex-review-doc` |
+Hitting the round cap is a diagnosis point, not an automatic hand-off — **except** for security or data-integrity changes, which skip this protocol entirely: cap hit → ⚠️ Need Human directly. The trigger is the cap itself, behaviour-layer, independent of whether compaction ever fires (the post-compact `[STRATEGIC_RESET]` checklist is an auxiliary injection channel, never the trigger).
 
-### Review Dispatch
+1. **Diagnose** — classify the stall as exactly one class from the closed table below; state the class and its observed signals in a short block, not free prose.
+2. **One bounded adjustment** — declared *before* it is made: name the scope (which files), the nature (the class's direction column), and the size (a single split, a single re-scope, or ≤ 5 focused edits). An adjustment must never grow into a rewrite mid-loop; if the diagnosis itself shows architecture-level change is needed, exit ⛔ Need Human instead of adjusting.
+3. **Return to the loop** — re-enter review with the adjustment as the change under review.
 
-**One reviewer — Codex — everywhere by default.** `/codex-review-fast` and `/codex-review-doc` dispatch Codex alone and must not launch a secondary.
+**Anti-loop cap: 1 diagnosis per change.** The same change hitting the cap a **second** time after a diagnosis → ⚠️ Need Human, no second diagnosis. This split lives entirely here — the hook cannot distinguish first from second (it sees only round/cap), so in `warn` mode this rule is the only enforcement; treat it as binding.
 
-| | |
-|---|---|
-| Opt-in dual | `/codex-review-branch --dual` only, off unless the flag is passed. For releases and security-sensitive work, not routine fixes |
-| Loop re-review | `--continue` re-dispatches Codex on the same thread |
-| Cycle reset | Any code edit resets the review cycle — the reviewer must re-run regardless of prior pass status |
-
-> **Why single is the default.** Dual dispatch doubled the token and wall-clock cost of every iteration, and because `review_mode: "dual"` forces `stop-guard` into `strict`, it turned every advisory warning into a hard block. Worth paying for on a release; not on a typical fix. No fail-closed property depends on it — in `single` mode `code_review.passed` governs the gate, and the sidecar, round cap and corrupt-state escalations behave identically.
-
-### Verification Depth
-
-Fixes must be **verified**, not **proved**. Re-running the review after a fix is the required evidence; a regression test (per @rules/testing.md) is the required cover. State plainly what ran and what it reported.
-
-Not expected: mutation-testing each fix to show its assertion fails without it, "blind controls", or harnesses that rewrite production files to score the suite. Mutation testing stays available when a reviewer specifically asks — it is **not** a standing requirement and must never run as an unprompted loop. Each mutant costs a full suite run, and a harness killed mid-run can leave production source rewritten; that happened, silently reverted a fix while its explanatory comment stayed behind, and cost more than the evidence was worth.
+| Class | Signals | Bounded direction |
+|-------|---------|-------------------|
+| `ARCHITECTURE` | Same defect recurs across files; fixing A breaks B | Stop patching; back to design, re-scope |
+| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Split or shrink first, then resume review |
+| `ATTENTION_DIFFUSION` | Fixes introduce new defects; the same fact is recorded wrong repeatedly | Shrink the batch; verify each item before merging |
+| `UNVERIFIED_CLAIM` | Blocking findings cluster on unmeasured claims | Measure first; write the derivation command into the doc |
+| `TIER_MISMATCH` | Findings persistently below the blocking threshold | Converge per tier and move to the next gate |
+| `REQUIREMENT_AMBIGUITY` | Reviewer and implementer disagree on what "correct" means | Ask the human; stop guessing |
 
 ## Sub-Threshold Findings
-
-A finding **below** the tier's blocking severity does not re-open the loop.
 
 | Tier | Blocking | Sub-threshold |
 |------|----------|---------------|
@@ -68,116 +47,39 @@ A finding **below** the tier's blocking severity does not re-open the loop.
 | `standard` | P0, P1 | P2, Nit |
 | `thorough` | P0, P1, P2 | Nit |
 
-**On `✅ Ready` with only sub-threshold findings: log each one and proceed to `/precommit`.** No extra fix pass, no extra re-review.
+On `✅ Ready` with only sub-threshold findings: log them and proceed. No extra fix pass, no extra re-review. The durable record is `[NIT_DEFERRED] file:line | issue | reason: sub-threshold-<severity> | <ISO8601>` — hook-parsed at column 0 from the *review tool's* output (the same line in your own prose persists nothing), field order fixed. Two exceptions are fixed on the spot with no new round: a one-line fix in a file already open, and a sub-threshold finding that is really a security or data-integrity defect (severity mis-assigned — escalate to `thorough` and say so).
 
-```
-[NIT_DEFERRED] file:line | issue | reason: sub-threshold-<severity> | <ISO8601>
-```
+## Gate Sentinels (hook-parsed, emit verbatim)
 
-**That exact tag, that exact field order — and it must come from the reviewer.** The line is hook-parsed at column 0 out of the *review tool's output* and written to `.claude_nit_history.json` with a TTL, which is what stops the same finding being re-raised next session. The reviewer prompts instruct Codex to emit it; the same line typed into your own prose triggers no PostToolUse and persists nothing, so restate deferrals for the reader if you like but do not treat that as the record. Field 2 is the issue, field 3 the reason — swapping them mis-files the entry, and any other tag is prose no hook reads. The name predates tiers; the severity rides in `reason:`.
+| Sentinel | Context |
+|----------|---------|
+| `✅ Ready` / `⛔ Blocked` | Code review |
+| `✅ Mergeable` / `⛔ Needs revision` | Doc review |
+| `## Overall: ✅ PASS` / `## Overall: ⛔ FAIL` / `## Overall: ❌ FAIL` / `## Overall: ⚠️ NO CHECKS RUN` | Precommit — the sentinel owns its whole line at column 0; the parser takes the *last* `## Overall:` line, so a stray one masks a real FAIL |
+| `✅ Plan Ready` / `⛔ Plan Blocked` / `⚠️ Plan Needs Human` / `[PLAN_REVIEW_DEGRADED]` / `[PLAN_REVIEW_SKIPPED]` | Plan review (needs a `## Plan Review` header; plan output must never contain a bare `✅ Ready`, `✅ Mergeable`, `## Gate:` or bare `⛔ Blocked`) |
 
-Two exceptions, fixed in the current pass with no new round: a one-line fix in a file you already have open, and a sub-threshold finding that is actually a security or data-integrity defect (severity was mis-assigned — escalate to `thorough` and say so).
+`✅ All Pass` is behaviour-layer prose for "every gate passed" — it is *not* the precommit sentinel and no hook classifies it as a verdict. `⚠️ Need Human` is behaviour-layer only.
 
-Sub-threshold findings are recorded, not lost: `/codex-review-branch` picks them up when the change is next reviewed at depth.
+## Override Contract
 
-## Exit Conditions
+`rules/auto-loop-project.md` (user-owned) customizes this file — **Default and Guidance tiers only**. Anchor-tier instructions (`rules/discretion.md` § Anchor Register) are never overridable: on conflict the Anchor wins and the conflict is reported, not silently resolved.
 
-Evaluated top-to-bottom, first match wins. State lives in `.claude_review_state.json` `iteration_history`.
+Resolution is **Anchor-first**, because an instruction's tier is decided by `discretion.md`, never by a label written next to it: **(0)** an Anchor Register hit resolves to **Anchor** and stops there — a tier annotation in either file cannot downgrade a Register hit, and one that tries is reported as a conflict rather than honoured. Only for non-Anchor instructions does the rest apply, highest first: (1) an explicit tier annotation on the instruction itself; (2) the heading table below; (3) preamble text before the first `##` resolves as one synthetic section; (4) an unknown heading fails closed to **Default** and is listed in the report, never silently dropped.
 
-| # | Condition | Action |
-|---|-----------|--------|
-| 1 | `current_round >= max_rounds` | ⚠️ Need Human |
-| 2 | Zero findings **and** the gate verdict itself passed | `/precommit` |
-| 3 | Findings decreasing | Continue |
-| 4 | Findings not decreasing | Continue — plateau detection is V2, so row 1 is the backstop |
+Two override kinds, and the distinction is load-bearing: a **section replacement** restates a `##` heading this file actually defines and replaces that section wholesale; a **setting** names a configuration slot that this file's prose or a hook reads by name. Settings have no same-named section here, so "full replacement" never describes them — the shipped scaffold is settings-only, and every one names its consumer below.
 
-Row 1 is the only convergence exit the hook observes, and it only *blocks* in `strict` or dual mode; under the default `warn` it prints to stderr and lets the stop through. **In warn mode the behaviour layer is the enforcement** — treat the cap as binding on yourself.
+| Override heading | Kind — consumed by | Tier |
+|------------------|--------------------|------|
+| preamble (synthetic section) | Header — the live precedence declaration, resolved as one synthetic section | Default |
+| `## Tier` | Setting — § Tiers, "the configured tier … baseline, not a ceiling" | Default — the security/data-integrity escalation sentence in § Tiers is Anchor-tier (Anchor Register #3 hit, resolved at step 0) and stays binding whatever tier is configured |
+| `## Max Rounds` | Setting — § Tiers cap sentence; the hooks persist the value | Default |
+| `## Plan Review` | Setting — `/plan-review` self-invocation in plan mode | Default |
+| `## Plan Review Max Rounds` | Setting — plan-review state init | Default |
+| `## Git Memory` | Setting — post-compact hook, git-context injection | Default |
+| `## Think Harder` | Setting — post-compact hook, § Cap Diagnostic Protocol auxiliary channel | Default |
 
-Row 2's zero is not self-evidencing: the count is derived by pattern-matching finding lines, so a reviewer error or a format change also yields `0`. Corroborate it with a passing `✅ Ready` before reading it as convergence. And a passing review is not always a passing gate: whenever Stop names an aggregate obligation, no single-reviewer round discharges it — and a `Do NOT auto-retry` line means no command does. Take either at face value rather than re-reviewing into it.
-
-`current_round` is a **lower bound** on rounds actually run — the increment is best-effort and a dropped verdict costs no round. It counts code-review rounds only; doc reviews and code edits do not touch it, and only a passing `/precommit` resets it. A value above `max_rounds` is normal, not corruption. Mechanics: [`docs/features/auto-loop-evolution/4-implementation.md`](../docs/features/auto-loop-evolution/4-implementation.md) §2.
-
-**Advisory exits** (independent of `iteration_history`):
-
-- ✅ All Pass — code: review + precommit passed; docs: doc review passed
-- ⛔ Need Human — architecture change, feature removal, user asks to stop
-- ⚠️ Need Human — feature docs not found (3-level fallback exhausted); or a P0/P1 dismiss candidate awaiting confirmation via `/seek-verdict`
-
-## Strategic Reset (opt-in)
-
-When `total_rounds_session >= max_rounds - 3` and it has not yet fired, the post-compact hook injects a `[STRATEGIC_RESET]` checklist — re-read the original requirements, challenge the assumptions, try a fundamentally different approach before escalating at the cap. Once per state-file lifetime.
-
-Enable with `## Think Harder: enabled` in `auto-loop-project.md`. `total_rounds_session` is never reset, so this fires on cumulative effort rather than per-cycle effort.
-
-## Gate Sentinels
-
-Emit these verbatim. Hook-parsed ones become durable state; behaviour-layer ones are read by the loop only.
-
-| Sentinel | Context | Parsed by |
-|----------|---------|-----------|
-| `✅ Ready` / `⛔ Blocked` | Code review | Hook + behavior |
-| `✅ Mergeable` / `⛔ Needs revision` | Doc review | Hook + behavior |
-| `## Overall: ✅ PASS` | Precommit | Hook |
-| `## Overall: ⛔ FAIL` / `## Overall: ❌ FAIL` | Precommit | Hook |
-| `## Overall: ⚠️ NO CHECKS RUN` | Precommit — non-verdict, no state recorded | Hook |
-| `✅ Plan Ready` / `⛔ Plan Blocked` | Plan review (needs a `## Plan Review` header) | Hook + behavior |
-| `[PLAN_REVIEW_DEGRADED]` / `[PLAN_REVIEW_SKIPPED]` | Plan review | Hook + behavior |
-| `⚠️ Need Human` · `⚠️ Plan Needs Human` | Any | Behavior-layer only |
-
-Two rules govern how you write them:
-
-1. **A precommit sentinel owns its whole line.** Column 0, nothing before or after it. A mention inside prose or a template line must not look like a verdict — the parser takes the last `## Overall:` line, so a stray one masks a real `FAIL`.
-2. **Plan sentinels stay in their namespace.** Plan-review output must never contain a bare `✅ Ready`, `✅ Mergeable`, `## Gate:` or bare `⛔ Blocked`.
-
-`✅ All Pass` is behaviour-layer prose for "every gate passed" — it is **not** the precommit sentinel and no hook classifies it as a verdict.
-
-Parsing mechanics, transcript-fallback anchoring, and the archaeology behind both: [`4-implementation.md`](../docs/features/auto-loop-evolution/4-implementation.md) §4.
+No row is a section replacement: `## Tier` is deliberately **not** this file's `## Tiers`, and the other five name no section at all. A user who does want a section replacement restates that section's exact heading — the mechanism is available, the scaffold just does not ship one.
 
 ## Enforcement
 
-| Layer | Mechanism | Trigger |
-|-------|-----------|---------|
-| PostToolUse | Records file changes and review verdicts into `.claude_review_state.json` | Edit / Bash / Skill |
-| SessionStart (compact) | Re-injects auto-loop state after compaction | Context compaction |
-| Stop | Reads the state file; warns before stopping with a gate open (blocks in `strict`) | Stop attempt |
-
-When a hook cannot durably record a transition it writes a **fail-closed sidecar marker** rather than failing silently, and stop-guard invalidates the affected gate. You will see this as a gate that re-opens for no visible reason — that is the design, not a bug. Full protocol: [`4-implementation.md`](../docs/features/auto-loop-evolution/4-implementation.md) §1, §3.
-
-| Escape hatch | Effect |
-|--------------|--------|
-| `HOOK_DEBUG=1` | Hook debug output |
-| `HOOK_BYPASS=1` | Skip Stop hook checks (emergency) |
-
-## Correct Behavior
-
-```
-"Fixed 3 issues, running /codex-review-fast..."
-[Execute: Codex --continue]
-"✅ Ready. 2 Nit deferred (logged). Running /precommit..."
-[Execute]
-"All passed ✅"
-```
-
-The failure mode this replaces: edit → polished summary → "next step: suggest running the review" → stop, waiting for the user. That is Declaring-as-Executing and Summary-as-Completion in one move.
-
-### Adequacy Gate (behavior-layer)
-
-After precommit Pass, if a request doc with `## Acceptance Criteria` is detected: auto-detect it (3-level fallback — context → git diff → `⚠️ Need Human`), run `/codex-test-review --ac-trace <request-path>`, then evaluate. Mode comes from `testing-project.md ## Adequacy Mode`.
-
-| Mode | ✅ Adequate | ⚠️ With exceptions | ⚠️ Need Human | ⛔ Inadequate |
-|------|------------|-------------------|---------------|---------------|
-| advisory (default) | Continue | Continue + log | Warn + continue | Warn + continue |
-| strict | Continue | Continue + log | **Stop** | Re-enter fix loop |
-| off | Skip | Skip | Skip | Skip |
-
-No request doc with an AC section → no gate. Behavior-layer only; strict is opt-in.
-
-### Doc Sync
-
-After precommit Pass, **only** when the change maps to a feature under `docs/features/`: `/update-docs <tech-spec-path>` for the changed sections, then `/create-request --update <request-path>` for Progress / Status / AC. Same 3-level target detection as above.
-
-Safety valve: after syncing, compare the code diff against the pre-sync baseline — new code changes send you back into the review loop.
-
-## Project Customization
-
-Overrides belong in `auto-loop-project.md`, not here. See @rules/auto-loop-project.md.
+PostToolUse records receipts into `.claude_review_state.json`; Stop reads them and warns when a gate is open (blocks only in `strict` or dual mode). A hook that cannot durably record a transition writes a fail-closed sidecar marker and stop-guard invalidates the affected gate — a gate re-opening for no visible reason is that design, not a bug. Context capacity never overrides an open gate (@rules/context-management.md). Escape hatches: `HOOK_DEBUG=1` (debug output), `HOOK_BYPASS=1` (emergency skip). Mechanics, parser anchoring, and the archaeology behind every paragraph this file used to carry: `docs/features/auto-loop-evolution/4-implementation.md`. Project overrides: @rules/auto-loop-project.md.
