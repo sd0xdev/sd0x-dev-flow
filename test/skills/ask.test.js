@@ -158,16 +158,11 @@ test('ask references/routing-table.md exists', () => {
   assert.match(content, /Routing/, 'should contain routing rules');
 });
 
-// --- CLAUDE.md integration ---
+// --- Catalog registration ---
 
-test('CLAUDE.md contains /ask entry', () => {
-  const claude = readFileSync(resolve(ROOT, 'CLAUDE.md'), 'utf8');
-  assert.match(claude, /\/ask/, 'CLAUDE.md should reference /ask');
-});
-
-test('CLAUDE.template.md contains /ask entry', () => {
-  const template = readFileSync(resolve(ROOT, 'CLAUDE.template.md'), 'utf8');
-  assert.match(template, /\/ask/, 'CLAUDE.template.md should reference /ask');
+test('docs/skill-catalog.yml registers /ask', () => {
+  const content = readFileSync(resolve(ROOT, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/ask$/m, '/ask must be registered in the skill catalog');
 });
 
 // --- Regression guard: `context: fork` breaks conversation continuity ---

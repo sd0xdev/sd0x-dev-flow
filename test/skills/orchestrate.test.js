@@ -349,16 +349,8 @@ test('orchestrate is registered in docs/skill-catalog.yml under planning', () =>
   assert.match(content, /command: \/orchestrate/, 'catalog should list /orchestrate');
 });
 
-test('orchestrate appears in the CLAUDE.md command quick references', () => {
-  for (const rel of ['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.template.md']) {
-    const path = resolve(root, rel);
-    // .claude/ is gitignored local install state — absent in fresh clones,
-    // worktrees, and CI. Only assert it when the local install exists.
-    if (rel.startsWith('.claude/') && !existsSync(path)) continue;
-    const content = readFileSync(path, 'utf8');
-    assert.match(content, /\| `\/orchestrate` \|/, `${rel} quick reference should include /orchestrate`);
-  }
-});
+// Registration lives solely in docs/skill-catalog.yml (asserted above) — the CLAUDE.md
+// command table was removed in R3 (auto-loop prose reduction).
 
 // --- Doc ↔ code agreement ---
 

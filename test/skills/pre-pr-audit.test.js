@@ -67,9 +67,9 @@ test('output-template.md exists with sentinel strings', () => {
   assert.match(content, /PR-Blocked/, 'should have PR-Blocked sentinel');
 });
 
-// --- CLAUDE.md reference ---
+// --- Catalog registration ---
 
-test('CLAUDE.md references pre-pr-audit', () => {
-  const content = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-  assert.match(content, /\/pre-pr-audit/, 'should reference /pre-pr-audit command');
+test('docs/skill-catalog.yml registers /pre-pr-audit', () => {
+  const content = readFileSync(resolve(root, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/pre-pr-audit$/m, '/pre-pr-audit must be registered in the skill catalog');
 });

@@ -6,9 +6,6 @@ const { resolve } = require('node:path');
 const ROOT = resolve(__dirname, '../..');
 const SKILL = resolve(ROOT, 'skills/recap-ask/SKILL.md');
 const QA_PROMPT = resolve(ROOT, 'skills/recap-ask/references/qa-prompt.md');
-const CLAUDE_ROOT = resolve(ROOT, 'CLAUDE.md');
-const CLAUDE_TEMPLATE = resolve(ROOT, 'CLAUDE.template.md');
-const CLAUDE_DOTDIR = resolve(ROOT, '.claude/CLAUDE.md');
 
 // --- SKILL.md frontmatter & core sections ---
 
@@ -364,41 +361,12 @@ test('recap-ask skill directory has required files', () => {
   }
 });
 
-// --- CLAUDE*.md registration contract (cross-file consistency) ---
+// --- Catalog registration contract ---
 
-test('/recap-ask row is registered identically in tracked CLAUDE*.md catalogs', () => {
-  // Only enforce on files that exist in the working tree. .claude/CLAUDE.md is
-  // gitignored locally but tracked via the plugin pipeline; if missing here,
-  // skip that file to keep this test stable on fresh clones.
-  const catalogs = [
-    { path: CLAUDE_ROOT, label: 'CLAUDE.md' },
-    { path: CLAUDE_TEMPLATE, label: 'CLAUDE.template.md' },
-    { path: CLAUDE_DOTDIR, label: '.claude/CLAUDE.md' },
-  ].filter(({ path }) => existsSync(path));
-
-  assert.ok(catalogs.length >= 1, 'at least one CLAUDE*.md catalog must exist');
-
-  // T5 will register this row; before T5 the row may be absent. Treat missing
-  // as "not yet registered" and surface a single assertion rather than N checks.
-  const rows = catalogs
-    .map(({ path, label }) => ({
-      label,
-      row: readFileSync(path, 'utf8').match(/\|\s*`\/recap-ask`[^\n]+\|/),
-    }))
-    .filter(({ row }) => row !== null);
-
-  if (rows.length === 0) {
-    // Pre-T5 state: no catalog registers /recap-ask. Allowed.
-    return;
-  }
-
-  // Post-T5: every catalog that has any /recap-ask row must use the same row.
-  const canonical = rows[0].row[0];
-  for (const { label, row } of rows) {
-    assert.strictEqual(
-      row[0],
-      canonical,
-      `/recap-ask row in ${label} must match the canonical row in ${rows[0].label}`,
-    );
-  }
+test('/recap-ask is registered in docs/skill-catalog.yml', () => {
+  // The CLAUDE.md command tables were removed in R3 — the catalog is the
+  // single registration surface. This replaces the old cross-file row contract,
+  // whose tolerate-all-absent branch would otherwise have gone silently vacuous.
+  const catalog = readFileSync(resolve(ROOT, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(catalog, /^ {2}- command: \/recap-ask$/m, '/recap-ask must be registered in the skill catalog');
 });

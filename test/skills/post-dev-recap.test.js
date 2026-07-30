@@ -345,35 +345,13 @@ test('SKILL.md Examples cover happy path, focus, --interactive, and scope-fail',
   assert.match(section, /scope/i, 'Example 4: scope-fail path');
 });
 
-// --- Catalog registration contract (T5-gated) ---
+// --- Catalog registration contract ---
 
-test('/post-dev-recap row will be registered identically in CLAUDE*.md catalogs (T5-gated)', () => {
-  // Catalog registration is T5's scope; T4 only writes the skill. This test locks
-  // the contract: once /post-dev-recap is registered, the tracked catalogs must
-  // carry the same row. Until T5 lands, it's allowed to be missing from both
-  // (skill exists, not yet catalogued). `.claude/CLAUDE.md` is gitignored and
-  // only exists after local bootstrap — include it only when present (same
-  // guarded pattern as recap-doc.test.js and recap-ask.test.js).
-  const catalogFiles = [
-    resolve(REPO, 'CLAUDE.md'),
-    resolve(REPO, 'CLAUDE.template.md'),
-    resolve(REPO, '.claude', 'CLAUDE.md'),
-  ].filter(existsSync);
-  const rows = catalogFiles.map((f) => {
-    const content = readFileSync(f, 'utf8');
-    const m = content.match(/^\| `\/post-dev-recap`.*$/m);
-    return m ? m[0] : null;
-  });
-  const present = rows.filter(Boolean).length;
-  const absent = rows.length - present;
-  assert.ok(
-    present === 0 || present === rows.length,
-    `All ${rows.length} present catalogs must agree: either zero rows (pre-T5) or all rows (post-T5). Got present=${present}, absent=${absent}, rows=${JSON.stringify(rows)}`,
-  );
-  if (present === rows.length && rows.length >= 2) {
-    // If any are registered, all must match exactly
-    for (let i = 1; i < rows.length; i++) {
-      assert.strictEqual(rows[0], rows[i], `${catalogFiles[0]} and ${catalogFiles[i]} rows must match`);
-    }
-  }
+test('/post-dev-recap is registered in docs/skill-catalog.yml', () => {
+  // The CLAUDE.md command tables were removed in R3 — docs/skill-catalog.yml
+  // is the single registration surface. This replaces the old cross-file row
+  // contract, whose tolerate-all-absent branch would otherwise have gone
+  // silently vacuous once the tables disappeared.
+  const catalog = readFileSync(resolve(REPO, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(catalog, /^ {2}- command: \/post-dev-recap$/m, '/post-dev-recap must be registered in the skill catalog');
 });

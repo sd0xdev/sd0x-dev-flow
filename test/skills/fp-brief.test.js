@@ -108,9 +108,9 @@ test('codex-verify-prompt.md exists with mandatory fields', () => {
   assert.match(content, /sandbox.*read-only/i, 'should specify read-only sandbox');
 });
 
-// --- CLAUDE.md assertion ---
+// --- Catalog registration ---
 
-test('CLAUDE.md has /fp-brief entry', () => {
-  const content = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-  assert.match(content, /fp-brief/, 'should have fp-brief in command reference');
+test('docs/skill-catalog.yml registers /fp-brief', () => {
+  const content = readFileSync(resolve(root, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/fp-brief$/m, '/fp-brief must be registered in the skill catalog');
 });

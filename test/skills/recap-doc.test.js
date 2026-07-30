@@ -9,9 +9,6 @@ const OUTPUT_TPL = resolve(ROOT, 'skills/recap-doc/references/output-template.md
 const SOURCE_GUIDE = resolve(ROOT, 'skills/recap-doc/references/source-guide.md');
 const PROMPT_TPL = resolve(ROOT, 'skills/recap-doc/references/prompt-template.md');
 const TAXONOMY = resolve(ROOT, 'scripts/config/doc-taxonomy.json');
-const CLAUDE_ROOT = resolve(ROOT, 'CLAUDE.md');
-const CLAUDE_TEMPLATE = resolve(ROOT, 'CLAUDE.template.md');
-const CLAUDE_DOTDIR = resolve(ROOT, '.claude/CLAUDE.md');
 
 // --- SKILL.md frontmatter & core sections ---
 
@@ -421,32 +418,14 @@ test('recap-doc skill directory has required files', () => {
   }
 });
 
-test('/recap-doc row is registered identically in tracked CLAUDE*.md catalogs', () => {
-  // Contract: the Command Quick Reference row for /recap-doc must appear
-  // byte-identical across tracked catalogs. `.claude/CLAUDE.md` is gitignored
-  // (per .gitignore `.claude/`) and only exists after /project-setup runs
-  // locally — verify it only if present, so CI clones without the bootstrap
-  // step still pass this contract test.
-  const rowRegex = /^\|\s*`\/recap-doc`\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*$/m;
-  const extract = (path) => {
-    const content = readFileSync(path, 'utf8');
-    const m = content.match(rowRegex);
-    assert.ok(m, `/recap-doc row missing from ${path}`);
-    return { description: m[1], when: m[2] };
-  };
-  assert.ok(existsSync(CLAUDE_ROOT), `tracked catalog should exist: ${CLAUDE_ROOT}`);
-  assert.ok(existsSync(CLAUDE_TEMPLATE), `tracked catalog should exist: ${CLAUDE_TEMPLATE}`);
-  const root = extract(CLAUDE_ROOT);
-  const template = extract(CLAUDE_TEMPLATE);
-  assert.equal(root.description, template.description, 'description differs: CLAUDE.md vs CLAUDE.template.md');
-  assert.equal(root.when, template.when, 'when column differs: CLAUDE.md vs CLAUDE.template.md');
-  // Exact category contract — siblings /tech-brief and /fp-brief both use
-  // "Understanding"; any drift should be intentional and visible in diff.
-  assert.equal(root.when, 'Understanding', `/recap-doc When column must be "Understanding", got: "${root.when}"`);
-  // .claude/CLAUDE.md is gitignored — verify only when bootstrapped locally.
-  if (existsSync(CLAUDE_DOTDIR)) {
-    const dotdir = extract(CLAUDE_DOTDIR);
-    assert.equal(root.description, dotdir.description, 'description differs: CLAUDE.md vs .claude/CLAUDE.md');
-    assert.equal(root.when, dotdir.when, 'when column differs: CLAUDE.md vs .claude/CLAUDE.md');
-  }
+test('/recap-doc is registered in docs/skill-catalog.yml with a discoverable description', () => {
+  // The CLAUDE.md command tables were removed in R3 — the catalog is the
+  // single registration surface, so there is no cross-file row to keep in sync.
+  const catalog = readFileSync(resolve(ROOT, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(catalog, /^ {2}- command: \/recap-doc$/m, '/recap-doc must be registered in the skill catalog');
+  // Discovery now rides on the SKILL frontmatter description.
+  const skill = readFileSync(SKILL, 'utf8');
+  const fm = skill.match(/^---\n([\s\S]*?)\n---/);
+  assert.ok(fm, 'SKILL.md must have frontmatter');
+  assert.match(fm[1], /^description:\s*\S+/m, 'SKILL.md frontmatter must carry a non-empty description');
 });

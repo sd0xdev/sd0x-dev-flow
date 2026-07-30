@@ -78,6 +78,23 @@ test('scan-repo.js script exists', () => {
 });
 
 // ═══════════════════════════════════════════════
+// Registration surface (1 test)
+// ═══════════════════════════════════════════════
+
+test('sharingan generation output must not instruct CLAUDE command-table registration', () => {
+  // R3 removed the CLAUDE.md command table; docs/skill-catalog.yml is the sole registration
+  // surface. A live integration checklist telling users to add table rows would reintroduce it.
+  for (const file of [skillPath, resolve(refDir, 'output-template.md')]) {
+    const content = readFileSync(file, 'utf8');
+    assert.ok(!/CLAUDE\.md command table|command table.*CLAUDE\.md/i.test(content),
+      `${file} instructs CLAUDE command-table registration; point to docs/skill-catalog.yml instead`);
+  }
+  const template = readFileSync(resolve(refDir, 'output-template.md'), 'utf8');
+  assert.match(template, /docs\/skill-catalog\.yml/,
+    'integration checklist must route registration to docs/skill-catalog.yml');
+});
+
+// ═══════════════════════════════════════════════
 // v2 validation (1 test)
 // ═══════════════════════════════════════════════
 

@@ -67,9 +67,9 @@ test('test-count-parsers.md exists with framework parsers', () => {
   assert.match(content, /count_level/i, 'should describe count_level');
 });
 
-// --- CLAUDE.md assertion ---
+// --- Catalog registration ---
 
-test('CLAUDE.md has /test-health entry', () => {
-  const content = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-  assert.match(content, /test-health/, 'should have test-health in command reference');
+test('docs/skill-catalog.yml registers /test-health', () => {
+  const content = readFileSync(resolve(root, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/test-health$/m, '/test-health must be registered in the skill catalog');
 });

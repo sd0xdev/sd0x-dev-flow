@@ -55,11 +55,11 @@ test('deep-research SKILL.md under 500 lines', () => {
   assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
 });
 
-// --- CLAUDE.md assertion ---
+// --- Catalog registration ---
 
-test('CLAUDE.md has /deep-research entry', () => {
-  const content = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-  assert.match(content, /deep-research/, 'should have deep-research in command reference');
+test('docs/skill-catalog.yml registers /deep-research', () => {
+  const content = readFileSync(resolve(root, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/deep-research$/m, '/deep-research must be registered in the skill catalog');
 });
 
 // --- Reference file assertions ---

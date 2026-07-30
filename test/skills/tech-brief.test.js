@@ -91,7 +91,7 @@ test('source-guide.md has 3 stages and missing source handling', () => {
 
 // --- Integration ---
 
-test('CLAUDE.md contains tech-brief entry', () => {
-  const claude = readFileSync(resolve(ROOT, 'CLAUDE.md'), 'utf8');
-  assert.match(claude, /\/tech-brief/, 'CLAUDE.md should reference /tech-brief');
+test('docs/skill-catalog.yml registers /tech-brief', () => {
+  const content = readFileSync(resolve(ROOT, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/tech-brief$/m, '/tech-brief must be registered in the skill catalog');
 });

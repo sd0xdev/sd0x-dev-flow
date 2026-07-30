@@ -37,11 +37,39 @@ test('remind SKILL.md under 500 lines', () => {
   assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
 });
 
-// --- CLAUDE.md assertion ---
+// --- Catalog registration ---
 
-test('CLAUDE.md has /remind entry', () => {
-  const content = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
-  assert.match(content, /remind/, 'should have remind in command reference');
+test('docs/skill-catalog.yml registers /remind', () => {
+  const content = readFileSync(resolve(root, 'docs/skill-catalog.yml'), 'utf8');
+  assert.match(content, /^ {2}- command: \/remind$/m, '/remind must be registered in the skill catalog');
+});
+
+// --- Extraction-target liveness ---
+// The skill's value is quoting real rule text; a mapping that names a section which no longer
+// exists silently degrades /remind into memory-based correction. Every "Section to Extract"
+// target named by SKILL.md / detection-rules.md must exist in its source file.
+
+test('remind extraction targets exist in rules/auto-loop.md', () => {
+  const autoLoop = readFileSync(resolve(root, 'rules/auto-loop.md'), 'utf8');
+  assert.match(autoLoop, /Terminal completion invariant/, 'detections 1-2 extract the invariant paragraph');
+  assert.match(autoLoop, /^Gate sequence:/m, 'detection 3 extracts the Gate sequence paragraph');
+  assert.match(autoLoop, /^## Tiers$/m, 'the Gate sequence paragraph is anchored inside § Tiers');
+});
+
+test('remind extraction targets exist in CLAUDE.md (nuclear mode + detection 6)', () => {
+  const claudeMd = readFileSync(resolve(root, 'CLAUDE.md'), 'utf8');
+  assert.match(claudeMd, /^## Required Checks/m, 'detection 6 + --all extract the Required Checks table');
+  assert.match(claudeMd, /^## Auto-Loop$/m, '--all extracts the Auto-Loop section');
+});
+
+test('remind mappings do not reference sections removed by the auto-loop rewrite', () => {
+  const skill = readFileSync(skillPath, 'utf8');
+  const detection = readFileSync(resolve(root, 'skills/remind/references/detection-rules.md'), 'utf8');
+  for (const [label, content] of [['SKILL.md', skill], ['detection-rules.md', detection]]) {
+    assert.ok(!content.includes('The Four Anchors'), `${label} references removed section "The Four Anchors"`);
+    assert.ok(!content.includes('Auto-Trigger'), `${label} references removed section "Auto-Trigger"`);
+    assert.ok(!content.includes('## Auto-Loop Rule` section'), `${label} references removed CLAUDE section`);
+  }
 });
 
 // --- Reference file assertions ---
