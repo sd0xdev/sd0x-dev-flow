@@ -2,85 +2,18 @@
 /**
  * prune-runs.js — deterministic FIFO retention for `.claude_workflows/` run artifacts.
  *
- * The retention rule ("keep the 10 most recent runs, delete the oldest") lived only as prose in
- * SKILL.md, which made it unexecutable twice over: `/orchestrate` grants no tool that can remove
- * anything (`allowed-tools` has `Bash(node:*)` and no `Bash(rm:*)`), and a prose rule cannot be
- * regression-tested. Untended, each run leaves an ~81 KB `plan-context.json` behind — a packet
- * carrying the full skill catalog and repo signals, so the pile is both garbage and leak surface.
- *
- * A run occupies TWO paths that must be counted and removed together:
- *   <root>/<run-id>.json   run-state
- *   <root>/<run-id>/       packet + plan
- * Deleting only the `.json` is the failure this script exists to prevent, so a run counts as
- * present if EITHER path exists, and pruning removes both.
- *
- * ── Containment ────────────────────────────────────────────────────────────────────────────────
- * This deletes recursively, so the target is derived, never accepted:
- *
- *   root = realpath(`git rev-parse --show-toplevel` of --repo) + '/.claude_workflows'
- *
- * There is deliberately NO `--root` flag. An earlier revision had one, guarded only by a basename
- * check, and its own header claimed a repo-root containment the code never enforced — so
- * `--root /somewhere/else/.claude_workflows --keep 0` recursively removed run-shaped artifacts in
- * a directory belonging to no repository at all. `--repo` remains, but it selects a *repository*
- * whose own workflows directory is then derived; it cannot name the deletion target directly.
- * Pointing at another repo prunes that repo's run artifacts, which is the documented meaning of
- * the flag rather than an escape.
- *
- * Entry names are read from the directory itself, never from an argument, and must match the
- * run-id grammar exactly — `<UTC yyyymmdd-HHMMSS>-<intent-slug>`. Anything unrecognized is left
- * alone and reported: an unexpected name in the workflows directory is a reason to stop, not to
- * guess.
- *
- * ── TOCTOU ─────────────────────────────────────────────────────────────────────────────────────
- * A path-based delete is unfixable by re-checking the path: `fs.rmSync("<root>/<id>")` re-resolves
- * every component, so a concurrent rename of the root plus a symlink in its place redirects the
- * recursive delete no matter how recently the root was `stat`ed. An earlier revision did exactly
- * that — re-`stat` the root, then `rmSync` the joined path — and documented the leftover window as
- * an accepted residual. It was not narrow: the check and the syscall are two separate path walks,
- * so the attacker's window is the whole interval between them, and the recursive delete lands
- * wherever the symlink points.
- *
- * The fix is to stop resolving the path at delete time. Node exposes no `unlinkat`/`openat`, but
- * it does expose `process.chdir`, and a RELATIVE name is resolved from the kernel-held working
- * directory reference — an inode, not a string. So:
- *
- *   1. An fd is opened on the root with `O_DIRECTORY | O_NOFOLLOW` before anything else.
- *   2. `process.chdir(rootReal)` enters it. That call still resolves by path and so is still
- *      raceable — which is why the very next step compares `stat(".")` against `fstat(fd)`. A
- *      chdir that landed anywhere else aborts here, before any syscall that removes anything.
- *   3. From that point the binding is between two kernel objects with no path in the middle.
- *      Enumeration reads `"."` and every removal names a bare entry, so renaming, moving or
- *      symlinking the root has no effect on where the deletes land: they land in the directory
- *      the fd was opened on, which is the one that was validated.
- *   4. `assertCwdIsRoot` still runs before EVERY removal, because a run can own TWO artifacts
- *      (`<id>.json` and `<id>/`) and the exported `removeChild` must enforce its own precondition
- *      rather than trust a caller to have chdir'd.
- *   5. Each child is re-`lstat`ed (relative) immediately before its own removal; one that became a
- *      symlink or changed type since enumeration is skipped and reported.
- *
- * A child swapped for a symlink between step 5 and the syscall does not escape either:
- * `fs.rmSync` uses rimraf semantics — it `lstat`s each entry and `unlink`s symlinks instead of
- * descending through them — so the link is removed and its target is untouched. That holds for
- * links planted deep inside a run directory too. Both properties are pinned by tests rather than
- * assumed.
- *
- * What remains is not an escape: a concurrent process may rename an artifact out of the root
- * between enumeration and removal, in which case nothing of that run is deleted. That is reported
- * (the entry lands in `unknown`, and the run is NOT listed as pruned), never silently counted as
- * success.
- *
- * Ordering is by run-id string. That is chronological by construction — the id is prefixed with a
- * zero-padded UTC timestamp — and does not consult mtime, which a restore or a `touch` would
- * reorder. Ties (same second, same slug) cannot occur: that is the same run.
+ * A run occupies TWO paths that are counted and removed together: `<root>/<run-id>.json` and
+ * `<root>/<run-id>/` — a run is present if EITHER exists, and pruning removes both. The deletion
+ * target is always DERIVED (git toplevel of --repo + '/.claude_workflows'), never accepted as an
+ * argument, and the destructive phase is fd/cwd-bound so no path re-resolution can redirect it.
+ * Containment and TOCTOU design, and why there is deliberately no --root flag:
+ * docs/features/workflow-orchestration/4-implementation.md §1.
  *
  * Usage:
  *   node skills/orchestrate/scripts/prune-runs.js [--repo <path>] [--keep N] [--dry-run] [--json]
  *
- *   --repo <path>  Repository to prune (default: cwd). Selects the repo whose toplevel is
- *                  resolved; the deletion target is always <toplevel>/.claude_workflows and
- *                  cannot be named directly. See Containment above.
- *   --keep N       Number of most-recent runs to retain (default: 10; 0 prunes everything).
+ *   --repo <path>  Repository to prune (default: cwd); its own workflows dir is then derived.
+ *   --keep N       Most-recent runs to retain (default: 10; 0 prunes everything).
  *   --dry-run      Print what would be removed and exit without deleting.
  *   --json         Machine-readable output.
  *
@@ -280,53 +213,17 @@ function emptyPinnedDir(pinnedFd, what) {
 }
 
 /**
- * Remove one entry of the pinned directory, descending into it if it is a directory.
- *
- * WHY NOT `rmSync(name, { recursive: true })`.
- * Pinning the root proves the PARENT, not the identity of each entry resolved beneath it. A
- * recursive delete re-resolves the name and then walks whatever it finds, so a run directory can
- * be renamed away after the type check and an unrelated directory moved in under the same run id —
- * and the recursion erases the substitute. Rejecting symlinks does not help, because the
- * substitute is a real directory, exactly what the walk expects.
- *
- * `expect` is the identity observed at enumeration and it is the load-bearing half: opening the
- * child `O_NOFOLLOW` and proving the `chdir` against that descriptor binds open→chdir, but if the
- * swap landed BEFORE the open, every one of those checks is self-consistent on the substitute.
- *
- * Coming back up has no portable primitive (Node exposes no `fchdir`), so `..` is just another
- * name. That cannot be prevented, but the parent's descriptor is still open, so a `..` that lands
- * somewhere else is DETECTED before anything further is removed.
- *
- * Non-directory entries go through `unlinkVerified`, which isolates under an unguessable name
- * before removing; see there.
- *
- * The closing `rmdir` is non-recursive — the only UNBOUND path-resolved destructive step, and
- * non-destructive by construction because `rmdir` refuses anything non-empty.
- */
-/**
- * Unlink a NON-DIRECTORY entry in the current directory, binding the removal to an identity.
- *
- * Both regular-file deletes in this file re-resolved the name at the destructive step:
- * `removePinnedChild` verified the inode and then unlinked by name, and `removeChild` verified only
- * the SHAPE (`isFile`) with no inode binding at all — weaker than its own sibling branch three
- * lines above, which passes `{dev, ino, dir: true}` down to the pinned walk.
- *
- * The ordering is the point. `lstat -> compare -> unlink` destroys the wrong file if a swap lands
- * in the second window; `rename -> lstat -> compare -> unlink` relocates it and reports instead.
- * Relocation is recoverable, deletion is not. The quarantine name is random so it cannot be aimed
- * at — unpredictability, not atomicity, is the property being relied on, since Node exposes no
- * unlink-by-descriptor. This is not a privilege boundary: renaming a file in requires write
- * permission on that file's own parent, which already allows unlinking it directly. See the fuller
- * argument on `unlinkVerified` in scripts/skills/necessity-audit/cleanup.js.
+ * Unlink a NON-DIRECTORY entry in the current directory, binding the removal to an identity:
+ * `rename → lstat → compare → unlink` relocates a raced substitute instead of destroying it.
+ * Why the pinned walk carries `expect` instead of using `rmSync` per child, and why deletes
+ * quarantine-rename first: docs/features/workflow-orchestration/4-implementation.md §1.1.
  *
  * Returns removeChild's three-state vocabulary:
- *   'removed'  the name was detached by this call
- *   'absent'   it had already vanished — NOT a failure, and must not inflate the pruned count
- *   'skipped'  substituted, or uninspectable/unremovable; a substitute is RETAINED under its
- *              quarantine name rather than destroyed, so a stray `.quarantine-*` in the run root
- *              is the deliberate evidence trail of a refused delete, not debris to clean blindly.
- * A post-rename ENOENT is 'removed', not 'absent': the rename already detached the original name,
- * so this call did prune the artifact regardless of who cleared the quarantine afterwards.
+ *   'removed'  the name was detached by this call (incl. post-rename ENOENT — the rename already
+ *              detached the original name)
+ *   'absent'   it had already vanished — NOT a failure, must not inflate the pruned count
+ *   'skipped'  substituted, or uninspectable/unremovable; the substitute is RETAINED under its
+ *              `.quarantine-*` name as the evidence trail of a refused delete
  */
 function unlinkVerified(name, expect) {
   const quarantine = `.quarantine-${crypto.randomBytes(12).toString('hex')}`;

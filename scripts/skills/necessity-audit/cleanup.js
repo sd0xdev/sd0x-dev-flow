@@ -4,40 +4,17 @@
 /**
  * cleanup.js — guarded removal of the necessity-audit scratch directory.
  *
- * WHY THIS EXISTS AS A SCRIPT.
- * The cleanup step used to be a bare `rm -rf -- "<AUDIT_TMP_DIR>"` in SKILL.md, with the safety
- * condition ("re-read the path; it must be the exact absolute path `mktemp -d` printed") written as
- * PROSE addressed to the model. Prose is not a control: nothing executes it, so the one run where
- * the placeholder is mis-substituted is also the run where nothing checks. And the failure is not
- * recoverable — on macOS `TMPDIR` is an ambient variable already pointing at the SHARED temp root
- * (`/var/folders/…/T/`), so the natural mistake substitutes a path one level too high and deletes
- * every other process's scratch space.
- *
- * `allowed-tools` in that skill already carries `Bash(node:*)`, so moving the delete here makes the
- * guard actually run without widening the skill's permissions or adding a prompt.
- *
- * WHY A CLAIM MARKER AND NOT JUST A SHAPE CHECK.
- * Shape alone ("an absolute `tmp.XXXXXXXXXX` under a temp root") is satisfied by EVERY concurrent
- * process's scratch directory, so a mis-substitution that names a *different* valid scratch dir
- * still passes and still deletes someone else's work. The delete is therefore bound to a marker
- * this skill writes at creation time: `--claim` stamps the directory, `--dir` refuses to remove one
- * that was never stamped.
- *
- * WHY THE MARKER CARRIES A CAPABILITY TOKEN AND NOT JUST A NAME.
- * A marker whose mere PRESENCE authorizes deletion only distinguishes "claimed by this skill" from
- * "not claimed by this skill" — and every concurrent necessity-audit run claims its own directory.
- * So the case the marker was introduced for (a substituted path naming a directory that is not this
- * run's) is still wide open the moment two audits overlap, which is precisely when a stray delete
- * costs someone their work. `--claim` therefore mints an unguessable token, stores it in the
- * marker, and prints it; `--dir` requires the caller to present that exact token. Presence proves
- * membership; the token proves identity, and identity is what the skill actually promises.
+ * The delete is bound to a claim marker + capability token: `--claim` stamps a fresh `mktemp -d`
+ * dir and prints an unguessable token; `--dir` refuses any directory that was never stamped or
+ * whose token does not match. Why prose was not a control, and why shape checks and
+ * presence-only markers were insufficient: docs/features/necessity-audit/4-implementation.md §1.
  *
  * CLI:
- *   node cleanup.js --claim <absolute path>              # stamp a fresh `mktemp -d` dir; prints token=<hex>
+ *   node cleanup.js --claim <absolute path>              # stamp; prints token=<hex>
  *   node cleanup.js --dir <absolute path> --token <hex>  # remove the dir that minted <hex>
  *
  * Exit codes:
- *   0 = claimed, or removed (removal is idempotent — a re-run after a partial failure is safe)
+ *   0 = claimed, or removed (idempotent — a re-run after a partial failure is safe)
  *   1 = refused: not a `mktemp -d` scratch directory, not claimed, or the token does not match
  *   2 = usage error
  */
@@ -334,38 +311,11 @@ function runVerifiedPhase({ mode, resolved, dirFd, token }) {
 
 /**
  * Remove the directory `dirFd` refers to, without ever routing the destructive part through a
- * re-resolvable pathname.
- *
- * WHY NOT JUST `rmSync(resolved, {recursive: true})` AFTER AN IDENTITY CHECK.
- * That was the previous shape, and the identity check did not bind the delete. Every earlier check
- * — temp-root containment, not-a-symlink, marker present, token matches — ran against a PATH, and
- * `rmSync` resolves that path AGAIN. A check placed immediately before it narrows the window; it
- * does not close it, because check-then-act on a name is still check-then-act. In the surviving
- * window another process renames the authorized directory away, drops a different real directory
- * at the same name, and the recursive delete lands on the substitute. The old comment claimed the
- * residual failure mode was "abort"; nothing after the swap performed a check, so it was "delete
- * the attacker's directory".
- *
- * WHAT THIS DOES INSTEAD.
- * `process.chdir()` into the directory and verify the resulting cwd against the held fd. From that
- * point the cwd is a kernel-held INODE reference: a relative name is resolved from it, and no
- * rename or symlink swap anywhere above can redirect that resolution — there is no path left in
- * the middle to attack. Every entry is then removed by relative name, so the whole recursive,
- * destructive phase happens inside the inode the token authorizes.
- *
- * That leaves exactly one path-resolved operation, and it is deliberately the non-destructive one:
- * `rmdirSync` on the now-empty directory. `rmdir` refuses a non-empty directory, so a substitute
- * swapped in at the last instant fails with ENOTEMPTY rather than being erased. The only surviving
- * outcome of a perfectly-timed swap is the removal of an EMPTY directory — which destroys nothing.
- * This is a real reduction in what the residual can cost, not a smaller window on the same loss.
- *
- * WHY THIS IS SPLIT IN TWO.
- * The one window left open is the instant between "the authorized inode is empty" and "rmdir the
- * name". Both halves are synchronous, so nothing inside this process can interleave there — which
- * also means a test cannot reach that instant through `removeVerified` alone. Exporting the two
- * halves lets a test act exactly where an attacker would, using the real production code on both
- * sides of the seam and no test-only branch inside it. `removeVerified` is their composition, and
- * is itself covered, so the split cannot drift from what the CLI runs.
+ * re-resolvable pathname: chdir into it, verify the resulting cwd against the held fd, then
+ * remove every entry by RELATIVE name. The only path-resolved operation left is the
+ * non-destructive final `rmdirSync`, which fails ENOTEMPTY on a last-instant substitute. Why
+ * check-then-act on a path could not be fixed by more checks, and why the removal is exported
+ * as two composable halves: docs/features/necessity-audit/4-implementation.md §2.
  *
  * @param {string} resolved absolute path, already validated
  * @param {number} dirFd open O_DIRECTORY|O_NOFOLLOW descriptor on that directory

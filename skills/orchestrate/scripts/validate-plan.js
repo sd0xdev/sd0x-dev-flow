@@ -2,54 +2,26 @@
 /**
  * validate-plan.js — v1 admission controller for /orchestrate plans.
  *
- * Lints a planner-produced plan JSON against the plan-context output. All
- * rules are fail-closed: any violation → exit 1 with {ok:false, violations[]}
- * listing every broken rule (not just the first). Pass → exit 0 {ok:true}.
+ * Lints a planner-produced plan JSON against the plan-context output. All rules are fail-closed:
+ * any violation → exit 1 with {ok:false, violations[]} listing every broken rule. Pass → exit 0.
  *
  * Rules (tech-spec §3.3 T2):
- *   A1  kind:fanout target must be in admission.allowlist (deny-by-default)
- *   A2  kind:fanout with mutating:true → reject (contradictory declaration)
- *   A3  any mutating:true step must have kind:proposed-manual (v1 report-only)
- *   A4  kind:main-skill target must exist in plan-context skill_candidates
- *       (anti-hallucination — planner may only pick real skills). v1 is
- *       report-only: a MUTATING construct is emitted as kind:proposed-manual (A3),
- *       while a non-mutating kind:main-skill step stays main-skill and is validated
- *       here (A4) but is simply NOT dispatched by the v1 executor — so no main-skill
- *       named here actually runs regardless.
- *       SECURITY BOUNDARY: the planner-supplied `mutating` flag is NOT trusted
- *       as the guard here — a lying `mutating:false` on an actually-mutating
- *       target (e.g. /bug-fix) would pass A3+A4. The report-only guarantee does
- *       NOT rest on capability-blocking the Skill tool: `disallowed-tools: Skill`
- *       is deliberately AVOIDED because it stays active until the next user
- *       message (per Claude Code) and would therefore also block the mandatory
- *       same-turn `/codex-review-doc` handoff, which itself runs via the Skill
- *       tool — the run could never reach its Mergeable/`done` gate. (Omitting
- *       Skill from `allowed-tools`, which we do, is only a pre-approval signal,
- *       not a hard block; that is acceptable because the real backstop is below.)
- *       The primary backstop is run-verify.js's SC-2 pre/post no-change proof:
- *       the baseline is snapshotted BEFORE any dispatch and re-compared after, so
- *       any mutation WITHIN THE MONITORED git-scoped surface (porcelain + tracked/
- *       untracked/ignored content + refs/config/hooks/info-exclude/worktree/stash)
- *       — including one an errant main-skill dispatch somehow caused — surfaces as
- *       fail-closed drift → run marked failed, no report written. This is BEST-EFFORT
- *       fail-closed, NOT an absolute guarantee: out-of-repo writes, node_modules/,
- *       .venv/, build artifacts, and index-hiding (assume-unchanged/skip-worktree)
- *       are documented residuals (see SKILL.md report-only section + admission-
- *       allowlist.json residual_risk); v1 report-only strength rests on admission
- *       curation. When main-skill EXECUTION lands (v2), enabling it REQUIRES
- *       skill_candidates carrying a mutation flag so a mutating main-skill target
- *       is rejected here first, plus a reviewed read-only allowlist.
- *   G1  mutating steps present → required_gates must cover them
- *       (mutation_class "doc" → doc-review; anything else, including the
- *       conservative default "code", → code-review + precommit)
+ *   A1  fanout target must be in admission.allowlist (deny-by-default)
+ *   A2  fanout with mutating:true → reject (contradictory declaration)
+ *   A3  any mutating:true step must be kind:proposed-manual (v1 report-only)
+ *   A4  main-skill target must exist in plan-context skill_candidates (anti-hallucination;
+ *       v1 dispatches no main-skill step regardless)
+ *   G1  mutating steps → required_gates must cover them (mutation_class "doc" → doc-review;
+ *       anything else, incl. the conservative default "code" → code-review + precommit)
  *   G2  required_gates must include doc-review (v1's report Write is always a doc mutation)
- *   O1  every step must have a non-empty why (observability, Signal 6)
- *   B1  steps.length ≤ max_plan_steps; per parallel_group size ≤ max_workers;
- *       converge.max_rounds ≤ max_waves (non-numeric max_rounds → reject)
+ *   O1  every step needs a non-empty why (observability, Signal 6)
+ *   B1  steps ≤ max_plan_steps; group size ≤ max_workers; converge.max_rounds ≤ max_waves
  *   S1  serialized plan must not contain hook-parsed sentinel strings
- *   SCHEMA  structural integrity: intent/done_definition non-empty, steps is
- *       an array, known kind, step ids present and unique, depends_on is an
- *       array whose references resolve to existing ids and form a DAG (no cycle)
+ *   SCHEMA  intent/done_definition non-empty, ids unique, known kinds, depends_on resolves + DAG
+ *
+ * The planner-supplied `mutating` flag is NOT the security boundary — why, and what actually
+ * backstops report-only (run-verify SC-2 drift proof, admission curation, the deliberate
+ * avoidance of `disallowed-tools: Skill`): docs/features/workflow-orchestration/4-implementation.md §2.
  *
  * Usage:
  *   node skills/orchestrate/scripts/validate-plan.js --plan <path|-> --context <path|->

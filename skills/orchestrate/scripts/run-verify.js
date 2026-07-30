@@ -2,40 +2,18 @@
 /**
  * run-verify.js — pre/post no-change verification for /orchestrate (SC-2 hard backstop).
  *
- * snapshot:  emit a baseline JSON of git-scoped state on stdout, and its sha256 on stderr.
- * compare:   re-snapshot and diff against --baseline; exit 0 if identical
- *            ("no new drift" — a dirty baseline is supported; only *changes*
- *            relative to the baseline count), exit 1 with drift fields otherwise.
- *            REQUIRES --baseline-sha256: without it, "compare against the baseline"
- *            degrades to "compare against whatever file I was handed", which a
- *            post-mutation re-snapshot satisfies trivially. See the note at the flag.
+ * snapshot: emit a baseline JSON of git-scoped state on stdout, its sha256 on stderr.
+ * compare:  re-snapshot and diff against --baseline; exit 0 = no NEW drift (a dirty baseline is
+ *           supported; only changes relative to it count), exit 1 with drift fields otherwise.
+ *           REQUIRES --baseline-sha256 — without it the comparison degrades to "whatever file I
+ *           was handed", which a post-mutation re-snapshot satisfies trivially.
  *
- * Checks (each catches a bypass class porcelain alone misses):
- *   head                 — sneaky commit (worktree stays clean)
- *   branch               — git checkout -b
- *   porcelain_sha256     — file edits / new untracked (-uall, mirrors stop-guard lesson)
- *   tracked_diff_sha256  — content edits to already-dirty tracked files
- *                          (porcelain records status+path, not content)
- *   untracked_content_sha256 — content edits to pre-existing untracked files
- *                          (same porcelain blind spot, untracked side)
- *   ignored_content_sha256 — content edits to GITIGNORED files (e.g. .env, a
- *                          generated artifact) — invisible to BOTH porcelain and
- *                          ls-files --exclude-standard. Excludes the harness/control/
- *                          safety planes + node_modules/ (see IGNORED_EXCLUDE_PREFIXES).
- *   ignored_dirs_sha256  — existence + mode of ignored DIRECTORY nodes (ls-files
- *                          --directory), catching create/delete/chmod of an EMPTY
- *                          ignored dir that carries no leaf file (invisible to
- *                          porcelain AND ignored_content). See hashIgnoredDirNodes.
- *   refs_sha256          — tag/branch/ref creation or movement (for-each-ref)
- *   local_config_sha256  — local git config tampering (incl. core.hooksPath)
- *   worktrees            — sneaky worktree creation
- *   stash_count          — git stash hiding changes (stash ref also under refs hash)
- *   git_internals_sha256 — .git/hooks/* (planted-hook persistence) and
- *                          .git/info/exclude (hides a matching untracked write
- *                          from porcelain AND ls-files) — both invisible to
- *                          every working-tree check above
+ * Checks: head · branch · porcelain_sha256 · tracked_diff_sha256 · untracked_content_sha256 ·
+ * ignored_content_sha256 · ignored_dirs_sha256 · refs_sha256 · local_config_sha256 · worktrees ·
+ * stash_count · git_internals_sha256 — each closes a bypass class porcelain alone misses.
+ * Per-check rationale: docs/features/workflow-orchestration/4-implementation.md §3.
  *
- * Any git failure → exit 1 (fail-closed; an unverifiable repo is a drift).
+ * Any git failure → exit 1 (fail-closed; an unverifiable repo IS drift).
  *
  * Usage:
  *   node skills/orchestrate/scripts/run-verify.js snapshot [--repo <path>]
@@ -450,39 +428,13 @@ function hashObjects(repo, paths) {
   return hashes;
 }
 
-// Build NUL-delimited "<path>\u0000<hash>" content lines for a set of ls-files paths.
-// `git hash-object` FOLLOWS symlinks and dies on a symlink-to-directory — and this repo
-// (and any installed plugin) ships exactly those: `.claude/agents -> ../agents`, etc.,
-// which land in the ignored listing. Passing one straight to hash-object aborts the whole
-// snapshot → fail-closed on a benign repo. So classify each path by lstat:
-//   symlink        → hash the LINK TARGET string (also catches an ignored symlink being
-//                    repointed, which following-then-hashing-content would miss).
-//   regular file   → batched git hash-object (fast path). RESIDUAL (classify→read follow):
-//                    git hash-object FOLLOWS symlinks and has no --no-follow, so unlike the
-//                    directory branch's sha256File and the gitInternalsDigest hashRegularNodeNoFollow
-//                    (both object-identity O_NOFOLLOW+isFile reads), a raced lstat(isFile)→hash swap
-//                    to a symlink-to-FILE here would hash the TARGET, not the original node. Left as a
-//                    DOCUMENTED residual, not fixed: (a) it needs an adversary mutating DURING a single
-//                    snapshot()/compare() call, but the verifier runs only when no fanout worker is live
-//                    (SKILL.md ordering) — the same out-of-model lingering-adversary class as the other
-//                    TOCTOU residuals; (b) a symlink-to-DIRECTORY still fail-closes (hash-object aborts);
-//                    (c) closing it means re-implementing git's object hashing, forfeiting the object-model
-//                    consistency the SHA-1 note above relies on; (d) any post-snapshot swap still drifts on
-//                    the next non-raced snapshot. Tracked in references/admission-allowlist.json residual_risk.
-//   directory      → recursive content digest (an embedded repo is listed as a lone
-//                    `nested/` entry; a static type marker can't see internal mutations
-//                    → fail-OPEN, so digest every descendant's path + content instead).
-//   special        → a type marker (drifts on a type swap, never crashes).
-//   unresolvable   → FAIL-CLOSED (throw). ls-files JUST emitted this path, so an lstat failure
-//                    is an anomaly with two causes, both of which a constant marker mishandled:
-//                    (1) NON-UTF-8 filename — git() decodes ls-files -z as 'utf8', mapping invalid
-//                    bytes to U+FFFD; the mangled path then lstat-fails. The old constant `GONE`
-//                    marker recorded IDENTICALLY at snapshot AND compare, so mutating that file's
-//                    content drifted in NEITHER porcelain (it re-quotes the path unchanged) NOR
-//                    this digest → compare wrongly returned {ok:true} (a fail-OPEN hole).
-//                    (2) genuine TOCTOU vanish mid-snapshot. Throwing routes to snapshot()'s
-//                    fail-closed catch (an unverifiable path IS drift), matching every other
-//                    unreadable case here, and still drifts on the vanish (fail-closed == drift).
+// Build NUL-delimited "<path>NUL<hash>" content lines for a set of ls-files paths.
+// `git hash-object` FOLLOWS symlinks and dies on a symlink-to-directory (which this repo ships),
+// so each path is classified by lstat first: symlink → hash the link-target string; regular file
+// → batched hash-object (carries a documented raced-swap residual); directory → recursive content
+// digest; special → type marker; unresolvable → THROW (fail-closed — a constant marker was a
+// proven fail-OPEN for non-UTF-8 filenames). Classification rationale and the residual:
+// docs/features/workflow-orchestration/4-implementation.md §3.1.
 // Positions are preserved so the caller's pre-sorted order is stable across snapshots.
 function hashPathsContent(repo, paths) {
   const entries = new Array(paths.length);
