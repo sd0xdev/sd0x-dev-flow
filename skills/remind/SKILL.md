@@ -75,9 +75,9 @@ For each detected issue, **Read the mapped rule file** and extract the key secti
 
 | # | Detection | Condition | Rule to Load | Section to Extract |
 |---|-----------|-----------|-------------|-------------------|
-| 1 | Code changed, no review | `HAS_CODE=true` + `CODE_REVIEW=false` | `rules/auto-loop.md` | "The Four Anchors" + "Auto-Trigger" table |
-| 2 | Doc changed, no review | `HAS_DOC=true` + `DOC_REVIEW=false` | `rules/auto-loop.md` | ".md" row in Auto-Trigger table |
-| 3 | Review passed, no precommit | `CODE_REVIEW=true` + `PRECOMMIT=false` | `rules/auto-loop.md` | "precommit Pass" row |
+| 1 | Code changed, no review | `HAS_CODE=true` + `CODE_REVIEW=false` | `rules/auto-loop.md` | "Terminal completion invariant" opening paragraph (incl. corollaries) |
+| 2 | Doc changed, no review | `HAS_DOC=true` + `DOC_REVIEW=false` | `rules/auto-loop.md` | Terminal completion invariant paragraph — the `.md` gate is `/codex-review-doc` |
+| 3 | Review passed, no precommit | `CODE_REVIEW=true` + `PRECOMMIT=false` | `rules/auto-loop.md` | "Gate sequence" paragraph in § Tiers |
 | 4 | State drift | State says changes but git clean | — | Suggest reset state file |
 | 5 | On main branch | `BRANCH=main\|master` | `rules/git-workflow.md` | Branch naming + protected branches |
 | 6 | Dirty worktree, no state | Git dirty + no state file | `CLAUDE.md` | "Required Checks" table |
@@ -97,9 +97,11 @@ For each finding, quote the relevant rule text inline so the model re-ingests th
 
 ### Rule Context (auto-loaded)
 
-> **auto-loop.md — The Four Anchors**:
-> - ❌ Declaring ≠ Executing: Saying "need to run X" without actually invoking the tool
-> - ❌ Summary ≠ Completion: Outputting a summary then stopping
+> **auto-loop.md — Terminal completion invariant**: work on a change may be declared complete
+> only when every gate its change class requires has passed after the last edit in that
+> gate's change class.
+> - ❌ Declaring ≠ Executing: naming a gate is not running it
+> - ❌ Summary ≠ Completion: a report does not close an open gate
 >
 > **Required action**: Execute `/codex-review-fast` in this reply, do not stop.
 
@@ -123,7 +125,7 @@ When user provides a rule name:
 
 When the model keeps drifting despite specific reminders:
 
-1. **Read `CLAUDE.md`**: Extract `## Required Checks` table + `## Workflow` section + `## Auto-Loop Rule` section
+1. **Read `CLAUDE.md`**: Extract `## Required Checks` table + `## Auto-Loop` section
 2. **Read all rules**: `Glob("rules/*.md")` → Read each file
 3. **For each rule**: Extract prohibited behaviors / core principles
 4. **Cross-reference**: State file + git status against all rules
@@ -170,10 +172,10 @@ The whole point of `/remind` is that the model's memory of rules has drifted. Th
 
 ```
 Input: /remind
-Output: Smart detection finds code changed without review → loads auto-loop.md → quotes The Four Anchors → outputs `/codex-review-fast`
+Output: Smart detection finds code changed without review → loads auto-loop.md → quotes the terminal completion invariant → outputs `/codex-review-fast`
 
 Input: /remind auto-loop
-Output: Reads rules/auto-loop.md → summarizes the four anchors + auto-trigger table → checks state file → reports current compliance
+Output: Reads rules/auto-loop.md → summarizes the terminal completion invariant + gate sequence → checks state file → reports current compliance
 
 Input: /remind --all
 Output: Reads CLAUDE.md + all rules/*.md → produces full compliance matrix → flags all violations with correction commands

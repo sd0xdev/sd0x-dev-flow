@@ -19,7 +19,7 @@
 
 | Pattern | Location | Patch Strategy |
 |---------|----------|---------------|
-| Skill table row | `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.template.md` | Remove entire row |
+| Skill catalog entry | `docs/skill-catalog.yml` | Remove the `- command: /<name>` entry (CLAUDE files carry no command table since R3) |
 | README skill row | `README.md` + 5 locale variants | Remove row + decrement count in summary line |
 | Prose mention | `rules/*.md`, `skills/*/SKILL.md` | Remove or reword the mention |
 | "When NOT to Use" | Other `skills/*/SKILL.md` | Remove the line referencing the target |
@@ -32,7 +32,7 @@
 | Check | Command | Classification |
 |-------|---------|---------------|
 | Agent preload | `grep -rn "^skills:.*<name>" agents/ --include="*.md"` | BLOCKER |
-| CLAUDE.md table | `grep -n "/<name>" CLAUDE.md .claude/CLAUDE.md CLAUDE.template.md` | PATCHABLE |
+| Skill catalog + CLAUDE prose | `grep -n "/<name>" docs/skill-catalog.yml CLAUDE.md .claude/CLAUDE.md CLAUDE.template.md` | PATCHABLE |
 | README tables | `grep -n "/<name>" README*.md` | PATCHABLE |
 | Other skill refs | `grep -rn "/<name>\|<name>" skills/ --include="*.md"` | PATCHABLE |
 | Rule mentions | `grep -rn "/<name>" rules/ --include="*.md"` | PATCHABLE |
@@ -84,7 +84,7 @@
 
 | Asset Type | Verification Commands |
 |------------|----------------------|
-| skill | `grep -rn "skills:.*<name>" agents/` + `grep -rn "/<name>" CLAUDE.md .claude/CLAUDE.md CLAUDE.template.md README*.md skills/ --include="*.md"` |
+| skill | `grep -rn "skills:.*<name>" agents/` + `grep -rn "/<name>" CLAUDE.md .claude/CLAUDE.md CLAUDE.template.md README*.md skills/ --include="*.md"` + `grep -n "command: /<name>" docs/skill-catalog.yml`（canonical 註冊面，須為空） |
 | agent | `grep -rn "<name>" skills/ --include="*.md"` + check `.claude/agents/` |
 | rule | `grep -rn "@rules/<name>" . --include="*.md"` |
 | script | `grep -rn "scripts/<name>" . --include="*.md"` + `grep -n "<name>" hooks/hooks.json` |

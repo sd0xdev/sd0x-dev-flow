@@ -89,7 +89,7 @@ Apply 2-tier classification per `references/removal-policy.md`:
 Execution order (patches first, deletes last):
 
 1. **Patch** PATCHABLE references:
-   - Remove table rows from CLAUDE.md, `.claude/CLAUDE.md`, CLAUDE.template.md
+   - Remove the skill's entry from `docs/skill-catalog.yml` (tracked CLAUDE files carry no command table since R3; still grep them for prose mentions)
    - Remove/update entries in README.md + locale variants (count + detail row)
    - Update prose mentions in other skills/rules
 2. **Delete** target files:
@@ -109,6 +109,7 @@ Run type-specific verification from `references/removal-policy.md`:
 # Verify no residual references (excluding archived docs)
 grep -rn "^skills:.*<name>" agents/ --include="*.md"
 grep -rn "/<name>" CLAUDE.md .claude/CLAUDE.md CLAUDE.template.md README*.md skills/ --include="*.md" | grep -v "archived/"
+grep -n "command: /<name>" docs/skill-catalog.yml   # canonical registration surface — must be empty
 ```
 
 If residual references found, report them. If clean, output `Verification passed`.

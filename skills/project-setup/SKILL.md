@@ -45,7 +45,7 @@ Phase 4: Verify CLAUDE.md
 Phase 5: Install Rules + Backfill CLAUDE.md (unless --no-rules or --lite)
     │
     ├─ Locate plugin rules dir (3-level fallback)
-    ├─ mkdir -p .claude/rules/ → copy 11 managed rules + 1 override template
+    ├─ mkdir -p .claude/rules/ → copy 13 managed rules + 2 override templates
     ├─ Backfill: ensure .claude/CLAUDE.md has @rules/ references
     └─ Output rules install report
     │
@@ -176,12 +176,13 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
 ### 5.2 Copy Rules
 
 1. `mkdir -p ${REPO_ROOT}/.claude/rules/`
-2. Copy all 11 managed rules:
+2. Copy all 13 managed rules:
 
    | Rule | Purpose |
    |------|---------|
    | `auto-loop.md` | Auto review loop enforcement |
    | `codex-invocation.md` | Codex independent research requirement |
+   | `discretion.md` | Instruction tiers: Anchor / Default / Guidance |
    | `fix-all-issues.md` | Zero tolerance for unfixed issues |
    | `framework.md` | Framework conventions |
    | `testing.md` | Test structure and requirements |
@@ -191,9 +192,10 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
    | `docs-writing.md` | Documentation writing conventions |
    | `docs-numbering.md` | Document numbering scheme |
    | `self-improvement.md` | Self-improvement loop |
+   | `context-management.md` | Data-driven context monitoring |
 
 3. Create override template (unmanaged, not manifest-tracked):
-   - `auto-loop-project.md` — user-owned override template (see Phase 3.6 in `/install-rules`)
+   - `auto-loop-project.md` · `testing-project.md` — user-owned override templates (see Phase 3.6 in `/install-rules`)
 
 4. Conflict strategy:
 
@@ -222,7 +224,7 @@ Ensure `.claude/CLAUDE.md` contains `@rules/` references so the auto-loop engine
 2. **Found** → check if `@rules/auto-loop-project.md` also present:
    - **Both present** → skip (fully configured)
    - **`auto-loop.md` present, `auto-loop-project.md` missing** → insert `- @rules/auto-loop-project.md -- Project-specific auto-loop overrides (user-owned)` after `auto-loop.md` line
-3. **Not found but file exists** → append `## Rules` block at end of file (12 `@rules/` references (11 managed + 1 override template) from `CLAUDE.template.md` `## Rules` section)
+3. **Not found but file exists** → append `## Rules` block at end of file (15 `@rules/` references (13 managed + 2 override templates) from `CLAUDE.template.md` `## Rules` section)
 4. **File does not exist** (edge case: Phase 3 was skipped) → extract from `CLAUDE.template.md`: `## Required Checks` through `### Auto-Loop Rule` sections + `## Rules` section → create minimal `.claude/CLAUDE.md`
 
 When extracting from template, remove ecosystem block markers and leave unresolved placeholders as `{PLACEHOLDER}`.
@@ -516,7 +518,7 @@ Summarize all phases and perform closed-loop check:
 |-------|--------|
 | Detection | ✅ Framework: X, PM: Y, DB: Z |
 | CLAUDE.md | ✅ Configured (0 remaining placeholders) |
-| Rules | ✅ 11/11 managed rules + 1 override template |
+| Rules | ✅ 13/13 managed rules + 2 override templates |
 | Hooks | ✅ 5/5 installed + settings merged |
 | Scripts | ✅ 3/3 runner scripts installed |
 | Env Config | ✅ STOP_GUARD_MODE=strict, AUTO_COMPACT_WINDOW=320000 (1M) |
@@ -540,7 +542,7 @@ Summarize all phases and perform closed-loop check:
 - [ ] All 9 auto-detected placeholders detected or marked N/A
 - [ ] User confirmed detection results before writing
 - [ ] No remaining auto-detected `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup (manual placeholders like `{TICKET_PATTERN}` are acceptable)
-- [ ] `.claude/rules/` contains 12 `.md` files (11 managed + 1 override template) (unless `--no-rules` or `--lite`)
+- [ ] `.claude/rules/` contains 15 `.md` files (13 managed + 2 override templates) (unless `--no-rules` or `--lite`)
 - [ ] `.claude/hooks/` contains 5 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, and `lib/utils.js` (unless `--lite` or `--detect-only`)

@@ -55,7 +55,7 @@
 
 ### Integration Checklist
 - [ ] Review each SKILL.md for accuracy
-- [ ] Add entries to CLAUDE.md command table
+- [ ] Register each skill in `docs/skill-catalog.yml` (the sole registration surface — no CLAUDE.md table)
 - [ ] Run `/skill-health-check` for full validation
 - [ ] Write tests in `test/skills/{skill}.test.js`
 - [ ] Test invocation: `/{skill-name} <test-input>`
