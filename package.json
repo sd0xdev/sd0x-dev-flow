@@ -1,6 +1,6 @@
 {
   "name": "sd0x-dev-flow",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "Harness engineering for Claude Code — hook-enforced review gates, state-machine gates, and fail-closed safety where it counts.",
   "license": "MIT",
   "scripts": {
@@ -8,8 +8,8 @@
     "test:unit": "node --test test/scripts/lib/*.test.js test/scripts/lib/fc-parsers/*.test.js",
     "test:integration": "node --test test/scripts/*.test.js",
     "test:hooks": "node --test test/hooks/*.test.js",
-    "test:schema": "node --test test/skills/*.test.js test/skills/*/*.test.js",
-    "test:fast": "node --test test/scripts/lib/*.test.js test/scripts/lib/fc-parsers/*.test.js test/skills/*.test.js test/skills/*/*.test.js",
+    "test:schema": "node --test test/rules/*.test.js test/skills/*.test.js test/skills/*/*.test.js",
+    "test:fast": "node --test test/scripts/lib/*.test.js test/scripts/lib/fc-parsers/*.test.js test/rules/*.test.js test/skills/*.test.js test/skills/*/*.test.js",
     "test:ci": "node --test $(find test -name '*.test.js')",
     "lint:md": "npx markdownlint-cli2 \"**/*.md\"",
     "lint:fix": "npx markdownlint-cli2 --fix \"**/*.md\""
