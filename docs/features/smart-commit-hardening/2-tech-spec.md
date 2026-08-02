@@ -14,7 +14,7 @@
 | Module | 可復用部分 |
 | ------ | ---------- |
 | `skills/smart-commit/SKILL.md` | 現有 Step 1–6 workflow、AI trailer sanitization regex（行 147–157） |
-| `scripts/commit-msg-guard.sh` | Forbidden pattern regex（BRE 格式）、`ALLOW_AI_COAUTHOR` bypass |
+| `scripts/commit-msg-guard.sh` | Forbidden pattern regex（**ERE**，`grep -Ei`；早期版本誤記為 BRE）、`ALLOW_AI_COAUTHOR` **narrow opt-in**（移除白名單那一行後其餘樣式照常套用，不是 bypass） |
 | `commands/smart-commit.md` | Context block（status/log/branch） |
 | `rules/git-workflow.md` | Claude git 操作權限定義 |
 | `CLAUDE.md:115` | Author attribution 政策、forbidden patterns |
@@ -91,9 +91,13 @@ sequenceDiagram
 **指令**:
 
 ```bash
-# 讀取有效 identity + 來源
-git config --show-origin --show-scope --get-all user.name
-git config --show-origin --show-scope --get-all user.email
+# 讀取有效 identity + 來源。前綴與 -C 的契約見
+# skills/smart-commit/references/git-environment.md § 1——診斷與 commit 必須指向同一個 repository
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
+REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
+$GIT_ENV git -C "$REPO_ROOT" config --show-origin --show-scope --get-all user.name
+$GIT_ENV git -C "$REPO_ROOT" config --show-origin --show-scope --get-all user.email
 # 檢查環境變數覆寫
 printf "GIT_AUTHOR_NAME=%s\nGIT_AUTHOR_EMAIL=%s\nGIT_COMMITTER_NAME=%s\nGIT_COMMITTER_EMAIL=%s\n" \
   "${GIT_AUTHOR_NAME:-}" "${GIT_AUTHOR_EMAIL:-}" \
@@ -122,9 +126,12 @@ printf "GIT_AUTHOR_NAME=%s\nGIT_AUTHOR_EMAIL=%s\nGIT_COMMITTER_NAME=%s\nGIT_COMM
 **指令**:
 
 ```bash
-git config --show-origin --get commit.gpgsign 2>/dev/null || echo "unset"
-git config --show-origin --get user.signingkey 2>/dev/null || echo "unset"
-git config --show-origin --get gpg.format 2>/dev/null || echo "gpg"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
+REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
+$GIT_ENV git -C "$REPO_ROOT" config --show-origin --get commit.gpgsign 2>/dev/null || echo "unset"
+$GIT_ENV git -C "$REPO_ROOT" config --show-origin --get user.signingkey 2>/dev/null || echo "unset"
+$GIT_ENV git -C "$REPO_ROOT" config --show-origin --get gpg.format 2>/dev/null || echo "gpg"
 ```
 
 **決策邏輯**:
@@ -149,7 +156,10 @@ git config --show-origin --get gpg.format 2>/dev/null || echo "gpg"
 **Post-commit 可見性**（`--execute` 模式）:
 
 ```bash
-git log -1 --format='%G?' # N=unsigned, G=good, U=good-untrusted, etc.
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
+REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
+$GIT_ENV git -C "$REPO_ROOT" log -1 --format='%G?' # N=unsigned, G=good, U=good-untrusted, etc.
 ```
 
 ### 3.4 Step 1e: AI Guard Readiness（新增）
@@ -159,13 +169,25 @@ git log -1 --format='%G?' # N=unsigned, G=good, U=good-untrusted, etc.
 **指令**:
 
 ```bash
-# 偵測有效 hook 路徑（使用 git rev-parse --git-path 處理相對路徑和 worktree）
-HOOK_FILE=$(git rev-parse --git-path hooks/commit-msg 2>/dev/null)
-# 若 core.hooksPath 已設定，優先使用
-CUSTOM_HOOKS=$(git config --get core.hooksPath 2>/dev/null)
-[ -n "$CUSTOM_HOOKS" ] && HOOK_FILE="${CUSTOM_HOOKS}/commit-msg"
-# 檢查 commit-msg hook
-test -x "$HOOK_FILE" && echo "guard:installed" || echo "guard:missing"
+# `--git-path hooks/…` 本身就已套用 core.hooksPath（含 `~`／`%(prefix)` 展開）與 linked
+# worktree，因此用問的、不用自己重算。
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
+REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
+HOOK_FILE=$($GIT_ENV git -C "$REPO_ROOT" rev-parse --git-path hooks/commit-msg 2>/dev/null)
+# 回答相對於自己的 cwd，而 -C "$REPO_ROOT" 已把 cwd 釘在 root，故相對答案即 root-relative：
+# 不需版本旗標、不需額外行程、不需切行。REPO_ROOT 末段含換行由上方 `printf .` sentinel 保住
+# （$( ) 會剝除所有尾端換行，而 --show-toplevel 沒有 -z 形式）；sentinel 以 && 連接而非 `;`，
+# 否則 printf 的 exit 0 會蓋掉 git 的失敗狀態。推導與實測：
+# skills/smart-commit/references/git-environment.md §1。
+case "$HOOK_FILE" in
+  ""|/*) ;;
+  *) HOOK_FILE="${REPO_ROOT}/${HOOK_FILE}" ;;
+esac
+# 三態必須可分辨：決策表對「存在但不可執行」另有 chmod 指引
+if   [ -x "$HOOK_FILE" ]; then echo "guard:installed"
+elif [ -f "$HOOK_FILE" ]; then echo "guard:not-executable"
+else                           echo "guard:missing"; fi
 ```
 
 **決策邏輯**:
@@ -214,46 +236,78 @@ test -x "$HOOK_FILE" && echo "guard:installed" || echo "guard:missing"
 **流程**:
 
 ```bash
-# 1. 寫入 temp file
-TMPFILE=$(mktemp "${TMPDIR:-/tmp}/smart-commit-msg.XXXXXX")
-trap 'rm -f "$TMPFILE"' EXIT
+# 1. 建立 temp file，訊息以 Write 工具寫入（不用 heredoc）
+#    固定的 `<<'EOF'` 定界符可被注入：訊息中出現一行 EOF 會提前結束 heredoc，
+#    其餘內容落入 shell。/create-pr 對同一構造的禁令出於同一理由。
+TMPFILE=$(mktemp "${TMPDIR:-/tmp}/smart-commit-msg.XXXXXX") || exit 1
 
-# 2. 寫入行為層 sanitization 後的訊息
-cat <<'EOF' > "$TMPFILE"
-<sanitized commit message>
-EOF
-
-# 3. Runtime validation（ERE + \b 字界, all use grep -Ei）
-AI_CO_AUTHOR="${AI_CO_AUTHOR:-0}"  # set to 1 when --ai-co-author passed
-
-validate_msg() {
-  local tmpfile="$1"
-  # 僅 AI 加 \b 字界，避免 -i 下誤中一般字詞（maintainer、domain）；GPT/OpenAI 刻意不加界以匹配 ChatGPT/GPT-4
-  # Pattern 1: Co-Authored-By AI（若 --ai-co-author 啟用，僅允許精確格式）
-  if [ "$AI_CO_AUTHOR" = "1" ]; then
-    # 移除精確允許行後再檢查殘留 AI patterns
-    grep -Eiv '^Co-Authored-By: Claude <noreply@anthropic\.com>$' "$tmpfile" | \
-      grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' && return 1
-  else
-    grep -Ei 'Co-Authored-By:.*(Claude|Anthropic|GPT|OpenAI|Copilot|noreply@anthropic)' "$tmpfile" && return 1
-  fi
-  # Pattern 2: Generated-by tag（always blocked）
-  grep -Ei 'Generated (by|with).*(Claude|\bAI\b|GPT|OpenAI|Copilot)' "$tmpfile" && return 1
-  # Pattern 3: Emoji robot tag（always blocked）
-  grep -Ei '🤖.*(Claude|\bAI\b|GPT|OpenAI)' "$tmpfile" && return 1
-  return 0
-}
-
-if ! validate_msg "$TMPFILE"; then
-  echo "❌ AI content detected after sanitization — aborting commit"
-  rm -f "$TMPFILE"
-  exit 1
+# 2. Runtime validation：直接執行 canonical 執行點，不再自帶一份 validate_msg()
+#    舊版在此重寫政策，衍生三個缺陷：`grep … && return 1` 把狀態 2 讀成乾淨
+#    （fail-open）、白名單以 -Eiv 剝除而與 hook 的 -Fxv 判定相反、測試複製同
+#    一段 shell 因而偵測不到 drift。guard 本身已具備 privileged mode、PATH
+#    釘死、LC_ALL=C 與「grep 非 0/1 即中止」。
+# 3. 解析 canonical validator：**只走 repo 相對路徑**。此處曾以
+#    `${CLAUDE_PLUGIN_ROOT}/scripts/…` 為第一候選，那等於讓呼叫端指定 validator。
+#    `GIT_*` 的剝除寫成**單一前綴**並套用到本檔每一個 git 操作。只對 rev-parse
+#    剝除是另一個缺陷：guard 來自當前目錄所在的 repo，commit 卻寫入 GIT_* 選定的
+#    另一個 repo——同一個問題答了兩次、兩個答案。`--execute` 因此明確定義為
+#    「作用於當前目錄所在的 repo」，要換 repo 的人改變當前目錄。
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+# `||` 掛在 substitution 上：後面兩個 strip 是 parameter assignment，永遠成功，
+# 守衛寫在它們之後就永遠不會觸發（git-environment.md §1）。
+REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || {
+  # 先清理、後診斷：繼承的 `set -e` 下，寫 stderr 失敗會就地結束 shell，
+  # 其後的清理永遠不會執行——這裡留在磁碟上的是完整的 commit message。
+  rm -f "$TMPFILE" || echo "⚠️ 無法刪除 $TMPFILE" >&2
+  echo "⚠️ could not resolve the repository root — aborting" >&2
+  exit 1; }
+REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
+GUARD=""
+for cand in "$REPO_ROOT/.claude/scripts/commit-msg-guard.sh" \
+            "$REPO_ROOT/scripts/commit-msg-guard.sh"; do
+  if [ -f "$cand" ]; then GUARD="$cand"; break; fi
+done
+if [ -z "$GUARD" ]; then
+  echo "❌ commit-msg-guard.sh not found — cannot validate" >&2
+  rm -f "$TMPFILE"; exit 1     # fail closed：無法驗證即不得提交
 fi
 
-# 4. Commit
-git commit -F "$TMPFILE"
-rm -f "$TMPFILE"
+# 4. 驗證與 commit 置於同一區塊，中間不插入任何步驟。
+#    `ALLOW_AI_COAUTHOR` 為呼叫端可設，預設分支因此以 env -u 清除而非僅是不設定
+#    ——guard 與 commit-msg hook 都讀它。SIGN_FLAG 必須在此賦值：behavioural spec
+#    的每個 fence 是獨立 shell，未賦值不是「預設為空」而是「由呼叫端決定」。
+#    每個狀態都以 `if` 捕捉，不留裸命令——`git commit` 本身也不例外。繼承來的
+#    `set -e` 會讓失敗的裸命令在捕捉狀態、刪除訊息檔與輸出中止訊息之前就結束
+#    整個 shell；置於 `then` 區塊內並不豁免：errexit 只對被**測試**的命令
+#    （`if` 的條件）暫停，對它選中的區塊照常生效。
+SIGN_FLAG=''                   # --sign → -S；--no-sign → --no-gpg-sign
+# AI_CO_AUTHOR 必須在本 fence 內賦值，理由與 SIGN_FLAG／GIT_ENV 相同：未賦值不是
+# 「預設 0」，而是由呼叫端決定——繼承的 AI_CO_AUTHOR=1 會在 `--ai-co-author` 未傳入時
+# 選到白名單分支，而真的傳入時反而可能落到預設分支。旗標由 skill 決定，不由環境決定。
+AI_CO_AUTHOR=0                 # 傳入 --ai-co-author 時，且僅在此時，由 skill 改為 1
+if [ "$AI_CO_AUTHOR" = "1" ]; then
+  if $GIT_ENV ALLOW_AI_COAUTHOR=1 /bin/bash -p "$GUARD" "$TMPFILE"; then
+    if $GIT_ENV ALLOW_AI_COAUTHOR=1 git -C "$REPO_ROOT" commit $SIGN_FLAG -F "$TMPFILE"
+    then COMMIT_STATUS=0; else COMMIT_STATUS=$?; fi
+  else
+    COMMIT_STATUS=1
+    echo "❌ AI content detected after sanitization — aborting commit" >&2
+  fi
+else
+  if $GIT_ENV /bin/bash -p "$GUARD" "$TMPFILE"; then
+    if $GIT_ENV git -C "$REPO_ROOT" commit $SIGN_FLAG -F "$TMPFILE"
+    then COMMIT_STATUS=0; else COMMIT_STATUS=$?; fi
+  else
+    COMMIT_STATUS=1
+    echo "❌ AI content detected after sanitization — aborting commit" >&2
+  fi
+fi
+rm -f "$TMPFILE" || echo "⚠️ 無法刪除 $TMPFILE，其中仍是完整 commit 訊息" >&2
+[ "$COMMIT_STATUS" -eq 0 ] || exit 1
 ```
+
+> 完整可執行版本以 `skills/smart-commit/references/execute-mode.md` 為準；本節是設計說明，
+> 兩者若分歧以該檔為實作契約。
 
 **`--ai-co-author` 窄白名單**:
 
@@ -268,11 +322,42 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 **Post-commit 洩漏處理**（`--execute` 模式）:
 
 ```bash
-# 每個 commit 後檢查
-MSG=$(git log -1 --format='%B')
-# 如果 forbidden pattern 出現
-# → 立即停止所有剩餘 commit groups
-# → 輸出 amend 指引
+# 每個 commit 後，用同一支 guard 掃描「實際被記錄下來的內容」。
+# 這是**獨立的 shell**，所以 GIT_ENV 必須在此重新賦值：未賦值不是「預設為空」，
+# 在繼承的 nounset 下會直接中止（且早於清理），沒有 nounset 則等於整段不套用剝除政策。
+# `$GUARD` 同理，須以與上方完全相同的順序重新解析（此處省略，見 execute-mode.md）。
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+AI_CO_AUTHOR=0                 # 同上：分支選擇不得由繼承的環境決定
+LOGFILE=$(mktemp "${TMPDIR:-/tmp}/smart-commit-log.XXXXXX") || exit 1
+# 讀取失敗與寫入失敗都會留下空檔案，而空檔案對 guard 而言與乾淨訊息無異
+# ——那會把一個從未被讀取的 commit 報成無洩漏。兩者都必須顯式拒絕。
+if ! $GIT_ENV git log -1 --format='%B' > "$LOGFILE"; then
+  echo "❌ 無法讀回 commit 訊息 — 該 commit 未經驗證，就此停止" >&2
+  rm -f "$LOGFILE" || echo "⚠️ 無法刪除 $LOGFILE" >&2
+  exit 1
+fi
+if [ ! -s "$LOGFILE" ]; then
+  echo "❌ commit 訊息讀回為空 — 該 commit 未經驗證，就此停止" >&2
+  rm -f "$LOGFILE" || echo "⚠️ 無法刪除 $LOGFILE" >&2
+  exit 1
+fi
+# guard 的狀態以 if 捕捉後，清理，然後**在本區塊內重新拋出**：清理是最後一個命令，
+# 成功的 rm 會讓整個區塊以 0 結束、把有洩漏的 run 報成乾淨，而下一個 fence 是另一個
+# shell，$LEAK_STATUS 不會存活。狀態本身就是硬停止，amend 指引只是要印什麼。
+# 分支必須與 commit 前的驗證一致：`--ai-co-author` 之下那一行**恰好是**被允許的內容，
+# 無條件以 -u 清除等於把合法的白名單行報成 post-commit 洩漏。
+if [ "$AI_CO_AUTHOR" = "1" ]; then
+  if $GIT_ENV ALLOW_AI_COAUTHOR=1 /bin/bash -p "$GUARD" "$LOGFILE"; then
+    LEAK_STATUS=0; else LEAK_STATUS=1; fi
+else
+  if $GIT_ENV /bin/bash -p "$GUARD" "$LOGFILE"; then
+    LEAK_STATUS=0; else LEAK_STATUS=1; fi
+fi
+rm -f "$LOGFILE" || echo "⚠️ 無法刪除 $LOGFILE，其中仍是 commit 訊息" >&2
+if [ "$LEAK_STATUS" -ne 0 ]; then
+  echo "❌ commit 中出現 AI 署名洩漏，剩餘 commit groups 全數中止" >&2
+  exit 1     # 立即停止所有剩餘 commit groups，輸出 amend 指引（不自動 amend）
+fi
 ```
 
 ### 3.7 Regex 正規化
@@ -283,9 +368,9 @@ MSG=$(git log -1 --format='%B')
 
 | Pattern | 舊（混合） | 新（ERE + `\b` 字界, `grep -Ei`） |
 |---------|-----------|----------------|
-| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
-| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
-| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(?:Claude\|Anthropic\|...)` (PCRE) | `Co-Authored-By:.*(Claude\|Anthropic\|\bAI\b\|GPT\|OpenAI\|Copilot\|Codex\|Gemini\|noreply@anthropic)` |
+| Generated-by tag | `Generated (?:by\|with).*(?:Claude\|...)` (PCRE) | `Generated[ -](by\|with).*(Claude\|Anthropic\|\bAI\b\|GPT\|OpenAI\|Copilot\|Codex\|Gemini)` |
+| Emoji robot tag | `🤖.*\(Claude\|AI\|GPT\)` (BRE) | `🤖.*(Claude\|Anthropic\|\bAI\b\|GPT\|OpenAI\|Copilot\|Codex\|Gemini)` |
 
 **注意**：ERE 中 `|` 和 `()` 不需要反斜線跳脫。上表「新」欄位中的 `\|` 為 Markdown 表格跳脫，實際 regex 為 `|`。所有 pattern 使用 `grep -Ei`（ERE + case-insensitive）。裸 `AI` 在 `-i` 下會誤中 "maintainer"、"domain" 等一般字詞，故僅對 `AI` 加 `\b` 字界（BSD 與 GNU grep 皆支援；POSIX `[[:<:]]` 不可攜）；`GPT`/`OpenAI` 刻意不加字界，以匹配 `ChatGPT`/`GPT-4`（無英文字含 "gpt"）。
 
@@ -314,10 +399,10 @@ MSG=$(git log -1 --format='%B')
 |------|------|---------|
 | `--show-origin --get-all` 在舊版 Git (<2.8) 不支援 | Pre-flight 失敗 | 偵測 git 版本，fallback 到 `--get` |
 | `includeIf` 解析複雜 | 誤判衝突 | 衝突定義 = 解析值不同，而非來源數不同 |
-| Runtime validation temp file race condition | 訊息被修改 | `mktemp` + 立即使用 + `trap` cleanup |
+| Runtime validation temp file race condition | 訊息被修改 | `mktemp`（原子建立、名稱不可預測、0600）+ validation 與 `git commit -F` 置於**同一個 bash 區塊**。殘留：guard 與 git 仍各自開檔一次，同使用者行程可在其間換掉內容；post-commit 掃描是它的偵測層。**不得**改用固定路徑（曾短暫改為 `/tmp/smart-commit-msg-1.txt`，引入 symlink 覆寫、同名碰撞與洩漏） |
 | `gpg.format=ssh` signing key format 不同 | Key 存在性檢查邏輯不同 | 根據 `gpg.format` 調整 key 驗證邏輯 |
 | Headless/CI 環境無法互動 | AskUserQuestion 阻塞 | 偵測 `CI` 環境變數，跳過互動提示 |
-| ERE regex 在 macOS/Linux `grep` 行為差異 | 跨平台不一致 | 測試覆蓋 GNU grep 和 BSD grep |
+| ERE regex 在 macOS/Linux `grep` 行為差異 | 跨平台不一致 | **未緩解**：測試只跑執行主機上的那一份 grep（本 repo 為 BSD grep）。CI 若在 Linux 執行同一套測試即構成另一半覆蓋；在此之前這是已知缺口，不是已完成的驗證 |
 
 ## 5. Work Breakdown
 
@@ -356,16 +441,22 @@ MSG=$(git log -1 --format='%B')
 | Signing: enabled + key present | 顯示 enabled 狀態 |
 | Signing: enabled + key missing | 顯示 warning |
 | Signing: not configured | 顯示 inherit 狀態 |
-| Regex: ERE + `\b` 字界跨平台一致性 | GNU grep 和 BSD grep 相同結果 |
+| Regex: ERE + `\b` 字界（**單一主機**） | 只驗證執行主機的 grep；GNU／BSD 兩者皆驗尚未達成（見 §4） |
 | Hook detection: `core.hooksPath` awareness | 非標準 hook 路徑正確偵測 |
 
 ### 6.2 Integration Tests
 
-| Test Case | 驗證目標 |
-|-----------|---------|
-| `--execute` 模式 temp-file validation 攔截 AI 內容 | Commit 被 abort |
-| `--execute` 模式簽名失敗 | 立即停止 + 修復指引 |
-| Post-commit AI 洩漏偵測 → hard stop | 剩餘 groups 不執行 |
+**現況：以下皆為規劃，尚未實作。** `test/scripts/smart-commit.test.js` 驗證的是 guard 本身、
+`execute-mode.md` 的**結構性質**（validator 不由環境變數選定、訊息檔以 `mktemp` 配置、預設分支
+清除 `ALLOW_AI_COAUTHOR`、frontmatter 已預先授權所需工具），以及 `allowed-tools` 契約。
+沒有任何測試實際跑完 `--execute` 行為流程——它需要一個真實 repo 與使用者核准，屬 `/feature-verify`
+的範圍。此處列為缺口而非已完成項。
+
+| Test Case | 驗證目標 | 狀態 |
+|-----------|---------|------|
+| `--execute` 模式 temp-file validation 攔截 AI 內容 | Commit 被 abort | 未實作 |
+| `--execute` 模式簽名失敗 | 立即停止 + 修復指引 | 未實作 |
+| Post-commit AI 洩漏偵測 → hard stop | 剩餘 groups 不執行 | 未實作 |
 
 ## 7. Open Questions
 
