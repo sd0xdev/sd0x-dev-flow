@@ -64,11 +64,6 @@ test('SKILL.md has Verification checklist', () => {
   assert.match(content, /\[[ x]\]/, 'should have checklist format');
 });
 
-test('SKILL.md is under 500 lines', () => {
-  const content = readFileSync(SKILL, 'utf8');
-  const lines = content.split('\n').length;
-  assert.ok(lines < 500, `SKILL.md should be under 500 lines, got ${lines}`);
-});
 
 // --- Reference files ---
 

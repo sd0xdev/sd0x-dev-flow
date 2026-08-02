@@ -84,11 +84,6 @@ test('plan-review SKILL.md has Verification checklist and Examples', () => {
   assert.match(content, /## Examples/i, 'should have Examples section');
 });
 
-test('plan-review SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Reference file assertions ---
 

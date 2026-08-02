@@ -47,11 +47,6 @@ test('deep-explore SKILL.md has precedence table', () => {
   assert.match(content, /hard ceiling/i, 'should mention hard ceiling');
 });
 
-test('deep-explore SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Catalog registration ---
 

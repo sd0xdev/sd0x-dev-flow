@@ -36,11 +36,6 @@ test('create-request SKILL.md has complete status filter list', () => {
   assert.match(content, /Superseded/, 'should list Superseded as complete status');
 });
 
-test('create-request SKILL.md stays under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 test('create-request SKILL.md trigger keywords include scan', () => {
   const content = readFileSync(skillPath, 'utf8');

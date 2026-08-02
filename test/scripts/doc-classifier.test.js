@@ -87,6 +87,49 @@ test('classifyByPath runbook-release.md → runbook (ancillary)', () => {
   assert.equal(r.namespace, 'ancillary');
 });
 
+test('classifyByPath review-log-stacked-pr-mode-r2.md → review-log (ancillary)', () => {
+  const r = classifyByPath('review-log-stacked-pr-mode-r2.md', taxonomy);
+  assert.equal(r.type, 'review-log');
+  assert.equal(r.namespace, 'ancillary');
+});
+
+// The prefix is anchored: a review log is a feature-level ancillary document, and a file that
+// merely mentions the words is not one. The filename here is deliberately NEUTRAL — an earlier
+// version used `2-tech-spec-review-log-notes.md`, which stays green even with the `^` removed
+// because `^2-tech-spec` claims it first. A control that passes for a reason other than the one
+// it names does not test the thing it appears to test.
+test('classifyByPath notes-review-log-stuff.md → not review-log (the ^ anchor is load-bearing)', () => {
+  const r = classifyByPath('notes-review-log-stuff.md', taxonomy);
+  assert.notEqual(r.type, 'review-log');
+});
+
+// Ordering matters: several ancillary patterns match a bare keyword anywhere in the filename
+// (`checklist`, `runbook`, `decision`, `-tech-brief.md$`), so a review log whose TOPIC contains
+// one of those words is claimed by the earlier entry unless `review-log` precedes them all.
+for (const [file, topic] of [
+  ['review-log-checklist.md', 'checklist'],
+  ['review-log-runbook.md', 'runbook'],
+  ['review-log-decision.md', 'adr'],
+  ['review-log-release-tech-brief.md', 'tech-brief'],
+]) {
+  test(`classifyByPath ${file} → review-log, not ${topic}`, () => {
+    const r = classifyByPath(file, taxonomy);
+    assert.equal(r.type, 'review-log');
+  });
+}
+
+// …and the entries it now precedes must still win on their own filenames.
+for (const [file, expected] of [
+  ['checklist-deploy.md', 'checklist'],
+  ['runbook-release.md', 'runbook'],
+  ['adr-0001-kafka.md', 'adr'],
+  ['2-tech-spec-tech-brief.md', 'tech-brief'],
+]) {
+  test(`classifyByPath ${file} → ${expected} (unchanged by the review-log insertion)`, () => {
+    assert.equal(classifyByPath(file, taxonomy).type, expected);
+  });
+}
+
 test('classifyByPath adr-kafka-auth.md → adr', () => {
   const r = classifyByPath('adr-kafka-auth.md', taxonomy);
   assert.equal(r.type, 'adr');
