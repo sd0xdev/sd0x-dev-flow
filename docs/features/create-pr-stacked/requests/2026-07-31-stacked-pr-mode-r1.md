@@ -5,8 +5,8 @@
 > **Status**: In Progress
 > **Note**: 原規劃含 `/feasibility-study`（授權落點評估）；使用者於 2026-07-31 直接裁決 v1 組合方案（`/push-ci` + `/create-pr`），該項由決策取代，不另跑
 > **Priority**: P1
-> **Tech Spec**: [Link](../2-tech-spec.md)
-> **Requirements**: [Link](../1-requirements.md)
+> **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
+> **Requirements**: [1-requirements.md](../1-requirements.md)
 
 ## Background
 
