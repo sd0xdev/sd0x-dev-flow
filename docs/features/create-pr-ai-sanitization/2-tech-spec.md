@@ -24,7 +24,7 @@
 
 | Pattern Category | Regex |
 |-----------------|-------|
-| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|GPT\|OpenAI\|Copilot\|noreply@anthropic)` |
+| Co-Authored-By AI | `Co-Authored-By:.*(Claude\|Anthropic\|\bAI\b\|GPT\|OpenAI\|Copilot\|Codex\|Gemini\|noreply@anthropic)` |
 | Generated-by tag | `Generated (by\|with).*(Claude\|\bAI\b\|GPT\|OpenAI\|Copilot)` |
 | Emoji robot tag | `🤖.*(Claude\|\bAI\b\|GPT\|OpenAI)` |
 

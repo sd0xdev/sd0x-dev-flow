@@ -164,10 +164,17 @@ test('Step 7b has auto-remediate with single attempt guardrail', () => {
   );
 });
 
-test('Step 7b uses safe escaping (printf + --body-file)', () => {
+test('Step 7b uses safe escaping (single-quote rendering + --body-file)', () => {
+  // The title escaping contract moved from `printf '%s' '<v>'` to direct
+  // single-quote rendering: the printf form still placed the value inside a
+  // "$( )" substitution, which does not neutralise a `$( )` in the value.
   assert.ok(
-    skillContent.includes("printf '%s'"),
-    'should use printf for safe title escaping'
+    skillContent.includes('#### Command Rendering'),
+    'should define a single-quote rendering contract for titles and branches'
+  );
+  assert.ok(
+    !skillContent.includes('$(printf'),
+    'should not wrap dynamic values in a command substitution'
   );
   assert.ok(
     skillContent.includes('--body-file'),

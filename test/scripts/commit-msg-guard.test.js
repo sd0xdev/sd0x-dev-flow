@@ -157,3 +157,962 @@ test('missing message file exits 1 with error', () => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /file not found/);
 });
+
+// ============================================================================
+// Fail-closed — the guard must never read "could not answer" as "clean"
+// ============================================================================
+
+/** Run the guard from a copy, so a mutation never touches the tracked file. */
+function runMutatedGuard(message, mutate, env = {}) {
+  const dir = makeTempDir('sd0x-commit-msg-mutant-');
+  const copy = join(dir, 'guard.sh');
+  const source = require('node:fs').readFileSync(guardPath, 'utf8');
+  const mutated = mutate(source);
+  assert.notEqual(mutated, source, 'the mutation must actually apply');
+  writeFileSync(copy, mutated);
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, message);
+  return spawnSync('bash', [copy, msgFile], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+// A latin-1 byte is not valid UTF-8. Written as a Buffer because a JS string is
+// encoded as UTF-8 on the way to disk, which would produce valid bytes.
+const LATIN1_TRAILER = Buffer.from(
+  'feat: add widget\n\nCaf\xe9 Co-Authored-By: Claude <noreply@anthropic.com>\n',
+  'latin1'
+);
+
+test('blocks a trailer on a line carrying a byte that is not valid UTF-8', () => {
+  // BSD grep in a UTF-8 locale reports such a line as non-matching and exits 1
+  // — the "clean" status. Commit messages carry latin-1 bytes routinely, so
+  // this let a real AI trailer through the hook entirely.
+  const result = runGuard(LATIN1_TRAILER);
+  assert.equal(result.status, 1, 'the commit must be rejected');
+  assert.match(result.stderr, /AI attribution detected/);
+});
+
+
+/**
+ * Does the local grep actually exhibit the locale bypass? BSD grep in a UTF-8
+ * locale reports a line carrying an invalid UTF-8 byte as non-matching (status
+ * 1, the clean branch); GNU grep matches it anyway. The negative controls below
+ * assert that removing `LC_ALL=C` REPRODUCES the defect, which is only true
+ * where the defect exists — CI runs ubuntu-latest with GNU grep, so a control
+ * written as an unconditional assertion fails there on a working fix. Measure
+ * the premise instead of assuming the platform.
+ */
+function localeBypassExhibited() {
+  const dir = mkdtempSync(join(tmpdir(), 'grep-premise-'));
+  try {
+    const f = join(dir, 'probe.txt');
+    writeFileSync(f, Buffer.from('Caf\xe9 Co-Authored-By: Claude <x@y>\n', 'latin1'));
+    const env = { ...process.env, LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8' };
+    const r = spawnSync('grep', ['-Ei', '-e', 'Co-Authored-By:.*Claude', '--', f], { env });
+    return r.status === 1;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const LOCALE_BYPASS = localeBypassExhibited();
+const SKIP_LOCALE = LOCALE_BYPASS
+  ? false
+  : 'the local grep matches invalid-UTF-8 lines anyway (GNU grep), so the bypass this control reproduces does not exist here';
+
+test('removing the locale pin reopens the bypass', (t) => {
+  // Negative control: without it, the test above would still pass if the fix
+  // were reverted for an unrelated reason.
+  if (SKIP_LOCALE) return t.skip(SKIP_LOCALE);
+  // Target the POLICY grep specifically. A bare 'LC_ALL=C grep' replacement hits
+  // whichever occurrence comes first in the file, and the --ai-co-author
+  // whitelist grep now sits above the loop — mutating that one leaves the policy
+  // pinned and the control passes for the wrong reason.
+  const result = runMutatedGuard(LATIN1_TRAILER, (s) => {
+    const mutated = s.replace('LC_ALL=C grep -Ein', 'grep -Ein');
+    assert.notEqual(mutated, s, 'the locale mutation must actually apply');
+    return mutated;
+  });
+  assert.equal(result.status, 0, 'unpinned, the trailer is accepted — this is the defect');
+});
+
+test('a pattern grep cannot evaluate rejects the commit instead of passing it', () => {
+  // Status > 1 is "could not answer". The previous `if grep -Eqi … 2>/dev/null`
+  // read every nonzero status as "no match" AND discarded the diagnostic, so an
+  // invalid ERE silently disabled one third of the policy.
+  const result = runMutatedGuard(
+    'feat: add widget\n',
+    // An unterminated bracket expression: legal shell, invalid ERE.
+    (s) => s.replace(
+      "'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'",
+      "'Co-Authored-By[unclosed'"
+    )
+  );
+  assert.notEqual(result.status, 0, 'an unusable pattern must not report the message clean');
+  assert.match(result.stderr, /could not evaluate pattern/);
+  assert.match(result.stderr, /could not be enforced in full/);
+});
+
+test("grep's own diagnostic for an unusable pattern is not discarded", () => {
+  // The old form sent grep's error to /dev/null, so an operator was told the
+  // policy had degraded but never WHICH way — and "invalid ERE" and "cannot
+  // read the file" need different fixes. The expectation is taken from the real
+  // grep on the same pattern rather than hard-coded, because BSD and GNU word
+  // it differently ("brackets not balanced" vs "Unmatched [").
+  const BROKEN_ERE = 'Co-Authored-By[unclosed';
+  const dir = makeTempDir('sd0x-commit-msg-ere-');
+  const probe = join(dir, 'probe.txt');
+  writeFileSync(probe, 'feat: add widget\n');
+  const real = spawnSync('grep', ['-Ein', '-m1', '-e', BROKEN_ERE, '--', probe], { encoding: 'utf8' });
+  assert.ok(real.status > 1, 'fixture premise: the pattern must be one grep cannot evaluate');
+  assert.ok(real.stderr.trim().length > 0, 'fixture premise: grep must say why');
+
+  const mutate = (s) => s.replace(
+    "'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'",
+    `'${BROKEN_ERE}'`
+  );
+  const result = runMutatedGuard('feat: add widget\n', mutate);
+  assert.equal(result.status, 1, 'an unusable pattern must reject the commit');
+  assert.ok(
+    result.stderr.includes(real.stderr.trim().replace(/^grep: /, '').split('\n')[0].trim()),
+    `grep's own reason must survive to the operator; got:\n${result.stderr}`
+  );
+
+  // Negative control: restoring the discard leaves the rejection intact and the
+  // reason gone, which is exactly the state the assertion above must catch.
+  const silenced = runMutatedGuard(
+    'feat: add widget\n',
+    (s) => {
+      const m = mutate(s);
+      const silencedSrc = m.replace('-e "$pat" -- "$SCAN_FILE")', '-e "$pat" -- "$SCAN_FILE" 2>/dev/null)');
+      assert.notEqual(silencedSrc, m, 'the stderr-discard mutation must actually apply');
+      return silencedSrc;
+    }
+  );
+  assert.equal(silenced.status, 1);
+  assert.ok(
+    !silenced.stderr.includes(real.stderr.trim().replace(/^grep: /, '').split('\n')[0].trim()),
+    'discarded, the reason must be absent — otherwise this test proves nothing'
+  );
+});
+
+// ============================================================================
+// Environment-controlled policy selection
+// ============================================================================
+
+// Bash imports functions from the environment before the hook's first line
+// runs, and an imported function beats both PATH lookup and the shell builtin
+// of the same name — `set`, `unset` and `command` included, so clearing them
+// from inside the script is not an option.
+const HOSTILE_GREP = { 'BASH_FUNC_grep%%': '() { return 1; }' };
+
+test('an exported grep function cannot make the hook accept a trailer', () => {
+  const result = runGuard(
+    'feat: add widget\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n',
+    HOSTILE_GREP
+  );
+  assert.equal(result.status, 1, 'the commit must still be rejected');
+  assert.match(result.stderr, /AI attribution detected/);
+});
+
+test('a re-exec that does not take aborts rather than running unprivileged', () => {
+  // `exec` is shadowable, so losing it must fail closed. The abort is a
+  // `${x:?}` expansion, which resolves before command lookup and therefore
+  // cannot be intercepted by an imported `exit`, `echo` or `:`.
+  const result = runMutatedGuard(
+    'feat: add widget\n',
+    (s) => {
+      const m = s.replace(/^\s+exec \/usr\/bin\/env -u SHELLOPTS[\s\S]*?"\$@"$/m, '    :');
+      assert.notEqual(m, s, 'the re-exec mutation must actually apply');
+      return m;
+    },
+    HOSTILE_GREP
+  );
+  assert.notEqual(result.status, 0, 'no privileged mode must never read as clean');
+  assert.match(result.stderr, /privileged re-exec did not take/);
+});
+
+test('removing the trust block entirely reopens the exported-function bypass', () => {
+  // Negative control: with the whole block gone the hostile function wins and a
+  // real trailer is committed. Anchored on the block's own first and last lines
+  // so a reword fails loudly here rather than quietly disarming the control.
+  const result = runMutatedGuard(
+    'feat: add widget\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n',
+    (s) => {
+      const start = s.indexOf('case "${SD0X_PRIV_REEXEC:-}" in');
+      const endMark = 'unset SD0X_PRIV_REEXEC\n';
+      const end = s.lastIndexOf(endMark);
+      assert.ok(start >= 0 && end > start, 'the trust block must be locatable');
+      return s.slice(0, start) + s.slice(end + endMark.length);
+    },
+    HOSTILE_GREP
+  );
+  assert.equal(result.status, 0, 'unprivileged, the trailer is accepted — this is the defect');
+});
+
+// ============================================================================
+// Diagnostics must not republish the message
+// ============================================================================
+
+test('the rejection names the location, never the matching line', () => {
+  // A commit message routinely carries pasted output, so the matching line can
+  // hold a credential — and this text goes to the terminal and to any CI log
+  // running the hook. rules/security.md forbids writing one there, and the
+  // sibling enforcement point already withholds it.
+  const result = runGuard(
+    'feat: add widget\n\nGenerated by GPT-4; token=SYNTHETIC-abc123-MARKER\n'
+  );
+  assert.equal(result.status, 1);
+  assert.doesNotMatch(result.stderr, /SYNTHETIC-abc123-MARKER/, 'the line must not be echoed');
+  assert.match(result.stderr, /line 3 matched pattern 2/, 'the location must still be reported');
+  assert.match(result.stderr, /content withheld/);
+});
+
+test('echoing the matched line back is what the withholding prevents', () => {
+  // Negative control for the test above.
+  const result = runMutatedGuard(
+    'feat: add widget\n\nGenerated by GPT-4; token=SYNTHETIC-abc123-MARKER\n',
+    (s) => s.replace(
+      '  line $lineno matched pattern $PAT_INDEX (content withheld — it may carry a secret)',
+      '  $MATCH'
+    )
+  );
+  assert.match(result.stderr, /SYNTHETIC-abc123-MARKER/, 'unwithheld, the credential reaches the log');
+});
+
+test('a grep that cannot answer does NOT advertise the opt-in as a way out', () => {
+  // This test used to assert the opposite, and the guard used to print it. Both
+  // were wrong: the whitelist is applied ABOVE the loop and the loop then runs
+  // unchanged, so ALLOW_AI_COAUTHOR=1 reaches this same failure. Advertising it
+  // sends a blocked developer down a path that cannot work.
+  const result = runMutatedGuard(
+    'feat: add widget\n',
+    (s) => s.replace("'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'", "'Co-Authored-By[unclosed'")
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /could not be enforced in full/);
+  assert.match(result.stderr, /environment failure, not a message problem/,
+    'the diagnosis must point at the environment, which is where the fix is');
+  assert.doesNotMatch(result.stderr, /To allow: ALLOW_AI_COAUTHOR/,
+    'dead recovery guidance must not come back');
+});
+
+test('the opt-in genuinely does not rescue a grep failure (the claim, measured)', () => {
+  // Pins the REASON the guidance was removed, not merely its absence.
+  const withOptIn = runMutatedGuard(
+    'feat: add widget\n',
+    (s) => s.replace("'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'", "'Co-Authored-By[unclosed'"),
+    { ALLOW_AI_COAUTHOR: '1' }
+  );
+  assert.equal(withOptIn.status, 1,
+    'if this ever passes, the removed guidance was true and should be restored');
+});
+
+// ============================================================================
+// Bash startup files, and tracing
+// ============================================================================
+
+/**
+ * Run the guard the way git does — by executing the file, so its shebang picks
+ * the interpreter. `runGuard` passes the script to `bash` as an argument, which
+ * bypasses the shebang entirely and therefore cannot exercise this.
+ */
+function execGuard(message, env = {}, guard = guardPath) {
+  const dir = makeTempDir('sd0x-commit-msg-exec-');
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, message);
+  return spawnSync(guard, [msgFile], { encoding: 'utf8', env: { ...process.env, ...env } });
+}
+
+/** A $BASH_ENV startup file that ends the run before line one. */
+function startupFile(body) {
+  const dir = makeTempDir('sd0x-commit-msg-bashenv-');
+  const f = join(dir, 'startup.sh');
+  writeFileSync(f, body);
+  return f;
+}
+
+const TRAILER = 'feat: add widget\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n';
+
+test('a $BASH_ENV startup file cannot silence the hook', () => {
+  // Non-interactive bash sources $BASH_ENV BEFORE the first script line, so
+  // `exit 0` ends the run successfully with nothing executed. No in-script
+  // guard can pre-empt that; `-p` in the shebang not processing it is the
+  // defence, and git runs a hook by executing it.
+  const result = execGuard(TRAILER, { BASH_ENV: startupFile('exit 0\n') });
+  assert.equal(result.status, 1, 'the commit must still be rejected');
+  assert.match(result.stderr, /AI attribution detected/);
+});
+
+test('dropping -p from the shebang reopens the startup-file bypass', () => {
+  // Negative control: the in-script re-exec cannot cover this, because the
+  // startup file runs before the line that would re-exec.
+  const dir = makeTempDir('sd0x-commit-msg-shebang-');
+  const copy = join(dir, 'guard.sh');
+  const source = require('node:fs').readFileSync(guardPath, 'utf8');
+  const mutated = source.replace('#!/bin/bash -p\n', '#!/bin/bash\n');
+  assert.notEqual(mutated, source, 'the mutation must actually apply');
+  writeFileSync(copy, mutated);
+  require('node:fs').chmodSync(copy, 0o755);
+  const result = execGuard(TRAILER, { BASH_ENV: startupFile('exit 0\n') }, copy);
+  assert.equal(result.status, 0, 'unprivileged, the trailer is accepted — this is the defect');
+});
+
+const TRACE_MSG = 'feat: add widget\n\nGenerated by GPT-4; token=SYNTHETIC-abc123-MARKER\n';
+
+test('an inherited xtrace cannot republish the matching line', () => {
+  // With xtrace on, bash writes every expansion to stderr — including the command
+  // substitution that captures the whole matching line, which is exactly what the
+  // diagnostics withhold on purpose. TWO mechanisms suppress it now and both are
+  // exercised: the unconditional re-exec re-launches without `-x` at all, and
+  // `set +x` covers the path where the re-exec is skipped because the loop-bound
+  // marker was already set.
+  for (const [label, env] of [
+    ['re-exec drops -x', {}],
+    ['set +x covers the skipped re-exec', { SD0X_PRIV_REEXEC: '1' }],
+  ]) {
+    const dir = makeTempDir('sd0x-commit-msg-xtrace-');
+    const msgFile = join(dir, 'COMMIT_EDITMSG');
+    writeFileSync(msgFile, TRACE_MSG);
+    const result = spawnSync('bash', ['-px', guardPath, msgFile],
+      { encoding: 'utf8', env: { ...process.env, ...env } });
+    assert.equal(result.status, 1, label);
+    assert.doesNotMatch(result.stderr, /SYNTHETIC-abc123-MARKER/,
+      `xtrace must not leak the line (${label})`);
+  }
+});
+
+test('removing the trace guard is what lets xtrace leak it', () => {
+  // The control must run on the path where `set +x` is load-bearing. Without the
+  // marker the re-exec itself drops `-x`, so the mutant would stay silent and the
+  // control would prove nothing — the failure mode this whole test exists to avoid.
+  const dir = makeTempDir('sd0x-commit-msg-xtrace-control-');
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, TRACE_MSG);
+  const copy = join(dir, 'guard.sh');
+  const source = require('node:fs').readFileSync(guardPath, 'utf8');
+  const mutated = source.replace('set +x\nset +v\n', '');
+  assert.notEqual(mutated, source, 'the mutation must actually apply');
+  writeFileSync(copy, mutated);
+  const result = spawnSync('bash', ['-px', copy, msgFile], {
+    encoding: 'utf8', env: { ...process.env, SD0X_PRIV_REEXEC: '1' },
+  });
+  assert.match(result.stderr, /SYNTHETIC-abc123-MARKER/, 'untraced-off, the line reaches stderr');
+});
+
+// ============================================================================
+// Inherited environment values — privileged mode stops imported FUNCTIONS and
+// does nothing about these. Every case below was measured to make the hook
+// exit 0 on a message carrying a real forbidden trailer before the fix.
+// ============================================================================
+
+const REAL_VIOLATION = 'fix: thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n';
+
+for (const opt of ['-x', '-m0', '-q', '-c', '-L', '-v']) {
+  test(`GREP_OPTIONS=${opt} cannot make the hook report a real trailer clean`, () => {
+    const result = runGuard(REAL_VIOLATION, { GREP_OPTIONS: opt });
+    assert.equal(result.status, 1,
+      `GREP_OPTIONS=${opt} must not change the verdict (stderr: ${result.stderr})`);
+  });
+}
+
+/**
+ * Does this userland honour GREP_OPTIONS at all? GNU grep >= 2.21 ignores it,
+ * so on ubuntu CI there is nothing for the control below to demonstrate. That
+ * is reported as SKIPPED rather than passed: a control that quietly returns
+ * reads, in the summary, exactly like one that verified something.
+ */
+function grepOptionsHonoured() {
+  const dir = mkdtempSync(join(tmpdir(), 'grep-opt-premise-'));
+  try {
+    const f = join(dir, 'f');
+    writeFileSync(f, 'abcdef\n');
+    const plain = spawnSync('grep', ['-E', 'bcd', f], { encoding: 'utf8' });
+    if (plain.status !== 0) return false;
+    const withOpt = spawnSync('grep', ['-E', 'bcd', f], {
+      encoding: 'utf8', env: { ...process.env, GREP_OPTIONS: '-x' },
+    });
+    return withOpt.status === 1;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+const SKIP_GREP_OPTIONS = grepOptionsHonoured()
+  ? false
+  : 'this grep ignores GREP_OPTIONS (GNU >= 2.21), so the bypass this control reproduces does not exist here';
+
+test('GREP_OPTIONS negative control: the variable really does reach a bare grep here',
+  { skip: SKIP_GREP_OPTIONS }, () => {
+    // `-x` on a substring pattern flips a match to a non-match wherever the
+    // variable is honoured. This is what the loop above proves the hook is
+    // immune to; without it, that loop could pass on a userland where the
+    // vector does not exist and prove nothing.
+    const dir = makeTempDir('sd0x-grep-opt-');
+    const f = join(dir, 'f');
+    writeFileSync(f, 'abcdef\n');
+    const withOpt = spawnSync('grep', ['-E', 'bcd', f], {
+      encoding: 'utf8', env: { ...process.env, GREP_OPTIONS: '-x' },
+    });
+    assert.equal(withOpt.status, 1,
+      'the premise this control rests on must hold when it is not skipped');
+  });
+
+test('a hostile PATH cannot substitute the grep that decides the verdict', () => {
+  const dir = makeTempDir('sd0x-evil-path-');
+  writeFileSync(join(dir, 'grep'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const result = runGuard(REAL_VIOLATION, { PATH: `${dir}:${process.env.PATH}` });
+  assert.equal(result.status, 1,
+    `a planted "always clean" grep must not be consulted (stderr: ${result.stderr})`);
+});
+
+test('hostile-PATH negative control: the planted grep IS reachable when PATH is not pinned', () => {
+  // Runs the same planted directory against a copy with the PATH pin removed, so
+  // a green result above means the pin worked rather than that the fixture was
+  // never on PATH in the first place.
+  const dir = makeTempDir('sd0x-evil-path-ctl-');
+  writeFileSync(join(dir, 'grep'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const copy = join(dir, 'guard.sh');
+  const source = require('fs').readFileSync(guardPath, 'utf8');
+  const mutated = source.replace("PATH='/usr/bin:/bin:/usr/sbin:/sbin'\nexport PATH\n", '');
+  assert.notEqual(mutated, source, 'the mutation must actually apply');
+  writeFileSync(copy, mutated);
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, REAL_VIOLATION);
+  const result = spawnSync('bash', [copy, msgFile], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH}` },
+  });
+  assert.equal(result.status, 0,
+    'unpinned, the planted grep answers and the real trailer passes — that is the hole being closed');
+});
+
+// ============================================================================
+// ALLOW_AI_COAUTHOR is a NARROWING, not an off switch.
+// rules/discretion.md § Anchor Register #4 grants exactly one exception line.
+// ============================================================================
+
+const ALLOWED = 'Co-Authored-By: Claude <noreply@anthropic.com>';
+
+test('opt-in permits the exact whitelisted trailer', () => {
+  const result = runGuard(`fix: thing\n\n${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('opt-in permits a message that is nothing but the whitelisted trailer', () => {
+  const result = runGuard(`${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('opt-in still passes an ordinary clean message', () => {
+  const result = runGuard('feat: ordinary work\n\nbody text\n', { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+for (const [label, message] of [
+  ['Generated-by tag', 'fix: t\n\nGenerated by Claude\n'],
+  ['Generated-with tag', 'fix: t\n\nGenerated with GPT-4\n'],
+  ['robot emoji tag', 'fix: t\n\n🤖 Claude wrote this\n'],
+  ['variant Co-Authored-By address', 'fix: t\n\nCo-Authored-By: Claude <bot@example.com>\n'],
+  ['Co-Authored-By GPT', 'fix: t\n\nCo-Authored-By: GPT-4 <x@y.z>\n'],
+  ['Co-Authored-By Copilot', 'fix: t\n\nCo-Authored-By: Copilot <c@github.com>\n'],
+  ['whitelisted line plus a second violation', `fix: t\n\n${ALLOWED}\nGenerated with OpenAI\n`],
+]) {
+  test(`opt-in does NOT permit: ${label}`, () => {
+    const result = runGuard(message, { ALLOW_AI_COAUTHOR: '1' });
+    assert.equal(result.status, 1,
+      `the anchor grants one exact line and nothing else (stderr: ${result.stderr})`);
+  });
+}
+
+test('opt-in whitelist matches whole lines only, not substrings', () => {
+  // A line that merely CONTAINS the permitted trailer is not the permitted
+  // trailer; -Fx is what makes that true.
+  const result = runGuard(`fix: t\n\nsee also ${ALLOWED} for context\n`, { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 1, result.stderr);
+});
+
+test('opt-in leaves no temporary file behind', () => {
+  const before = require('fs').readdirSync(tmpdir()).filter((f) => f.startsWith('commit-msg-guard.'));
+  runGuard(`fix: t\n\n${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
+  const afterFiles = require('fs').readdirSync(tmpdir()).filter((f) => f.startsWith('commit-msg-guard.'));
+  assert.deepEqual(afterFiles, before, 'the EXIT trap must remove the whitelist scratch file');
+});
+
+test('EXIT-trap regression: a clean message on the non-opt-in path exits 0', () => {
+  // The cleanup trap returns the status of its last command, and an EXIT trap
+  // that fails SETS the script's exit status. A `[ -n "$CLEANUP_FILE" ]` test
+  // returning 1 (no temp file was made) turned every clean commit into exit 1.
+  for (const message of [
+    'fix: thing\n',
+    'feat: a\n\nbody\nmore body\n',
+    'docs: update\n\nCo-Authored-By: SD0 <lf2sam111@gmail.com>\n',
+  ]) {
+    const result = runGuard(message);
+    assert.equal(result.status, 0,
+      `clean message must exit 0, got ${result.status} (stderr: ${result.stderr})`);
+  }
+});
+
+// ============================================================================
+// Cleanup failure — the scratch copy holds the WHOLE commit message, so a
+// failed removal is a disclosure, not a tidiness problem. It must be said out
+// loud (with the path, never the content) and must NOT change the verdict.
+//
+// PATH is pinned by design, so `rm` cannot be stubbed from the environment —
+// which is the point. The branch is therefore exercised by mutation, the same
+// negative-control discipline the rest of this file uses.
+// ============================================================================
+
+/**
+ * The rm-failure mutations below make the guard leave its scratch copy behind
+ * ON PURPOSE — that is the branch under test. The file holds the WHOLE commit
+ * message, so the harness must remove what the mutant could not: leaving a
+ * token-shaped fixture in a world-visible TMPDIR is the exact disclosure the
+ * warning exists to report.
+ */
+function reapLeakedScratch(stderr) {
+  const m = /^ {2}(\S*commit-msg-guard\.\S+)$/m.exec(stderr || '');
+  if (m) rmSync(m[1], { force: true });
+  return m ? m[1] : null;
+}
+
+test('a failing cleanup rm warns with the path and still exits 0', () => {
+  const result = runMutatedGuard(
+    `fix: thing\n\n${ALLOWED}\n`,
+    (s) => {
+      const mutated = s.replace('if ! rm -f -- "$CLEANUP_FILE"; then', 'if ! false; then');
+      assert.notEqual(mutated, s, 'the rm-failure mutation must actually apply');
+      return mutated;
+    },
+    { ALLOW_AI_COAUTHOR: '1' }
+  );
+  assert.equal(result.status, 0,
+    `a cleanup problem is no reason to reject a compliant commit (stderr: ${result.stderr})`);
+  assert.match(result.stderr, /could not remove the scratch copy/,
+    'the failure must be reported, not swallowed by the trap\'s `return 0`');
+  const leaked = reapLeakedScratch(result.stderr);
+  assert.ok(leaked, 'the leftover path must be printed so the developer can remove it');
+  assert.ok(leaked.includes('commit-msg-guard.'), leaked);
+});
+
+test('the cleanup warning never prints the message body it is warning about', () => {
+  const secretish = 'ghp_exampletokenshapednotreal0000000000';
+  const result = runMutatedGuard(
+    `fix: thing\n\n${secretish}\n${ALLOWED}\n`,
+    (s) => s.replace('if ! rm -f -- "$CLEANUP_FILE"; then', 'if ! false; then'),
+    { ALLOW_AI_COAUTHOR: '1' }
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stderr.includes(secretish),
+    'the path is safe to print; the content is not (rules/security.md)');
+  reapLeakedScratch(result.stderr);
+});
+
+test('an ordinary opt-in run emits no cleanup warning', () => {
+  // Control for the two above: without the mutation the rm succeeds and the
+  // warning must be absent, so those tests are observing the branch and not
+  // a message the script prints unconditionally.
+  const result = runGuard(`fix: thing\n\n${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(!result.stderr.includes('could not remove the scratch copy'), result.stderr);
+});
+
+// ============================================================================
+// POSIXLY_CORRECT is a legitimate setting, and POSIX mode is a PARSE-time
+// property — a script that fails to parse under it cannot fix itself. The
+// enforcement points must keep working, not fail closed into a denial.
+// ============================================================================
+
+for (const [label, message, expected] of [
+  ['clean message', 'feat: add widget\n\nbody\n', 0],
+  ['real trailer', 'fix: t\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n', 1],
+  ['generated-by tag', 'fix: t\n\nGenerated by Claude\n', 1],
+]) {
+  test(`POSIXLY_CORRECT=1 leaves the verdict unchanged: ${label}`, () => {
+    const result = runGuard(message, { POSIXLY_CORRECT: '1' });
+    assert.equal(result.status, expected,
+      `POSIX mode must not turn the hook into a syntax error (stderr: ${result.stderr})`);
+  });
+}
+
+test('POSIXLY_CORRECT=1 does not break the opt-in whitelist path', () => {
+  const permitted = runGuard(`fix: t\n\n${ALLOWED}\n`, {
+    ALLOW_AI_COAUTHOR: '1', POSIXLY_CORRECT: '1',
+  });
+  assert.equal(permitted.status, 0, permitted.stderr);
+  const rejected = runGuard('fix: t\n\nGenerated with OpenAI\n', {
+    ALLOW_AI_COAUTHOR: '1', POSIXLY_CORRECT: '1',
+  });
+  assert.equal(rejected.status, 1, rejected.stderr);
+});
+
+// ============================================================================
+// `$-` is NOT proof of a secure start
+//
+// The earlier block treated `p` in `$-` as the credential and its comment said
+// an imported function "cannot forge" it. Measured: an exported
+// SHELLOPTS=privileged starts an ordinary bash with `p` already set while
+// environment functions are STILL imported, so a hostile `grep` survived and
+// the hook accepted a real trailer. BASH_ENV containing `set -o privileged`
+// does the same. What is trustworthy is the reverse: bash never exports
+// SHELLOPTS/BASHOPTS/BASH_ENV itself, so seeing one in the exported environment
+// proves it was inherited.
+// ============================================================================
+
+const REAL_TRAILER = 'feat: x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n';
+
+test('fixture premise: SHELLOPTS=privileged really does put p in $- without -p', () => {
+  // Without this the tests below could pass because the vector never worked.
+  const r = spawnSync('/bin/bash', ['-c', 'echo "$-"'], {
+    encoding: 'utf8', env: { ...process.env, SHELLOPTS: 'privileged' },
+  });
+  assert.match(r.stdout, /p/, 'the forgery vector must be real on this bash');
+  const fn = spawnSync('/bin/bash', ['-c', 'type -t grep'], {
+    encoding: 'utf8',
+    env: { ...process.env, SHELLOPTS: 'privileged', 'BASH_FUNC_grep%%': '() { return 1; }' },
+  });
+  assert.equal(fn.stdout.trim(), 'function',
+    'and functions must still be imported — that is what makes it a bypass');
+});
+
+for (const [label, env] of [
+  ['SHELLOPTS=privileged', { SHELLOPTS: 'privileged' }],
+  ['BASHOPTS inherited', { BASHOPTS: 'checkwinsize' }],
+]) {
+  test(`a forged privileged mode (${label}) cannot make the hook accept a trailer`, () => {
+    const result = runGuard(REAL_TRAILER, { ...env, 'BASH_FUNC_grep%%': '() { return 1; }' });
+    assert.equal(result.status, 1,
+      `the hostile grep must not survive (stderr: ${result.stderr})`);
+  });
+}
+
+test('a hostile BASH_ENV cannot make the hook accept a trailer', () => {
+  const dir = makeTempDir('sd0x-benv-');
+  const startup = join(dir, 'startup.sh');
+  writeFileSync(startup, 'set -o privileged\n');
+  const result = runGuard(REAL_TRAILER, {
+    BASH_ENV: startup, 'BASH_FUNC_grep%%': '() { return 1; }',
+  });
+  assert.equal(result.status, 1, result.stderr);
+});
+
+test('pre-setting the re-exec marker fails closed, never open', () => {
+  // The bound that stops the re-exec looping is caller-settable. It must lead
+  // to a refusal, not to a skipped check.
+  const result = runGuard(REAL_TRAILER, {
+    SD0X_PRIV_REEXEC: '1', 'BASH_FUNC_grep%%': '() { return 1; }',
+  });
+  assert.notEqual(result.status, 0, 'a forged marker must never read as clean');
+  assert.match(result.stderr, /cannot establish bash privileged mode/);
+});
+
+test('a legitimate SHELLOPTS export still lets an ordinary commit through', () => {
+  // The control is a re-exec, not a refusal — exporting SHELLOPTS is a thing
+  // developers do, and hardening must not turn it into a denial.
+  const result = runGuard('feat: ordinary work\n\nbody\n', { SHELLOPTS: 'privileged' });
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('negative control: trusting $- alone reopens the SHELLOPTS bypass', () => {
+  // Restore the old credential and the forgery works again. Without this the
+  // tests above could be passing for some unrelated reason.
+  const result = runMutatedGuard(
+    REAL_TRAILER,
+    (s) => {
+      const start = s.indexOf('case "${SD0X_PRIV_REEXEC:-}" in');
+      const endMark = 'unset SD0X_PRIV_REEXEC\n';
+      const end = s.lastIndexOf(endMark);
+      assert.ok(start >= 0 && end > start);
+      const old = 'case "$-" in\n  *p*) ;;\n  *) exec /bin/bash -p -- "${BASH_SOURCE[0]:-$0}" "$@" ;;\nesac\n';
+      // the pre-fix shape: trust `$-`, never re-exec unconditionally
+      return s.slice(0, start) + old + s.slice(end + endMark.length);
+    },
+    { SHELLOPTS: 'privileged', 'BASH_FUNC_grep%%': '() { return 1; }' }
+  );
+  assert.equal(result.status, 0,
+    'with the old $--only check the trailer is accepted — that is the defect being fixed');
+});
+
+// ============================================================================
+// Policy completeness
+//
+// Each line below was ACCEPTED by the shipped patterns. The sanitizer imports
+// this same set as its entire policy, so every one of them was also publishable
+// in a PR title and body.
+// ============================================================================
+
+for (const [label, line] of [
+  ['hyphenated Generated-by', 'Generated-by: Claude'],
+  ['Generated by Anthropic', 'Generated by Anthropic'],
+  ['Generated with Anthropic', 'Generated with Anthropic tooling'],
+  ['robot tag + Copilot', '🤖 Copilot wrote this'],
+  ['robot tag + Anthropic', '🤖 Anthropic'],
+  ['Co-Authored-By Codex', 'Co-Authored-By: Codex <codex@example.com>'],
+  ['Co-Authored-By Gemini', 'Co-Authored-By: Gemini <gemini@example.com>'],
+  ['hyphenated Generated-with', 'Generated-with GPT-4'],
+]) {
+  test(`policy gap closed: ${label} is rejected`, () => {
+    const result = runGuard(`feat: x\n\n${line}\n`);
+    assert.equal(result.status, 1,
+      `"${line}" must not pass (stderr: ${result.stderr})`);
+  });
+}
+
+for (const [label, line] of [
+  ['maintainer contains "ai"', 'Generated by the maintainer script'],
+  ['detailed contains "ai"', 'Refactored with detailed steps for QA'],
+  ['Codex named as a reviewer, not an author', 'docs: record Codex review findings'],
+  ['human co-author', 'Co-Authored-By: SD0 <lf2sam111@gmail.com>'],
+  ['domain/explain', 'explain the domain in detail'],
+  ['generated as an ordinary verb', 'The report is generated nightly by cron'],
+]) {
+  test(`no false positive: ${label}`, () => {
+    const result = runGuard(`feat: x\n\n${line}\n`);
+    assert.equal(result.status, 0,
+      `"${line}" is ordinary prose and must pass (stderr: ${result.stderr})`);
+  });
+}
+
+// ============================================================================
+// Round 40 — where the in-script recovery actually stops
+//
+// The preamble used to assert that `/usr/bin/env`, being a path with `/`, could
+// not be shadowed by a function. That is false in bash: `function /usr/bin/env`
+// is definable and wins command lookup, so a $BASH_ENV startup file can make the
+// environment read return empty and the block stay silent. No in-script check
+// closes it — every alternative is a shadowable builtin and parameter expansion
+// cannot enumerate functions. What DOES hold is the entrypoint: `-p` (from the
+// shebang or from the documented invocation) never processes $BASH_ENV at all.
+// These tests pin the boundary in both directions so a future "fix" that claims
+// more than it delivers fails here.
+// ============================================================================
+
+/** A $BASH_ENV file that shadows both the env read and the policy grep. */
+function shadowingStartup() {
+  const dir = makeTempDir('sd0x-shadow-');
+  const f = join(dir, 'startup.sh');
+  writeFileSync(f,
+    'function /usr/bin/env(){ printf ""; }\n' +
+    'function grep(){ return 1; }\n' +
+    'set -o privileged\n');
+  return f;
+}
+
+test('fixture premise: a function named /usr/bin/env wins command lookup', () => {
+  // Without this the boundary tests below would pass for the wrong reason.
+  const r = spawnSync('/bin/bash',
+    ['-c', 'function /usr/bin/env(){ printf SHADOWED; }; /usr/bin/env X=1 true'],
+    { encoding: 'utf8' });
+  assert.equal(r.stdout, 'SHADOWED',
+    'bash must allow / in function names for this residual to be real');
+});
+
+test('the shebang entrypoint survives a command-shadowing $BASH_ENV', () => {
+  const dir = makeTempDir('sd0x-benv-shebang-');
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, REAL_TRAILER);
+  const r = spawnSync(guardPath, [msgFile], {
+    encoding: 'utf8',
+    env: { ...process.env, BASH_ENV: shadowingStartup() },
+  });
+  assert.equal(r.status, 1, `shebang -p must still reject (stderr: ${r.stderr})`);
+});
+
+test('the documented /bin/bash -p entrypoint survives the same startup file', () => {
+  const dir = makeTempDir('sd0x-benv-p-');
+  const msgFile = join(dir, 'COMMIT_EDITMSG');
+  writeFileSync(msgFile, REAL_TRAILER);
+  const r = spawnSync('/bin/bash', ['-p', guardPath, msgFile], {
+    encoding: 'utf8',
+    env: { ...process.env, BASH_ENV: shadowingStartup() },
+  });
+  assert.equal(r.status, 1, `-p must still reject (stderr: ${r.stderr})`);
+});
+
+test('the unconditional re-exec closes the $BASH_ENV shadowing vector', () => {
+  // Under the previous design this returned 0. The read was a command substitution,
+  // so a function named `/usr/bin/env` answered it and the block concluded "trusted".
+  // With no read at all, the only construct left is `exec` — which performs no
+  // function lookup, so the shadowing function never gets asked.
+  const r = runGuard(REAL_TRAILER, { BASH_ENV: shadowingStartup() });
+  assert.equal(r.status, 1, `must reject (stderr: ${r.stderr})`);
+});
+
+test('fixture premise: exec performs no function lookup, plain execution does', () => {
+  // This asymmetry is the entire reason the block is shaped the way it is.
+  const cmd = spawnSync('/bin/bash',
+    ['-c', 'function /usr/bin/env(){ printf SHADOWED; }; /usr/bin/env X=1 true'],
+    { encoding: 'utf8' });
+  assert.equal(cmd.stdout, 'SHADOWED', 'plain execution must consult functions');
+  const ex = spawnSync('/bin/bash',
+    ['-c', 'function /usr/bin/env(){ printf SHADOWED; }; exec /usr/bin/env X=1 /bin/echo REAL'],
+    { encoding: 'utf8' });
+  assert.equal(ex.stdout.trim(), 'REAL', 'exec must NOT consult functions');
+});
+
+test('documented residual, via a startup file that turns privileged mode on', () => {
+  // Asserted as the KNOWN limit, not as desired behaviour: skipping the exec and
+  // satisfying both second-pass checks needs control of the invoking shell. If a
+  // future change closes it this test fails, which is the point.
+  //
+  // Named for what it actually does. An earlier title said "SHELLOPTS=privileged"
+  // while the body set no such variable — it reached `-p` through BASH_ENV, so the
+  // title described a residual the test never exercised. The variable form is the
+  // test below; both are the same residual reached two ways.
+  const dir = makeTempDir('sd0x-forged-');
+  const startup = join(dir, 'startup.sh');
+  writeFileSync(startup,
+    'function grep(){ return 1; }\nset -o privileged\nunset BASH_ENV\n');
+  const r = runGuard(REAL_TRAILER, { SD0X_PRIV_REEXEC: '1', BASH_ENV: startup });
+  assert.equal(r.status, 0,
+    'if this now rejects, the residual is closed — update the preamble and this test');
+});
+
+test('documented residual, via a genuinely exported SHELLOPTS=privileged', () => {
+  // The form the preamble names, exercised literally: the marker is pre-set so no
+  // re-exec happens, SHELLOPTS carries `-p` in so `case "$-"` is satisfied, and the
+  // shell — not being started with -p — imports the hostile function that answers
+  // grep. This is the residual as WRITTEN, not a paraphrase of it.
+  const r = runGuard(REAL_TRAILER, {
+    SD0X_PRIV_REEXEC: '1',
+    SHELLOPTS: 'privileged',
+    'BASH_FUNC_grep%%': '() { return 1; }',
+  });
+  assert.equal(r.status, 0,
+    'if this now rejects, the residual is closed — update the preamble and this test');
+});
+
+test('an imported `[` function cannot skip the re-exec', () => {
+  // Round 42's finding, pinned. `[` is an ordinary COMMAND, so a function named `[`
+  // wins lookup and answers the branch. While the block opened with `if [ -z ... ]`
+  // that function alone suppressed the re-exec; combined with a startup file that
+  // sets -p and poisons grep, the guard reported a real trailer as clean. The block
+  // now branches with `case`, a reserved word the grammar resolves.
+  const dir = makeTempDir('sd0x-bracket-');
+  const startup = join(dir, 'startup.sh');
+  writeFileSync(startup, [
+    'function [ () { return 1; }',
+    'function grep(){ return 1; }',
+    'set -o privileged',
+    'unset BASH_ENV',
+    '',
+  ].join('\n'));
+  const r = runGuard(REAL_TRAILER, { BASH_ENV: startup });
+  assert.notEqual(r.status, 0, 'a shadowed `[` must never read as clean');
+});
+
+test('negative control: branching on `[` instead of `case` reopens that bypass', () => {
+  // Without this, the test above could pass for an unrelated reason. Restore the
+  // pre-fix shape and the same hostile startup file wins again.
+  const dir = makeTempDir('sd0x-bracket-ctl-');
+  const startup = join(dir, 'startup.sh');
+  writeFileSync(startup, [
+    'function [ () { return 1; }',
+    'function grep(){ return 1; }',
+    'set -o privileged',
+    'unset BASH_ENV',
+    '',
+  ].join('\n'));
+  const result = runMutatedGuard(
+    REAL_TRAILER,
+    (s) => {
+      const from = 'case "${SD0X_PRIV_REEXEC:-}" in\n  \'\')\n';
+      const to = 'if [ -z "${SD0X_PRIV_REEXEC:-}" ]; then\n';
+      assert.ok(s.includes(from), 'the `case` branch must be locatable');
+      let out = s.replace(from, to);
+      // close the `if` where the `case` arm used to close
+      const arm = '    ;;\nesac\n# Second pass.';
+      assert.ok(out.includes(arm), 'the arm terminator must be locatable');
+      out = out.replace(arm, 'fi\n# Second pass.');
+      assert.notEqual(out, s, 'the mutation must actually apply');
+      return out;
+    },
+    { BASH_ENV: startup }
+  );
+  assert.equal(result.status, 0,
+    'with `[` deciding the branch the trailer is accepted — that is the defect being fixed');
+});
+
+test('the marker is cleared once the second pass has accepted it', () => {
+  // Source-level, deliberately. The `unset` protects a script's DESCENDANTS, and the
+  // guard spawns none — so no arrangement of guard processes can observe it here. An
+  // earlier version of this test started `bash nested.sh` which started the guard, and
+  // passed identically with all three `unset` lines deleted: no ancestor had exported
+  // the marker, so there was nothing for the child to inherit. The behavioural test,
+  // with a real ancestor→descendant chain, is in run-skill.test.js — run-skill.sh is
+  // the script that actually dispatches another one.
+  const src = require('node:fs').readFileSync(guardPath, 'utf8');
+  const code = src.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.match(code, /^unset SD0X_PRIV_REEXEC$/m,
+    'the marker must not stay exported for descendants');
+  const secondPass = code.indexOf('case "${BASH_ENV+x}" in');
+  assert.ok(secondPass >= 0 && code.indexOf('unset SD0X_PRIV_REEXEC') > secondPass,
+    'and must be cleared AFTER the second pass, never before it');
+});
+
+test('a forged marker without a real -p is refused, not skipped', () => {
+  const r = runGuard(REAL_TRAILER, {
+    SD0X_PRIV_REEXEC: '1', 'BASH_FUNC_grep%%': '() { return 1; }',
+  });
+  assert.notEqual(r.status, 0, 'a forged marker must never read as clean');
+  assert.match(r.stderr, /cannot establish bash privileged mode/);
+});
+
+test('a forged marker with BASH_ENV still set is refused', () => {
+  // The second pass checks ${BASH_ENV+x} by parameter expansion: our own re-exec
+  // strips it, and bash never sets it, so seeing it means the marker was forged.
+  const r = runGuard(REAL_TRAILER, {
+    SD0X_PRIV_REEXEC: '1', BASH_ENV: shadowingStartup(),
+  });
+  assert.notEqual(r.status, 0, 'must refuse');
+});
+
+// No environment scan survives, so the class of false positive it created cannot
+// recur — single-line OR multiline. The multiline case is what round 41 measured:
+// a value may legitimately contain newlines, so no textual anchor separates a real
+// variable from a line of someone's CI metadata.
+for (const [label, env] of [
+  ['a single-line value mentioning BASH_ENV=', { NOTE: 'documentation says BASH_ENV=ignored' }],
+  ['a multiline value whose 2nd line looks like BASH_ENV=', { NOTE: 'ordinary CI metadata\nBASH_ENV=whatever' }],
+  ['a multiline value whose 2nd line looks like SHELLOPTS=', { NOTE: 'release notes\nSHELLOPTS=privileged' }],
+  ['a multiline value whose 2nd line looks like BASHOPTS=', { CI_NOTE: 'cert body\nBASHOPTS=checkwinsize' }],
+]) {
+  test(`${label} is not a denial`, () => {
+    const r = runGuard('feat: ordinary work\n\nbody\n', env);
+    assert.equal(r.status, 0, `must not refuse (stderr: ${r.stderr})`);
+  });
+}
+
+test('the source performs no environment scan at all', () => {
+  const raw = require('node:fs').readFileSync(guardPath, 'utf8');
+  // Non-comment lines only: the preamble QUOTES the construct it removed, and a
+  // whole-file scan would flag the explanation instead of the code.
+  const src = raw.split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
+  assert.ok(!/\$\(\/usr\/bin\/env\)/.test(src),
+    'reading the environment is what a shadowed function could answer');
+  assert.ok(!/SD0X_ENV=/.test(src), 'the scanned-environment variable must be gone');
+  assert.match(src, /^case "\$\{SD0X_PRIV_REEXEC:-\}" in$/m,
+    'the branch must be a `case` — a reserved word an imported function cannot answer');
+  assert.ok(!/^\s*if \[ /m.test(src.split('unset SD0X_PRIV_REEXEC')[0]),
+    'no `[` may decide anything in the trust block; `[` is a shadowable command');
+  assert.match(src, /\$\{BASH_ENV\+x\}/,
+    'the second pass must test BASH_ENV by parameter expansion');
+});
+
+test('a real inherited SHELLOPTS is still caught without any scan', () => {
+  const r = runGuard(REAL_TRAILER, {
+    SHELLOPTS: 'privileged', 'BASH_FUNC_grep%%': '() { return 1; }',
+  });
+  assert.equal(r.status, 1, `dropping the scan must not weaken this (${r.stderr})`);
+});
+
+test('a bare AI co-author is rejected (the category is named Co-Authored-By AI)', () => {
+  const r = runGuard('feat: x\n\nCo-Authored-By: AI Assistant <ai@example.com>\n');
+  assert.equal(r.status, 1, `bare AI must be rejected (stderr: ${r.stderr})`);
+});
+
+test('the AI bound spares an ordinary name containing "ai"', () => {
+  const r = runGuard('feat: x\n\nCo-Authored-By: Kai Nakamura <kai@example.com>\n');
+  assert.equal(r.status, 0, `\\bAI\\b must not fire on "Kai" (stderr: ${r.stderr})`);
+});
