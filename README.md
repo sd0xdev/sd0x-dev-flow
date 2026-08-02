@@ -287,7 +287,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/feature-dev` | Implementing new features end-to-end |
 | `/smart-commit` | Committing changes with smart grouping |
 | `/push-ci` | Pushing code and monitoring CI |
-| `/create-pr` | Creating GitHub pull requests |
+| `/create-pr` | Creating GitHub pull requests, including stacked PR chains (--stack) |
 | `/codex-review-fast` | Quick code review (diff only) |
 | `/codex-review-doc` | Reviewing documentation changes |
 | `/codex-security` | OWASP Top 10 security audit |
