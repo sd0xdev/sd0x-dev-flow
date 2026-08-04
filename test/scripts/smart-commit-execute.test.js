@@ -42,7 +42,11 @@ process.on('exit', () => {
 function mkRepo({ withGuard = true } = {}) {
   const dir = tempDir('smart-commit-exec-');
   const git = (...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' });
-  git('init', '-q', '.');
+  // `--initial-branch` explicitly, not the ambient default: several tests below drive
+  // `refs/heads/main` from a hook body, and a bare `git init` takes the branch name from the
+  // developer's `init.defaultBranch`. Unset — as on CI — that is `master`, so the hook updates
+  // a ref nothing points at and the test's own control assertion is what fails.
+  git('init', '-q', '--initial-branch=main', '.');
   git('config', 'user.name', 'Test Dev');
   git('config', 'user.email', 'dev@example.com');
   git('config', 'commit.gpgsign', 'false');

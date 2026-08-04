@@ -1252,27 +1252,135 @@ test('POSIXLY_CORRECT=1 leaves body stripping byte-identical', () => {
   assert.ok(posix.stdout.includes('kept line'), posix.stdout);
 });
 
+/**
+ * The parse the sibling checks below perform — and the one the control verifies, by
+ * calling it and comparing what it RETURNS. Deliberately not "the only place bash is
+ * launched": `probe()` further down issues literal invocations that must not route
+ * through here, since a helper that lost its flag would otherwise silence the very
+ * comparison meant to catch it. It returns the result rather than asserting on it,
+ * so the control can read the verdict; a helper that asserts internally can only be
+ * observed as threw/did-not-throw, and a no-op body is indistinguishable from a
+ * passing parse under that weaker observation.
+ */
+const parsePosix = (target) => spawnSync('/bin/bash', ['--posix', '-n', target], { encoding: 'utf8' });
+
+/**
+ * Constructs whose PARSE verdict may differ between POSIX and default mode, each
+ * pinned to exact bytes so the control can pick one without a shape regex. WHICH
+ * one actually discriminates belongs to the interpreter, not to a version this file
+ * could hard-code, so the control probes rather than assumes. Measured on the two
+ * builds present here (`--posix -n` vs `-n`, exit status):
+ *
+ *   fixture                                bash 3.2         bash 5.3
+ *   process substitution                   posix:2 plain:0  posix:0 plain:0
+ *   single quote in a "${x:-'}}" expansion  posix:2 plain:2  posix:0 plain:2
+ *
+ * Neither discriminates on both, which is exactly why this is a list. bash 5.1 made
+ * process substitution legal in POSIX mode, retiring the first there; the second is
+ * POSIX's rule that a single quote inside a double-quoted `${...}` expansion is a
+ * literal character, where bash's default mode opens a quoted string that then runs
+ * to EOF. bash 3.2 rejects it in both modes, so it cannot replace the first either.
+ */
+const PROCSUB_FIXTURE = 'while read -r l; do echo "$l"; done < <(printf \'a\\n\')';
+const QUOTED_EXPANSION_FIXTURE = 'echo "${x:-\'}}"';
+
 for (const [label, target] of [['sanitizer', script], ['commit-msg guard', guard]]) {
   test(`${label} parses under bash --posix (measured, not asserted by pattern)`, () => {
     // Measured rather than grepped for `<(`: the string appears legitimately in
     // prose explaining WHY it is not used, and a comment is not a parse error.
     // `-n` parses without executing, which is exactly the property at stake.
-    const r = spawnSync('/bin/bash', ['--posix', '-n', target], { encoding: 'utf8' });
-    assert.equal(r.status, 0,
-      `POSIX mode must not make this a syntax error: ${r.stderr}`);
+    const r = parsePosix(target);
+    assert.equal(r.status, 0, `POSIX mode must not make this a syntax error: ${r.stderr}`);
   });
 }
 
-test('mutation control: process substitution WOULD fail the posix parse check', () => {
-  // Without this the check above could pass for a script that simply has no
-  // loops left. Reintroduce the construct and confirm the measurement notices.
-  const dir = mkdtempSync(join(tmpdir(), 'posix-ctl-'));
+/** Write a fixture script into `dir` and return its path. */
+const writeFixture = (dir, name, body) => {
+  const p = join(dir, name);
+  writeFileSync(p, `#!/bin/bash\n${body}\n`);
+  return p;
+};
+
+/** A literal invocation, deliberately NOT routed through the helpers under test. */
+const probe = (argv, target) => spawnSync('/bin/bash', [...argv, target], { encoding: 'utf8' }).status;
+
+/**
+ * Pick a fixture whose parse verdict this interpreter actually changes between the
+ * two modes, using literal probes. Returns the fixture plus both verdicts, or
+ * `null` when no candidate discriminates — a state the control refuses to pass in,
+ * because every downstream claim would then be unfalsifiable.
+ */
+const findModeDiscriminator = (dir) => {
+  for (const [name, body] of [['procsub', PROCSUB_FIXTURE], ['quoted-expansion', QUOTED_EXPANSION_FIXTURE]]) {
+    const path = writeFixture(dir, `disc-${name}.sh`, body);
+    const strict = probe(['--posix', '-n'], path);
+    const plain = probe(['-n'], path);
+    if (strict !== plain) return { name, path, strict, plain };
+  }
+  return null;
+};
+
+/**
+ * Half one: `-n` is discriminating at all, and the fixtures are the exact constructs
+ * this control was built around. Exact bytes, not a shape regex — `/<\s*<\(/` cannot
+ * tell syntax from text, since `: '< <('` matches it while containing no process
+ * substitution, and real `cat <(printf a)` would need its own alternative.
+ */
+test('mutation control: the fixtures are exact, and `-n` separates broken bash from valid bash', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'posix-fix-'));
   try {
-    const copy = join(dir, 'mutant.sh');
-    writeFileSync(copy, '#!/bin/bash\nwhile read -r l; do echo "$l"; done < <(printf \'a\\n\')\n');
-    const r = spawnSync('/bin/bash', ['--posix', '-n', copy], { encoding: 'utf8' });
-    assert.notEqual(r.status, 0,
-      'if this parses, the check above proves nothing about POSIX mode');
+    assert.equal(PROCSUB_FIXTURE, 'while read -r l; do echo "$l"; done < <(printf \'a\\n\')',
+      'the process-substitution fixture is no longer the construct this control was built around');
+    assert.equal(QUOTED_EXPANSION_FIXTURE, 'echo "${x:-\'}}"',
+      'the quoted-expansion fixture is no longer the construct this control was built around');
+
+    // Both directions. Without the second, "rejects everything" — a broken `-n`,
+    // a missing file — would read as a passing control.
+    assert.notEqual(probe(['--posix', '-n'], writeFixture(dir, 'broken.sh', 'if true; then')), 0,
+      '`bash --posix -n` must still reject a genuine syntax error');
+    assert.equal(probe(['--posix', '-n'], writeFixture(dir, 'clean.sh', ': ; echo ok')), 0,
+      'and must still accept a well-formed script, or the line above proves nothing');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * Half two: `parsePosix` — the exact function the sibling checks call — really runs a
+ * POSIX parse. Established by CALLING it and reading the verdict it returns, never by
+ * reading its source. Source predicates were tried and are not causal: a body
+ * spelling `false ? parsePosix(t) : parsePlain(t)` still mentions `parsePosix(` and
+ * spawns nothing directly, and an argv of `['-n', target, '--posix']` still contains
+ * `--posix` while placing it after the operand, where it enables nothing. Both of
+ * those collapse to the plain verdict, which is what the first assertion fails on.
+ *
+ * Observing only whether the helper THREW would be weaker still: on an interpreter
+ * whose discriminator is accepted in POSIX mode, a helper replaced by a no-op throws
+ * nothing and reads as a passing parse. Hence the two bounds — a helper that returns
+ * a constant, in either direction, fails one of them.
+ *
+ * What no runtime control can establish is that the sibling `test()` bodies call this
+ * helper at all; a body rewritten to spawn bash itself is outside what any assertion
+ * here observes, and is a visible edit rather than a silent drift.
+ */
+test('mutation control: the posix parse helper is causally in POSIX mode', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'posix-mode-'));
+  try {
+    const d = findModeDiscriminator(dir);
+    assert.ok(d, 'no fixture here makes `bash --posix -n` and `bash -n` disagree on this bash, so '
+      + 'nothing can show the sibling checks are in POSIX mode — add a construct that discriminates');
+
+    assert.equal(parsePosix(d.path).status, d.strict,
+      `parsePosix disagrees with a literal \`--posix -n\` on the ${d.name} fixture `
+      + `(strict ${d.strict}, plain ${d.plain}) — the sibling checks are not parsing in POSIX mode`);
+
+    // ...and it is really parsing, not returning a constant that happens to match
+    // above. Both bounds are needed: whichever way this interpreter's discriminator
+    // goes, one of `{status: 0}` and `{status: 2}` would otherwise satisfy it.
+    assert.equal(parsePosix(writeFixture(dir, 'ctl-clean.sh', ': ; echo ok')).status, 0,
+      'parsePosix rejects a well-formed script — it is not parsing');
+    assert.notEqual(parsePosix(writeFixture(dir, 'ctl-broken.sh', 'if true; then')).status, 0,
+      'parsePosix accepts a genuine syntax error — it is not parsing');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

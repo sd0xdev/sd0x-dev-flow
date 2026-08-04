@@ -593,7 +593,37 @@ test('an inherited CDPATH cannot redirect wrapper resolution', (t) => {
   assert.equal(r.stdout, `${NONCE}|${root}|\n`, 'and must not redirect it either');
 });
 
-test('negative control: without the CDPATH clear, resolution breaks', (t) => {
+/**
+ * Does privileged mode on THIS bash still honour an inherited CDPATH? Measured
+ * rather than derived from a version, because the answer changed and the version
+ * boundary is not what one would guess: bash NEWS records CDPATH joining the
+ * variables privileged mode ignores in 4.0, and the two builds available here
+ * bracket it — 3.2 honours CDPATH under `-p`, 5.3 ignores it (both measured; 4.x
+ * is not installed, which is precisely why this probes behaviour instead).
+ *
+ * The wrapper always re-execs itself under `/bin/bash -p`, so where the
+ * interpreter ignores CDPATH it has already neutralized it FOR `cd` before the
+ * wrapper's own `CDPATH=''` line is reached — removing that line is then not
+ * observable *through resolution* there. It stays observable another way, which
+ * an earlier version of this comment wrongly denied: privileged mode keeps the
+ * variable and its export attribute, so the value the dispatched target inherits
+ * still witnesses the assignment. See `the CDPATH clear executes` below.
+ *
+ * `/bin/bash` and not `bash`: the re-exec at run-skill.sh:36 names that path, so
+ * this probe must ask the same interpreter the wrapper will actually run under.
+ */
+function privilegedBashHonoursCdpath(t) {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'cdpath-probe-')));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  mkdirSync(join(dir, 'decoy/scripts'), { recursive: true });
+  const r = spawnSync('/bin/bash', ['-p', '-c', 'cd -P scripts >/dev/null 2>&1 && pwd'], {
+    encoding: 'utf8', cwd: dir, env: { ...process.env, CDPATH: join(dir, 'decoy') },
+  });
+  return r.stdout.trim() === join(dir, 'decoy/scripts');
+}
+
+test('negative control: the CDPATH clear is what holds, wherever CDPATH can still reach', (t) => {
   const root = makeTree(t);
   const wrapper = join(root, 'scripts/run-skill.sh');
   const src = readFileSync(wrapper, 'utf8');
@@ -605,8 +635,154 @@ test('negative control: without the CDPATH clear, resolution breaks', (t) => {
   const r = run('scripts/run-skill.sh', ['fixture', 'echo.sh'], {
     cwd: root, env: { CDPATH: decoy },
   });
-  assert.notEqual(r.stdout, `${NONCE}|${root}|\n`,
-    'if this still resolves correctly, the CDPATH test above proves nothing');
+
+  if (privilegedBashHonoursCdpath(t)) {
+    assert.notEqual(r.stdout, `${NONCE}|${root}|\n`,
+      'if this still resolves correctly, the CDPATH test above proves nothing');
+    return;
+  }
+  // The other regime, asserted rather than skipped: a skip would leave the sibling
+  // test passing for an unstated reason. Privileged mode was just MEASURED to drop
+  // CDPATH, so the mutant must resolve correctly here — and if a future bash
+  // reverts that, the probe flips and the branch above applies again.
+  assert.equal(r.stdout, `${NONCE}|${root}|\n`,
+    'privileged mode was measured to drop CDPATH, so even the mutant must resolve');
+});
+
+/**
+ * The clear is an ASSIGNMENT, and its effect outlives the `cd` it was written for.
+ * Privileged mode on bash >= 4.0 declines to USE CDPATH for `cd`, but it keeps the
+ * variable and its export attribute — so what the dispatched target inherits is a
+ * witness that the line executed, and a portable one. Measured on 5.3 under `-p`:
+ * `declare -x CDPATH="<decoy>"` before the assignment, `declare -x CDPATH=""`
+ * after, and a child process sees `CDPATH=<decoy>` versus `CDPATH=`.
+ *
+ * That is what makes this the code-vs-data oracle a source-text landmark can never
+ * be: wrap the exact bytes in a string and this test fails on EVERY platform,
+ * Linux CI included. The resolution oracle in `an inherited CDPATH cannot redirect
+ * wrapper resolution` above fails only where CDPATH still steers `cd` — bash 3.2.
+ * Two different oracles over the same line, neither one a duplicate of the other.
+ */
+test('the CDPATH clear executes: the dispatched target inherits an emptied CDPATH', (t) => {
+  const root = makeTree(t);
+  // A decoy with NO `scripts` entry, deliberately. The CDPATH lookup then misses
+  // and `cd -P scripts` falls back to the real relative directory on BOTH bash
+  // generations, so dispatch happens either way and the only thing left varying
+  // is the value the target inherits. Create `decoy/scripts` instead and bash 3.2
+  // fails at resolution: the mutant half would pass for that reason, silently
+  // becoming a second copy of the resolution oracle rather than an execution one.
+  const decoy = join(root, 'decoy');
+  mkdirSync(decoy, { recursive: true });
+  const probe = join(root, 'skills/fixture/scripts/cdpath.sh');
+  writeFileSync(probe, `#!/bin/bash\nprintf '%s|%s\\n' '${NONCE}' "\${CDPATH-UNSET}"\nexit 0\n`);
+  chmodSync(probe, 0o755);
+
+  const production = run('scripts/run-skill.sh', ['fixture', 'cdpath.sh'], {
+    cwd: root, env: { CDPATH: decoy },
+  });
+  assert.equal(production.status, 0, `wrapper exited ${production.status}: ${production.stderr}`);
+  assert.equal(production.stdout, `${NONCE}|\n`,
+    'the target must inherit CDPATH set-but-empty — `UNSET` would mean the wrapper never assigned '
+    + 'it, and the decoy value would mean the assignment did not execute');
+
+  // Negative control: the exact bytes survive as DATA inside a multiline string,
+  // so every source-text landmark still finds them while nothing executes.
+  const wrapper = join(root, 'scripts/run-skill.sh');
+  const src = readFileSync(wrapper, 'utf8');
+  const asData = src.replace(/^CDPATH=''$/m, 'CDPATH_DOC="\nCDPATH=\'\'\n"');
+  assert.notEqual(asData, src, 'the quoted-data mutation must actually apply');
+  assert.match(asData, /^CDPATH=''$/m, 'and must leave the exact line present, as data');
+  writeFileSync(wrapper, asData);
+
+  const mutant = run('scripts/run-skill.sh', ['fixture', 'cdpath.sh'], {
+    cwd: root, env: { CDPATH: decoy },
+  });
+  assert.equal(mutant.status, 0,
+    'the mutant must still reach dispatch, or this control is re-testing resolution rather than '
+    + `execution (exit ${mutant.status}: ${mutant.stderr})`);
+  assert.equal(mutant.stdout, `${NONCE}|${decoy}\n`,
+    'with the assignment turned into data, the target must inherit the caller CDPATH unchanged');
+});
+
+/**
+ * `CDPATH=''` protects the resolution `cd`s BELOW it, so where it sits is part of
+ * the control and not merely that it exists. The sibling mutation above pins the
+ * line's text; nothing pins its position, and `/^CDPATH=''$/m` still matches a
+ * copy MOVED under a resolution `cd`.
+ *
+ * Why source order rather than behaviour: on a bash whose privileged mode drops
+ * CDPATH — measured for 5.3 by `privilegedBashHonoursCdpath` above, and the only
+ * kind `ubuntu-latest` runs (.github/workflows/ci.yml) — the re-exec neutralizes
+ * CDPATH before the wrapper's own line is reached, so no behavioural probe
+ * through this entrypoint observes the ordering at all. The regression this
+ * guards is macOS `/bin/bash` 3.2, which honours CDPATH under `-p`.
+ *
+ * WHAT IT ESTABLISHES, stated at the strength it actually has: the three named
+ * resolution statements' literal lines occur AFTER a literal `CDPATH=''` line,
+ * and a fourth `cd -P` line cannot appear without this pin failing. It does not
+ * establish that bash EXECUTES that line as an assignment — wrap the exact bytes
+ * in a multiline string (`CDPATH_DOC="\nCDPATH=''\n"`) and every assertion here
+ * still passes. Nor does it establish "no directory-changing command runs before
+ * the clear": deciding either from source needs quote, heredoc and function-body
+ * state, and a line-local regex gets it wrong in both directions — `\cd` and
+ * `pushd` slip past one (both measured to follow CDPATH on bash 3.2), while
+ * `printf '%s\n' "please cd later"` trips it. An earlier version used exactly
+ * such a regex FOR BOTH the assertion and its own mutant, so a mis-located
+ * landmark produced a mutant built against that same wrong landmark and the pair
+ * passed together. Hence literal production text below: the control is derived
+ * from the statement, never from a matcher.
+ *
+ * Code-vs-data is decided BEHAVIOURALLY, and portably, by `the CDPATH clear
+ * executes` above: it reads the value the dispatched target inherits, which
+ * privileged mode preserves on every version, so the data-mutant fails on Linux
+ * CI too. On bash 3.2 the resolution oracle in `an inherited CDPATH cannot
+ * redirect wrapper resolution` catches that same mutant a second way. This pin is
+ * therefore not the code-vs-data control and does not need to be — it covers the
+ * realistic accident (relocation, deletion, rewording) cheaply and everywhere,
+ * while execution is covered by tests that actually run the wrapper.
+ */
+const CDPATH_CLEAR = "CDPATH=''";
+
+const RESOLUTION_CDS = [
+  '  SELF_DIR=$(cd -P "$(dirname "$SELF")" && pwd) || exit 1',
+  'SCRIPT_DIR=$(cd -P "$(dirname "$SELF")" && pwd) || exit 1',
+  'PLUGIN_ROOT=$(cd -P "$SCRIPT_DIR/.." && pwd) || exit 1',
+];
+
+/** Every `cd -P` line, the explanatory comment included, so a fourth cannot land unnoticed. */
+const CD_P_LINES = [
+  '# whose entries contain a directory named `scripts` sends `cd -P "$(dirname …)"`',
+  ...RESOLUTION_CDS,
+];
+
+/** Named resolution statements sitting at or above the clear — empty when the order holds. */
+const resolutionCdsAboveClear = (lines) => {
+  const clear = lines.indexOf(CDPATH_CLEAR);
+  return clear === -1 ? RESOLUTION_CDS : RESOLUTION_CDS.filter((s) => lines.indexOf(s) < clear);
+};
+
+test('the CDPATH clear line sits above every named resolution cd, and a relocation is visible', () => {
+  const lines = readFileSync(scriptPath, 'utf8').split('\n');
+
+  assert.deepEqual(lines.filter((l) => l.includes('cd -P')), CD_P_LINES,
+    'the set of `cd -P` lines in the wrapper changed — one was added, removed or reworded. '
+    + 'Update RESOLUTION_CDS/CD_P_LINES so this guard still covers all of them');
+  assert.notEqual(lines.indexOf(CDPATH_CLEAR), -1, `the wrapper has no \`${CDPATH_CLEAR}\` line`);
+  assert.deepEqual(resolutionCdsAboveClear(lines), [],
+    "these resolution statements sit above the `CDPATH=''` line — on a bash honouring CDPATH under "
+    + "`-p` (macOS /bin/bash 3.2) each then follows the caller's CDPATH, not the wrapper's own tree");
+
+  // Negative control: MOVE the clear below the first resolution statement. The
+  // insertion point is that statement's literal text, so this control does not
+  // inherit any locator the assertion above depends on.
+  const reduced = lines.filter((l) => l !== CDPATH_CLEAR);
+  const at = reduced.indexOf(RESOLUTION_CDS[0]);
+  const moved = [...reduced.slice(0, at + 1), CDPATH_CLEAR, ...reduced.slice(at + 1)];
+
+  assert.equal(moved.filter((l) => l === CDPATH_CLEAR).length, 1,
+    'the mutant must MOVE the clear, not drop or duplicate it');
+  assert.deepEqual(resolutionCdsAboveClear(moved), [RESOLUTION_CDS[0]],
+    'relocating the clear below the first resolution cd must be visible to this predicate');
 });
 
 // ============================================================================
