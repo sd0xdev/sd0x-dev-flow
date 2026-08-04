@@ -226,5 +226,6 @@ signal=mcp__codex__codex 於 2026-07-31 兩次回傳 usage limit（恢復時間 
 
 ## Review Log
 
-逐輪審查紀錄（第 27 輪起，含每輪 findings、處置、變異驗證與撤回的宣稱）已移至
-[../review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)。
+逐輪審查紀錄（**第 38 輪起**，含每輪 findings、處置、變異驗證與撤回的宣稱）已移至
+[../review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)——該檔保留索引與最新一輪，較早的輪次分置於其同名子目錄。
+第 27–37 輪未搬走，散見於本文件正文的 `## Acceptance Criteria`（AC-Q1 本體、審查者替換說明，及其後的 review Note）與 `## Progress`（狀態表與第 35–37 輪的 Note）——**不在本節**，本節只有這段索引說明。形式不一致：有的是具名 `**Note —**`，有的併在 AC 段落裡，第 34 輪沒有獨立條目。
