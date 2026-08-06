@@ -1491,8 +1491,11 @@ test('the sanitizer scans no environment and states its residual', () => {
     'the branch must be a `case` — a reserved word an imported function cannot answer');
   assert.ok(!/^\s*if \[ /m.test(src.split('unset SD0X_PRIV_REEXEC')[0]),
     'no `[` may decide anything in the trust block; `[` is a shadowable command');
-  assert.match(raw, /Residual: a caller who controls the invoking shell/,
-    'the preamble must state the residual it cannot close');
+  // Pinned on the residual's two CONDITIONS, not on a prose opener: the wording
+  // moved when the shared rationale was de-duplicated into the tech spec, and a
+  // sentence-shaped pin fails on rewording while saying nothing about content.
+  assert.match(raw, /residual[\s\S]{0,120}marker pre-set AND privileged mode already on/i,
+    'the preamble must state the residual it cannot close (pre-set marker + privileged mode)');
   assert.ok(!/path containing `\/` is not/.test(raw),
     'the false "cannot be shadowed" claim must stay gone');
 });

@@ -245,8 +245,11 @@ test('the wrapper establishes privileged mode and fails closed without it', () =
     're-exec must strip all three vectors, present or not');
   assert.match(code, /\$\{BASH_ENV\+x\}/,
     'the second pass must test BASH_ENV by parameter expansion');
-  assert.match(src, /Residual: a caller who controls the invoking shell/,
-    'the preamble must state the residual rather than claim coverage');
+  // Pinned on the residual's two CONDITIONS, not on a prose opener: the wording moved when the
+  // shared rationale was de-duplicated into the tech spec, and a sentence-shaped pin fails on
+  // rewording while saying nothing about whether the residual is still disclosed.
+  assert.match(src, /residual[\s\S]{0,120}marker pre-set AND privileged mode already on/i,
+    'the preamble must state the residual it cannot close (pre-set marker + privileged mode)');
   assert.match(src, /\/bin\/bash -p -- /, 're-exec must name the interpreter absolutely');
   assert.match(src, /SD0X_PRIV_GUARD:\?/,
     'and abort via parameter expansion if the re-exec did not take');

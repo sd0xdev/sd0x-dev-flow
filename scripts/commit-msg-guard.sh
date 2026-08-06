@@ -7,33 +7,16 @@
 #   false positive. See the block above the whitelist for what it cannot do.
 
 # Privileged mode, ESTABLISHED rather than detected, before anything else runs.
-#
-# Trust boundary first: the protected entrypoints are this file's `#!/bin/bash -p`
-# shebang and the documented `/bin/bash -p <file>` invocation. The block below
-# RE-ESTABLISHES `-p` for a plain `bash <file>` start; it cannot widen that.
-#
-# Every decision below is a `case` — a reserved WORD, resolved by the grammar.
-# That is load-bearing, not style. `[` is an ordinary command, so an imported
-# `[` function answers it: measured, such a function made the `if [ -z ... ]`
-# this block used to open with skip the re-exec outright. `case` cannot be
-# shadowed, and `${x:?}` fails during EXPANSION — before any command lookup —
-# so the aborts cannot be intercepted either.
-#
-# The re-exec does not ENUMERATE or CLASSIFY the environment — the precise claim,
-# since `env -u` obviously carries the rest of it forward and the two checks below
-# read shell state that the environment produced. It strips the three named
-# variables unconditionally, and `-p` makes the new shell ignore exported
-# functions altogether (measured, bash 3.2). An earlier version instead SCANNED
-# via `$(/usr/bin/env)`; that could not separate a real variable from those names
-# appearing inside another value, and was itself answerable by a function named
-# `/usr/bin/env`.
-#
-# Residual: a caller who controls the invoking shell so that, at line one, the
-# marker is already set AND privileged mode is already on. Exporting
-# SHELLOPTS=privileged is one spelling; a startup file that turns `-p` on, sets
-# the marker and unsets BASH_ENV is another. Both skip the exec and satisfy both
-# second-pass checks. Derivation:
-# docs/features/create-pr-stacked/2-tech-spec.md §3.4 items 23, 27, 31, 33.
+# The trust boundary is this file's `#!/bin/bash -p` shebang and the documented
+# `/bin/bash -p <file>` invocation; the block below RE-ESTABLISHES `-p` for a
+# plain `bash <file>` start and cannot widen that. Every decision here is a
+# `case` (a reserved word, resolved by the grammar) and every abort is `${x:?}`
+# (fails during expansion, before command lookup) — so neither an imported
+# function nor a shadowed builtin can answer them, which `[` and `exec` both
+# could. Why each construct is the one that survived measurement, what defeated
+# the earlier `$-` and environment-scan designs, and the residual still open
+# (marker pre-set AND privileged mode already on): see
+# docs/features/create-pr-stacked/2-tech-spec.md §3.4 items 23, 27, 31, 33, 38.
 case "${SD0X_PRIV_REEXEC:-}" in
   '')
     exec /usr/bin/env -u SHELLOPTS -u BASHOPTS -u BASH_ENV 'SD0X_PRIV_REEXEC=1' \

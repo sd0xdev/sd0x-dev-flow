@@ -661,46 +661,22 @@ function gitInternalsDigest(repo) {
   return sha256(frameParts(parts));
 }
 
-// Digest ignored DIRECTORY NODES (existence + own mode) — the empty-ignored-dir hole (Codex iter-14
-// P2). The file-level ignored_content enumeration lists ignored FILES only (`ls-files -o -i`
-// recurses into ignored dirs, emitting leaf files, never a trailing-slash dir entry), and
-// hashPathsContent's ancestor-mode folding only fires for dirs that CONTAIN a leaf. So an EMPTY
-// ignored dir — created, deleted, or chmod'd by an adversarial worker post-snapshot — is invisible
-// to both porcelain (-uall never lists ignored/empty) and the content digest → compare returns
-// {ok:true} despite a filesystem mutation, breaking the "zero filesystem change" report-only proof.
-// `ls-files --directory` collapses each ignored dir to a single `dir/` node (empty ones included,
-// verified on git 2.54), so this digest of sorted `path\0mode` drifts on create (new node), delete
-// (node vanishes), or chmod (mode changes). An lstat failure THROWS → snapshot()'s fail-closed catch
-// (an unresolvable node is drift), symmetric with hashPathsContent.
-// RESIDUAL: `--directory` collapses at the FIRST ignored ancestor, so a nested EMPTY dir created
-// BELOW an already-ignored dir (e.g. `cache/emptysub/` when `cache/` is ignored) is not individually
-// enumerated — only `cache/`'s node is. Non-empty descendants are still caught (files by
-// ignored_content, their ancestor modes by hashPathsContent); only nested EMPTY dirs escape. This is
-// a deep edge behind the read-only admission allowlist (workers cannot mkdir via their tools) and is
-// a documented v2 residual, consistent with the IGNORE_EXCLUDE_PATHSPECS high-volume-subtree residual.
+// Digest ignored DIRECTORY NODES (existence + own mode) — closes the empty-ignored-dir hole, which
+// neither porcelain nor the file-level content digest can see. `ls-files --directory` yields one
+// `dir/` node per ignored dir, empty ones included, so a digest of sorted `path\0mode` drifts on
+// create, delete and chmod. An lstat failure THROWS → snapshot()'s fail-closed catch, symmetric
+// with hashPathsContent. The collapse is KEPT here as a documented residual (nested empty dirs
+// below an already-ignored dir escape): docs/features/workflow-orchestration/4-implementation.md §3.2.
 
 // Expand the `--directory`-collapsed UNTRACKED dir nodes into every directory beneath them.
-//
-// `ls-files --others --directory` collapses each untracked tree at its FIRST untracked ancestor, so
-// a repo whose baseline already contains `scratch/file` enumerates exactly `scratch/` — and then
-// `mkdir scratch/empty`, `rmdir` it, or `chmod` any nested dir moves NO digest on ANY plane:
-// porcelain never lists directories, and the file-level untracked scan only yields leaves. Verified
-// against real git: with `scratch/{file.txt,nested/deep/y.txt,emptydir}` untracked, `--directory`
-// emits the single node `scratch/`. That is the common case, not an exotic one — this repo's own
-// `test/hooks/helpers/` collapses the same way — so on the untracked plane the collapse defeats the
-// hole this digest exists to close.
-//
-// The IGNORED plane keeps the collapse as a deliberate residual (see above): recursing into
-// `node_modules/` is precisely the cost blowup IGNORE_EXCLUDE_PATHSPECS exists to prevent. The
-// untracked plane's trade-off is the opposite one, and the marginal cost here is provably
-// negligible: every FILE in these same trees is already enumerated AND content-hashed by
-// `untracked_content`, so any tree big enough to make this readdir walk expensive is already
-// costing far more on a plane that predates it. This walk adds no new order of magnitude.
-//
-// Symlinks are not followed: `withFileTypes` populates the Dirent from the directory entry itself,
-// so a symlink-to-directory reports isSymbolicLink() and never isDirectory(), and the walk cannot
-// be steered outside the tree by planting one. The same three exclusion predicates as the caller
-// are re-applied per level, because `--directory` only ever showed us the root of each tree.
+// On this plane the same collapse is a defeat rather than a residual: a baseline containing
+// `scratch/file` enumerates only `scratch/`, and then mkdir/rmdir/chmod anywhere beneath it moves
+// no digest on any plane. Symlinks are not followed — `withFileTypes` builds each Dirent from the
+// directory entry, so a symlink-to-directory reports isSymbolicLink() and never isDirectory(), and
+// the walk cannot be steered out of the tree. The caller's three exclusion predicates are re-applied
+// per level because `--directory` only revealed each tree's root. Why the two planes resolve the
+// collapse differently, and the cost argument behind it:
+// docs/features/workflow-orchestration/4-implementation.md §3.2.
 function expandUntrackedDirTree(repo, roots) {
   const out = new Set();
   const stack = [...roots];
