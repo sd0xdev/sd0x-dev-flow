@@ -1,7 +1,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { resolve } = require('node:path');
-const { statSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, chmodSync } = require('node:fs');
+const {
+  statSync, writeFileSync, mkdtempSync, rmSync, mkdirSync, chmodSync, copyFileSync,
+} = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { tmpdir } = require('node:os');
 
@@ -220,11 +222,109 @@ const gitEnvPath = resolve(__dirname, '../../skills/smart-commit/references/git-
 // is therefore READ from the reference — the single source — and the other files must quote
 // it byte-for-byte. Weakening the reference now fails here (the token check below); changing
 // any copy without the reference fails wherever that copy is asserted.
+// The declaration is a BARE LITERAL line, not `GIT_ENV="…"`. The variable form was removed
+// because an unquoted expansion used as a command prefix is not split into words by zsh — the
+// whole string becomes one command name and every fence died at its first line. The pattern
+// admits only `-u NAME` tokens so a line that merely STARTS with the prefix and then runs a
+// command cannot be mistaken for the declaration.
 const CANONICAL_PREFIX = (() => {
-  const m = readFileSync(gitEnvPath, 'utf8').match(/^GIT_ENV="(env -u GIT_DIR[^"]*)"$/m);
-  assert.ok(m, 'git-environment.md § 1 must declare the canonical GIT_ENV prefix');
+  const m = readFileSync(gitEnvPath, 'utf8').match(/^(env -u GIT_DIR(?: -u [A-Z_]+)+)$/m);
+  assert.ok(m, 'git-environment.md § 1 must declare the canonical env -u prefix on a line of its own');
   return m[1];
 })();
+
+// Every `env -u GIT_DIR …` run in a file, however it is spelled around it. Replaces the old
+// sweep over `GIT_ENV="…"` assignments, which could only see the declaration and would now see
+// nothing at all — a sweep that matches nothing passes, which is the failure mode F1d's
+// `found.length >= 1` was already written to catch once.
+const PREFIX_RUNS = (text) => text.match(/env -u GIT_DIR(?: -u [A-Z_]+)*/g) || [];
+
+// The retired form, described by SHAPE rather than by name. Round 84: the first version of this
+// guard tested `/\$GIT_ENV\b/`, which is one spelling of a defect that has three — `${GIT_ENV}`
+// walked through it, and so did the same variable under any other name. What is actually banned
+// is (a) a variable that carries the prefix and (b) an expansion used as a command prefix, which
+// is the construct zsh does not word-split; the old name is kept as a third, cheap pattern.
+// Derivation and measurements: skills/smart-commit/references/git-environment.md § 1.
+const RETIRED_FORM_OK = 'retired-form-ok';
+// Round 84, second pass. Both patterns were measured evadable as first written:
+// `readonly PREFIX="env -u …"` walked past an `export`-only declarator list, and
+// `$PREFIX \` + a continued `git …` line walked past a `git|bash|env` command allow-list.
+// Pattern 2 also fired on ordinary prose — "An inherited $GIT_DIR env var decides …" — so it
+// now requires COMMAND position (line start, or after `;` `&&` `||` `|` `(` `$(`), which is
+// what makes it a shell test rather than a word search.
+// Round 84, third pass — both directions were measured wrong again, and each fix names its
+// counter-example. Evasions that passed: an INDENTED use (`CMD_POSITION` offered a bare `^`),
+// and `NAME=$(printf %s "<prefix>")` (pattern 1 required the right-hand side to START with
+// `env`). False positives that failed on ordinary markdown: `| $REPO_ROOT | the derived root |`
+// and `if $INSPECT reports guard:missing, …` — an expansion followed by any word at all was
+// treated as a command. Pattern 2 now requires a plausible COMMAND after the expansion, not
+// prose: a path, a flag, or a bare word that is not ordinary English following punctuation.
+const DECLARATOR = '(?:export|readonly|local|typeset|declare(?:\\s+-\\w+)*)\\s+';
+const CMD_POSITION = '(?:^\\s*|[;&|(]\\s*|\\$\\(\\s*|\\b(?:if|then|else|elif|do|while|until)\\s+|![ \\t]*)';
+// What may legitimately follow a prefix expansion: another command word. Anchored on the
+// shapes a real call site uses — `git`, `bash`, an absolute path, a `-`/`--` flag, or a line
+// continuation — rather than on "any non-space", which is what made prose match.
+const COMMAND_TAIL = '(?:[ \\t]+(?:/\\S+|-{1,2}\\w\\S*|(?:command|eval|exec|env|sudo|nohup|time)\\b|\\w*git\\b|\\w*bash\\b|\\w*sh\\b)|[ \\t]*\\\\$)';
+// "The right-hand side reaches the prefix" is NOT the test, and measuring showed why: the
+// shipped derivation `REPO_ROOT=$(<prefix> git rev-parse --show-toplevel …)` is an assignment
+// whose RHS contains the prefix, and it is the correct form used in all twenty fences. What
+// separates the two is what FOLLOWS the prefix — a command word means it is being RUN, a quote
+// or a closing paren means it is being CAPTURED, and capturing it is the retired form.
+// The `-u ` half of the lookahead stops the trailing `(?: -u …)*` from backtracking to a short
+// match: without it, the pattern settles on a truncated prefix whose next token is ` -u …` and
+// reports the good line as a violation.
+const PREFIX_BODY = 'env -u GIT_DIR(?: -u [A-Z_]+)*';
+// TWO lookaheads, and the first is not redundant — measured. `[A-Z_]+` can settle on part of a
+// variable name (`GIT_WORK_TRE`), and the next character is then `E`, which is not whitespace,
+// so a whitespace-only lookahead SUCCEEDS on a truncated match and reports all twenty shipped
+// derivations as violations. `(?![A-Z_])` forces the token to end before the second is asked.
+const NOT_RUN = '(?![A-Z_])(?![ \\t]+(?:-u |[A-Za-z_/]))';
+const RETIRED_FORM_PATTERNS = [
+  // `NAME="env -u …"`, `NAME=$(printf %s "env -u …")`, `NAME=(env -u …)`, any declarator.
+  [new RegExp(`^\\s*(?:${DECLARATOR})?[A-Za-z_][A-Za-z0-9_]*=.*${PREFIX_BODY}${NOT_RUN}`),
+    'assigns the prefix to a variable instead of running it'],
+  [new RegExp(`${CMD_POSITION}\\$\\{?[A-Za-z_][A-Za-z0-9_]*\\}?${COMMAND_TAIL}`),
+    'runs a command through an expanded prefix variable'],
+  [/\bGIT_ENV\b/, 'names the retired GIT_ENV variable'],
+];
+
+// A line opts out with the `retired-form-ok` MARKER, not by matching a sentence. The first
+// version keyed the exemption on the prose ("Literally, and never through a variable"), so
+// rephrasing that paragraph — an ordinary doc edit — failed the guard, and re-quoting the
+// sentence elsewhere disarmed it. The marker is a token: it moves with the line it exempts.
+const retiredFormViolations = (text, label) => {
+  const out = [];
+  text.split('\n').forEach((line, i) => {
+    if (line.includes(RETIRED_FORM_OK)) return;
+    for (const [re, why] of RETIRED_FORM_PATTERNS) {
+      if (re.test(line)) out.push(`${label}:${i + 1} ${why} — ${line.trim().slice(0, 90)}`);
+    }
+  });
+  return out;
+};
+
+// Every file that carries the policy in prose or in a fence. execute-mode.md is here even
+// though it holds only one literal prefix copy: what this sweep bans is the retired SPELLING,
+// and a copied fence lands there as readily as anywhere else.
+// Instruction surfaces only — the files a reader COPIES FROM. Round 85 removed
+// `docs/features/smart-commit-hardening/2-tech-spec.md` from this list, and the reason is the
+// guard's own purpose rather than convenience: that document records the design as it shipped
+// and says in its own §3.2 note "要照抄可執行的形狀請看腳本本身。". Sweeping
+// it forced the retired `GIT_ENV="…"` form to be rewritten into the current spelling across
+// three superseded sections (+23 lines, measured) — which does not make the record more
+// accurate, it makes it FALSE: those fences never looked like that. A historical record is
+// exactly where the retired form belongs. What replaces the sweep for that file is
+// F1q below: the sections carrying the retired form must be labelled superseded.
+const RETIRED_FORM_SWEEP = [
+  ['skills/smart-commit/SKILL.md', 'SKILL.md'],
+  ['skills/smart-commit/references/git-environment.md', 'git-environment.md'],
+  ['skills/smart-commit/references/execute-mode.md', 'execute-mode.md'],
+];
+
+// The tech spec is out of the sweep, so its exemption is a LABEL rather than a marker: a
+// section may carry the retired form only while it is marked as superseded. Without this,
+// dropping it from the sweep would be a pure loss of coverage.
+const SUPERSEDED_SPEC = 'docs/features/smart-commit-hardening/2-tech-spec.md';
 
 // What the prefix must still cover, stated independently of the string above so that
 // shortening the reference is caught rather than silently redefining "canonical".
@@ -272,18 +372,52 @@ test('F1d: the canonical git environment is defined once and quoted identically 
     [skillPath, 'SKILL.md'],
     [gitEnvPath, 'git-environment.md'], [hardeningSpec, 'smart-commit-hardening/2-tech-spec.md'],
   ]) {
-    const found = readFileSync(path, 'utf8').match(/GIT_ENV="[^"]*"/g) || [];
-    assert.ok(found.length >= 1, `${label} must declare the prefix at least once`);
-    for (const decl of found) {
-      assert.equal(decl, `GIT_ENV="${CANONICAL_PREFIX}"`,
-        `${label} must quote the canonical prefix byte-for-byte in every assignment`);
+    const found = PREFIX_RUNS(readFileSync(path, 'utf8'));
+    assert.ok(found.length >= 1, `${label} must write the prefix at least once`);
+    for (const run of found) {
+      assert.equal(run, CANONICAL_PREFIX,
+        `${label} must write the canonical prefix byte-for-byte at every call site`);
     }
   }
+  // The variable is gone, so nothing may reintroduce it — in any spelling. One copied fence
+  // would put it back, and F1d's prefix sweep above cannot catch that: the canonical run
+  // sitting inside a re-added `NAME="env -u …"` assignment compares equal byte-for-byte.
+  // The must-fail direction rules/testing.md § Conventions "Guards" requires is F1m, which
+  // injects each evading shape into a copy of these files and asserts this same function
+  // rejects it — delete the block below and F1m goes red.
+  const violations = RETIRED_FORM_SWEEP
+    .flatMap(([rel, label]) => retiredFormViolations(
+      readFileSync(resolve(__dirname, '../..', rel), 'utf8'), label));
+  assert.deepEqual(violations, [],
+    'no file may reintroduce a prefix-carrying variable — zsh does not word-split an expansion '
+    + `used as a command prefix; mark a legitimate mention with ${RETIRED_FORM_OK}`);
+  // The must-pass half: at least one line legitimately names the retired form — the reference
+  // paragraph in git-environment.md explaining why it is retired. The tech spec used to supply
+  // a second, but round 85 took that file out of the sweep entirely (see the list above), so
+  // the bound came down with it rather than being propped up by a marker added for the count's
+  // sake. What the bound still catches is the case that matters: drop to 0 and the guard has
+  // nothing left to let through, which is how the first version became dead code.
+  const exempt = RETIRED_FORM_SWEEP.flatMap(([rel, label]) =>
+    readFileSync(resolve(__dirname, '../..', rel), 'utf8').split('\n')
+      .map((line, i) => (line.includes(RETIRED_FORM_OK) ? `${label}:${i + 1}` : null))
+      .filter(Boolean));
+  // A LOWER bound, not an equality. The equality made the remedy this guard's own failure
+  // message advertises ("mark a legitimate mention with retired-form-ok") fail at the next
+  // assertion, with a count of 3 — an exemption whose count is pinned is not an exemption.
+  // The bound still catches the case that matters: drop to 0 and the guard has nothing left
+  // to let through, which is how the first version became dead code.
+  assert.ok(exempt.length >= 1,
+    `at least one line must carry ${RETIRED_FORM_OK} — the reference paragraph names the `
+    + `retired form on purpose; found: ${exempt.join(', ') || '(none)'}`);
   // `-C "$REPO_ROOT"` is half the contract; the reference must carry it too, or the
   // per-fence assertions below would be enforcing a rule stated nowhere.
-  assert.match(readFileSync(gitEnvPath, 'utf8'), /REPO_ROOT=\$\(\$GIT_ENV git rev-parse --show-toplevel && printf \.\) \|\| \{[^}]*\}\nREPO_ROOT=\$\{REPO_ROOT%\.\}; REPO_ROOT=\$\{REPO_ROOT%\$'\\n'\}/,
-    'the reference must define how REPO_ROOT is derived');
-  assert.match(readFileSync(gitEnvPath, 'utf8'), /\$GIT_ENV git -C "\$REPO_ROOT"/,
+  const refText = readFileSync(gitEnvPath, 'utf8');
+  assert.ok(refText.includes(
+    `REPO_ROOT=$(${CANONICAL_PREFIX} git rev-parse --show-toplevel && printf .) || {`),
+  'the reference must define how REPO_ROOT is derived, with the prefix written out');
+  assert.match(refText, /REPO_ROOT=\$\{REPO_ROOT%\.\}; REPO_ROOT=\$\{REPO_ROOT%\$'\\n'\}/,
+    'and how the sentinel is stripped');
+  assert.ok(refText.includes(`${CANONICAL_PREFIX} git -C "$REPO_ROOT"`),
     'and that every command is pinned to it');
 });
 
@@ -320,7 +454,6 @@ const PINNED_COPYABLE = [
   '--amend',
   '<PREFIX>',
   'git-environment.md',
-  '$GIT_ENV',
   '<sha>',
   // The comparison the amend branch is taken on — prefixed and -C pinned like the rest.
   "<PREFIX> git -C '<REPO_ROOT>' rev-parse HEAD",
@@ -407,9 +540,9 @@ function copyableSurface(section) {
   return { problems, copyable, outside };
 }
 
-test('F1f: the leak-recovery commands users are told to paste carry the canonical prefix', () => {
-  // Round 86, Codex P2. § On a leak writes the prefix out LITERALLY — the user's shell has no
-  // `$GIT_ENV` — so it is a second copy that F1d's `GIT_ENV="…"` sweep cannot see. It was
+test('F1r: the leak-recovery commands users are told to paste carry the canonical prefix', () => {
+  // Round 86, Codex P2. § On a leak writes the prefix out for the user to paste, and this file
+  // is not one of the three F1d sweeps, so it is a copy nothing else checks. It was
   // byte-identical when written and nothing kept it that way. That matters more here than in
   // an ordinary example: these commands run against a repository that has just been shown to
   // contain a leaked commit, and an inherited GIT_DIR points them at a different one.
@@ -558,6 +691,66 @@ test('F1k: F1f mutation control — every bypass is seen, and documentation stil
     const mutated = section.replace(anchor, `${anchor}\n\n${inject}\n`);
     assert.notEqual(mutated, section, `the ${label} control must apply`);
     assert.equal(seen(mutated), false, `${label} is documentation, not a command — it must pass`);
+  }
+});
+
+test('F1m: F1d mutation control — every reintroduction of the prefix variable is rejected', () => {
+  // Round 84. F1d's retired-form guard had no must-fail direction: deleting the whole block left
+  // 196/196 green, which is exactly the check rules/testing.md § Conventions "Guards" prescribes
+  // ("delete the guard; if every existing case stays green, it has no negative control"). It was
+  // also one spelling deep — `/\$GIT_ENV\b/` — so `${GIT_ENV}` and any rename walked through.
+  // Each injection below was measured against the shipped files before being written down.
+  // The sweep is run HERE as well as in F1d, deliberately. Measured: emptying
+  // RETIRED_FORM_PATTERNS turns this test red (the control works), but deleting F1d's
+  // application block alone left 48/48 green — the detector was defended and its use was not.
+  // Running it in both places means one of them has to survive the edit that removes the other.
+  assert.deepEqual(
+    RETIRED_FORM_SWEEP.flatMap(([rel, label]) => retiredFormViolations(
+      readFileSync(resolve(__dirname, '../..', rel), 'utf8'), label)), [],
+    'every swept file must be clean — otherwise nothing below means anything');
+  const clean = readFileSync(skillPath, 'utf8');
+  const anchor = '### Step 3: Collect Changes';
+  assert.ok(clean.includes(anchor), 'the mutation anchor must exist');
+
+  for (const [label, inject] of [
+    // The three spellings of the same variable. The middle one is what the previous guard missed.
+    ['bare $GIT_ENV', `$GIT_ENV git -C "$REPO_ROOT" status --short`],
+    ['braced ${GIT_ENV}', '${GIT_ENV} git -C "$REPO_ROOT" status --short'],
+    ['a restored assignment', `GIT_ENV="${CANONICAL_PREFIX}"`],
+    // Renames. The defect is the SHAPE, so a guard keyed on the old name is one edit from useless.
+    ['a renamed variable', '$GITENV git -C "$REPO_ROOT" status --short'],
+    ['a renamed assignment', `GITENV="${CANONICAL_PREFIX}"`],
+    ['an exported assignment', `export SCRUB="${CANONICAL_PREFIX}"`],
+    // Not at line start, and not in front of `git`: both positions a hand-anchored pattern missed.
+    ['inside a substitution', 'REPO_ROOT=$($E git rev-parse --show-toplevel)'],
+    ['in front of bash', '$E /bin/bash -p -- "$REPO_ROOT/scripts/run-skill.sh" smart-commit x.sh'],
+    ['after a conditional', 'if $E git diff --quiet; then :; fi'],
+  ]) {
+    const mutant = clean.replace(anchor, () => `${anchor}\n\n\`\`\`bash\n${inject}\n\`\`\`\n`);
+    assert.ok(mutant.includes(inject),
+      `the ${label} mutation must apply VERBATIM — an unapplied substitution looks like a pass`);
+    assert.ok(retiredFormViolations(mutant, 'SKILL.md').length > 0,
+      `F1d must reject ${label}`);
+  }
+
+  // The must-pass direction, using the same words as ordinary data. The guard that preceded this
+  // one keyed its exemption on a SENTENCE, so rephrasing the paragraph that explains the retired
+  // form — an ordinary doc edit — failed the build, and re-quoting that sentence anywhere else
+  // disarmed the guard. With a marker token, both stop being possible.
+  for (const [label, inject] of [
+    ['the shipped delegation', '/bin/bash -p -- "$INSPECT" guard'],
+    ['the locator that finds it', 'INSPECT="$REPO_ROOT/.claude/scripts/smart-commit-inspect.sh"'],
+    ['a prefix written out literally', `${CANONICAL_PREFIX} git -C "$REPO_ROOT" status --short`],
+    ['an ordinary expansion', 'echo "$REPO_ROOT" && printf .'],
+    ['a path built from a variable', 'HOOK_FILE="${REPO_ROOT}/${HOOK_FILE}"'],
+    ['a marked mention of the retired form', 'GIT_ENV="env -u …" is retired <!-- retired-form-ok -->'],
+    ['a rephrased explanation', 'Written out literally, because a variable cannot be word-split '
+      + 'by zsh <!-- retired-form-ok -->'],
+  ]) {
+    const mutant = clean.replace(anchor, () => `${anchor}\n\n\`\`\`bash\n${inject}\n\`\`\`\n`);
+    assert.notEqual(mutant, clean, `the ${label} control must apply`);
+    assert.deepEqual(retiredFormViolations(mutant, 'SKILL.md'), [],
+      `${label} is not the retired form — it must pass`);
   }
 });
 
@@ -824,7 +1017,17 @@ test('E10: no fixed-EOF heredoc carries a commit message', () => {
   // anchor and backtick-only delimiter (r97) — reached the assertion as a shrunken input rather
   // than as a failure. A count that must not drop is what turns "the oracle passed" into
   // "the oracle passed on the whole document". Update it deliberately when a fence is added.
-  const PINNED_BASH_LINES = { 'execute-mode.md': 5, 'SKILL.md': 115 };
+  // SKILL.md: 115 → 101 when the 14 `GIT_ENV="…"` assignment lines were deleted and the prefix
+  // written out at each call site instead; 101 → 78 when ten read-only diagnostic fences moved
+  // their bodies into smart-commit-inspect.sh and became a single delegation each. Both times
+  // the count dropped for a reason, which is exactly what this pin makes someone state.
+  // 78 -> 108 when each of the ten delegations gained the three-line locator that lets it
+  // resolve the script in a consuming project (installed copy first) instead of assuming
+  // this plugin checkout. See F1f.
+  // 108 -> 109: one comment line in the `guard` fence, splitting a pointer that conflated two
+  // different questions (why the three states differ -> `P6`; why a resolution FAILURE is a
+  // fourth state and not `guard:missing` -> the script). Prose, not a new command.
+  const PINNED_BASH_LINES = { 'execute-mode.md': 5, 'SKILL.md': 109 };
   for (const [name, path] of [['execute-mode.md', execModePath], ['SKILL.md', skillPath]]) {
     assert.equal(bashBlocks(path).split('\n').length, PINNED_BASH_LINES[name],
       `${name}: the scanned bash surface changed size — a shrinking one means a fence form the `
@@ -936,8 +1139,9 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
   const raw = readFileSync(skillPath, 'utf8');
   assert.match(raw, /### Git Environment Policy/,
     'the policy must be declared once, at workflow level');
-  assert.match(raw, /GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"/,
-    'and it must be the identical prefix execute-mode.md uses');
+  assert.ok(raw.includes('env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR'),
+  'and it must be the identical prefix execute-mode.md uses. Spelled out here rather than '
+  + 'read from CANONICAL_PREFIX: this is the copy that would silently follow a drifting source');
 
   // Only the fences the skill itself executes: a ````markdown wrapper marks a block as
   // output for the user, and those are exempt by the stated policy.
@@ -947,14 +1151,26 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
     .split('\n')
     .filter((l) => /(^|[;&|(]|\s)git\s/.test(l) && !/^\s*#/.test(l));
   assert.ok(calls.length >= 8, `expected the skill's own git calls; found ${calls.length}`);
+  // Round 85, instrumented: every one of these lines is now the `rev-parse --show-toplevel`
+  // derivation, because the commands that consume paths moved into smart-commit-inspect.sh.
+  // So the `-C` loop and the `:(literal)` loop below have an EMPTY population — they pass
+  // by having nothing to judge, which reads as coverage and is not. Asserted as a number so
+  // that stays visible, and so a fence reintroducing a direct git call has to change THIS
+  // line rather than slipping past two loops nobody re-read. Where the properties are
+  // actually covered now: P3 (`-C "$REPO_ROOT"`) and P4/P5 (`:(literal)`) in
+  // test/scripts/smart-commit-inspect.test.js.
+  const consumers = calls.filter((c) => !/rev-parse --show-toplevel/.test(c));
+  assert.equal(consumers.length, 0,
+    'a fence runs git directly again — the two loops below are live now and must be re-read: '
+      + consumers.map((c) => c.trim()).join(' | '));
   for (const call of calls) {
-    assert.match(call, /\$GIT_ENV git/,
-      `every git call the skill runs must carry the one policy — this one does not: ${call.trim()}`);
+    assert.ok(call.includes(`${CANONICAL_PREFIX} git`),
+      `every git call the skill runs must carry the one policy, written out — this one does not: ${call.trim()}`);
     // Round 48, P1: paths are collected root-relative, so a command that consumes them
     // while running from the skill's cwd reads or stages the wrong base. `-C` is not a
     // property of the commands that print — it is a property of all of them.
     if (/rev-parse --show-toplevel/.test(call)) continue;
-    assert.match(call, /\$GIT_ENV git -C "\$REPO_ROOT"/,
+    assert.ok(call.includes(`${CANONICAL_PREFIX} git -C "$REPO_ROOT"`),
       `every git call must be pinned to the derived root: ${call.trim()}`);
   }
 
@@ -975,14 +1191,20 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
   // establish BOTH in the same shell. Round 48, P2: asserting only that the assignment
   // *starts* with the list let one full copy elsewhere in the file satisfy the separate
   // full-list check while an individual fence carried a shortened one; and nothing checked
-  // REPO_ROOT at all, so `-C ""` (or an abort under nounset) passed.
+  // REPO_ROOT at all, so `-C ""` (or an abort under nounset) passed. The prefix half is now
+  // structurally unfalsifiable per fence — writing it out IS establishing it — so what is
+  // left to check is that no fence carries a shortened copy, and the REPO_ROOT half.
   for (const fence of fences) {
-    if (!/\$GIT_ENV/.test(fence)) continue;
-    assert.ok(fence.includes(`GIT_ENV="${CANONICAL_PREFIX}"`),
-      `a fence using $GIT_ENV must assign the canonical prefix in the same shell: ${fence.slice(0, 80)}`);
+    for (const run of PREFIX_RUNS(fence)) {
+      assert.equal(run, CANONICAL_PREFIX,
+        `a fence must write the prefix in full, not a shortened copy: ${fence.slice(0, 80)}`);
+    }
     if (!/\$REPO_ROOT/.test(fence)) continue;
-    assert.match(fence, /REPO_ROOT=\$\(\$GIT_ENV git rev-parse --show-toplevel && printf \.\) \|\| \{[^}]*\}\nREPO_ROOT=\$\{REPO_ROOT%\.\}; REPO_ROOT=\$\{REPO_ROOT%\$'\\n'\}/,
-      `a fence using $REPO_ROOT must derive it in the same shell: ${fence.slice(0, 80)}`);
+    assert.ok(fence.includes(
+      `REPO_ROOT=$(${CANONICAL_PREFIX} git rev-parse --show-toplevel && printf .) || {`),
+    `a fence using $REPO_ROOT must derive it in the same shell: ${fence.slice(0, 80)}`);
+    assert.match(fence, /REPO_ROOT=\$\{REPO_ROOT%\.\}; REPO_ROOT=\$\{REPO_ROOT%\$'\\n'\}/,
+      `and strip the sentinel there too: ${fence.slice(0, 80)}`);
   }
 
   // Round 45: the sweep above matches on the literal token `git `, so a DELEGATED command
@@ -991,12 +1213,57 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
   // The preferred diagnostic path was therefore answering about a different repository than
   // the commit while F1b stayed green. The prefix belongs on the delegation, not inside the
   // helper, so that is what is asserted.
-  const delegations = executed.split('\n').filter((l) => /run-skill\.sh/.test(l) && !/^\s*#/.test(l));
+  // A NAME inside a code span is prose about the runner, not an invocation of it: the
+  // fallback paragraph in Step 1c has to be able to say `scripts/run-skill.sh` to explain
+  // which chain it does NOT share. Spans are stripped before the match, so only a line that
+  // actually runs the wrapper is held to the root-anchoring rule below.
+  const withoutSpans = (l) => l.replace(/`[^`]*`/g, '');
+  const delegations = executed.split('\n')
+    .filter((l) => /run-skill\.sh/.test(withoutSpans(l)) && !/^\s*#/.test(l));
   assert.ok(delegations.length >= 1, 'the delegated diagnostic must still be present');
-  for (const call of delegations) {
-    assert.match(call, /\$GIT_ENV /,
-      `a helper that runs git must be invoked under the same policy: ${call.trim()}`);
+  // Two kinds, and which kind a delegation is depends on the CALLEE, not on the call site:
+  // a helper that runs git under the caller's environment needs the prefix on the delegation;
+  // one that strips the environment for itself must NOT be prefixed, or the policy is stated
+  // twice and the second statement is the one nobody maintains. `smart-commit-inspect.sh` is
+  // the second kind — test/scripts/smart-commit-inspect.test.js P1 pins its unset block equal
+  // to this prefix, which is what earns the exemption. Everything else is the first kind.
+  // Keyed on the INVOCATION, not on run-skill.sh delegations. Round 84, instrumented: after
+  // the locator replaced the runner, zero delegations matched this name, so the branch below
+  // could not fire — "a check that cannot fail is not a check", as this same test says twenty
+  // lines down about a different one.
+  const inspectCalls = executed.split('\n')
+    .filter((l) => /"\$INSPECT"/.test(l) && !/^\s*(?:#|\[ -r )/.test(l));
+  assert.ok(inspectCalls.length >= 10, `the diagnostics must reach the script; found ${inspectCalls.length}`);
+  for (const call of inspectCalls) {
+    assert.ok(!call.includes('env -u GIT_DIR'),
+      `the script applies the policy itself; prefixing it states it twice: ${call.trim()}`);
   }
+  const selfPolicing = /smart-commit-inspect\.sh/;
+  for (const call of delegations) {
+    if (selfPolicing.test(call)) {
+      assert.ok(!call.includes('env -u GIT_DIR'),
+        `a self-policing helper must not also be prefixed: ${call.trim()}`);
+    } else {
+      assert.ok(call.includes(`${CANONICAL_PREFIX} `),
+        `a helper that runs git must be invoked under the same policy: ${call.trim()}`);
+    }
+  }
+  // The exemption is only sound while the script really does strip the environment. Asserted
+  // here too, not just in the script's own suite: this is the file that grants the exemption.
+  const inspectSrc = readFileSync(
+    resolve(__dirname, '../../skills/smart-commit/scripts/smart-commit-inspect.sh'), 'utf8');
+  // Token by token, not `/^unset GIT_DIR…ALLOW_AI_COAUTHOR$/`: that pattern is satisfied by
+  // a two-name block `unset GIT_DIR ALLOW_AI_COAUTHOR`, and this is the file whose own
+  // stripping EARNS the no-prefix exemption asserted just above. The sibling check for
+  // smart-commit-execute.sh already iterates the list; both now do.
+  const inspectUnset = (inspectSrc.match(/^unset GIT_DIR[\s\S]*?ALLOW_AI_COAUTHOR$/m) || [''])[0]
+    .replace(/\\\n\s*/g, ' ');
+  for (const tok of REQUIRED_ENV_TOKENS) {
+    assert.ok(inspectUnset.includes(tok.replace('-u ', '')),
+      `smart-commit-inspect.sh must strip ${tok} itself, since it is invoked without the prefix`);
+  }
+  assert.match(inspectSrc, /^unset GIT_DIR[\s\S]*?ALLOW_AI_COAUTHOR$/m,
+    'smart-commit-inspect.sh must strip the environment itself — that is why it is unprefixed');
 
   // The `--execute` script is the one git-running callee invoked WITHOUT the prefix, and it
   // is not a run-skill.sh delegation at all — it establishes its own privileged mode, so the
@@ -1016,7 +1283,10 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
       `smart-commit-execute.sh must strip ${tok} itself, since it is invoked without the prefix`);
   }
   for (const call of execCalls) {
-    assert.doesNotMatch(call, /\$GIT_ENV /,
+    // The prefix itself, not the retired `$GIT_ENV` spelling: with the variable gone, banning
+    // the variable is a check that can no longer fail, and a double-application would be
+    // written out in full like every other call site.
+    assert.ok(!call.includes('env -u GIT_DIR'),
       `the script applies the policy itself; prefixing it states it twice: ${call.trim()}`);
   }
   // Root-anchoring applies to EVERY delegation, self-policing or not — it is about where the
@@ -1024,11 +1294,64 @@ test('F1b: SKILL.md applies the same git environment policy to what the skill ru
   // works from anywhere inside the repository, but the wrapper was still named cwd-relative.
   // From a subdirectory it is simply not found, and the preferred doctor degrades silently to
   // the warn-only inline fallback — losing linked-worktree and signing-key diagnostics.
+  // Every locator line, not only the one run-skill.sh delegation. Round 84, measured: after
+  // the diagnostics stopped going through the runner this loop covered exactly one line, and
+  // stripping `$REPO_ROOT/` from a SINGLE fence's locator left the whole suite green — that
+  // fence would then abort from any subdirectory blaming a missing install.
+  // Round 85: keyed to `INSPECT=` alone, this loop never saw the --execute locators.
+  // Measured survivors: making both `EXECUTE=` lines cwd-relative left all three suites
+  // green, and that one is a live break — `/smart-commit --execute` from any subdirectory
+  // then matches neither `[ -r ]` arm and aborts blaming a missing install. Both names now.
+  const locators = executed.split('\n')
+    .filter((l) => /^\s*(?:\[ -r "\$(?:INSPECT|EXECUTE)" \] \|\| )?(?:INSPECT|EXECUTE)=/.test(l));
+  assert.ok(locators.length >= 26,
+    `every fence must carry both locator arms; found ${locators.length}`);
+  for (const line of locators) {
+    assert.match(line, /(?:INSPECT|EXECUTE)="\$REPO_ROOT\//,
+      `the script must be resolved against the repository root, not the cwd: ${line.trim()}`);
+  }
+  // Precedence, textually: the installed copy is tried FIRST. Asserting only that both paths
+  // appear cannot see the two arms swapped, and swapping them is what breaks a consuming
+  // project — there, `.claude/scripts/` is the only copy that exists.
+  // `^\s*` and both names: the --execute locators are indented inside a numbered list, so
+  // an anchor at column 0 could not have seen them even before the name was widened.
+  const armPairs = executed.split('\n')
+    .map((l, i, all) => (/^\s*(?:INSPECT|EXECUTE)="\$REPO_ROOT\/\.claude\/scripts\//.test(l) ? all[i + 1] : null))
+    .filter(Boolean);
+  assert.ok(armPairs.length >= 13, `each fence must open its locator with the installed copy; found ${armPairs.length}`);
+  for (const second of armPairs) {
+    assert.match(second, /(?:INSPECT|EXECUTE)="\$REPO_ROOT\/skills\/smart-commit\/scripts\//,
+      `the plugin-checkout arm must come SECOND: ${second.trim()}`);
+  }
   for (const call of delegations) {
     assert.match(call, /"\$REPO_ROOT\/scripts\/run-skill\.sh"/,
       `the wrapper must be resolved against the repository root, not the cwd: ${call.trim()}`);
   }
 });
+
+/**
+ * Give a fixture repository the two files a delegating fence needs in order to resolve.
+ *
+ * The read-only diagnostics used to be written out inside the fences; they now live in
+ * `smart-commit-inspect.sh`, resolved by path — installed copy first, NOT through
+ * `run-skill.sh`; in a consuming project the runner derives its plugin root from its own
+ * installed location, where this script does not live (measured: exit 127). The tests run the
+ * SHIPPED FENCE verbatim rather than calling the script directly, which makes them stricter
+ * than they were: they now also prove the delegation resolves. That only works if the fixture
+ * carries the chain, since the fence names it relative to the repository root it derives —
+ * which is the fixture, not this repository.
+ *
+ * Copied rather than symlinked on purpose: `run-skill.sh` resolves its own symlink chain
+ * PHYSICALLY to derive the plugin root, so a symlink here would send the dispatch back to this
+ * checkout and the fixture would stop being the thing under test.
+ */
+const installDelegationChain = (dir) => {
+  const inspect = resolve(__dirname, '../../skills/smart-commit/scripts/smart-commit-inspect.sh');
+  mkdirSync(resolve(dir, 'scripts'), { recursive: true });
+  mkdirSync(resolve(dir, 'skills/smart-commit/scripts'), { recursive: true });
+  copyFileSync(resolve(__dirname, '../../scripts/run-skill.sh'), resolve(dir, 'scripts/run-skill.sh'));
+  copyFileSync(inspect, resolve(dir, 'skills/smart-commit/scripts/smart-commit-inspect.sh'));
+};
 
 test('F1f: the shipped hook resolver answers correctly from a subdirectory', () => {
   // Round 50, P2. The compressed Step 1e resolver looked fine and was wrong: `--git-path`
@@ -1038,11 +1361,24 @@ test('F1f: the shipped hook resolver answers correctly from a subdirectory', () 
   // — which `--git-path` had already expanded correctly. No textual assertion could see any
   // of that, and a mutation reverting the fix left the whole suite green. So this extracts
   // the shipped fence and RUNS it, from a subdirectory, against a real repository.
+  //
+  // The resolver has since moved into smart-commit-inspect.sh and the fence delegates to it.
+  // What is extracted and run is still the fence, so the chain — derive the root, locate the
+  // script, run it, resolve the hook — is exercised end to end and every fixture below keeps
+  // its meaning. `installDelegationChain` is what makes the fixture able to answer at all.
   const raw = readFileSync(skillPath, 'utf8');
   const m = raw.match(/\*\*1e\. AI Guard Readiness\*\*\s*```bash\n([\s\S]*?)^```$/m);
   assert.ok(m, 'the Step 1e fence must be locatable');
   const fence = m[1];
-  assert.match(fence, /guard:installed/, 'the extracted span must be the resolver itself');
+  assert.match(fence, /"\$INSPECT" guard/,
+    'the extracted span must be the delegation that reaches the resolver');
+  // Both arms of the locator, so a fence that only ever finds the in-repo copy cannot pass:
+  // in a consuming project `/install-scripts` flattens the script into `.claude/scripts/`,
+  // and that is the arm a plugin checkout never exercises.
+  assert.match(fence, /INSPECT="\$REPO_ROOT\/\.claude\/scripts\/smart-commit-inspect\.sh"/,
+    'the installed copy must be tried first');
+  assert.match(fence, /INSPECT="\$REPO_ROOT\/skills\/smart-commit\/scripts\/smart-commit-inspect\.sh"/,
+    'and the plugin checkout second');
 
   const dir = mkdtempSync(resolve(tmpdir(), 'smart-commit-hook-'));
   // Round 51, P2: the custom-hooksPath cases used to run with the DEFAULT hook still
@@ -1062,6 +1398,7 @@ test('F1f: the shipped hook resolver answers correctly from a subdirectory', () 
       return r;
     };
     git('init', '-q');
+    installDelegationChain(dir);
     mkdirSync(resolve(dir, 'sub/deep'), { recursive: true });
     const sub = resolve(dir, 'sub/deep');
 
@@ -1136,6 +1473,10 @@ test('F1f: the shipped hook resolver answers correctly from a subdirectory', () 
     git('-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
     const wt = resolve(dir, 'wt');
     git('worktree', 'add', '-q', wt, '-b', 'probe');
+    // A linked worktree is its own `--show-toplevel`, so the fence resolves the runner
+    // relative to IT. In a real checkout `scripts/` is tracked and therefore present; the
+    // fixture's copies are untracked, so they have to be placed here as well.
+    installDelegationChain(wt);
     assert.ok(statSync(resolve(wt, '.git')).isFile(), 'fixture precondition: a linked worktree\'s .git is a file');
     assert.equal(runFrom(wt), 'guard:installed',
       'the common-dir hook governs the worktree — only git knows where it is');
@@ -1154,6 +1495,7 @@ test('F1f: the shipped hook resolver answers correctly from a subdirectory', () 
     sup('commit', '-q', '--allow-empty', '-m', 'init');
     sup('submodule', 'add', '-q', dir, 'vendor');
     const vendor = resolve(superDir, 'vendor');
+    installDelegationChain(vendor);   // same reason as the worktree above
     assert.ok(statSync(resolve(vendor, '.git')).isFile(), 'fixture precondition: a submodule\'s .git is a file');
     assert.equal(runFrom(vendor), 'guard:missing', 'control: the submodule gitdir has no hook yet');
     install(resolve(superDir, '.git/modules/vendor/hooks'));
@@ -1187,25 +1529,51 @@ test('F1g: a repository root ending in a newline survives the derivation', () =>
       assert.equal(r.status, 0, `git ${a.join(' ')} failed: ${r.stderr}`);
     };
     git('init', '-q');
+    installDelegationChain(root);
     const hooks = resolve(root, '.git/hooks');
     mkdirSync(hooks, { recursive: true });
     writeFileSync(resolve(hooks, 'commit-msg'), '#!/bin/sh\nexit 0\n');
     chmodSync(resolve(hooks, 'commit-msg'), 0o755);
 
     const run = (body) => spawnSync('bash', ['-c', body], { cwd: root, encoding: 'utf8' });
-    const shipped = run(fence);
-    assert.equal(shipped.status, 0, `the resolver must exit 0; got ${shipped.stderr}`);
-    assert.equal(shipped.stdout.trim(), 'guard:installed',
-      'the shipped derivation keeps the trailing newline, so -C names the real repository');
+    // What this test is about is the DERIVATION, so that is what it reads: the shipped two
+    // lines must leave `$REPO_ROOT` byte-identical to the real root, newline included.
+    const lines = fence.split('\n');
+    const at = lines.findIndex((l) => l.startsWith('REPO_ROOT=$(') && l.includes('printf .'));
+    assert.ok(at >= 0 && lines[at + 1].startsWith('REPO_ROOT=${REPO_ROOT%.}'),
+      'the two-line derivation must be locatable');
+    const derivation = lines.slice(at, at + 2).join('\n');
+    const shipped = run(`${derivation}\nprintf '%s' "$REPO_ROOT"`);
+    assert.equal(shipped.status, 0, `the derivation must exit 0; got ${shipped.stderr}`);
+    // Compared by shape, not against `root` itself: on macOS `git rev-parse --show-toplevel`
+    // answers the PHYSICAL path (`/private/var/…`) while mkdtemp hands back the symlinked one
+    // (`/var/…`), so an equality here would fail for a reason that is not the defect.
+    assert.ok(shipped.stdout.endsWith('/repo\n'),
+      'the sentinel keeps the trailing newline, so every later -C names the real repository');
 
-    // Control: the pre-fix derivation on the same fixture. If this ever also says
-    // `installed`, the fixture stopped reproducing the defect and the test is vacuous.
-    const direct = fence.replace(
-      /REPO_ROOT=\$\(\$GIT_ENV git rev-parse --show-toplevel && printf \.\) \|\| \{[^}]*\}\nREPO_ROOT=\$\{REPO_ROOT%\.\}; REPO_ROOT=\$\{REPO_ROOT%\$'\\n'\}/,
-      'REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel)');
-    assert.notEqual(direct, fence, 'the control must actually differ from the shipped form');
-    assert.equal(run(direct).stdout.trim(), 'guard:missing',
-      'control: the direct substitution truncates the root and finds nothing');
+    // Control: the pre-fix derivation on the same fixture. If this ever also matches, the
+    // fixture stopped reproducing the defect and the assertion above is vacuous.
+    // Line-addressed rather than pattern-matched: the prefix is written out in full now, and a
+    // regex carrying an escaped copy of it would be a fourth place the list has to stay correct.
+    const direct = `REPO_ROOT=$(${CANONICAL_PREFIX} git rev-parse --show-toplevel)`;
+    assert.notEqual(direct, derivation, 'the control must actually differ from the shipped form');
+    const truncated = run(`${direct}\nprintf '%s' "$REPO_ROOT"`);
+    assert.notEqual(truncated.stdout, shipped.stdout,
+      'control: the direct substitution truncates the root');
+    assert.equal(`${truncated.stdout}\n`, shipped.stdout,
+      'and truncates it by exactly the record terminator the sentinel protects');
+
+    // And the whole fence, not just its first two lines: a derivation that preserves the byte
+    // is worthless if the next step drops it again. An intermediate revision routed this
+    // through `scripts/run-skill.sh`, whose own `$(cd -P … && pwd)` truncates exactly the
+    // newline preserved above, so the dispatch could not find its target and the fence aborted
+    // 127. Resolving the script by path removed that hop, and the capability came back —
+    // measured here rather than assumed, because it is the reason the hop was removed.
+    const delegated = run(fence);
+    assert.equal(delegated.status, 0,
+      `the whole fence must survive the newline root, not only the derivation: ${delegated.stderr}`);
+    assert.equal(delegated.stdout.trim(), 'guard:installed',
+      'and answer about the hook that is actually installed in it');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1229,8 +1597,10 @@ test('F1h: a failed root derivation is reported, not swallowed by the sentinel',
   // a repository it printed `guard:missing` and exited 0, reporting "the hook is not
   // installed" when the truth was "this is not a repository". The fence itself is now run,
   // verbatim, and the guard is part of it.
-  assert.match(fence, /^REPO_ROOT=\$\(\$GIT_ENV git rev-parse --show-toplevel && printf \.\) \|\|/m,
-    'the guard must be part of the shipped derivation, not synthesized by this test');
+  assert.ok(fence.split('\n').some((l) => l
+    === `REPO_ROOT=$(${CANONICAL_PREFIX} git rev-parse --show-toplevel && printf .) || `
+      + '{ echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }'),
+  'the guard must be part of the shipped derivation, not synthesized by this test');
 
   // A directory that is not a repository and has no repository above it, so
   // `rev-parse --show-toplevel` genuinely fails rather than answering about us.
@@ -1250,17 +1620,371 @@ test('F1h: a failed root derivation is reported, not swallowed by the sentinel',
     assert.doesNotMatch(shipped.stdout, /guard:/,
       'and it must not report a guard verdict at all — `guard:missing` here would mean '
       + '"the hook is not installed" when the truth is "this is not a repository"');
+    assert.match(shipped.stderr, /could not resolve the repository root/,
+      'and it must NAME the cause — the guard exists to produce this sentence, not merely to '
+      + 'produce a non-zero status');
 
-    // Control: revert only the guard. If this ever also refuses to answer, the fixture has
-    // stopped reproducing the defect and the assertions above prove nothing.
+    // Control: revert ONLY the derivation guard (non-global replace — the locator further down
+    // has the same shape and removing it too would change what this measures). What the control
+    // demonstrates moved when the diagnostics went behind a script. Before, the unguarded fence
+    // exited 0 and printed `guard:missing` — a wrong answer. Now REPO_ROOT is empty, both
+    // locator arms miss, and the run stops on the locator's own message. Both are failures, so
+    // status alone no longer separates them; what separates them is WHICH cause is named, and
+    // "the script is not installed" is the wrong one when the truth is "this is not a repository".
     const unguarded = fence.replace(/ \|\| \{ echo "[^"]*" >&2; exit 1; \}/, '');
     assert.notEqual(unguarded, fence, 'the control must actually differ from the shipped form');
+    assert.ok(unguarded.includes('smart-commit-inspect.sh not found'),
+      'the control must keep the locator guard — otherwise it reverts two things, not one');
     const ctl = run(unguarded);
-    assert.equal(ctl.status, 0, 'control: without the guard the fence exits 0…');
-    assert.match(ctl.stdout, /guard:missing/, '…and misreports the missing repository as a missing hook');
+    assert.doesNotMatch(ctl.stderr, /could not resolve the repository root/,
+      'control: without the guard the real cause is never stated…');
+    assert.match(ctl.stderr, /smart-commit-inspect\.sh not found/,
+      '…and what surfaces instead blames a missing install, which is not what is wrong');
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// Every fence used to open with `GIT_ENV="…"` and then run `$GIT_ENV git …`. That is correct
+// POSIX and dead on arrival in zsh, which does not word-split unquoted expansions: the whole
+// list becomes one command name and the fence dies at its first line. zsh is macOS's default
+// login shell, so the skill was unusable on the platform it was written on while this suite
+// reported every test green — no static assertion could see it, because the text was exactly
+// what the contract asked for. The contract changed to "write the prefix out"; F1d enforces
+// that everywhere, and this test is why that is the right contract rather than a preference.
+// Round 84. Every assertion about the delegations was about their SHAPE — the locator, the
+// root anchoring, the absence of a prefix — and none about which question each fence asks.
+// Measured: rewriting Step 3's `collect` to `status` left 62/62 green, and that swap silently
+// drops the diffstat the grouping step reads.
+//
+// Round 85: the first version anchored 1c on a sentence of prose, because 1c's FIRST fence is
+// the git-profile delegation and the step heading would have read that one. Rewording that
+// sentence then broke the test — the anchor was load-bearing documentation, which is exactly
+// the coupling a structural test should not have. It is gone: a section's fence is now found
+// by looking for the first line that invokes the script, and the delegation is skipped because
+// it does not invoke it at all. No prose is pinned.
+test('F1n: each diagnostic fence asks the question its step is documented to ask', () => {
+  const raw = readFileSync(skillPath, 'utf8');
+  const isCall = (l) => /"\$INSPECT"/.test(l) && !/^\s*\[ -r /.test(l);
+  const subOf = (line) => (line.match(/"\$INSPECT" (\w+)/) || [])[1];
+
+  // (a) Document order, in full. Ten fences ask ten questions; this pins the sequence, the
+  // count, and each identity at once, so a deleted fence or a duplicated subcommand fails
+  // here rather than surviving as a plausible-looking diff.
+  const EXPECTED_SEQUENCE = [
+    'style', 'identity', 'signing', 'signature', 'guard',
+    'collect', 'scope', 'branch', 'diff', 'status',
+  ];
+  // Fence bodies only. Filtering the whole document caught the Git Environment Policy
+  // paragraph, which names `"$INSPECT"` in prose while explaining the rule — the same trap
+  // F1o fell into. Prose is not an invocation.
+  const bodies = [...raw.matchAll(/^```bash\n([\s\S]*?)^```$/gm)].map((m) => m[1]).join('\n');
+  const actual = bodies.split('\n').filter(isCall).map(subOf);
+  assert.deepEqual(actual, EXPECTED_SEQUENCE,
+    'the diagnostic fences, in document order, must ask exactly these questions');
+
+  // (b) Section binding. (a) alone cannot catch a fence MOVING between steps — the sequence
+  // is unchanged when Step 3's fence slides under Step 4's heading. Each headed step is
+  // therefore bound to the first invocation inside its own section.
+  const EXPECTED = [
+    ['**1b. Learn Commit Style**', 'style'],
+    ['**1c. Identity Diagnostics**', 'identity'],
+    ['**1d. Signing Diagnostics**', 'signing'],
+    ['**1e. AI Guard Readiness**', 'guard'],
+    ['### Step 3: Collect Changes', 'collect'],
+  ];
+  for (const [heading, sub] of EXPECTED) {
+    const at = raw.indexOf(heading);
+    assert.ok(at >= 0, `the ${heading} section must exist`);
+    const rest = raw.slice(at + heading.length);
+    // The section ends at the next step heading of either shape, so a fence that moved out
+    // of this section is genuinely out of range rather than merely further down.
+    const nextHeading = rest.match(/^(?:#{2,4} |\*\*(?:1[a-z]\.|Step ))/m);
+    const section = nextHeading ? rest.slice(0, nextHeading.index) : rest;
+    const call = section.split('\n').find(isCall);
+    assert.ok(call, `${heading}'s section must invoke the script`);
+    assert.equal(subOf(call), sub,
+      `${heading} must ask for \`${sub}\`, not something adjacent: ${call.trim()}`);
+  }
+
+  // (c) The two subcommands that take operands must be shown with a LITERAL placeholder.
+  // Round 85, measured: reverting `scope '<path>'` to `scope "$SCOPE_PATH"` left all four
+  // smart-commit suites green. Each fence is one tool call, so one shell — a variable the
+  // fence never assigned expands to empty, the script refuses it (exit 2), and the scoping
+  // the caller asked for silently never happens. F1l used to carry a `SCOPE_PATH=.` prelude
+  // that kept the defective form runnable; that prelude is gone, and this is what replaces it.
+  for (const line of bodies.split('\n').filter(isCall)) {
+    const s = subOf(line);
+    if (s !== 'scope' && s !== 'diff') continue;
+    assert.match(line, /"\$INSPECT" (?:scope|diff) '<path>'/,
+      `${s} must be shown with a literal placeholder, never a variable this fence never ` +
+      `assigned: ${line.trim()}`);
+  }
+});
+
+// Round 85. Both halves of the entrypoint spelling are load-bearing and neither was pinned:
+// mutating all ten new call sites to `/bin/bash --` (no -p) or to bare `bash -p --` left
+// 63/63 green. Measured in a real repository, with `evil.sh` containing one line
+// `git() { printf 'branch-ATTACKER\n'; }`:
+//
+//   BASH_ENV=evil.sh /bin/bash -p -- inspect.sh branch  -> main             (shipped)
+//   PATH=shim:$PATH  bash -p --      inspect.sh branch  -> branch-SHIM
+//
+// Round 89: the row that used to sit between these two — `/bin/bash --` without `-p` yielding
+// `branch-ATTACKER` — was measured before the script re-established privileged mode for
+// itself, and is now false: it re-execs exactly like its --execute sibling (inspect.sh:26-42,
+// 4-implementation.md § 8), and `P18` pins that launch returning the REAL branch. The earlier
+// wording here ("does NOT re-establish privileged mode … the caller's `-p` is the only thing
+// between an inherited BASH_ENV and a forged diagnostic") said the script was defenceless.
+//
+// What survives is why F1o still earns its place: the re-exec is defence in depth, not a
+// substitute for the caller's spelling. `-p` is what the re-exec preserves rather than
+// invents, the absolute path is what makes PATH irrelevant (the third row still reproduces),
+// and the exact shipped spelling is the contract `F1p` counts.
+test('F1o: every executed helper invocation uses the exact /bin/bash -p -- entrypoint', () => {
+  const raw = readFileSync(skillPath, 'utf8');
+  const executed = raw.replace(/^````markdown[\s\S]*?^````$/gm, '');
+
+  // The predicate, named once so both directions below test the same thing rather than two
+  // hand-written approximations of it.
+  // The prefix may precede it on a delegation (git-profile.sh runs git under the caller's
+  // environment), so what is pinned is that the interpreter token, wherever it appears, is
+  // the absolute path with -p and --. Nothing may stand between `--` and the script.
+  const wellFormed = (line) => /(?:^|\s)\/bin\/bash -p -- "\$(?:INSPECT|EXECUTE)"|(?:^|\s)\/bin\/bash -p -- "\$REPO_ROOT\/scripts\/run-skill\.sh"/.test(line.trim());
+
+  // Only the bodies of ```bash fences. Filtering the whole document instead caught a
+  // paragraph that mentions `"$EXECUTE"` inside backticks while explaining this very rule —
+  // prose is not an invocation, and a test that cannot tell them apart fails on its own
+  // documentation.
+  // Round 87: indent-tolerant, for the same reason F1p was widened. Two of the --execute
+  // fences are nested under a numbered list item, so a `^```bash` pattern never saw them —
+  // a guard titled "every executed helper invocation" that structurally cannot reach the
+  // two fences which STAGE AND COMMIT. They are spelled correctly today; the point is that
+  // nothing would have caught it if they were not.
+  const fences = [...executed.matchAll(/^[ \t]*```bash\n([\s\S]*?)^[ \t]*```$/gm)].map((m) => m[1]);
+  // The run-skill.sh delegation counts too: it was spelled with a bare `bash`, which resolves
+  // through the caller's PATH — so a shim answers the command whose JSON decides HALT versus
+  // continue, and launching the caller's shell is what `-p` exists to prevent. A test titled
+  // "every executed helper invocation" that skipped it was describing more than it checked.
+  const calls = fences.flatMap((f) => f.split('\n'))
+    .filter((l) => /"\$(?:INSPECT|EXECUTE)"|run-skill\.sh/.test(l) && !/^\s*(?:#|\[ -r )/.test(l));
+  // Pinned exactly, like F1p's fence count: an inequality lets a call site disappear (a fence
+  // deleted, or re-spelled so the filter stops matching it) without the guard noticing, which
+  // is the failure mode the indent fix above was written against.
+  assert.equal(calls.length, 14,
+    `the diagnostics, the delegation and the execute path must all be present; found ${calls.length}`);
+  for (const call of calls) {
+    assert.ok(wellFormed(call),
+      `the interpreter must be spelled by absolute path with -p, and nothing may precede it: ${call.trim()}`);
+  }
+
+  // Both directions, per rules/testing.md § Conventions "Guards". The negative cases are the
+  // two mutants measured above; the positive one is the shipped spelling. Delete the loop
+  // above and these still describe what the loop was for — but they no longer see SKILL.md,
+  // which is why they are a control and not the test.
+  for (const bad of [
+    '/bin/bash -- "$INSPECT" branch',
+    'bash -p -- "$INSPECT" branch',
+    '/usr/bin/env bash -p -- "$INSPECT" branch',
+    '/bin/bash -p "$INSPECT" branch',
+    'env -u GIT_DIR bash -p -- "$REPO_ROOT/scripts/run-skill.sh" git-profile',
+  ]) {
+    assert.ok(!wellFormed(bad), `this spelling must be rejected but was accepted: ${bad}`);
+  }
+  for (const good of [
+    '/bin/bash -p -- "$INSPECT" branch',
+    '/bin/bash -p -- "$EXECUTE" --stdin',
+    'env -u GIT_DIR /bin/bash -p -- "$REPO_ROOT/scripts/run-skill.sh" git-profile',
+  ]) {
+    assert.ok(wellFormed(good), `the shipped spelling must be accepted: ${good}`);
+  }
+});
+
+test('F1q: the tech spec may carry the retired form only where it is marked superseded', () => {
+  const raw = readFileSync(resolve(__dirname, '../..', SUPERSEDED_SPEC), 'utf8');
+  const SUPERSEDED = '已被取代';
+
+  // Every `##`/`###` section that contains the retired form must carry the marker.
+  const lines = raw.split('\n');
+  const sections = [];
+  let current = { heading: '(preamble)', start: 1, body: [] };
+  for (const [i, line] of lines.entries()) {
+    if (/^#{2,3} /.test(line)) {
+      sections.push(current);
+      current = { heading: line.trim(), start: i + 1, body: [] };
+    } else current.body.push(line);
+  }
+  sections.push(current);
+
+  const carrying = sections.filter((s) => s.body.some((l) => /\bGIT_ENV\b/.test(l)));
+  assert.ok(carrying.length >= 3,
+    `the superseded sections must still record the shipped form; found ${carrying.length}`);
+  for (const s of carrying) {
+    assert.ok(s.body.some((l) => l.includes(SUPERSEDED)),
+      `${s.heading} (line ${s.start}) carries the retired GIT_ENV form but is not marked ` +
+      `"${SUPERSEDED}" — either mark it, or rewrite it to the current spelling`);
+  }
+
+  // Both directions, per rules/testing.md § Conventions "Guards". A section that carries the
+  // form without the label must fail; one that carries neither must pass. Written against the
+  // same predicate the loop uses, so deleting the loop does not leave these describing nothing.
+  const marked = (body) => body.some((l) => l.includes(SUPERSEDED));
+  const carries = (body) => body.some((l) => /\bGIT_ENV\b/.test(l));
+  const bad = ['GIT_ENV="env -u GIT_DIR …"', 'REPO_ROOT=$($GIT_ENV git rev-parse …)'];
+  assert.ok(carries(bad) && !marked(bad), 'control: an unlabelled retired fence must be a violation');
+  const ok = ['> 已被取代：見 §3.2', 'GIT_ENV="env -u GIT_DIR …"'];
+  assert.ok(carries(ok) && marked(ok), 'control: a labelled one must be accepted');
+  const clean = ['/bin/bash -p -- "$INSPECT" style'];
+  assert.ok(!carries(clean), 'control: a section with no retired form is not judged at all');
+});
+
+// Round 85. references/git-environment.md § 1 makes a claim about dash — that the fences fail
+// LOUDLY there rather than answering wrongly — and until now nothing checked it. It had already
+// gone stale: written when the fences ran git inline, where a dash-mangled REPO_ROOT produced
+// `unset / unset / gpg` at exit 0 and steered --execute toward an unsigned commit. The locator
+// changed that by accident (a trailing newline makes both arms unreadable, so the fence takes
+// its own refusal branch), and a documented measurement with no oracle is how that goes
+// unnoticed. This is the oracle.
+test('F1p: under an unsupported shell every fence fails loudly and answers nothing', (t) => {
+  const DASH = '/bin/dash';
+  const probe = spawnSync(DASH, ['-c', ':'], { encoding: 'utf8' });
+  if (probe.error || probe.status !== 0) {
+    t.skip(`${DASH} unavailable — the claim under test is dash-specific and cannot be probed`);
+    return;
+  }
+
+  // Round 86: the fence pattern is INDENTED-TOLERANT and covers `$EXECUTE` too. Both gaps came
+  // from the same column-0 assumption: two of the --execute fences are nested under a numbered
+  // list item, so `^```bash` skipped them, and the filter never named `$EXECUTE` at all. The
+  // three --execute fences are the ones that stage and commit — the last place an unsupported
+  // shell should be trusted to fail on its own. 14 = 10 `$INSPECT` + 3 `$EXECUTE` + 1 run-skill.
+  const raw = readFileSync(skillPath, 'utf8');
+  const executed = raw.replace(/^````markdown[\s\S]*?^````$/gm, '');
+  const fences = [...executed.matchAll(/^[ \t]*```bash\n([\s\S]*?)^[ \t]*```$/gm)].map((m) => m[1])
+    .filter((f) => /"\$INSPECT"|"\$EXECUTE"|run-skill\.sh/.test(f));
+  assert.equal(fences.length, 14,
+    `expected every fence that reaches a helper; found ${fences.length}`);
+
+  const dir = mkdtempSync(resolve(tmpdir(), 'sc-dash-'));
+  try {
+    for (const [i, body] of fences.entries()) {
+      // Placeholders are documentation. Substituting a real path rather than dropping the line
+      // matters here: a dropped line would remove the invocation and the fence would "pass" by
+      // running nothing, which is the vacuous shape this test exists to avoid.
+      const script = resolve(dir, `f${i}.sh`);
+      writeFileSync(script, body
+        .replace(/<path>/g, 'README.md').replace(/<msg-file>/g, 'README.md')
+        // Optional-argument markers only — `\[--…\]`, never a bare `[ … ]`, which is the shell
+        // `test` builtin the locator is built from. A wider pattern deleted `[ -r "$INSPECT" ]`
+        // and every fence then died at dash's PARSER (rc 2) instead of at the refusal branch,
+        // which reads like a stronger result while actually testing nothing the skill does.
+        .replace(/\[--[^\]]*\]/g, '').replace(/ …/g, ''));
+      const r = spawnSync(DASH, [script], { encoding: 'utf8', cwd: process.cwd() });
+      assert.notEqual(r.status, 0,
+        `fence ${i} exited 0 under dash — an unsupported shell must never produce an answer: ` +
+        JSON.stringify(r.stdout.slice(0, 160)));
+      assert.equal(r.stdout, '',
+        `fence ${i} printed to stdout under dash; a caller cannot tell that apart from a real ` +
+        `answer: ${JSON.stringify(r.stdout.slice(0, 160))}`);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('F1l: the fences the skill executes run under zsh, not only under a POSIX shell', (t) => {
+  const ZSH = '/bin/zsh';
+  const probe = spawnSync(ZSH, ['-c', ':'], { encoding: 'utf8' });
+  if (probe.error || probe.status !== 0) {
+    // The static half (F1d) still runs everywhere, so the contract stays enforced; what is
+    // lost here is the executable proof, and that is said out loud rather than passed over.
+    t.skip(`${ZSH} unavailable — the behaviour under test is zsh-specific and cannot be probed`);
+    return;
+  }
+
+  const raw = readFileSync(skillPath, 'utf8');
+  const executed = raw.replace(/^````markdown[\s\S]*?^````$/gm, '');
+  // Round 90, P2. This was column-0-anchored while F1o/F1p were already indent-tolerant, so it
+  // found 12 fences where they find 14 — blind to the two --execute fences nested under a
+  // numbered list item, which are the ones that stage and commit. The count is pinned rather
+  // than bounded for the reason F1p pins its own: `>= 10` lets a fence disappear silently, and
+  // the "how many ran" assertion below is computed over whatever discovery returns, so an
+  // under-discovering pattern makes that assertion agree with itself and prove nothing.
+  const fences = [...executed.matchAll(/^[ \t]*```bash\n([\s\S]*?)^[ \t]*```$/gm)].map((m) => m[1]);
+  assert.equal(fences.length, 14, `expected every fence the skill runs; found ${fences.length}`);
+
+  // Round 85: this used to prepend `SCOPE_PATH=.`, a scaffold added when the --scope fence
+  // expanded `"$SCOPE_PATH"` in a shell that never assigned it. The fence now carries a literal
+  // `'<path>'` placeholder, so the prelude is not merely vestigial — it would keep the zsh run
+  // green if the defective form came back. Removed, so the run judges the shipped text.
+  //
+  // Round 89, P2. What replaced it dropped every LINE containing `<…>` or `…`, which is not
+  // the same edit: for the `scope` and `diff` fences that line is the invocation, so both
+  // "passed" by running their locator and nothing else — zsh coverage of the `--scope` fence
+  // went from partial to none, while the comment here claimed the opposite. `F1p` in this same
+  // file names that exact shape vacuous ("a dropped line would remove the invocation and the
+  // fence would 'pass' by running nothing") and substitutes a real operand. So does this now.
+  // Brackets are deliberately NOT stripped: `[ -r "$INSPECT" ]` is a shell test, and a regex
+  // greedy enough to remove `[--ai-co-author]` removes that too and mangles the locator.
+  const substitute = (body) => body.replace(/<path>/g, 'README.md').replace(/ …/g, '');
+  // Three fences are left to F1d's static check, each named with its own reason rather than
+  // filtered by shape, so a fence cannot join the exemption by accident — the count is asserted
+  // below. None of the three is exempt for carrying a placeholder.
+  const EXEMPTIONS = [
+    // Reads the repository's OWN last commit through the AI-attribution guard, so its exit
+    // status is a fact about git history, not about the shell: a legitimate `--ai-co-author`
+    // commit at HEAD would redden a portability test.
+    { re: /"\$EXECUTE" verify-last/, why: 'verify-last: exit status depends on repo history' },
+    // Stages and commits. A portability test must never run it — CLAUDE.md rule 4 (Anchor).
+    { re: /"\$EXECUTE" commit\b/, why: 'commit: would stage and commit this repository' },
+    // Allocates a 0600 message file under the caller's temp dir. Running it would leave a file
+    // outside any fixture this test owns, and it has no cleanup path here.
+    { re: /"\$EXECUTE" alloc\b/, why: 'alloc: writes a temp file this test cannot clean up' },
+  ];
+  const isExempt = (body) => EXEMPTIONS.some((e) => e.re.test(body));
+  const runnable = substitute;
+  // Run from this repository: the fences derive their own root and issue read-only git
+  // commands against it, so a bare temp directory would fail them for a reason that has
+  // nothing to do with the shell under test.
+  const inShell = (sh, body) => spawnSync(sh, ['-c', body],
+    { cwd: resolve(__dirname, '../..'), encoding: 'utf8' });
+
+  const exempt = fences.filter(isExempt);
+  assert.equal(exempt.length, EXEMPTIONS.length,
+    `exactly ${EXEMPTIONS.length} fences are exempt from execution and each is named above with `
+    + `its reason (${EXEMPTIONS.map((e) => e.why).join('; ')}); found ${exempt.length}. `
+    + 'A new exemption is a decision, not a side effect of adding a fence.');
+
+  let ran = 0;
+  for (const [i, body] of fences.entries()) {
+    if (isExempt(body)) continue;
+    const runnableBody = runnable(body);
+    // The substitution has to leave a real command behind, or this loop is back to asserting
+    // that a locator runs. Round 89's defect passed every assertion below it.
+    assert.doesNotMatch(runnableBody, /<[a-z-]+>/,
+      `fence ${i} still carries a placeholder after substitution: it would run as documentation`);
+    const r = inShell(ZSH, runnableBody);
+    assert.equal(r.status, 0,
+      `fence ${i} must run under zsh; exit ${r.status}: ${(r.stderr || '').split('\n')[0]}`);
+    ran++;
+  }
+  assert.equal(ran, fences.length - EXEMPTIONS.length,
+    'every fence but the named exemptions must actually have been executed');
+
+  // Negative control, and the reason this test exists rather than a grep: the retired form
+  // rebuilt from the shipped fence must FAIL under zsh and PASS under bash. Without the bash
+  // half the failure could be any breakage at all; with it, the difference is the word
+  // splitting itself — which is exactly how the defect passed review on a bash-shaped reading.
+  const first = runnable(fences[0]);
+  const mutant = `GIT_ENV="${CANONICAL_PREFIX}"\n${first.split(CANONICAL_PREFIX).join('$GIT_ENV')}`;
+  assert.notEqual(mutant, first, 'the control must actually differ from the shipped form');
+  assert.notEqual(inShell(ZSH, mutant).status, 0,
+    'control: the variable form must fail under zsh — otherwise this test proves nothing');
+  assert.equal(inShell('/bin/bash', mutant).status, 0,
+    'control: and pass under bash, which is why the defect shipped');
+  // Positive control on the same axis: the shipped form works in BOTH, so the test is not
+  // merely rejecting a shell it dislikes.
+  assert.equal(inShell('/bin/bash', first).status, 0, 'the shipped form must still run under bash');
 });
 
 test('F1c: manual mode binds the printed commands to the repository the plan describes', () => {
@@ -1298,8 +2022,11 @@ test('F1c: manual mode binds the printed commands to the repository the plan des
     assert.match(c, SELF_CONTAINED,
       `a printed command must be self-contained — cwd and git env independent: ${c.trim()}`);
   }
-  assert.ok(!/\$GIT_ENV git/.test(printed),
-    'printed output must not reference $GIT_ENV — that variable exists only in the skill\'s shell');
+  // Kept as an anti-reintroduction guard after the variable was removed everywhere: printed
+  // output is the one surface where reintroducing it would be silently wrong rather than
+  // merely unportable — the reader's shell has never had the name defined at all.
+  assert.ok(!/\$GIT_ENV/.test(printed),
+    'printed output must not reference $GIT_ENV — that variable exists nowhere, least of all in the reader\'s shell');
 
   // Round 47: pathspecs are resolved against `-C`, so an `add` must pass them root-relative,
   // single-quoted, after `--`. Without the quoting a filename with a space becomes two
@@ -1346,7 +2073,15 @@ test('F1c: manual mode binds the printed commands to the repository the plan des
   assert.match(aiCmds[0], new RegExp(
     SELF_CONTAINED.source.replace(String.raw`(?: [A-Z_]+=\S+)*`, ' ALLOW_AI_COAUTHOR=1')),
     'the assignment must sit AFTER the prefix — before it, the prefix strips it away');
-  assert.match(raw.slice(aiIdx, aiIdx + 900), /^Co-Authored-By: Claude <noreply@anthropic\.com>$/m,
+  // Bounded by the block's own closing fence, not a magic character count: a fixed offset goes
+  // stale every time the strip list grows (measured: a prior 950-char window, chosen before
+  // GIT_EXTERNAL_DIFF/GIT_CONFIG_GLOBAL were added to the prefix, no longer reached the trailer).
+  const aiBlockOpen = raw.indexOf('````markdown', aiIdx);
+  assert.ok(aiBlockOpen > aiIdx, 'the --ai-co-author variant must be a fenced ````markdown block');
+  const aiBlockClose = raw.indexOf('\n````', aiBlockOpen + '````markdown'.length);
+  assert.ok(aiBlockClose > aiBlockOpen, 'the ````markdown block must close');
+  assert.match(raw.slice(aiBlockOpen, aiBlockClose),
+    /^Co-Authored-By: Claude <noreply@anthropic\.com>$/m,
     'and the one permitted trailer must be spelled byte-exact');
 });
 
@@ -1364,8 +2099,10 @@ test('F6: the frontmatter pre-authorizes every tool the execute path uses, and n
   const fm = readFileSync(skillPath, 'utf8').split('---')[1];
   for (const [tool, why] of [
     [/\bWrite\b/, 'the commit message is written with the Write tool'],
-    [/Bash\(bash:\*\)/, 'smart-commit-execute.sh is launched as `bash -p -- "$EXECUTE" …`'],
-    [/Bash\(git:\*\)/, 'the read-only diagnostics and staging are git calls'],
+    [/Bash\(bash:\*\)/, 'smart-commit-execute.sh is launched as `/bin/bash -p -- "$EXECUTE" …`'],
+    // The diagnostics moved into a script, so what still needs this grant is the derivation
+    // line every fence opens with (`git rev-parse --show-toplevel`) and `--execute` staging.
+    [/Bash\(git:\*\)/, 'the root derivation in every fence, and --execute staging, are git calls'],
     [/Bash\(env:\*\)/, 'those diagnostics carry the env -u prefix'],
   ]) {
     assert.match(fm, tool, `allowed-tools must cover: ${why}`);

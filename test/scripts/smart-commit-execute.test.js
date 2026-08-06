@@ -288,6 +288,389 @@ test('commit when the guard is absent → status 3, no commit, message removed',
   assert.equal(repo.git('rev-parse', '--verify', 'HEAD').status !== 0, true, 'nothing committed');
 });
 
+test('commit pins core.fsmonitor=false, so a HOME-configured command cannot run', () => {
+  // Round 21 review, P1: `core.fsmonitor` set to a shell command is arbitrary command
+  // execution the moment status-touching git runs it — and `commit` (even without `-a`) is
+  // one such command, empirically confirmed. HOME cannot be stripped (it is genuine
+  // load-bearing input elsewhere), so `run_commit` pins `-c core.fsmonitor=false` on the
+  // command line instead, which always outranks a lower-scoped value regardless of which
+  // scope carried it.
+  const repo = mkRepo();
+  const attackHome = tempDir('sc-exec-fsmon-home-');
+  const marker = join(attackHome, 'pwned');
+  writeFileSync(join(attackHome, '.gitconfig'), `[core]\n\tfsmonitor = touch ${marker}; true\n`);
+
+  // Armed control (round 22 review, P2 — @rules/testing.md § Conventions "Guards" requires
+  // both directions): prove the fixture is genuinely live BEFORE trusting its absence below,
+  // with a real `git commit` under the same HOME and no pin in effect.
+  const controlRepo = mkRepo();
+  writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
+  controlRepo.git('add', 'a.txt');
+  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the fsmonitor command');
+  rmSync(marker, { force: true });
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(existsSync(marker), false,
+    `a HOME-configured core.fsmonitor command must never run (marker exists: ${existsSync(marker)})`);
+});
+
+test('commit pins core.attributesFile=/dev/null, so a HOME-configured clean filter cannot run', () => {
+  // Round 22 review, P2: a separate knob from fsmonitor. `filter.<name>.clean` defined in
+  // HOME-global config only fires when some `.gitattributes` assigns `filter=<name>` to a
+  // path, and `core.attributesFile` is the one non-repo-local source of that assignment —
+  // empirically confirmed to run even on a plain `git commit` with no `-a` and content
+  // already staged before the attack HOME took effect.
+  const repo = mkRepo();
+  const attackHome = tempDir('sc-exec-attrfile-home-');
+  const marker = join(attackHome, 'pwned');
+  const attrFile = join(attackHome, 'gitattributes');
+  writeFileSync(attrFile, '*.txt filter=evil\n');
+  writeFileSync(join(attackHome, '.gitconfig'),
+    `[core]\n\tattributesFile = ${attrFile}\n[filter "evil"]\n\tclean = touch ${marker}; cat\n`);
+
+  // Armed control: a raw commit under the attack HOME, no pin, must run the filter.
+  const controlRepo = mkRepo();
+  writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
+  controlRepo.git('add', 'a.txt');
+  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the clean filter');
+  rmSync(marker, { force: true });
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(existsSync(marker), false,
+    `a HOME-configured filter.clean command must never run (marker exists: ${existsSync(marker)})`);
+});
+
+test('commit overrides a non-local core.hooksPath, so a HOME-configured pre-commit hook cannot run', () => {
+  // Round 22 review, P1: the fsmonitor/attributesFile pins above close two SPECIFIC knobs,
+  // but a non-local core.hooksPath names pre-commit/prepare-commit-msg/post-commit hooks
+  // directly, unrelated to either knob — the same HOME channel `guard`'s scope-check already
+  // distrusts (smart-commit-inspect.sh), left open here. `resolve_hooks_override` applies the
+  // identical scope check before `git commit`.
+  const repo = mkRepo();
+  const attackHome = tempDir('sc-exec-hookspath-home-');
+  const attackHooksDir = join(attackHome, 'hooks');
+  const marker = join(attackHome, 'pwned');
+  mkdirSync(attackHooksDir, { recursive: true });
+  writeFileSync(join(attackHooksDir, 'pre-commit'), `#!/bin/sh\ntouch ${marker}\nexit 0\n`, { mode: 0o755 });
+  writeFileSync(join(attackHome, '.gitconfig'), `[core]\n\thooksPath = ${attackHooksDir}\n`);
+
+  // Armed control: a raw commit under the attack HOME, no override, must run the hook.
+  const controlRepo = mkRepo();
+  writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
+  controlRepo.git('add', 'a.txt');
+  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the pre-commit hook');
+  rmSync(marker, { force: true });
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(existsSync(marker), false,
+    `a HOME-configured pre-commit hook must never run (marker exists: ${existsSync(marker)})`);
+  assert.match(repo.git('log', '-1', '--format=%B').stdout, /feat: Add a\.txt/,
+    'the legitimate commit must still go through — the override must not itself block the commit');
+  // Round 23 review, P1: silently overriding a config value a developer set (however
+  // untrusted its scope) is a surprise the next debugging session pays for. The override
+  // must announce itself and name what it substituted, not just take effect quietly.
+  assert.match(r.stderr, /core\.hooksPath is configured outside this repository\/worktree/,
+    'overriding an untrusted core.hooksPath must be announced on stderr, not applied silently');
+  assert.match(r.stderr, /Running hooks from .+ instead\./,
+    'the warning must name what the override actually pointed hooks at');
+  assert.ok(!r.stderr.includes(attackHooksDir),
+    'the announced replacement must be the repository\'s own hooks dir, not the untrusted one');
+});
+
+test('commit still honours a LOCAL core.hooksPath — the override is scoped to untrusted config only', () => {
+  // Regression control for the fix above: a repository-committed hooksPath (the husky-style
+  // legitimate use this scope check exists to keep working) must still run.
+  const repo = mkRepo();
+  const localHooksDir = join(repo.dir, '.githooks');
+  const marker = join(repo.dir, 'ran');
+  mkdirSync(localHooksDir, { recursive: true });
+  writeFileSync(join(localHooksDir, 'pre-commit'), `#!/bin/sh\ntouch ${marker}\nexit 0\n`, { mode: 0o755 });
+  repo.git('config', 'core.hooksPath', '.githooks');
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(existsSync(marker), 'a repository-local core.hooksPath must still be honoured by commit');
+});
+
+test('commit overrides a non-local gpg.program, so a HOME-configured signer script cannot run', () => {
+  // Round 23 review, P0, reproduced live: `commit.gpgsign=true` is ordinary, repository-local,
+  // trusted configuration — but WHICH BINARY signs is a separate lookup (`gpg.program`, plus
+  // its `gpg.<format>.program`/`gpg.ssh.defaultKeyCommand` siblings), reachable through the
+  // identical HOME channel the fsmonitor/attributesFile/hooksPath pins above already distrust,
+  // and left entirely open. `resolve_gpg_override` applies the same scope check and substitutes
+  // the ordinary default program NAME (`gpg`) rather than refusing — there is a universal safe
+  // default here, unlike the filter/diff/merge driver channel below.
+  const repo = mkRepo();
+  repo.git('config', 'commit.gpgsign', 'true');
+  const attackHome = tempDir('sc-exec-gpgprogram-home-');
+  const marker = join(attackHome, 'pwned');
+  const evilSigner = join(attackHome, 'evil-gpg');
+  // Exits nonzero deliberately: this fixture only needs to prove the malicious program never
+  // RUNS, not that it can also forge a valid signature for a key it does not hold.
+  writeFileSync(evilSigner, `#!/bin/sh\ntouch ${marker}\nexit 1\n`, { mode: 0o755 });
+  writeFileSync(join(attackHome, '.gitconfig'), `[gpg]\n\tprogram = ${evilSigner}\n`);
+
+  // Armed control: a raw, signing commit under the attack HOME, no override, must run it.
+  const controlRepo = mkRepo();
+  controlRepo.git('config', 'commit.gpgsign', 'true');
+  writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
+  controlRepo.git('add', 'a.txt');
+  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker),
+    'the fixture must be live: a raw signing commit under the attack HOME must run gpg.program');
+  rmSync(marker, { force: true });
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  // Not asserting r.status === 0: the override substitutes the safe default BINARY NAME
+  // (`gpg`), and whether that real binary can then actually produce a signature depends on a
+  // signing key being available in this test environment, which is out of scope here — see
+  // the sibling fsmonitor/attributesFile/hooksPath tests for the environment-independent
+  // overrides (an empty hooks dir, `/dev/null`, `false`) where a status assertion is meaningful.
+  assert.equal(existsSync(marker), false,
+    `a HOME-configured gpg.program must never run (marker exists: ${existsSync(marker)})`);
+  assert.doesNotMatch(r.stderr, new RegExp(evilSigner.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    'the malicious program path must not even be the one git attempted');
+  // Round 24 review, P1: `resolve_hooks_override` announces its override (test above);
+  // `resolve_gpg_override` did not, the identical silent-substitution gap one function over.
+  assert.match(r.stderr, /⚠️ gpg\.program is configured outside this repository\/worktree - ignoring it\./,
+    'overriding an untrusted gpg.program must be announced on stderr, not applied silently');
+  assert.match(r.stderr, /Using gpg instead\./,
+    'the warning must name the safe default it substituted');
+});
+
+test('commit still honours a LOCAL gpg.program — the override is scoped to untrusted config only', () => {
+  // Regression control for the warning test above: a repository-committed gpg.program (a
+  // legitimate project-pinned signer) must still be used, not overridden to the bare default.
+  const repo = mkRepo();
+  repo.git('config', 'commit.gpgsign', 'true');
+  const localSigner = join(repo.dir, 'local-gpg.sh');
+  const marker = join(repo.dir, 'ran');
+  writeFileSync(localSigner, `#!/bin/sh\ntouch ${marker}\nexit 1\n`, { mode: 0o755 });
+  repo.git('config', 'gpg.program', localSigner);
+
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile]);
+  assert.ok(existsSync(marker), 'a repository-local gpg.program must still be invoked by commit');
+  assert.doesNotMatch(r.stderr, /gpg\.program is configured outside this repository\/worktree/,
+    'a local, trusted gpg.program must never be reported as overridden');
+});
+
+test('verify-last overrides an inherited log.showSignature, so a HOME-configured gpg.program '
+  + 'cannot run during read-back verification', () => {
+  // Round 24 review, P0, reproduced live (mirrors smart-commit-inspect.test.js's `P14b` for the
+  // identical channel on this file's own read-back path): `verify_one`'s message read-back
+  // (`git_verify log -1 --format='%B'`) asks for no signature text at all, but a
+  // HOME-reachable `log.showSignature=true` makes plain `git log` invoke `gpg.program` anyway,
+  // regardless of the format string. `--no-show-signature` closes this — this proves it does
+  // so on the real `verify-last` path, not just as a pinned flag a static check could satisfy
+  // without the runtime behaviour actually changing.
+  //
+  // Verification only runs when there is a signature blob to check (same measurement P14b
+  // records): an ordinary unsigned commit never invokes gpg.program at all regardless of
+  // log.showSignature, which would make the armed control below inert. A `gpgsig` header is
+  // forged onto a commit object via plumbing (no real key needed — the header's content is
+  // never validated by this path, only its presence is) so there is something to attempt
+  // verifying. `verify-last <sha>` takes the target directly, so this needs no `git commit`
+  // round trip and no HEAD move — `verify_one` has no reflog/ownership check of its own (that
+  // lives in `verify_created`, used only by the `commit` subcommand, not `verify-last`).
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, 'a.txt'), 'content of a.txt\n');
+  repo.git('add', 'a.txt');
+  const tree = repo.git('write-tree').stdout.trim();
+  const ident = 'Test Dev <dev@example.com> 1700000000 +0000';
+  const raw = `tree ${tree}\nauthor ${ident}\ncommitter ${ident}\n`
+    + 'gpgsig -----BEGIN PGP SIGNATURE-----\n \n fakedata\n -----END PGP SIGNATURE-----\n'
+    + '\nfeat: Add a.txt\n';
+  const forged = spawnSync('git', ['-C', repo.dir, 'hash-object', '-t', 'commit', '-w', '--stdin'],
+    { input: raw, encoding: 'utf8' });
+  assert.equal(forged.status, 0, `hash-object failed: ${forged.stderr}`);
+  const target = forged.stdout.trim();
+
+  const attackHome = tempDir('sc-exec-showsig-home-');
+  const marker = join(attackHome, 'pwned');
+  const evilGpg = join(attackHome, 'evil-gpg');
+  writeFileSync(evilGpg, `#!/bin/sh\ntouch ${marker}\nexit 1\n`, { mode: 0o755 });
+  writeFileSync(join(attackHome, '.gitconfig'), `[gpg]\n\tprogram = ${evilGpg}\n`);
+
+  // Armed control: a raw `git log -1 --format=%G?` under the attack HOME, no
+  // `--no-show-signature`, must run the attacker's gpg.program against the forged signature —
+  // proving the fixture is live before trusting the refusal assertion below.
+  const control = spawnSync('git', ['-C', repo.dir, 'log', '-1', '--format=%G?', target],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker),
+    'the fixture must be live: an unrestricted HOME must let a %G? read run the attacker '
+    + `gpg.program against the forged signature; control stdout: ${JSON.stringify(control.stdout)}`);
+  rmSync(marker, { force: true });
+
+  const r = run(repo.dir, ['verify-last', target], { env: { HOME: attackHome } });
+  assert.equal(existsSync(marker), false,
+    `a HOME-configured gpg.program must never run during verify-last (marker exists: ${
+      existsSync(marker)})`);
+  assert.equal(r.status, 0,
+    `verify-last must still succeed once the malicious gpg.program is refused a run: ${r.stderr}`);
+});
+
+test('commit refuses when the repository\'s own .gitattributes names a filter driver whose command '
+  + 'is configured outside the repository', () => {
+  // Round 23 review, P0, reproduced live: `core.attributesFile=/dev/null` (above) only blocks
+  // an ATTACKER-NAMED `.gitattributes`. A `.gitattributes` the repository itself tracks and
+  // commits (the git-lfs shape: `* filter=lfs`) is legitimate, trusted input — but the COMMAND
+  // that filter name resolves to (`filter.<name>.clean`) is an ordinary config lookup, reachable
+  // through the same HOME channel, and nothing stopped it living in a non-local scope. Unlike
+  // gpg.program there is no safe default substitute for an arbitrary filter command (git-lfs's
+  // clean filter IS the intended behaviour), so this REFUSES the commit rather than overriding.
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, '.gitattributes'), 'secret.bin filter=cleanfilter\n');
+  repo.git('add', '.gitattributes');
+  repo.git('commit', '-q', '-m', 'track a filter assignment (repo-owned, trusted)');
+  const attackHome = tempDir('sc-exec-filterdriver-home-');
+  const marker = join(attackHome, 'pwned');
+  writeFileSync(join(attackHome, '.gitconfig'),
+    `[filter "cleanfilter"]\n\tclean = touch ${marker}; cat\n`);
+
+  // Armed control: staging under the attack HOME, with the repo's own real .gitattributes in
+  // place, must run the externally-configured clean filter.
+  const controlRepo = mkRepo();
+  writeFileSync(join(controlRepo.dir, '.gitattributes'), 'secret.bin filter=cleanfilter\n');
+  controlRepo.git('add', '.gitattributes');
+  controlRepo.git('commit', '-q', '-m', 'seed');
+  writeFileSync(join(controlRepo.dir, 'secret.bin'), 'plain content\n');
+  spawnSync('git', ['-C', controlRepo.dir, 'add', 'secret.bin'],
+    { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.ok(existsSync(marker),
+    'the fixture must be live: staging under the attack HOME must run the clean filter the '
+    + "repo's own .gitattributes names");
+  rmSync(marker, { force: true });
+
+  writeFileSync(join(repo.dir, 'secret.bin'), 'plain content\n');
+  repo.git('add', 'secret.bin');
+  const headBefore = repo.git('rev-parse', 'HEAD').stdout.trim();
+  const msgFile = stage(repo, 'feat: add secret.bin\n', []);
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 7, r.stderr);
+  assert.equal(existsSync(marker), false,
+    'the externally-configured clean filter must never run on a staged path '
+    + `(marker exists: ${existsSync(marker)}; the unstaged case has its own test below)`);
+  assert.equal(existsSync(msgFile), false, 'a refused commit must not leave the message file behind');
+  assert.equal(repo.git('rev-parse', 'HEAD').stdout.trim(), headBefore,
+    'refusing must not create a new commit');
+});
+
+test('commit refuses on an untrusted filter driver named by a TRACKED file that was never staged '
+  + 'this commit', () => {
+  // Round 24 re-review, P1: the check enumerated paths via `diff --cached --name-only`, i.e.
+  // staged paths only. `git commit` refreshes racily-clean index entries across the WHOLE
+  // tracked tree, not only the staged ones, so `filter.<n>.clean` can run on a tracked file this
+  // commit never staged — reproduced 10/10 by the reviewer against a plain git-lfs shape where
+  // only an unrelated file was staged. Fixed by enumerating via `ls-files --cached` (the full
+  // tracked set) instead. This proves the enumeration now covers a tracked-but-unstaged path,
+  // independent of whether git's own racy reclean happens to trigger in this exact run.
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, '.gitattributes'), 'secret.bin filter=cleanfilter\n');
+  writeFileSync(join(repo.dir, 'secret.bin'), 'plain content\n');
+  repo.git('add', '.gitattributes', 'secret.bin');
+  repo.git('commit', '-q', '-m', 'track secret.bin under an attribute (repo-owned, trusted)');
+  const attackHome = tempDir('sc-exec-unstaged-filterdriver-home-');
+  const marker = join(attackHome, 'pwned');
+  writeFileSync(join(attackHome, '.gitconfig'),
+    `[filter "cleanfilter"]\n\tclean = touch ${marker}; cat\n`);
+
+  // secret.bin stays tracked and untouched; only an unrelated file is staged this commit.
+  const headBefore = repo.git('rev-parse', 'HEAD').stdout.trim();
+  const msgFile = stage(repo, 'chore: unrelated change\n', []);
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 7, r.stderr);
+  assert.equal(existsSync(marker), false,
+    `the untrusted filter driver on a tracked-but-unstaged file must never run (marker exists: ${existsSync(marker)})`);
+  assert.equal(existsSync(msgFile), false, 'a refused commit must not leave the message file behind');
+  assert.equal(repo.git('rev-parse', 'HEAD').stdout.trim(), headBefore,
+    'refusing must not create a new commit');
+});
+
+test('a non-local diff.*.textconv or merge.*.driver with no filter attribute in play does not '
+  + 'block a commit — git commit never invokes either', () => {
+  // Round 24 review, P1: the round-23 refusal checked `filter`/`diff`/`merge` alike, but `git
+  // commit` never runs `diff.<n>.textconv` (that is a `git diff` concern) or `merge.<n>.driver`
+  // (that only runs while resolving an actual merge conflict) — so a global textconv-only or
+  // merge-only config with no filter attribute in play was a pure false positive, measured to
+  // block a commit that never touched either channel. Narrowed to `filter` only; this is the
+  // regression control proving the narrowing actually stopped the over-refusal, not just that
+  // the filter case (test above) still refuses.
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, '.gitattributes'), 'notes.bin diff=binaryish\nmerged.bin merge=custom\n');
+  repo.git('add', '.gitattributes');
+  repo.git('commit', '-q', '-m', 'track diff/merge attribute assignments (repo-owned, trusted)');
+  const attackHome = tempDir('sc-exec-textconvdriver-home-');
+  writeFileSync(join(attackHome, '.gitconfig'),
+    '[diff "binaryish"]\n\ttextconv = false\n[merge "custom"]\n\tdriver = false %O %A %B\n');
+
+  writeFileSync(join(repo.dir, 'notes.bin'), 'plain content\n');
+  repo.git('add', 'notes.bin');
+  const msgFile = stage(repo, 'feat: add notes.bin\n', []);
+  const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
+  assert.equal(r.status, 0, `a diff-only/merge-only driver must not refuse a commit: ${r.stderr}`);
+  assert.match(repo.git('log', '-1', '--format=%B').stdout, /feat: add notes\.bin/,
+    'the commit must actually have gone through, not merely exited 0');
+});
+
+test('a failing `git ls-files` in the content-driver check aborts the commit rather than reading '
+  + 'as "no drivers found"', () => {
+  // Round 24 review, P1: `if ! ls-files | check-attr; then …` under bash's default
+  // (non-pipefail) semantics reflects only the LAST stage's exit status. An `ls-files` that
+  // fails still lets the pipeline "succeed" with empty output, which the old code read as "no
+  // drivers, proceed" — silently committing with the check effectively disabled. `PIPESTATUS`
+  // now covers both stages. `gitShim('ls-files')` fails only the one call this repo's own
+  // enumeration makes (verified unique in the file); every other git call, including the
+  // commit itself, passes. (Round 24 re-review, P0: the enumeration itself moved from
+  // `diff --cached --name-only` to `ls-files --cached`; this test moved with it.)
+  const repo = mkRepo();
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const headBefore = repo.git('rev-parse', 'HEAD').stdout.trim();
+  const r = run(repo.dir, ['commit', msgFile],
+    { env: { PATH: `${gitShim('ls-files')}:${process.env.PATH}` } });
+  assert.equal(r.status, 7,
+    `an unreadable diff must abort the commit, not silently proceed: ${r.stderr}`);
+  assert.match(r.stderr, /could not resolve gitattributes/,
+    'the failure must be reported, not swallowed');
+  assert.equal(repo.git('rev-parse', 'HEAD').stdout.trim(), headBefore,
+    'a commit blocked by an unresolved attribute check must not have landed');
+});
+
+test('a failing `git check-attr` (the pipeline\'s SECOND stage) also aborts the commit rather '
+  + 'than reading as "no drivers found"', () => {
+  // Round 24 re-review, P2: the test above proves `PIPESTATUS` catches a failing FIRST stage
+  // (`ls-files`); nothing proved the SECOND stage (`check-attr`) is covered too. Both indices
+  // are checked in the source (`rc[0]`/`rc[1]`), but a test that only ever fails index 0 could
+  // not tell a real two-index check from one that happens to work because index 0 always
+  // covers the only failure it is ever exercised against.
+  const repo = mkRepo();
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const headBefore = repo.git('rev-parse', 'HEAD').stdout.trim();
+  const r = run(repo.dir, ['commit', msgFile],
+    { env: { PATH: `${gitShim('check-attr')}:${process.env.PATH}` } });
+  assert.equal(r.status, 7,
+    `an unreadable check-attr must abort the commit, not silently proceed: ${r.stderr}`);
+  assert.match(r.stderr, /could not resolve gitattributes/,
+    'the failure must be reported, not swallowed');
+  assert.equal(repo.git('rev-parse', 'HEAD').stdout.trim(), headBefore,
+    'a commit blocked by an unresolved attribute check must not have landed');
+});
+
 test('commit outside a repository → status 6, message removed', () => {
   const dir = tempDir('smart-commit-norepo-');
   const alloc = run(dir, ['alloc']);
@@ -1304,6 +1687,107 @@ test('$BASH_ENV cannot preempt the script under the documented invocation', () =
     'and the real work must happen instead');
 });
 
+// Round 24 re-review, P1: this file's preamble had only the `''` arm of the sentinel case —
+// no guard against a FORGED `SD0X_PRIV_REEXEC=1` reaching the `*)` arm without ever going
+// through the real re-exec. `smart-commit-inspect.sh` carries this guard as its own round-19
+// P0 (proven there by P18g); this file did not, and the fix ports the identical exported-
+// SHELLOPTS/BASHOPTS check. `SHELLOPTS=privileged` at invocation sets a genuine lowercase `p`
+// in `$-` via bash's own startup handling of that variable — without `-p` ever appearing on
+// the command line — so the `case "$-" in *p*)` guard alone cannot distinguish this from real
+// privileged mode; only the exported-variable check can.
+test('a forged SD0X_PRIV_REEXEC sentinel cannot buy an unprivileged run of the privileged path',
+  () => {
+    const repo = mkRepo();
+    const env = {
+      ...process.env, TMPDIR: repo.dir,
+      SD0X_PRIV_REEXEC: '1',
+      SHELLOPTS: 'privileged',
+    };
+
+    // Negative control: SHELLOPTS=privileged must actually land a real `p` in `$-` outside
+    // this script too, or the attack below proves nothing about what the guard defends.
+    const control = spawnSync('/bin/bash', ['-c', 'case "$-" in *p*) echo ARMED;; esac'], {
+      encoding: 'utf8', env: { ...process.env, SHELLOPTS: 'privileged' },
+    });
+    assert.match(control.stdout, /ARMED/,
+      'control: SHELLOPTS=privileged must genuinely set a real p flag in $-, or this test '
+      + 'proves nothing');
+
+    // The attack itself: no `-p` on the command line (so the real re-exec never happened),
+    // the sentinel forged directly to skip past the `''` arm, and SHELLOPTS forging `$-`.
+    const attacked = spawnSync('/bin/bash', ['--', execScript, 'alloc'],
+      { cwd: repo.dir, encoding: 'utf8', env });
+    assert.notEqual(attacked.status, 0,
+      'a forged sentinel plus a forged $- flag must not be believed as genuine privileged mode');
+    assert.doesNotMatch(attacked.stdout, /smart-commit-msg/,
+      `the real work (alloc) must never run under a forged privileged claim; got stdout ${
+        JSON.stringify(attacked.stdout)}`);
+
+    // Mutation control: with the guard's case pattern defeated, the SAME attack env must
+    // reach `cmd_alloc` and print a real path — proving the guard above, not some unrelated
+    // failure, is what refuses the attack. Per testing.md's guard-deletion check.
+    const src = readFileSync(execScript, 'utf8');
+    const anchor = '      case $SD0X_F in\n        *x*)';
+    assert.ok(src.includes(anchor), 'the guard pattern must still be present to mutate');
+    const mutated = src.replace(anchor, '      case $SD0X_F in\n        *NEVER-MATCHES-ANYTHING*)');
+    assert.notEqual(mutated, src, 'the mutation must actually have applied');
+    const mutantDir = tempDir('sc-priv-mutant-');
+    const mutantPath = join(mutantDir, 'smart-commit-execute.sh');
+    writeFileSync(mutantPath, mutated, { mode: 0o755 });
+    writeFileSync(join(mutantDir, 'smart-commit-dispatch.sh'),
+      readFileSync(resolve(root, 'skills/smart-commit/scripts/smart-commit-dispatch.sh')),
+      { mode: 0o755 });
+    const withoutGuard = spawnSync('/bin/bash', ['--', mutantPath, 'alloc'],
+      { cwd: repo.dir, encoding: 'utf8', env });
+    assert.equal(withoutGuard.status, 0,
+      `control: with the guard defeated, the same attack must succeed — got status ${
+        withoutGuard.status}, stderr ${JSON.stringify(withoutGuard.stderr)}`);
+    assert.match(withoutGuard.stdout.trim(), /\/smart-commit-msg\.\w{6}$/,
+      'control: the defeated guard must let cmd_alloc actually run');
+  });
+
+// Round 24 re-review, P0 (the review that found #1698's original guard decorative): the guard
+// above used `declare -p ... | grep -qE ...` — `grep` is PATH-resolved, and in exactly the
+// scenario this guard exists to catch (no real `-p` re-exec happened, so environment function
+// import is still active) an attacker who can forge the sentinel can equally hijack `PATH` or
+// export a `BASH_FUNC_grep%%` shell function and make the pipe answer whatever they want. The
+// fix replaced the external `grep` with `builtin declare` + `case` (a reserved word, not a
+// command lookup target). This proves BOTH vectors are closed on the CURRENT source — a
+// regression back to any external-command check would make this fail alongside the mutation
+// control above.
+test('the forged-sentinel guard is immune to a hostile PATH or an imported grep function, '
+  + 'because it never invokes an external command', () => {
+  const repo = mkRepo();
+  const hostileBinDir = tempDir('sc-priv-hostile-bin-');
+  // A `grep` that always reports "no match" — if the guard still shelled out to `grep`,
+  // this alone would make every SHELLOPTS/BASHOPTS check silently pass.
+  writeFileSync(join(hostileBinDir, 'grep'), '#!/bin/bash\nexit 1\n', { mode: 0o755 });
+
+  const baseEnv = {
+    ...process.env, TMPDIR: repo.dir,
+    SD0X_PRIV_REEXEC: '1',
+    SHELLOPTS: 'privileged',
+  };
+
+  const pathAttack = spawnSync('/bin/bash', ['--', execScript, 'alloc'], {
+    cwd: repo.dir, encoding: 'utf8',
+    env: { ...baseEnv, PATH: `${hostileBinDir}:${process.env.PATH}` },
+  });
+  assert.notEqual(pathAttack.status, 0,
+    'a PATH-shadowed grep that always fails must not defeat the guard');
+  assert.doesNotMatch(pathAttack.stdout, /smart-commit-msg/,
+    'the real work must never run when the guard was meant to refuse');
+
+  const funcAttack = spawnSync('/bin/bash', ['--', execScript, 'alloc'], {
+    cwd: repo.dir, encoding: 'utf8',
+    env: { ...baseEnv, 'BASH_FUNC_grep%%': '() { return 1; }' },
+  });
+  assert.notEqual(funcAttack.status, 0,
+    'an imported grep() function that always fails must not defeat the guard');
+  assert.doesNotMatch(funcAttack.stdout, /smart-commit-msg/,
+    'the real work must never run when the guard was meant to refuse');
+});
+
 /* ------------------------------------------------------ the execution-trace oracle */
 
 /**
@@ -1404,16 +1888,17 @@ test('a temp file that cannot be removed is reported and retried, and the commit
   // the path and discarding it, and one warning would be equally consistent with either.
   // Counted PER PATH, and that is the whole point of the shape. Counting attempts on the message
   // file and distinct paths separately passed for a `sweep_owned` that returns on its first
-  // failure: post-commit detection allocates a second temp file, so both paths have already been
-  // through `scrub` and warned about once before the trap runs. One EXIT attempt on the message
-  // file and none on the logfile still yields "two attempts" and "two distinct paths" (Codex,
-  // round 95). Two paths at exactly two attempts each is the loop-continuation property itself.
+  // failure: refuse_on_untrusted_content_drivers's own scratch file and post-commit detection's
+  // logfile are both allocated during this one commit, so all three paths have already been
+  // through `scrub` and warned about once before the trap runs (round 23 added the first of
+  // those two; round 95 established the shape for the other). Three paths at exactly two
+  // attempts each is the loop-continuation property itself.
   const operands = readFileSync(rmCalls, 'utf8').split('\n')
     .filter((l) => l && l !== '-f' && l !== '--');
   const attempts = new Map();
   for (const p of operands) attempts.set(p, (attempts.get(p) ?? 0) + 1);
-  assert.equal(attempts.size, 2,
-    `both temp files must be owned at EXIT; saw ${JSON.stringify([...attempts.keys()])}`);
+  assert.equal(attempts.size, 3,
+    `all three temp files must be owned at EXIT; saw ${JSON.stringify([...attempts.keys()])}`);
   assert.equal(attempts.has(msgFile), true, 'and the message file must be one of them');
   for (const [path, n] of attempts) {
     assert.equal(n, 2, `${path} must be attempted twice — scrub, then the EXIT sweep; saw ${n}`);
@@ -2092,6 +2577,14 @@ const PINNED_DELIMITERS = {
     'root=${root%.}; root=${root%$\'\\n\'}',
     'find_guard() {',
     'run_guard() {',
+    'resolve_hooks_override() {',
+    'HOOKS_OVERRIDE=()',
+    'scope_word=${scope_line%%$\'\\t\'*}',
+    'common=${common%.}; common=${common%$\'\\n\'}',
+    '# Empty is not "root-relative" - repo_root() above refuses it for the same reason',
+    'resolve_gpg_override() {',
+    'GPG_OVERRIDE=()',
+    'scope_word=${scope_line%%$\'\\t\'*}',
     'run_commit() {',
     'marked_oids() {',
     'git_verify() {',
@@ -2103,6 +2596,11 @@ const PINNED_DELIMITERS = {
     'snapshot_tips() {',
     'resolve_git_path() {',
     'refuse_on_ancestry_overlays() {',
+    'refuse_on_untrusted_content_drivers() {',
+    'seen=$\'\\n\'',
+    'case "$seen" in *$\'\\n\'"$pvalue"$\'\\n\'*) continue ;; esac',
+    'seen="$seen$pvalue"$\'\\n\'',
+    'scope_word=${scope_line%%$\'\\t\'*}',
     'verify_created() {',
     'local before_tips=$1 after_tips=$2 head=$3 args=() all mine oid rc status=0',
     'cmd_commit() {',
@@ -2524,9 +3022,11 @@ const SUBSET_BANS = [
 const PERMITTED_TOKENS = {
   [execScript]: [
     '.', '/bin/bash', '/usr/bin/env', ':', '[', 'break', 'case', 'cmd_alloc', 'cmd_commit',
-    'cmd_verify_last', 'continue', 'disown_path', 'done', 'esac', 'exit', 'export', 'fi',
+    'cmd_verify_last', 'continue', 'declare', 'disown_path', 'done', 'esac', 'exit', 'export', 'fi',
     'find_guard', 'for', 'git_verify', 'local', 'marked_oids', 'own', 'printf', 'read',
-    'refuse_on_ancestry_overlays', 'repo_root', 'resolve_git_path', 'return', 'run_commit',
+    'refuse_on_ancestry_overlays', 'refuse_on_untrusted_content_drivers', 'repo_root',
+    'resolve_git_path', 'resolve_gpg_override', 'resolve_hooks_override',
+    'return', 'run_commit',
     'run_guard', 'scrub', 'sd_run', 'set', 'shift', 'snapshot_tips', 'sweep_owned', 'trap',
     'unset', 'usage', 'verify_created', 'verify_one', 'warn',
   ],
@@ -2610,12 +3110,28 @@ const PINNED_CODE_BEARING = {
     ['sd_run', 'git', 'rev-parse', '--show-toplevel'],
     ['sd_run', 'bash', '-p', '--', '$GUARD', '$1'],
     ['sd_run', 'bash', '-p', '--', '$GUARD', '$1'],
-    ['sd_run', 'git', '-C', '$ROOT', 'commit', '$@', '-F', '$msg_file'],
-    ['sd_run', 'git', '-C', '$ROOT', 'commit', '$@', '-F', '$msg_file'],
+    // resolve_hooks_override, called once per commit (round 22 review, P1): reads
+    // core.hooksPath's effective scope, then — only when untrusted — the repository's own
+    // built-in hooks directory to pin over it. Same trust boundary as `guard` in
+    // smart-commit-inspect.sh, restated here because it drives a SEPARATE process.
+    ['sd_run', 'git', '-C', '$ROOT', 'config', '--show-scope', '--get', 'core.hooksPath', '2>/dev/null'],
+    ['sd_run', 'git', '-C', '$ROOT', 'rev-parse', '--git-common-dir'],
+    // resolve_gpg_override's per-key scope check (round 23 review, P0), one call per key in
+    // its loop — the loop body is one call site, so one entry covers every iteration.
+    ['sd_run', 'git', '-C', '$ROOT', 'config', '--show-scope', '--get', '$name', '2>/dev/null'],
+    ['sd_run', 'git', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
+      '${HOOKS_OVERRIDE[@]+${HOOKS_OVERRIDE[@]}}', '${GPG_OVERRIDE[@]+${GPG_OVERRIDE[@]}}',
+      '-C', '$ROOT', 'commit', '$@', '-F', '$msg_file'],
+    ['sd_run', 'git', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
+      '${HOOKS_OVERRIDE[@]+${HOOKS_OVERRIDE[@]}}', '${GPG_OVERRIDE[@]+${GPG_OVERRIDE[@]}}',
+      '-C', '$ROOT', 'commit', '$@', '-F', '$msg_file'],
     // Every `git_verify` argv below, whole. Each is a read: `reflog` with only a `--format`,
     // `log -1`, `for-each-ref` with only a `--format`, `rev-parse --verify|--git-path`,
     // `symbolic-ref -q HEAD` (query — one operand, no second ref to write), `rev-list`.
-    ['git_verify', 'reflog', '--format=%H %gs'],
+    // `--no-show-signature` (round 24 review, P0): `reflog`/`log` are log-family and, with an
+    // attacker-reachable `log.showSignature=true` (HOME), invoke `gpg.program` even on a format
+    // that requests neither `%G?` nor any signature text — see the flag's own call-site comments.
+    ['git_verify', 'reflog', '--no-show-signature', '--format=%H %gs'],
     // The DEFINITION, not a call — `git_verify() {` splits at the `(`. Pinning it is what makes
     // the count meaningful: a second definition shadowing the first would otherwise be free.
     ['git_verify'],
@@ -2623,12 +3139,22 @@ const PINNED_CODE_BEARING = {
     ['if', 'sd_run', 'rm', '-f', '--', '$1'],
     ['sd_run', 'mktemp', '--', '${TMPDIR:-/tmp}/smart-commit-msg.XXXXXX'],
     ['sd_run', 'mktemp', '--', '${TMPDIR:-/tmp}/smart-commit-log.XXXXXX'],
-    ['if', '!', 'git_verify', 'log', '-1', '--format=%B', '$target', '>', '$logfile'],
+    ['if', '!', 'git_verify', 'log', '-1', '--no-show-signature', '--format=%B', '$target', '>', '$logfile'],
     ['git_verify', 'for-each-ref', '--format=%(refname) %(objectname)'],
     ['git_verify', 'rev-parse', '--verify', '--quiet', 'HEAD'],
     ['git_verify', 'symbolic-ref', '-q', 'HEAD', '>/dev/null'],
     ['git_verify', 'rev-parse', '--git-path', '$1'],
-    ['git_verify', 'rev-list', '${args[@]}'],
+    // refuse_on_untrusted_content_drivers (round 23 review, P0; narrowed to `filter` only and
+    // made unconditional in round 24, P1; enumeration widened from staged-only to the whole
+    // tracked set in round 24's re-review, P0): the scratch file, the ls-files|check-attr pipe
+    // that populates it (now run unconditionally so PIPESTATUS can be checked for both stages
+    // rather than only the pipeline's exit status), and the per-key scope check in its loop.
+    ['sd_run', 'mktemp', '--', '${TMPDIR:-/tmp}/smart-commit-attr.XXXXXX'],
+    ['sd_run', 'git', '-c', 'core.fsmonitor=false', '-C', '$ROOT', 'ls-files', '-z', '--cached'],
+    ['sd_run', 'git', '-c', 'core.fsmonitor=false', '-c', 'core.attributesFile=/dev/null',
+      '-C', '$ROOT', 'check-attr', 'filter', '-z', '--stdin', '>', '$attrfile', '2>/dev/null'],
+    ['sd_run', 'git', '-C', '$ROOT', 'config', '--show-scope', '--get', '$key', '2>/dev/null'],
+    ['git_verify', 'rev-list', '--no-show-signature', '${args[@]}'],
     ['git_verify', 'rev-parse', '--verify', '--quiet', 'HEAD'],
     ['git_verify', 'rev-parse', '--verify', 'HEAD'],
   ],
@@ -2941,10 +3467,10 @@ test('a git_verify call site rewritten into its write form breaks the argv pin',
     ['git_verify symbolic-ref -q HEAD', 'git_verify symbolic-ref HEAD refs/heads/pwn'],
     ['git_verify symbolic-ref -q HEAD', 'git_verify symbolic-ref --delete HEAD'],
     // A permitted name with a write subcommand behind it.
-    ["git_verify reflog --format='%H %gs'", 'git_verify reflog delete HEAD@{0}'],
+    ["git_verify reflog --no-show-signature --format='%H %gs'", 'git_verify reflog delete HEAD@{0}'],
     // And the global-option form, which the gate also refuses — belt and braces, since the two
     // controls are meant to overlap here rather than divide the space.
-    ["git_verify reflog --format='%H %gs'", "git_verify -c alias.p='!/tmp/curl' p"],
+    ["git_verify reflog --no-show-signature --format='%H %gs'", "git_verify -c alias.p='!/tmp/curl' p"],
   ]) {
     const mutated = src.replace(from, to);
     assert.notEqual(mutated, src, `the ${to} mutation must actually have applied`);

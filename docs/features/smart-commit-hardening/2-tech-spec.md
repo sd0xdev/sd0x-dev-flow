@@ -4,7 +4,7 @@
 
 - **Problem**: `/smart-commit` 存在三個使用者回報的問題：(1) Git identity 未驗證，多 profile 環境下身份混亂；(2) AI attribution 洩漏（Co-Authored-By Claude 殘留）；(3) Commit 簽名設定不一致，混合簽名/未簽名。
 - **Goals**: 在 `/smart-commit` workflow 中加入 identity diagnostics、AI runtime validation、signing diagnostics 三項 pre-flight 檢查，消除上述三類問題。
-- **Scope**: 修改 `skills/smart-commit/SKILL.md`、`commands/smart-commit.md`、`scripts/commit-msg-guard.sh`；新增測試。
+- **Scope**: 修改 `skills/smart-commit/SKILL.md`、~~`commands/smart-commit.md`~~（v3.0.0 已移除 `commands/`）、`scripts/commit-msg-guard.sh`；新增測試。
 - **Origin**: Best Practices Audit（Debate threadId: `019cb7cb-f464-75b2-ba9b-231ecded04d8`）
 
 ## 2. Existing Code Analysis
@@ -13,20 +13,24 @@
 
 | Module | 可復用部分 |
 | ------ | ---------- |
-| `skills/smart-commit/SKILL.md` | 現有 Step 1–6 workflow、AI trailer sanitization regex（行 147–157） |
+| `skills/smart-commit/SKILL.md` | 現有 Step 1–6 workflow、AI trailer sanitization regex（`Forbidden Pattern` / `Regex` 表格，三列：`Co-Authored-By AI` / `Generated-by tag` / `Emoji robot tag`） |
 | `scripts/commit-msg-guard.sh` | Forbidden pattern regex（**ERE**，`grep -Ei`；早期版本誤記為 BRE）、`ALLOW_AI_COAUTHOR` **narrow opt-in**（移除白名單那一行後其餘樣式照常套用，不是 bypass） |
-| `commands/smart-commit.md` | Context block（status/log/branch） |
+| ~~`commands/smart-commit.md`~~ | Context block（status/log/branch）——**v3.0.0 已移除 `commands/`**，skill frontmatter 取代之 |
 | `rules/git-workflow.md` | Claude git 操作權限定義 |
-| `CLAUDE.md:115` | Author attribution 政策、forbidden patterns |
+| `CLAUDE.md:39` | Author attribution 政策、forbidden patterns |
 
 ### Files Requiring Changes
 
 | File | Action | Description |
 | ---- | ------ | ----------- |
 | `skills/smart-commit/SKILL.md` | Modify | 新增 Step 1c/1d/1e + runtime validation |
-| `commands/smart-commit.md` | Modify | Context block 加入 identity/signing 資訊 |
+| ~~`commands/smart-commit.md`~~ | ~~Modify~~ | v3.0.0 已移除 `commands/`，不再適用 |
 | `scripts/commit-msg-guard.sh` | Modify | Regex 正規化為 ERE + `\b` 字界 |
 | `test/scripts/smart-commit.test.js` | New | Identity/AI guard/signing pre-flight 測試 |
+| `skills/smart-commit/scripts/smart-commit-execute.sh` | New | `--execute` 的 alloc / commit / verify-last，取代 §3.6 的 inline 設計 |
+| `skills/smart-commit/scripts/smart-commit-inspect.sh` | New | 十道唯讀診斷，取代 §3.2–3.4 的 inline fence |
+| `test/scripts/smart-commit-inspect.test.js` | New | 診斷腳本的環境剝離、root 錨定、pathspec、arity |
+| `docs/features/smart-commit-hardening/4-implementation.md` | New | 實作考古：量測、走過的彎路、每條規則所針對的缺陷；程式碼註解的指標目標 |
 
 ## 3. Technical Solution
 
@@ -86,6 +90,22 @@ sequenceDiagram
 
 ### 3.2 Step 1c: Identity Diagnostics（新增）
 
+> **已被取代（§3.2–3.4 共用此註記，設計層而非政策層）**：這三節記錄的是把診斷 fence 直接寫在
+> Markdown 裡的原始設計。現行實作把十道唯讀診斷全部移進簽入的
+> `skills/smart-commit/scripts/smart-commit-inspect.sh`（`style` / `identity` / `signing` /
+> `signature` / `guard` / `collect` / `status` / `scope` / `diff` / `branch`），skill 只發一道
+> `/bin/bash -p -- "$INSPECT" <subcommand>`；腳本位置以 repo root 為基準解析，先找安裝副本
+> `.claude/scripts/`、再找 `skills/smart-commit/scripts/`。與 §3.6 是同一個方向、同一個理由。
+>
+> 以下 fence **保留出貨時的形狀**——已退役的 `GIT_ENV="…"` 賦值後再套用（現行為字面前綴，見
+> `skills/smart-commit/references/git-environment.md` § 1）。但變數清單本身跟著每輪更新，不凍結在
+> 出貨當下的版本：一份過期的清單（例如漏掉 round 19/20 才加入的 `GIT_CONFIG_GLOBAL`／
+> `GIT_CONFIG_SYSTEM`）會誤導讀者以為某個管道還開著，這比「形狀不是原始的」更糟。所以這裡是形狀
+> 歷史、內容當代的混合體，不是逐位元組的原始紀錄。它的價值在於**每個判定存在的理由**：前綴為何要
+> 剝掉整組 `GIT_*`、`-C` 為何必須綁在 root、`--get-all` 為何不能退回 `--get`、hooks 路徑為何用問
+> 的。這些是政策層，沒有隨實作搬家而失效，也沒有隨清單增修而失效。
+> **要照抄可執行的形狀請看腳本本身。** 實作考古見 [4-implementation.md](./4-implementation.md)。
+
 **位置**: Step 1a/1b 之後，Step 2 之前
 
 **指令**:
@@ -93,7 +113,7 @@ sequenceDiagram
 ```bash
 # 讀取有效 identity + 來源。前綴與 -C 的契約見
 # skills/smart-commit/references/git-environment.md § 1——診斷與 commit 必須指向同一個 repository
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
 REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
 $GIT_ENV git -C "$REPO_ROOT" config --show-origin --show-scope --get-all user.name
@@ -121,12 +141,15 @@ printf "GIT_AUTHOR_NAME=%s\nGIT_AUTHOR_EMAIL=%s\nGIT_COMMITTER_NAME=%s\nGIT_COMM
 
 ### 3.3 Step 1d: Signing Diagnostics（新增）
 
+> 已被取代：見 §3.2 開頭的共用註記。現行實作為 `smart-commit-inspect.sh signing`（以及 commit
+> 後可見性的 `signature`）。
+
 **位置**: Step 1c 之後
 
 **指令**:
 
 ```bash
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
 REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
 $GIT_ENV git -C "$REPO_ROOT" config --show-origin --get commit.gpgsign 2>/dev/null || echo "unset"
@@ -156,13 +179,17 @@ $GIT_ENV git -C "$REPO_ROOT" config --show-origin --get gpg.format 2>/dev/null |
 **Post-commit 可見性**（`--execute` 模式）:
 
 ```bash
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
 REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
 $GIT_ENV git -C "$REPO_ROOT" log -1 --format='%G?' # N=unsigned, G=good, U=good-untrusted, etc.
 ```
 
 ### 3.4 Step 1e: AI Guard Readiness（新增）
+
+> 已被取代：見 §3.2 開頭的共用註記。現行實作為 `smart-commit-inspect.sh guard`，且 hooks 路徑
+> 解析失敗改為 fail closed（exit 1），不再落到 `guard:missing`——SKILL.md Step 1e 的決策表有對應
+> 的第四列。
 
 **位置**: Step 1d 之後
 
@@ -171,7 +198,7 @@ $GIT_ENV git -C "$REPO_ROOT" log -1 --format='%G?' # N=unsigned, G=good, U=good-
 ```bash
 # `--git-path hooks/…` 本身就已套用 core.hooksPath（含 `~`／`%(prefix)` 展開）與 linked
 # worktree，因此用問的、不用自己重算。
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
 REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
 HOOK_FILE=$($GIT_ENV git -C "$REPO_ROOT" rev-parse --git-path hooks/commit-msg 2>/dev/null)
@@ -231,6 +258,16 @@ else                           echo "guard:missing"; fi
 
 ### 3.6 Runtime Validation（Execute 模式增強）
 
+> **已被取代（設計層，非本節的政策層）**：本節記錄的是 `--execute` 在 Markdown 裡組出
+> validate + commit 的原始設計。現行實作把整段移進簽入的
+> `skills/smart-commit/scripts/smart-commit-execute.sh`（`alloc` / `commit` / `verify-last`），
+> skill 只發一道 `/bin/bash -p -- "$EXECUTE" …`。介面與 exit status 見
+> `skills/smart-commit/references/execute-mode.md`。
+>
+> 以下 fence **保留出貨時的寫法**，理由同 §3.2 的共用註記。本節保留的政策層判定為：temp file
+> 不用 heredoc、guard 路徑的解析順序、`ALLOW_AI_COAUTHOR` 不得由環境決定、驗證與 commit 必須在
+> 同一個 process。
+
 **位置**: Step 5c，在 `git commit` 之前
 
 **流程**:
@@ -252,7 +289,7 @@ TMPFILE=$(mktemp "${TMPDIR:-/tmp}/smart-commit-msg.XXXXXX") || exit 1
 #    剝除是另一個缺陷：guard 來自當前目錄所在的 repo，commit 卻寫入 GIT_* 選定的
 #    另一個 repo——同一個問題答了兩次、兩個答案。`--execute` 因此明確定義為
 #    「作用於當前目錄所在的 repo」，要換 repo 的人改變當前目錄。
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 # `||` 掛在 substitution 上：後面兩個 strip 是 parameter assignment，永遠成功，
 # 守衛寫在它們之後就永遠不會觸發（git-environment.md §1）。
 REPO_ROOT=$($GIT_ENV git rev-parse --show-toplevel && printf .) || {
@@ -306,8 +343,9 @@ rm -f "$TMPFILE" || echo "⚠️ 無法刪除 $TMPFILE，其中仍是完整 comm
 [ "$COMMIT_STATUS" -eq 0 ] || exit 1
 ```
 
-> 完整可執行版本以 `skills/smart-commit/references/execute-mode.md` 為準；本節是設計說明，
-> 兩者若分歧以該檔為實作契約。
+> 完整可執行版本是 `skills/smart-commit/scripts/smart-commit-execute.sh`（checked-in
+> script）；`references/execute-mode.md` 只解釋它做什麼與為什麼，刻意不放程序副本（見該檔開
+> 頭）。本節是設計說明，三者若分歧以 script 為實作契約，`execute-mode.md` 次之。
 
 **`--ai-co-author` 窄白名單**:
 
@@ -326,7 +364,7 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 # 這是**獨立的 shell**，所以 GIT_ENV 必須在此重新賦值：未賦值不是「預設為空」，
 # 在繼承的 nounset 下會直接中止（且早於清理），沒有 nounset 則等於整段不套用剝除政策。
 # `$GUARD` 同理，須以與上方完全相同的順序重新解析（此處省略，見 execute-mode.md）。
-GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR"
+GIT_ENV="env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR"
 AI_CO_AUTHOR=0                 # 同上：分支選擇不得由繼承的環境決定
 LOGFILE=$(mktemp "${TMPDIR:-/tmp}/smart-commit-log.XXXXXX") || exit 1
 # 讀取失敗與寫入失敗都會留下空檔案，而空檔案對 guard 而言與乾淨訊息無異
@@ -397,7 +435,7 @@ fi
 
 | Risk | 影響 | 緩解策略 |
 |------|------|---------|
-| `--show-origin --get-all` 在舊版 Git (<2.8) 不支援 | Pre-flight 失敗 | 偵測 git 版本，fallback 到 `--get` |
+| `--show-scope` 在舊版 Git (<2.26) 不支援，`--show-origin --get-all` 需 ≥2.8 | 診斷失敗 | **round 18 訂正**：本行原記載「偵測 git 版本，fallback 到 `--get`」，這個版本探測從未實作。實際行為是失敗封閉——`emit_config_records`（`smart-commit-inspect.sh`）讀取 rc≠0/≠1 一律視為「無法讀取」而中止（`could not read <key> — aborting`），而非靜默降級成較弱的旗標。measured：舊版 git 對 `--show-scope` 回傳非 0，`rev-parse` 本身仍成功，證明中止來自這次讀取本身。Oracle：`P8f`（`4-implementation.md` §10.1） |
 | `includeIf` 解析複雜 | 誤判衝突 | 衝突定義 = 解析值不同，而非來源數不同 |
 | Runtime validation temp file race condition | 訊息被修改 | `mktemp`（原子建立、名稱不可預測、0600）+ validation 與 `git commit -F` 置於**同一個 bash 區塊**。殘留：guard 與 git 仍各自開檔一次，同使用者行程可在其間換掉內容；post-commit 掃描是它的偵測層。**不得**改用固定路徑（曾短暫改為 `/tmp/smart-commit-msg-1.txt`，引入 symlink 覆寫、同名碰撞與洩漏） |
 | `gpg.format=ssh` signing key format 不同 | Key 存在性檢查邏輯不同 | 根據 `gpg.format` 調整 key 驗證邏輯 |
@@ -416,16 +454,20 @@ fi
 | W6 | 修改 SKILL.md：Post-commit 洩漏 hard stop | S | W4 |
 | W7 | 修改 SKILL.md：Commit plan 摘要增強 | S | W1, W2, W3 |
 | W8 | 正規化 `commit-msg-guard.sh` regex 為 ERE + `\b` 字界 | S | — |
-| W9 | 修改 `commands/smart-commit.md` context block | S | W1, W2 |
+| ~~W9~~ | ~~修改 `commands/smart-commit.md` context block~~ — v3.0.0 已移除 `commands/`，不再適用 | — | — |
 | W10 | 新增 `--sign` / `--no-sign` flags | S | W2 |
 | W11 | 新增 `test/scripts/smart-commit.test.js` | M | W1–W10 |
 | W12 | 更新 CLAUDE.md Command Quick Reference | S | W10 |
+| W13 | 把 §3.6 的 inline validate + commit 抽成 `smart-commit-execute.sh`（`alloc` / `commit` / `verify-last`） | L | W6 |
+| W14 | 把 §3.2–3.4 的 inline 診斷 fence 抽成 `smart-commit-inspect.sh`（十個 subcommand）+ `test/scripts/smart-commit-inspect.test.js`。**本項「減重」的目標達成與否，量測見 [4-implementation.md § 11](./4-implementation.md)** | L | W13 |
 
 **Size**: S = ≤30 min, M = 30–60 min
 
 ## 6. Testing Strategy
 
-### 6.1 Unit Tests（`test/scripts/smart-commit.test.js`）
+### 6.1 Unit Tests（`test/scripts/smart-commit.test.js`、`test/scripts/smart-commit-inspect.test.js`）
+
+前者測 SKILL.md 這個指令面（fence 形狀、locator、前綴政策、frontmatter 授權），後者測抽出來的診斷腳本本身（環境剝離、root 錨定、pathspec magic、arity、退出狀態）。W13/W14 之後兩者都是必要的：只測其一，另一半的迴歸不會被看見。
 
 | Test Case | 驗證目標 |
 |-----------|---------|
@@ -444,25 +486,42 @@ fi
 | Regex: ERE + `\b` 字界（**單一主機**） | 只驗證執行主機的 grep；GNU／BSD 兩者皆驗尚未達成（見 §4） |
 | Hook detection: `core.hooksPath` awareness | 非標準 hook 路徑正確偵測 |
 
-### 6.2 Integration Tests
+### 6.2 Integration Tests（`test/scripts/smart-commit-execute.test.js`、`test/scripts/smart-commit-scope.test.js`）
 
-**現況：以下皆為規劃，尚未實作。** `test/scripts/smart-commit.test.js` 驗證的是 guard 本身、
-`execute-mode.md` 的**結構性質**（validator 不由環境變數選定、訊息檔以 `mktemp` 配置、預設分支
-清除 `ALLOW_AI_COAUTHOR`、frontmatter 已預先授權所需工具），以及 `allowed-tools` 契約。
-沒有任何測試實際跑完 `--execute` 行為流程——它需要一個真實 repo 與使用者核准，屬 `/feature-verify`
-的範圍。此處列為缺口而非已完成項。
+**round 18 review 訂正**：本節曾記載「`--execute` 行為流程沒有任何測試實際跑完，需要一個真實 repo
+與使用者核准，屬 `/feature-verify` 的範圍」——這句話與 `execute-mode.md` 自身的說法（`test/scripts/
+smart-commit-execute.test.js` 在拋棄式 repo 中驅動真實 commit）矛盾，且並不成立：該檔案的測試正是
+在拋棄式的真實 repo 中實際執行 commit，斷言 exit status、HEAD 是否移動、訊息檔是否還留在磁碟上。
+行數與測試數不記在這裡——這兩個數字在本節先前的版本就已經因為檔案持續編輯而過期，記一次過期一次，
+本節下一句自己給的理由（改以測試名稱而非會過期的數字引用）同樣適用於這裡。`execute-mode.md` 的結構性宣稱（validator 不由環境變數選定、訊息檔以 `mktemp` 配置、
+預設分支清除 `ALLOW_AI_COAUTHOR`、frontmatter 已預先授權所需工具）與下表都由它涵蓋。
+
+引用方式與 `4-implementation.md` § 7 相同的理由：以測試名稱而非 `:NN` 行號引用——round 21 在此檔案
+中段插入一個測試，下表原本記載的四個行號當場全部失準，測試名稱本身用 `grep` 即可定位，不會過期。
 
 | Test Case | 驗證目標 | 狀態 |
 |-----------|---------|------|
-| `--execute` 模式 temp-file validation 攔截 AI 內容 | Commit 被 abort | 未實作 |
-| `--execute` 模式簽名失敗 | 立即停止 + 修復指引 | 未實作 |
-| Post-commit AI 洩漏偵測 → hard stop | 剩餘 groups 不執行 | 未實作 |
+| `--execute` 模式 temp-file validation 攔截 AI 內容 | `commit with an AI trailer and no opt-in` → exit 4、HEAD 不動、訊息檔被移除 | ✅ 已測試 |
+| commit-msg hook 注入 attribution 才被攔截，不誤判乾淨 | `a commit-msg hook injecting attribution is caught, not reported clean` | ✅ 已測試 |
+| Post-commit AI 洩漏偵測 → hard stop | `a post-commit hook stacking a clean commit cannot hide the leaking one` | ✅ 已測試 |
+| `--execute` 模式簽名失敗 | 立即停止 + 修復指引 | ⛔ 未實作 —— `--sign`/`--no-sign` 的 argv 本身已 pin（`--no-sign reaches git as --no-gpg-sign`、`--sign reaches git as -S`），但沒有測試驅動「簽名失敗」這條路徑本身（例如 `commit.gpgsign=true` 搭配壞掉的簽名金鑰，讓 `git commit` 真的失敗） |
+
+唯一存活的缺口是簽名失敗路徑，留待下一輪或 `/feature-verify`。
 
 ## 7. Open Questions
 
 | # | 問題 | 建議 | 決策狀態 |
 |---|------|------|---------|
 | Q1 | CI/headless 環境 identity 衝突如何處理？ | **Fail-closed**：衝突時 HALT + 輸出修復指引，不靜默繼承錯誤 identity | ✅ 已確認 |
-| Q2 | Git 版本最低要求？ | 建議 Git ≥ 2.13（`includeIf` 支援） | 待確認 |
+| Q2 | Git 版本最低要求？ | **round 18 訂正**：`includeIf` 確實只需 ≥2.13，但這不是實際地板——`--show-scope`（`emit_config_records` 每次都用）需 ≥2.26，而 SKILL.md:228-230、§10.8 依賴的 `author.*`/`committer.*` 優先序需 ≥2.31。建議 Git ≥ 2.31 | ✅ 已確認 |
 | Q3 | `commit-msg-guard.sh` 是否改為 ERE 後仍向下相容？ | `grep -E` 在所有目標平台可用（需測試驗證） | 待測試驗證 |
 | Q4 | 是否需要 `--profile <name>` flag 顯式選擇 profile？ | Phase 2 考慮，Phase 1 先用 diagnostics + AskUserQuestion | 延後 |
+
+## 8. Deviations
+
+本節記錄「已知偏離規則、已聲明、不需回答」的項目——與 §7 不同，這裡沒有待決問題。
+
+| # | 偏離的規則 | 處置與理由 | 定性 |
+|---|-----------|-----------|------|
+| D1 | 本檔已越過 `@rules/docs-numbering.md` 的 500 行門檻。**重新以 `wc -l` 量得：round 24 re-review 後仍為 527 行**（與 round 24 doc sync 當時記的數字相同——這次的 D1/D2 編輯只改表格儲存格內的文字，沒有新增或刪除行，所以本檔自身的行數這一輪沒有 drift；上一輪的過期教訓仍然適用，只是這輪剛好沒踩到）。**本次變更（round 24 re-review doc sync，承接 §10.17/§10.18 的原始碼與測試修訂）只編輯 D1/D2 兩列本身，不動其他章節** | **拆檔**：§3 佔 **399 行**（lines 35–433，佔全檔 **75.7%**，以本輪量得的 527 行為分母）且有乾淨的 3.1–3.8 邊界（用會辨識 ```markdown 圍籬的掃描確認——`:422` 的 `## Commit Plan` 在 §3.8 圍籬內，是示範輸出，不是節界）。全檔真正的 `##` 起始行為 3 / 10 / 35 / 434 / 445 / 466 / 511 / 520。目標結構 `2-tech-spec/2-tech-spec.md` + 子檔。**不在本次變更做**——會動到 `test/scripts/smart-commit.test.js` 四處硬編路徑（`SUPERSEDED_SPEC:327`、`hardeningSpec:366`、F1d sweep `:373`、`:310` 的同路徑註解）與 `create-pr-stacked/2-tech-spec.md:178` 及其 review log，屬獨立變更。**明確不採用**「壓縮內容鑽過 500」，規則本身禁止 | **延後，非豁免**。規則給的免拆理由是「這份整著讀比較好」；本列主張的是相反的（該拆，但成本落在別的變更）。超出量：本次變更前 **27 行**（527−500）。round 15/16 之前記的更小數字都是本檔更小時算的，已無參考價值，不再逐一列出 |
+| D2 | `4-implementation.md` 同樣越過 500 行門檻。round 24 re-review（新增 § 10.17；隨後第二輪 fallback re-review 又發現 § 10.17 自己新增的哨符防護有 P0 級繞過，新增 § 10.18 記錄該輪發現與修法；同時重新量測 §11 的量測列與其衍生百分比）後，以 `wc -l` 量得：**1750 行**（§10.17 剛寫完、§10.18 尚未新增時為 1691 行；round 24 review 剛收斂、§10.16 寫完時為 1631 行；round 24 初次寫完 §10.16 時為 1624 行） | **拆檔，但不在本次變更做**。最大的 §10 佔 **1183 行（67.6%）**（lines 459–1641，用 `## 11.` 的起始行 1642 反推），現有 10.1–10.18 **十八個** `###` 邊界（新增的 § 10.18 是第二輪 fallback re-review 的產物），正是規則說的「自然的子文件」形狀，且比例逐輪升高，免拆論證已經站不住，照實記在這裡。改為延後的理由只剩一條：拆檔會改動所有指向本檔的引用，而本次變更的 review loop 尚未收斂，在收斂前搬動檔案會讓每一輪的行號引用全部失效。成本：指向本檔的引用仍是 **32 行**，散在 6 個檔案（`SKILL.md` 4、`git-environment.md` 8、`smart-commit-inspect.sh` 11、**`2-tech-spec.md`（本檔）6**、兩支測試 3），其中一行就是本列自己——§ 10.17、§ 10.18 兩段與這兩輪擴充的兩支測試檔（`smart-commit-execute.test.js`、`smart-commit-inspect.test.js`）都沒有新增指向本檔的引用，所以總數自 round 24 doc sync 以來沒再動過。**`4-implementation.md` 對自己沒有引用（0 行）**。推導（表格內的管線符號以 `\|` 跳脫，一道指令涵蓋所有寫法，含只寫檔名不寫路徑的那些）：`grep -rn '4-implementation\.md' skills/smart-commit/ test/scripts/smart-commit-inspect.test.js test/scripts/smart-commit.test.js docs/features/smart-commit-hardening/2-tech-spec.md \| wc -l` → 32（round 23 時為 31；round 24 doc sync 時新增到 32；此後兩輪 re-review 皆未再新增）。**退出條件（round 18 review 新增，此前這條延後沒有終點）**：review loop 一旦收斂（連續兩輪皆 `✅ Ready`/`✅ Mergeable` 且無新增 finding），拆檔排在下一次觸碰本檔的變更之前執行，不得再無限期延後——本列自己就是「延後」被拿來墊檔九輪的證據 | **延後，非豁免**。本檔不屬 `@rules/docs-numbering.md` 的功能性文件豁免（它是 `docs/**` 散文），所以這是一條 `[DEVIATION]` 而非「不適用」。免拆的理由只有一條，且明說其限度：這份文件不是從頭讀到尾的，而是被 `§ N` 指標跳進來的，長度的代價落在捲動的讀者身上。更早幾輪的成本數字曾算錯兩次——兩道指令各自漏算了對方涵蓋的寫法；現行數字改用單一 `grep -rn ... \| wc -l` 指令，兩種寫法一起涵蓋，不再重蹈 |

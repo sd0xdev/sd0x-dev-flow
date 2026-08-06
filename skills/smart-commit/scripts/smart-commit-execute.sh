@@ -4,10 +4,8 @@
 # describes it rather than carrying a second copy. The basename is namespaced
 # because /install-scripts flattens every skill's scripts/ into one directory.
 #
-# Launch it as `/bin/bash -p -- <path>`. Both halves matter: passing a script as an
-# argument bypasses this shebang's -p and $BASH_ENV would run first, and a BARE `bash`
-# is resolved by the caller's shell - a PATH shim or an exported `bash` function answers
-# the whole command with status 0 and this file never starts.
+# Launch it as `/bin/bash -p -- <path>`. Both halves are load-bearing; why is
+# execute-mode.md § "Why the entrypoint is spelled /bin/bash -p --".
 #
 # Subcommands, in the order the skill runs them:
 #   alloc                                                  -> prints a fresh 0600 file
@@ -15,7 +13,8 @@
 #   verify-last [<commit-ish>] [--ai-co-author]            -> secondary check
 #
 # Exit status: 0 ok | 2 usage | 3 guard not found | 4 AI content or leak
-#              5 git commit failed | 6 repo root unresolvable | 7 commit unreadable
+#              5 git commit failed | 6 repo root or hooks path unresolvable | 7 commit
+#              unreadable, or refused pre-flight (ancestry overlay / untrusted content driver)
 #
 # Rationale and threat model for every defence below:
 # skills/smart-commit/references/execute-mode.md
@@ -31,6 +30,38 @@ case "${SD0X_PRIV_REEXEC:-}" in
     SD0X_PRIV_GUARD=''
     : "${SD0X_PRIV_GUARD:?smart-commit/execute: privileged re-exec did not take}"
     ;;
+  *)
+    # The sentinel is non-empty, meaning we skipped the exec above — the ONLY place that
+    # strips SHELLOPTS/BASHOPTS. An EXPORTED SHELLOPTS/BASHOPTS here means the sentinel was
+    # forged rather than earned, not merely re-exec'd: `SHELLOPTS=privileged` at invocation
+    # sets a real lowercase `p` in `$-` without ever passing `-p`, indistinguishable from
+    # genuine privileged mode by the `$-` check below alone — and bash imports an exported
+    # function from that same forged environment. `smart-commit-inspect.sh` carried this
+    # guard as its own round-19 P0; this file did not, and round 24 re-review reproduced the
+    # identical bypass here (an exported function ran unchecked) while the same attack
+    # against smart-commit-inspect.sh was refused. Full derivation: that file's preamble.
+    #
+    # The check itself must not call an external command: `grep` is PATH-resolved, and in
+    # exactly the scenario this guard exists to catch (the re-exec above did NOT run, so
+    # function-import-from-environment is still active) an attacker able to forge the
+    # sentinel can equally export `PATH` or a `BASH_FUNC_grep%%` shell function and make the
+    # pipe answer whatever they want (round 24 re-review, P0, reproduced against both files:
+    # PATH-shadowed grep and an imported grep function both defeated the pipe). `builtin`
+    # forces the `declare` call to the real builtin even if a `BASH_FUNC_declare%%` was
+    # imported; `case` is a reserved word and untouchable by either vector.
+    for SD0X_V in SHELLOPTS BASHOPTS; do
+      SD0X_D=$(builtin declare -p "$SD0X_V" 2>/dev/null)
+      SD0X_F=${SD0X_D#declare -}
+      SD0X_F=${SD0X_F%% *}
+      case $SD0X_F in
+        *x*)
+          SD0X_PRIV_GUARD=''
+          : "${SD0X_PRIV_GUARD:?smart-commit/execute: cannot establish privileged mode}"
+          ;;
+      esac
+    done
+    unset -v SD0X_V SD0X_D SD0X_F
+    ;;
 esac
 case "$-" in
   *p*) ;;
@@ -45,6 +76,8 @@ unset SD0X_PRIV_REEXEC
 # An inherited xtrace writes every expansion to stderr, commit message included.
 set +x
 set +v
+
+set -u
 
 # ONE environment policy for the whole process, applied once. As fenced bash this was
 # a prefix each block re-derived, and splitting it is what made the validator and the
@@ -71,9 +104,10 @@ set +v
 unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
       GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_NAMESPACE GIT_CEILING_DIRECTORIES \
       GIT_GLOB_PATHSPECS GIT_ICASE_PATHSPECS GIT_NOGLOB_PATHSPECS \
-      GIT_LITERAL_PATHSPECS GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT \
+      GIT_LITERAL_PATHSPECS GIT_CONFIG GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM \
+      GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM \
       GIT_IMPLICIT_WORK_TREE GIT_GRAFT_FILE GIT_SHALLOW_FILE GIT_PREFIX \
-      GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE ALLOW_AI_COAUTHOR
+      GIT_NO_REPLACE_OBJECTS GIT_REPLACE_REF_BASE GIT_EXTERNAL_DIFF ALLOW_AI_COAUTHOR
 CDPATH=''
 
 # Ownership evidence for the post-commit check. `git commit` writes GIT_REFLOG_ACTION as the
@@ -187,6 +221,96 @@ run_guard() {
   fi
 }
 
+# Populates the global HOOKS_OVERRIDE array, consumed by run_commit immediately after.
+# Empty when core.hooksPath's effective scope is trusted (local/worktree — the
+# repository's own committed choice — or genuinely unset); otherwise
+# `-c core.hooksPath=<repo's own hooks dir>`, so `git commit` runs pre-commit/
+# prepare-commit-msg/post-commit from the repository's own location regardless of what a
+# non-local scope (including one reachable through HOME) names. Mirrors
+# smart-commit-inspect.sh's `guard` trust boundary exactly, including the same fail-closed
+# rule for a `--show-scope` failure that is not "key unset" (its exit 1) — old git without
+# `--show-scope` support must not be read as "unset". Round 22 review, P1: the original
+# fsmonitor-only pin left every hook OTHER than fsmonitor's own shell command reachable
+# through this identical channel, unpinned.
+resolve_hooks_override() {
+  HOOKS_OVERRIDE=()
+  local scope_line scope_word scope_rc common hooks_cfg
+  scope_line=$(sd_run git -C "$ROOT" config --show-scope --get core.hooksPath 2>/dev/null)
+  scope_rc=$?
+  # Compared as a plain word, not the tab-delimited scope-and-value pair matched directly in
+  # a case pattern — behaviourally identical (git's --show-scope output is always the scope
+  # name, a tab, then the value), but keeps the pattern itself free of an ANSI-C-quoted
+  # delimiter glued to a bare word.
+  scope_word=${scope_line%%$'\t'*}
+  case "$scope_word" in
+    local|worktree) return 0 ;;
+  esac
+  [ "$scope_rc" -eq 1 ] && return 0
+  common=$(sd_run git -C "$ROOT" rev-parse --git-common-dir && printf .) || {
+    warn '⚠️ could not resolve the hooks path - aborting'
+    return 1
+  }
+  common=${common%.}; common=${common%$'\n'}
+  # Empty is not "root-relative" - repo_root() above refuses it for the same reason
+  # (round 23 review, P2): falling through would build `core.hooksPath=/hooks`, a
+  # path with no relation to this repository at all.
+  [ -n "$common" ] || {
+    warn '⚠️ could not resolve the hooks path - aborting'
+    return 1
+  }
+  case "$common" in
+    /*) ;;
+    *) common="$ROOT/$common" ;;
+  esac
+  hooks_cfg="core.hooksPath=$common/hooks"
+  # Two statements, not one `(-c "$hooks_cfg")` literal: the scanner treats an array literal's
+  # content as one unsplit word only while it carries no unquoted whitespace of its own (matching
+  # `OWNED+=("$1")` elsewhere in this file) — a `-c value` pair inside a single literal reintroduces
+  # a word boundary the assignment-prefix peel does not expect, and its second word reads as a
+  # command in its own right. Building the array incrementally keeps every assignment single-word.
+  HOOKS_OVERRIDE=(-c)
+  HOOKS_OVERRIDE+=("$hooks_cfg")
+}
+
+# Populates the global GPG_OVERRIDE array. Signing pulls its executable name from
+# `gpg.program` (every format), `gpg.<format>.program` (openpgp/x509/ssh), and
+# `gpg.ssh.defaultKeyCommand` (ssh format, only consulted when user.signingkey is
+# unset) — every one names a binary, and every one is reachable through a non-local
+# scope including HOME, with no `--sign` flag required: `commit.gpgsign=true` alone,
+# set globally, is enough to make git run whatever `gpg.program` also names (round 23
+# review, P0, reproduced end-to-end). Each key is checked and overridden independently
+# of whether signing is even requested this run, matching `core.fsmonitor`'s
+# unconditional pin below: a real local/worktree override (an operator's own committed
+# choice of gpg wrapper) still runs; anything from a scope this process does not
+# control is replaced with git's own built-in default, so signing - if it happens -
+# runs the binary the operator actually has, not one an attacker named.
+resolve_gpg_override() {
+  GPG_OVERRIDE=()
+  local key name default scope_line scope_word scope_rc
+  for key in \
+    'gpg.program:gpg' \
+    'gpg.openpgp.program:gpg' \
+    'gpg.x509.program:gpgsm' \
+    'gpg.ssh.program:ssh-keygen' \
+    'gpg.ssh.defaultKeyCommand:'
+  do
+    name=${key%%:*}; default=${key#*:}
+    scope_line=$(sd_run git -C "$ROOT" config --show-scope --get "$name" 2>/dev/null)
+    scope_rc=$?
+    scope_word=${scope_line%%$'\t'*}
+    case "$scope_word" in
+      local|worktree) continue ;;
+    esac
+    # Same fail-closed rule as resolve_hooks_override: only `--get`'s documented
+    # "key not found" exit (1) counts as genuinely unset and trusted; any other
+    # non-local/worktree outcome - including the flag itself failing on old git -
+    # is untrusted and gets overridden.
+    [ "$scope_rc" -eq 1 ] && continue
+    GPG_OVERRIDE+=(-c)
+    GPG_OVERRIDE+=("$name=$default")
+  done
+}
+
 # `git commit` gets the SAME per-call scoping, and it must: the canonical guard is also
 # installed as the repository's commit-msg hook, and that hook reads ALLOW_AI_COAUTHOR to
 # permit the one whitelisted line. Withholding it from `git commit` made --ai-co-author
@@ -196,15 +320,68 @@ run_guard() {
 run_commit() {
   local msg_file=$1
   shift
+  resolve_hooks_override || return 6
+  if [ "${#HOOKS_OVERRIDE[@]}" -gt 0 ]; then
+    warn "⚠️ core.hooksPath is configured outside this repository/worktree - ignoring it."
+    warn "   Running hooks from ${HOOKS_OVERRIDE[1]#core.hooksPath=} instead."
+  fi
+  resolve_gpg_override
+  # Same warning shape as core.hooksPath just above, and for the same reason (round 24
+  # review, P1): resolve_hooks_override warns when it overrides, resolve_gpg_override did
+  # not, and a silently substituted signer is a surprise the next debugging session pays
+  # for (a developer who set gpg.program in their own $HOME sees git suddenly try a
+  # different binary with no indication why).
+  if [ "${#GPG_OVERRIDE[@]}" -gt 0 ]; then
+    local gpg_kv gpg_name gpg_default
+    # A plain `for … in "${ARR[@]}"` walk, not a C-style `((…))` counting loop: the
+    # latter reads its counter variable as a bare word to the static oracle in
+    # test/scripts/smart-commit-execute.test.js the same way an unrecognised construct
+    # anywhere else in this file would (measured while wiring this warning's own test
+    # coverage). GPG_OVERRIDE alternates `-c`, `key=default`, `-c`, `key=default`, …;
+    # skipping the flag word with a single-pattern `case` is the same shape sd_allowlist
+    # and the case-arm fix above both already use.
+    for gpg_kv in "${GPG_OVERRIDE[@]}"; do
+      case "$gpg_kv" in
+        -c) continue ;;
+      esac
+      gpg_name=${gpg_kv%%=*}
+      gpg_default=${gpg_kv#*=}
+      warn "⚠️ $gpg_name is configured outside this repository/worktree - ignoring it."
+      if [ -n "$gpg_default" ]; then
+        warn "   Using $gpg_default instead."
+      else
+        warn "   Clearing it (no safe default exists) instead."
+      fi
+    done
+  fi
   # GIT_REFLOG_ACTION is set HERE and nowhere else, so the marker cannot end up on a read-back
   # command and be mistaken for evidence. Exported in a subshell, so the surrounding process
   # environment stays clean for every other git call.
+  #
+  # `-c core.fsmonitor=false`: `commit` (even without `-a`) can run a configured fsmonitor
+  # hook — a shell command there is arbitrary command execution, empirically confirmed, and
+  # reachable from any config scope this process does not control, including one through
+  # HOME (round 21 review, P1). Pinning `false` on the command line always outranks a
+  # lower-scoped value, closing that one knob regardless of which scope carried it.
+  #
+  # `-c core.attributesFile=/dev/null`: a SEPARATE knob the same HOME reaches (round 22
+  # review) — closes the assignment half of the filter channel. The command half (what a
+  # filter/textconv/merge driver named by the repository's OWN tracked `.gitattributes`
+  # actually runs) is a distinct exposure the pin does not touch at all - see
+  # refuse_on_untrusted_content_drivers, which cmd_commit runs before this function.
+  #
+  # "${HOOKS_OVERRIDE[@]}" / "${GPG_OVERRIDE[@]}": see resolve_hooks_override and
+  # resolve_gpg_override above, both called just before this.
   if [ "$AI_CO_AUTHOR" = 1 ]; then
     ( export ALLOW_AI_COAUTHOR=1 GIT_REFLOG_ACTION="$RUN_MARKER"
-      sd_run git -C "$ROOT" commit "$@" -F "$msg_file" )
+      sd_run git -c core.fsmonitor=false -c core.attributesFile=/dev/null \
+        ${HOOKS_OVERRIDE[@]+"${HOOKS_OVERRIDE[@]}"} ${GPG_OVERRIDE[@]+"${GPG_OVERRIDE[@]}"} \
+        -C "$ROOT" commit "$@" -F "$msg_file" )
   else
     ( export GIT_REFLOG_ACTION="$RUN_MARKER"
-      sd_run git -C "$ROOT" commit "$@" -F "$msg_file" )
+      sd_run git -c core.fsmonitor=false -c core.attributesFile=/dev/null \
+        ${HOOKS_OVERRIDE[@]+"${HOOKS_OVERRIDE[@]}"} ${GPG_OVERRIDE[@]+"${GPG_OVERRIDE[@]}"} \
+        -C "$ROOT" commit "$@" -F "$msg_file" )
   fi
 }
 
@@ -227,7 +404,11 @@ run_commit() {
 # leak - the marker attributes what `git commit` recorded here, not everything a hook did.
 marked_oids() {
   local log h msg
-  log=$(git_verify reflog --format='%H %gs') || return 2
+  # `--no-show-signature` (round 24 review, P0): `git reflog` is log-family and, with an
+  # attacker-reachable `log.showSignature=true` (HOME), invokes `gpg.program` even though
+  # this format requests neither `%G?` nor any signature text - reproduced end-to-end
+  # against a HOME-configured gpg.program that touched a marker file on every reflog read.
+  log=$(git_verify reflog --no-show-signature --format='%H %gs') || return 2
   while IFS=' ' read -r h msg; do
     case "$msg" in "$RUN_MARKER:"*) printf '%s\n' "$h" ;; esac
   done <<<"$log"
@@ -304,7 +485,12 @@ verify_one() {
   # Both failures below leave an EMPTY file, which the guard reads as a clean message: the
   # check would then report on a commit it never actually read. A commit message is never
   # legitimately empty, so emptiness is treated as unverified.
-  if ! git_verify log -1 --format='%B' "$target" > "$logfile"; then
+  #
+  # `--no-show-signature` (round 24 review, P0): same channel as marked_oids above - this
+  # read-back asks only for `%B`, but a HOME-reachable `log.showSignature=true` makes plain
+  # `git log` run `gpg.program` anyway. Reproduced against `verify-last`, which reaches this
+  # function directly with no `git commit` in between.
+  if ! git_verify log -1 --no-show-signature --format='%B' "$target" > "$logfile"; then
     scrub "$logfile"
     warn "❌ could not read the message of $target back - UNVERIFIED. Stop here."
     return 7
@@ -418,6 +604,105 @@ refuse_on_ancestry_overlays() {
   return 0
 }
 
+# Refuses to commit when the repository's OWN tracked `.gitattributes` names a filter
+# driver whose actual command comes from a scope this process does not control.
+# `core.attributesFile=/dev/null` (run_commit) only blocks an ATTACKER-NAMED driver
+# assignment; a driver the repository itself opts into (e.g. `* filter=lfs`, the
+# git-lfs shape) still resolves its command through ordinary config lookup, and
+# nothing stops that command living in a non-local scope reachable through HOME
+# (round 23 review, P0 - reproduced against `filter.<name>.clean` on a plain commit
+# with content already staged). This REFUSES rather than overrides: unlike
+# core.hooksPath there is no universal safe substitute for a filter command - git-lfs's
+# clean filter IS the intended behaviour - so silently disabling one risks committing
+# content the driver exists to transform, a data-integrity defect stacked on the
+# security one.
+#
+# `filter` only, not `diff`/`merge` (round 24 review, P1): `git commit` never invokes
+# `diff.<n>.textconv` or `merge.<n>.driver` - those run for `git diff` and for resolving
+# a merge conflict, neither of which `commit` performs - so checking them here only ever
+# produced a false refusal (measured: a global textconv-only config with no filter
+# attribute in play blocked a commit that never touched it). `filter.<n>.clean/smudge/
+# process` is the one family a prior `git add`/`git commit -a` on this content could
+# actually have reached, and is what stays checked. `smart-commit-inspect.sh`'s copy of
+# this function keeps all three - its `diff`/`status`/`collect` subcommands can genuinely
+# trigger textconv, unlike this one.
+refuse_on_untrusted_content_drivers() {
+  local attrfile ppath pattr pvalue seen key suffix scope_line scope_word scope_rc
+  local -a rc
+  attrfile=$(sd_run mktemp -- "${TMPDIR:-/tmp}/smart-commit-attr.XXXXXX") || {
+    warn '⚠️ could not allocate a scratch file for the attribute check - aborting'
+    return 1
+  }
+  own "$attrfile"
+  # NUL-delimited throughout, and never through `$( )`: bash command substitution
+  # silently deletes embedded NUL bytes rather than stopping at the first one, which
+  # would merge every path/attribute/value into one unparseable run. The scratch file
+  # is what lets the pipe's actual result be checked (`> "$attrfile"` fails loudly)
+  # instead of masking a `check-attr` failure behind whatever partial bytes a pipe
+  # into a `while read` loop happened to deliver.
+  # Stage 1 (`ls-files`) carries only `core.fsmonitor=false`: it does not read blob content
+  # (`--cached` is filename enumeration), so `attributesFile` has nothing to affect there.
+  # Stage 2 (`check-attr`) carries both — it is what actually resolves gitattributes, and an
+  # unpinned call here would also pick up the ATTACKER's `core.attributesFile` (if any) as if
+  # it were the repository's own, reporting a false refusal for a channel `-c
+  # core.attributesFile=/dev/null` on the real commit already closes (round 24 re-review, P2 —
+  # this comment previously claimed both calls carried both pins, which stage 1's own line
+  # below never did).
+  # Enumerated via `ls-files --cached` (the FULL tracked set), not `diff --cached --name-only`
+  # (round 24 review's own P0, found by re-review of this very round: `git commit` refreshes
+  # every tracked index entry that needs it, not only the staged ones, so `filter.<n>.clean`
+  # can run on a tracked path this commit never staged — reproduced 10/10 with a plain
+  # git-lfs shape where only an unrelated file was staged). Untracked paths are outside the
+  # index `git commit` touches, so `--others` is correctly omitted here (unlike
+  # `smart-commit-inspect.sh`'s copy, whose `status`/`diff` subcommands can report on them).
+  sd_run git -c core.fsmonitor=false -C "$ROOT" ls-files -z --cached |
+    sd_run git -c core.fsmonitor=false -c core.attributesFile=/dev/null \
+      -C "$ROOT" check-attr filter -z --stdin > "$attrfile" 2>/dev/null
+  # Both pipeline stages checked (round 24 review, P1): `if ! cmd1 | cmd2; then` reads
+  # only cmd2's exit status, so a failing `ls-files` (an unreadable index, a corrupt ref)
+  # left an EMPTY scratch file and this function read that as "no drivers found" and
+  # returned 0 — reproduced: a failing first stage let the commit through as if the tree
+  # carried no attributes at all.
+  rc=("${PIPESTATUS[@]}")
+  if [ "${rc[0]}" -ne 0 ] || [ "${rc[1]}" -ne 0 ]; then
+    scrub "$attrfile"
+    warn '⚠️ could not resolve gitattributes for tracked paths - aborting'
+    return 1
+  fi
+  seen=$'\n'
+  while IFS= read -r -d '' ppath && IFS= read -r -d '' pattr && IFS= read -r -d '' pvalue; do
+    case "$pvalue" in
+      '') continue ;;
+      unset) continue ;;
+      unspecified) continue ;;
+    esac
+    case "$seen" in *$'\n'"$pvalue"$'\n'*) continue ;; esac
+    seen="$seen$pvalue"$'\n'
+    # `for suffix in …; do key=…` rather than building a `keys` array: the array-append
+    # scanner defeat this file's own tests caught before (a single `+=(a b c)` line, or
+    # even a plain `keys=(a b c)` assignment, reads its 2nd/3rd word as a bare command to
+    # the static oracle - the array-assignment prefix is only recognised on the FIRST
+    # word) has no foothold in a `for … in word list; do` loop, which git_verify above
+    # already uses for the identical reason.
+    for suffix in clean smudge process; do
+      key="filter.$pvalue.$suffix"
+      scope_line=$(sd_run git -C "$ROOT" config --show-scope --get "$key" 2>/dev/null)
+      scope_rc=$?
+      scope_word=${scope_line%%$'\t'*}
+      case "$scope_word" in local|worktree) continue ;; esac
+      [ "$scope_rc" -eq 1 ] && continue
+      warn "❌ $key is configured outside this repository/worktree (reachable through HOME)"
+      warn "   but is named by this repository's own .gitattributes - refusing to commit"
+      warn '   rather than run it, or silently disable it and risk uncommitted transforms.'
+      warn "   If legitimate, move it to local scope: git config --local $key <command>"
+      scrub "$attrfile"
+      return 1
+    done
+  done < "$attrfile"
+  scrub "$attrfile"
+  return 0
+}
+
 # Everything the operation made NEWLY REACHABLE across the ref space - not "the range from the
 # old HEAD to the new one", and not "whatever is at the tip now": a post-commit hook can stack
 # a clean commit on top of the leaking one, or park the leaking one on a side ref and rebuild
@@ -451,7 +736,12 @@ verify_created() {
   args+=(--not)
   for oid in $before_tips; do args+=("$oid"); done
 
-  all=$(git_verify rev-list "${args[@]}") || return 7
+  # `--no-show-signature` for the same reason as marked_oids/verify_one above, applied here
+  # too as defense-in-depth: measured harmless either way (`rev-list` without a `%`-format
+  # does not invoke gpg.program even under `log.showSignature=true`), but the flag costs
+  # nothing and keeps every git_verify log-family call in this file under the same rule
+  # rather than three call sites disagreeing on which ones need it.
+  all=$(git_verify rev-list --no-show-signature "${args[@]}") || return 7
   if [ -z "$all" ]; then
     warn '❌ no commit was introduced - UNVERIFIED. Stop here.'
     return 7
@@ -553,17 +843,28 @@ cmd_commit() {
   fi
 
   refuse_on_ancestry_overlays || { scrub "$msg_file"; return 7; }
+  refuse_on_untrusted_content_drivers || { scrub "$msg_file"; return 7; }
 
   # The whole ref space before committing, plus HEAD. Empty in an unborn repository, which
   # is not an error - unreadable is, and both call sites test for it.
-  local before_tips after_tips before after status
+  local before_tips after_tips before after status commit_rc
   before_tips=$(snapshot_tips) || {
     scrub "$msg_file"
     warn '❌ could not read the ref space before committing - UNVERIFIED. Nothing was committed.'
     return 7
   }
   before=$(git_verify rev-parse --verify --quiet HEAD) || before=''
-  if run_commit "$msg_file" ${sign_args[@]+"${sign_args[@]}"}; then status=0; else status=5; fi
+  run_commit "$msg_file" ${sign_args[@]+"${sign_args[@]}"}
+  commit_rc=$?
+  # 6 is run_commit's own signal that resolution failed BEFORE git ever ran (hooks path
+  # unresolvable) - reusing the same code repo_root uses above for the same reason: no
+  # commit was attempted, so reporting 5 ("git commit failed") would blame git for a
+  # failure it never had the chance to have.
+  case "$commit_rc" in
+    0) status=0 ;;
+    6) status=6 ;;
+    *) status=5 ;;
+  esac
   scrub "$msg_file"
   [ "$status" -eq 0 ] || return "$status"
 

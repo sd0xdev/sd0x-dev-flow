@@ -3,7 +3,7 @@
 `--execute` runs a checked-in script, `skills/smart-commit/scripts/smart-commit-execute.sh`. This
 file explains what it does and why; it deliberately carries **no copy of the procedure**.
 
-Both bundled scripts carry the skill name in their basename, and that is not decoration:
+All three bundled scripts carry the skill name in their basename, and that is not decoration:
 `/install-scripts` flattens every skill's `scripts/*` into one `.claude/scripts/` directory, so a
 future skill shipping its own `execute.sh` would silently overwrite this one. Overwriting the
 policy enforcer with a different skill's script is the same failure class as pointing a variable at
@@ -28,7 +28,9 @@ survive from one to the next — the Write tool sits between the first two. Ever
 locator, or substitutes the absolute path the locator produced. `"$EXECUTE"` in a shell that never
 assigned it runs `bash` with an empty script path, or with whatever the caller happened to export.
 
-**Both halves of `/bin/bash -p` are load-bearing, and they defend different things.**
+### Why the entrypoint is spelled `/bin/bash -p --`
+
+Both halves are load-bearing, and they defend different things.
 
 `-p` defends *what runs after the process starts*. Handing a script to bash as an argument bypasses
 its `#!/bin/bash -p` shebang, and `$BASH_ENV` is sourced before the script's first line — before any
@@ -55,9 +57,11 @@ The script is **not** reached through `scripts/run-skill.sh`: it establishes pri
 and needs nothing from the runner but a path, and every layer that can be removed from a policy
 entrypoint is one fewer place for a bypass to live.
 
-There is no `$GIT_ENV` prefix here, and that is not an omission — the script unsets the same list
+There is no `env -u` prefix here, and that is not an omission — the script unsets the same list
 process-wide at its own first lines, so prefixing would apply one policy twice rather than add a
 second.
+
+### Subcommands, exit statuses, and who owns the message file
 
 `commit` validates, commits, **verifies the history its own commit added**, and removes the message file. Not "everything it recorded" — see § What this cannot do for what that traversal does and does not bound. Ownership
 of that file starts when the file starts being consumed: a usage error (unknown flag, both sign
@@ -287,7 +291,7 @@ HEAD-anchored range. Both were reproduced:
 
 | What the hook does | Why `before..after` misses it |
 |--------------------|-------------------------------|
-| **Stacking** — commit the leaking message, then commit a clean one on top | The leaking commit is no longer HEAD, so a `log -1` check reads the clean one |
+| **Stacking** — commit the leaking message, then commit a clean one on top | The leaking commit is no longer HEAD, so a `log -1` check reads the clean one. Measured against a `commit-msg` hook injecting the trailer plus a `post-commit` hook adding a clean commit: HEAD-only returns **0** with the trailer sitting in history, the ref-space range returns **4** naming the OID |
 | **Diversion** — park the leaking commit at `refs/keep/x`, build a clean commit on its *parent*, move the branch there | `before..after` contains only the clean commit, while the leaking one stays reachable from `refs/keep/x` |
 
 Snapshotting all refs catches both. It does **not** establish that nothing else was created — see
@@ -303,14 +307,8 @@ same history straight back in. No namespace filter survives that.
 
 Ownership is therefore decided by a **per-run reflog marker** — evidence of what this invocation
 actually created, rather than an inference from what the resulting history happens to reach. The
-mechanism, the measurements behind it, and the full verdict table are below under *Ownership is
-decided by a per-run reflog marker*. Reachability from the new HEAD was the previous answer and
-is no longer used for this: it cannot separate the commit this process made from one another
-process pushed onto the same branch a moment later, and it reported the second as the first.
-
-Both verdicts are fail-closed. The difference is what the developer is told: only status 4
-asserts *your commit leaked*, and that claim is not available for a commit this process cannot
-attribute.
+mechanism, its measurements and the full verdict table are in § What this cannot do, under
+*Ownership is decided by a per-run reflog marker*.
 
 Every one of those reads goes through a single helper that pins `--no-replace-objects`, so no
 verification path can forget it. Git's object reads are **replace-aware by default**: a
@@ -320,13 +318,6 @@ what actually gets pushed — the replacement ref is local and does not travel. 
 the flag the read returns `feat: clean` for a commit whose real message carries the trailer. A flag
 rather than `GIT_NO_REPLACE_OBJECTS` on purpose — this script's whole contract is that no
 environment variable decides what policy sees.
-
-Binding to the range rather than to `HEAD` is the whole point. `git commit` produces one commit, but
-a `post-commit` hook can stack more on top, so by the time any later check looks at `HEAD` the
-offending commit is no longer there — it is one below, still in history, still pushed. Reproduced:
-with a `commit-msg` hook injecting the trailer and a `post-commit` hook adding a clean commit, a
-`HEAD`-only check returned **0** while the trailer sat in the history. Against the range the same
-fixture returns **4**, naming the offending OID.
 
 `after == before` is its own refusal (status 7, UNVERIFIED). `git commit` reporting success while
 HEAD did not move means the commit went somewhere this process cannot see, and "cannot see" is
@@ -436,8 +427,8 @@ than a boundary below it — measured, `git rev-parse HEAD > .git/shallow` then
 objects are neutralized (`--no-replace-objects` on every read-back). The two file-based
 overlays — `info/grafts` and `shallow` — are **refused** by `refuse_on_ancestry_overlays`,
 because each changes what `rev-list` treats as already reachable and `--no-replace-objects`
-covers neither: grafts rewrite parentage outright, while every OID in `shallow` becomes a
-traversal ROOT so the ancestry below it is never walked. Either file being non-empty aborts with
+covers neither: grafts rewrite parentage outright, and `shallow` turns every OID it lists into a
+traversal root (measured above). Either file being non-empty aborts with
 exit 7 rather than producing a verdict, because a verdict computed over rewritten ancestry is
 not a verdict. For `shallow` the refusal is deliberately unconditional rather than "refuse only
 if we did not clone shallow": a genuine shallow clone cannot be verified by this script either,
@@ -487,8 +478,8 @@ Status 4 means a leak reached the commit — from `commit`'s own verification, o
    repository A and then answer "is it HEAD?" from repository B — and offer `--amend` against
    the wrong repository's HEAD. A command that decides something has to be at least as
    repository-safe as the one it is deciding about. `<PREFIX>` below is
-   `git-environment.md` § 1's list, written out literally because the user's shell has no
-   `$GIT_ENV`.
+   `git-environment.md` § 1's list, written out literally — which is now how that list is
+   written everywhere, executed or printed.
 
 | `<sha>` vs `<PREFIX> git -C '<REPO_ROOT>' rev-parse HEAD` | What to output |
 |--------------------------------|----------------|
@@ -528,7 +519,7 @@ The contract is about **git**, and deliberately so: what an inherited `GIT_DIR` 
 which is why every git invocation here carries the prefix and the `-C` pin. The prevention line in
 the templates above (`/install-scripts …`, then `cp …`) is not git, does not run against the
 repository under repair, and is not covered by this block. Every git mention anywhere in this
-section is enumerated in `test/scripts/smart-commit.test.js` (F1f) — adding one fails the test
+section is enumerated in `test/scripts/smart-commit.test.js` (F1r) — adding one fails the test
 until it is listed there, so a new git command cannot be introduced without a decision about it.
 
 Each line: `<PREFIX> git -C '<REPO_ROOT>' … # [label]`. The prefix and the `-C` pin are not
@@ -546,7 +537,7 @@ being pasted.
 `<PREFIX>` is:
 
 ```bash
-env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u ALLOW_AI_COAUTHOR
+env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR
 ```
 
 **Do NOT auto-amend.** Amending is a destructive git operation reserved for the developer.
