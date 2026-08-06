@@ -103,12 +103,17 @@ flowchart TD
     "total_rounds_session": 5,
     "strategic_reset_fired": false,
     "findings_by_round": [
-      { "round": 1, "total": 4, "p0": 0, "p1": 1, "p2": 2, "nit": 1, "fingerprints": ["a1b2c3d4e5f6g7h8"] },
-      { "round": 2, "total": 1, "p0": 0, "p1": 0, "p2": 1, "nit": 0, "fingerprints": ["d4e5f6g7h8i9j0k1"] }
+      { "round": 1, "total": 4, "p0": 0, "p1": 1, "p2": 2, "nit": 1, "timestamp": "2026-08-04T00:00:00Z",
+        "ids": ["hooks/post-tool-review-state.sh unguarded substitution -> add guard",
+                "rules/auto-loop.md over-promised the ledger -> qualify"] },
+      { "round": 2, "total": 1, "p0": 0, "p1": 0, "p2": 1, "nit": 0, "timestamp": "2026-08-04T00:11:00Z",
+        "ids": ["scripts/run-skill.sh stale rationale -> rewrite"] }
     ]
   }
 }
 ```
+
+`ids` 是 `[LOOP_PROGRESS]` 帳本的素材——每一輪的 finding **身分**，用來算出 closed／persisted／new。身分是 `file issue`：**行號已被剝除**（`file:line`、`file:line:col` 皆縮為 `file`），否則某檔案上方的一次修正會讓其下每一個未動的 finding 都讀作「關閉後又重新引入」，正好在進展最大的那一輪反轉 churn 訊號。上方範例值即為正規化**之後**的形態。上界是每輪 **40 筆 × 每筆 120 個 `cut -c` 單位**（`hooks/post-tool-review-state.sh:1402`），落在既有的 50 輪保留窗內。原範例寫的 `fingerprints` 欄位**從未有任何 writer**，已移除。
 
 **Migration**: Hook 讀取 `schema_version`；缺失時視為 v1（向後相容）。新欄位全部 optional，舊 hook 忽略。
 
@@ -485,5 +490,5 @@ Phase D（D-1~D-5、其 Work Breakdown 與 Testing Strategy）已獨立為 [`1-p
 - [ ] AC injection 的 token budget 上限（10 ACs? 20 ACs? truncate?）
 - [x] Nit history 已在 `.gitignore`（local-only），若需 team-shared 則移除 .gitignore entry
 - [ ] 收斂 sentinel `[ITERATION_STATE]` 是否需要被 stop-guard hook 解析？
-- [ ] D-2 Session reset 是否需保留 `total_rounds_session`？（目前設計為保留，因 strategic reset 依賴它）
+- [ ] D-2 Session reset 是否需保留 `total_rounds_session`？（**理由已失效**：strategic reset 曾依賴它，2026-08-04 起 checkpoint 改讀 `current_round`——見 `../../auto-loop-autonomy/4-implementation.md` §1.1。該欄位目前**仍持續累加**（`post-tool-review-state.sh:1451`）並由 `session-init.sh` 跨 session 保留，但**已無任何分支讀取它**。（`:1642` 累加的是 `.plan_review.iteration_history.total_rounds_session`——不同子樹的另一個欄位，不在本題範圍。）此問題應以「無讀取者的欄位是否該留」重新評估，不得沿用原理由）
 - [ ] D-5 Codex 是否能穩定輸出 JSON block？需 A/B test 驗證 compliance rate

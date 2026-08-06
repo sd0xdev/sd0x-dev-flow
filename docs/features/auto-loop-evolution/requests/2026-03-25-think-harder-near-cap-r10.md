@@ -77,3 +77,19 @@ autoresearch 在偵測到 >5 次連續失敗時觸發策略重置（re-read file
 | Development | Done | `post-compact-auto-loop.sh:90-117`, `session-init.sh` preserves counter |
 | Testing | Done | `post-compact-auto-loop.test.js` covers enabled/disabled/one-shot |
 | Acceptance | Done | Codex review + precommit pass |
+
+## Superseded (2026-08-04)
+
+The near-cap trigger this request shipped — `total_rounds_session >= max_rounds - 3`, injected only
+from `post-compact-auto-loop.sh` behind `## Think Harder: enabled` — could not fire at a fixed round
+and, on a long session, fired on effort already spent on changes that had since passed their gates.
+It is replaced by a fixed-round checkpoint on `current_round`, with the primary emission moved into
+the round-counting hook so it no longer depends on a compaction happening. Resolved Question 3 above
+still holds for the auxiliary channel; the one-shot flag is now shared by both channels and cleared
+at two sites — a passing precommit and SessionStart.
+
+**AC6（「預設 disabled（opt-in），避免改變現有用戶行為」）在新設計下不再成立，此處明列。** 上方 AC 維持打勾是因為**它們在當日確實達成**——R10 出貨的版本正是 opt-in 的；不成立的是替代它的設計，不是當時的實作。新的 primary channel（`post-tool-review-state.sh` `_update_iteration`）**無條件**觸發：`AUTO_LOOP_CHECKPOINT_ROUNDS` 只有一道 `^[0-9]+$` 且 `-ge 1` 的驗證（`:1419-1420`），沒有任何開關讀取 `## Think Harder: enabled`；auxiliary channel 才仍受該開關管轄（見 §1.2 的兩通道表）。
+
+這是刻意的取捨，理由是 checkpoint **什麼都不擋**：它不消耗輪數預算、不改變 gate、只多印一行提示，因此「改變現有用戶行為」的成本與 R10 當初設想的 opt-in 保護對象不同量級。實質的 opt-out 存在但**先前未被寫成 opt-out**：把 `AUTO_LOOP_CHECKPOINT_ROUNDS` 設得**遠高於** tier cap（`thorough` 為 30）。注意 cap+1 **不是保證**——沒有任何機制把 `current_round` 夾在 `max_rounds` 以內，`warn` 模式下 stop-guard 也不會真的停下 loop（見 `../../auto-loop-autonomy/4-implementation.md` §1.1），所以恰好設成 31 仍可能被跑過頭的 loop 追上。
+
+Rationale and the two-channel contract: [Auto-Loop Autonomy 實作紀錄 §1](../../auto-loop-autonomy/4-implementation.md).

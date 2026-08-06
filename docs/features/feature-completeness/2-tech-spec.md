@@ -57,6 +57,22 @@
 | `test/scripts/lib/fc-aggregator.test.js` | FR-7 3-tier mapping + `[UNVERIFIED]` 處理 |
 | `test/skills/feature-completeness.test.js` | SKILL.md 結構 + allowed-tools + sentinel header 驗證 |
 
+### 2.4 Request `Status` 讀法的三方分歧（`scripts/lib/request-status.js` 的存在理由）
+
+同一個 `Status` 欄位長出過三種互不相容的讀法，`fc-extractor.js` 是其中之一：
+
+| consumer | window | case | 接受的寫法 |
+|---|---|---|---|
+| `scripts/lib/fc-extractor.js` | 30 行 | insensitive | blockquote、heading、table |
+| `skills/next-step/scripts/analyze.js` | 全文 | sensitive | table、blockquote |
+| `skills/create-request/SKILL.md`（散文） | 15 行 | — | — |
+
+分歧不只在剖析，更在**哪些值算「還沒結束」**。`analyze.js` 當時用的是四個值的**正面列表**（`pending`、`in development`、`in progress`、`nearly complete`）。對本 repo 實際存在的 request 量測（**2026-07-26 於 `96786d1` 量得 125 份**；此為當時快照，數字會隨 request 累積而漂移——重新量測用 `node -e 'const{parseRequestStatus}=require("./scripts/lib/request-status.js");…'` 逐一掃 `docs/features/*/requests/*.md`，2026-08-04 重量為 134 份 / `Candidate Complete` 28 份）：該列表漏掉 `Candidate Complete`（當時 20 份，第三常見）與 `Spec Complete`（1 份），而 `In Development` 與 `Nearly Complete` **一份都沒對到**。後果是 `request-stale` 對 21 份未結案 request 完全失明，`feature-complete` 可能在它們仍未結時就通過。
+
+修法不是「補上漏掉的兩個字串」——那只會讓下一個新值以同樣方式被遺忘。`request-status.js` 改以**否定式**定義開放狀態：只有落在一組簡短、窮舉、封閉的**已結案**值裡才算結案，其餘一律開放，包含還沒有人想到的值。未知讀作開放，誤差方向偏向「回報已完成的工作」而非「隱藏未完成的工作」。
+
+`OPEN_REQUEST_STATUS` 是觀察到的開放詞彙，屬文件與測試素材，**不是判準**——沒有任何分支依賴它的成員資格。
+
 ## 3. Technical Solution
 
 ### 3.1 Architecture

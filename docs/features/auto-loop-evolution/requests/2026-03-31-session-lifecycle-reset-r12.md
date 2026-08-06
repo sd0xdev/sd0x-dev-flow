@@ -50,6 +50,20 @@
 | Testing | Done | 5 new test cases (all pass) |
 | Acceptance | Done | Codex review ✅ Ready + precommit ✅ Pass |
 
+## Partially Superseded (2026-08-04)
+
+The AC 「`total_rounds_session` 和 `strategic_reset_fired` 保留（不 reset）」 is **no longer true for
+`strategic_reset_fired`**, and the AC is left checked because it was met on the day: preserving the
+flag was correct while the R10 checkpoint fired on the session-cumulative `total_rounds_session`,
+which this hook does not reset.
+
+The checkpoint now fires on the per-change `current_round`, which this hook **does** zero. Preserved
+across that reset, the flag would enter every new session already set with the counter back at 0, so
+no change in that session could ever reach the checkpoint. `hooks/session-init.sh` therefore clears
+it alongside `current_round`; `total_rounds_session` is preserved exactly as this request specified.
+
+Both clear sites and why each is required: [Auto-Loop Autonomy 實作紀錄 §1.2](../../auto-loop-autonomy/4-implementation.md).
+
 ## References
 
 - Tech Spec: [auto-loop-evolution](../2-tech-spec/1-phase-d-hook-hardening.md) Phase D, D-2
