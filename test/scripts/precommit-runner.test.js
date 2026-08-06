@@ -79,7 +79,7 @@ test('full precommit with all scripts passes', () => {
   assert.equal(summary.overallPass, true);
   assert.deepEqual(
     summary.steps.map(step => step.name),
-    ['lint_fix', 'build', 'test_unit']
+    ['comment_blocks', 'lint_fix', 'build', 'test_unit']
   );
 });
 
@@ -98,7 +98,7 @@ test('missing lint:fix still passes, recorded as explicit skip', () => {
   assert.equal(summary.overallPass, true);
   assert.deepEqual(
     summary.steps.map(step => step.name),
-    ['lint_fix', 'test_unit']
+    ['comment_blocks', 'lint_fix', 'test_unit']
   );
   const lintStep = summary.steps.find(step => step.name === 'lint_fix');
   assert.equal(lintStep.status, 'skip');
@@ -121,7 +121,7 @@ test('fallback to test script when test:unit missing', () => {
   assert.equal(summary.overallPass, true);
   assert.deepEqual(
     summary.steps.map(step => step.name),
-    ['lint_fix', 'test_unit']
+    ['comment_blocks', 'lint_fix', 'test_unit']
   );
   const ran = summary.steps.find(step => step.name === 'test_unit');
   assert.equal(ran.status, undefined, 'test_unit actually ran (not a skip)');
@@ -197,7 +197,7 @@ test('fast mode skips build step', () => {
   assert.equal(buildStep, undefined, 'build step should not exist in fast mode');
   assert.deepEqual(
     summary.steps.map(step => step.name),
-    ['lint_fix', 'test_unit']
+    ['comment_blocks', 'lint_fix', 'test_unit']
   );
 });
 
@@ -292,4 +292,141 @@ test('full mode falls back to test:fast when no test:ci or test', () => {
   const { stdout, summary } = runPrecommit(dir, 'full');
   assert.equal(summary.overallPass, true, 'should run test:fast (pass) not test:unit (fail)');
   assert.match(stdout, /test: using "test:fast" \(full mode\)/);
+});
+
+// --- comment_blocks step ---
+
+const { mkdirSync, copyFileSync } = require('node:fs');
+const checkerSrc = resolve(__dirname, '../../scripts/check-comment-blocks.js');
+
+test('comment_blocks is skipped, not failed, when the checker is not checked in', () => {
+  // A consuming project has no hooks/scripts/skills tree. The checker exits 2 on
+  // such a root, so wiring it unconditionally would FAIL every such precommit.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { 'test:unit': './pass.sh' } };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+
+  const { summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, true);
+  const step = summary.steps.find(s => s.name === 'comment_blocks');
+  assert.equal(step.status, 'skip');
+  assert.equal(step.reason, 'checker missing');
+});
+
+test('comment_blocks ignores the INSTALLED checker at .claude/scripts/', () => {
+  // The consuming-project case the skip above only half covered. `/install-scripts` copies this
+  // plugin's `scripts/*.js` into `.claude/scripts/`, so a project that ran it HAS the checker —
+  // and if it also has an ordinary top-level `scripts/` dir (a Python or Rust repo very well
+  // might), honouring the installed copy runs this plugin's 30-line convention over that project's
+  // own code and can fail its precommit on a rule it never adopted. The checker's scan dirs are
+  // the repo's own hooks/scripts/skills; `.claude/` is exempt, so it never even reads the copy's
+  // own directory. Opting in means vendoring the checker into your own `scripts/` — asserted as
+  // the negative control by the tests below, which do exactly that and DO run the step.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { 'test:unit': './pass.sh' } };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  mkdirSync(join(dir, '.claude', 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, '.claude', 'scripts', 'check-comment-blocks.js'));
+  // A top-level scripts/ dir holding a block this plugin would call blocking.
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  writeFileSync(
+    join(dir, 'scripts', 'their-own-tool.js'),
+    `${Array.from({ length: 40 }, (_, i) => `// their rationale line ${i + 1}`).join('\n')}\ncode();\n`
+  );
+
+  const { summary } = runPrecommit(dir, 'fast');
+  const step = summary.steps.find(s => s.name === 'comment_blocks');
+  assert.equal(step.status, 'skip', 'the installed copy must not opt a consuming project in');
+  assert.equal(step.reason, 'checker missing');
+  assert.equal(summary.overallPass, true, "and their precommit must not fail on this plugin's convention");
+});
+
+test('comment_blocks fails precommit when a ≥30-line logical block exists', () => {
+  // Negative control for the skip above: the step must be able to fail, or
+  // "always skipped" would be indistinguishable from "wired and working".
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { 'test:unit': './pass.sh' } };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, 'scripts', 'check-comment-blocks.js'));
+  // 23 comment lines + blank + 12 more: two compliant contiguous runs, one
+  // 35-line logical block.
+  const head = Array.from({ length: 23 }, (_, i) => `# rationale ${i + 1}`).join('\n');
+  const tail = Array.from({ length: 12 }, (_, i) => `# more ${i + 1}`).join('\n');
+  writeFileSync(join(dir, 'scripts', 'offender.sh'), `${head}\n\n${tail}\nrun_it\n`);
+
+  // The runner never exits non-zero — the verdict travels in the column-0
+  // `## Overall:` sentinel, so that "ran and failed" stays distinguishable from
+  // "the runner crashed". Assert the sentinel, not the exit code.
+  const { stdout, summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, false);
+  assert.match(stdout, /^## Overall: ❌ FAIL$/m);
+  const step = summary.steps.find(s => s.name === 'comment_blocks');
+  assert.notEqual(step.code, 0, 'the comment_blocks step is the one that failed');
+});
+
+test('comment_blocks passes when every block is under the threshold', () => {
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { 'test:unit': './pass.sh' } };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, 'scripts', 'check-comment-blocks.js'));
+  const body = Array.from({ length: 10 }, (_, i) => `# rationale ${i + 1}`).join('\n');
+  writeFileSync(join(dir, 'scripts', 'fine.sh'), `${body}\nrun_it\n`);
+
+  const { summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, true);
+  const step = summary.steps.find(s => s.name === 'comment_blocks');
+  assert.equal(step.code, 0);
+});
+
+test('comment_blocks alone does not satisfy "some validation ran"', () => {
+  // A consuming project in another ecosystem (pytest/cargo/go) that happens to have a top-level
+  // scripts/ dir: the checker runs and passes, every npm script skips. Counting the policy step
+  // as validation banked a ✅ PASS receipt with the project's own checks never invoked — the
+  // exact false-green the three-state sentinel exists to prevent.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, 'scripts', 'check-comment-blocks.js'));
+
+  const { stdout, summary } = runPrecommit(dir, 'fast');
+  const step = summary.steps.find(s => s.name === 'comment_blocks');
+  assert.equal(step.code, 0, 'the policy step itself ran and passed');
+  assert.equal(summary.overallPass, false, 'but nothing was validated');
+  assert.match(stdout, /^## Overall: ⚠️ NO CHECKS RUN/m);
+});
+
+test('a FAILING comment_blocks is a FAIL, never swallowed by NO CHECKS RUN', () => {
+  // Negative control for the exclusion above: excluding policy steps from "did anything run" must
+  // not also exclude them from "did anything fail". This one is deliberately NOT a control for the
+  // policy-step concept — it stays green if `isPolicyStep` is reverted to always-false, because the
+  // test above is what covers that direction. What it kills is dropping `&& !policyFailed` from the
+  // sentinel, which turns a real policy failure into "nothing ran".
+  const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
+  const dir = createTempRepo(pkg);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, 'scripts', 'check-comment-blocks.js'));
+  const body = Array.from({ length: 35 }, (_, i) => `# rationale ${i + 1}`).join('\n');
+  writeFileSync(join(dir, 'scripts', 'offender.sh'), `${body}\nrun_it\n`);
+
+  const { stdout, summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, false);
+  assert.match(stdout, /^## Overall: ❌ FAIL$/m);
+  assert.ok(!stdout.includes('NO CHECKS RUN'), 'a policy failure must not read as "nothing ran"');
+});
+
+test('a validation step still decides the verdict when a policy step also ran', () => {
+  // The plugin's own shape: comment_blocks plus a real script. Excluding policy steps from the
+  // "ran" tally must not make a repo that DID validate report NO CHECKS RUN. The mutant this kills
+  // is over-exclusion — `isPolicyStep` returning true for everything — not the revert.
+  const pkg = { name: 'temp', version: '1.0.0', scripts: { 'test:unit': './pass.sh' } };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  mkdirSync(join(dir, 'scripts'), { recursive: true });
+  copyFileSync(checkerSrc, join(dir, 'scripts', 'check-comment-blocks.js'));
+
+  const { stdout, summary } = runPrecommit(dir, 'fast');
+  assert.equal(summary.overallPass, true);
+  assert.match(stdout, /^## Overall: ✅ PASS$/m);
 });

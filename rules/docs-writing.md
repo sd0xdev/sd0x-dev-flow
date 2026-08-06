@@ -20,8 +20,14 @@ Before adding pseudocode: grep for similar implementations -> read to confirm na
 
 A comment answers the **local what/why**. Extended argumentation, historical archaeology, and cross-file protocol descriptions belong in docs, referenced by a pointer — that content loads on every read of the file but is needed only for the rare change, and it drifts from the doc version it duplicates.
 
-| Contiguous comment lines | Action |
-|--------------------------|--------|
+The unit counted is the **logical block, not the contiguous run**: a blank line
+between two comment lines *bridges* them into one block. Otherwise the cheapest
+way under the threshold is a blank line every 29 lines, which changes the block's
+shape and nothing about what the reader loads. Only a non-comment, non-blank line
+closes a block.
+
+| Comment lines in one logical block | Action |
+|------------------------------------|--------|
 | ≥ 30 | **Migrate now** — move unique content to the owning feature doc (or delete if the doc already has it), leave a pointer |
 | 25–29 | Warning — migrate at the next substantive edit |
 | < 25 | Fine |
@@ -35,9 +41,11 @@ Pointer format — one or two lines, naming the doc **section**, not just the fi
 
 Migration is **move or de-duplicate, never plain deletion** — no net information loss.
 
-Exempt — exactly what the checker recognizes, no more: a block whose **first line** matches `SPDX-License-Identifier`, `Copyright (c)/©/<year>`, `eslint-disable`, or `shellcheck disable`; and any file under a directory named `node_modules`/`.claude`/`dist`/`vendor` (any depth). Other directive forms (`@ts-nocheck`, `prettier-ignore`, …) and generated files outside those directory names are **not** auto-exempt — extend `EXEMPT_FIRST_LINE`/`EXEMPT_DIR_NAMES` in the checker (with a test) before relying on a new form.
+Exempt — exactly what the checker recognizes, no more: a block whose **first line** matches `SPDX-License-Identifier`, `Copyright (c)/©/<year>`, `eslint-disable`, or `shellcheck disable`; and any file under a directory named `node_modules`/`.claude`/`dist`/`vendor` (any depth).
 
-Mechanical check: `node scripts/check-comment-blocks.js` (threshold 30 blocking / 25 warning, recursive over `hooks/ scripts/ skills/`). Not wired into precommit yet — run standalone.
+The exemption covers the **contiguous run the directive heads**, not everything a blank line bridges into it. Otherwise the two rules cancel: one `# SPDX-License-Identifier` line, one blank, then 60 lines of rationale would be a single exempt block, and the header would launder arbitrary explanation at the cost of a blank line. The remainder below the bridge is measured on its own and reported at its own first line — so an exempt header followed directly by its licence text stays exempt, which is the case the exemption was written for. Other directive forms (`@ts-nocheck`, `prettier-ignore`, …) and generated files outside those directory names are **not** auto-exempt — extend `EXEMPT_FIRST_LINE`/`EXEMPT_DIR_NAMES` in the checker (with a test) before relying on a new form.
+
+Mechanical check: `node scripts/check-comment-blocks.js` (threshold 30 blocking / 25 warning, recursive over `hooks/ scripts/ skills/`). Comment syntax is resolved per language — `.sh` counts only `#`, so a shell `case "$1" in /*)` is not read as a C block-comment opener. Wired into `/precommit` as the `comment_blocks` step, which runs first (static and cheap) and **skips rather than fails** unless the repo checked the checker into its own `scripts/` — which also settles the scan dirs, since finding it there proves `scripts/` exists. The installed copy at `.claude/scripts/` deliberately does **not** count: `/install-scripts` puts it there in consuming projects, and the checker scans the *repo's* top-level `hooks/ scripts/ skills/`, so honouring it would judge someone else's code by this plugin's 30-line convention and could fail their precommit. Vendoring the checker into your own `scripts/` is how a project opts in.
 
 ## Locale-Aware Writing
 
