@@ -17,7 +17,7 @@
  * Layers (first non-empty wins):
  *   1. uncommitted — git diff HEAD + git status --porcelain (confidence: high)
  *   2. branch      — git diff <merge-base>..HEAD (confidence: medium)
- *   3. session     — .claude_review_state.json recent_file_edits (confidence: low, best-effort)
+ *   3. session     — .claude_review_state.json changed_files_since_review (confidence: low, best-effort)
  *
  * Tech spec: docs/features/post-dev-recap/2-tech-spec.md §3.4.1
  */
@@ -148,20 +148,79 @@ async function layerBranch(root) {
   return { source: 'branch', confidence: 'medium', files, baseRef };
 }
 
+/**
+ * Repo-relative form of `abs`, or null when it does not live under `root`.
+ *
+ * The escape test is `..` exactly or `../` — NOT the `..` prefix: a real directory named
+ * `..cache/` is inside the repo and starts with two dots, and rejecting it silently drops
+ * legitimate edits from the session fallback.
+ */
+function insideRoot(root, abs) {
+  const rel = path.relative(root, abs);
+  const escapes = rel === '..' || rel.startsWith(`..${path.sep}`);
+  return !rel || escapes || path.isAbsolute(rel) ? null : rel;
+}
+
+/**
+ * Resolve symlinks in the deepest EXISTING ancestor of `p`, keeping the missing
+ * remainder. `git rev-parse --show-toplevel` returns a resolved root, while the
+ * hooks record whatever spelling the edit tool reported — on macOS that is
+ * `/var/...` against a `/private/var/...` root, so a plain prefix compare drops
+ * in-repo files. The leaf often does not exist (deleted, or never created).
+ */
+function realpathBestEffort(p) {
+  const tail = [];
+  let head = p;
+  for (;;) {
+    try {
+      const real = fs.realpathSync(head);
+      return tail.length ? path.join(real, ...tail) : real;
+    } catch {
+      const parent = path.dirname(head);
+      if (parent === head) return p;
+      tail.unshift(path.basename(head));
+      head = parent;
+    }
+  }
+}
+
 function layerSession(root) {
   const statePath = path.join(root, '.claude_review_state.json');
   try {
     const raw = fs.readFileSync(statePath, 'utf8');
     const state = JSON.parse(raw);
-    const edits = state.recent_file_edits;
+    // `changed_files_since_review` is what the hooks actually write (absolute
+    // paths, cleared on a passing code review). `recent_file_edits` has never
+    // had a writer in this repo, so reading only it made this layer return null
+    // every time — a silent no-op, not a fallback. Both are accepted, live one
+    // first, so a state file from either shape still resolves.
+    const edits = Array.isArray(state.changed_files_since_review) && state.changed_files_since_review.length > 0
+      ? state.changed_files_since_review
+      : state.recent_file_edits;
     if (!Array.isArray(edits) || edits.length === 0) return null;
     const files = new Map();
     for (const entry of edits) {
+      let p = null;
+      let changeType = 'modified';
       if (typeof entry === 'string') {
-        files.set(entry, 'modified');
+        p = entry;
       } else if (entry && typeof entry.path === 'string') {
-        files.set(entry.path, entry.change_type || 'modified');
+        p = entry.path;
+        changeType = entry.change_type || 'modified';
       }
+      if (!p) continue;
+      // Absolute entries outside the repo are dropped, NOT escalated: the edit
+      // log is session-wide and legitimately records scratch files under other
+      // job directories, which are simply not this repo's scope. A RELATIVE
+      // entry is passed through untouched so a forged `../` still reaches the
+      // path-safety gate and fails the run — dropping those would launder an
+      // escape attempt into a quiet omission.
+      if (path.isAbsolute(p)) {
+        const rel = insideRoot(root, p) ?? insideRoot(root, realpathBestEffort(p));
+        if (rel === null) continue;
+        p = rel;
+      }
+      files.set(p, changeType);
     }
     if (files.size === 0) return null;
     return { source: 'session', confidence: 'low', files, baseRef: 'session' };

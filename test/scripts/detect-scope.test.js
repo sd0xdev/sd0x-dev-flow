@@ -113,6 +113,74 @@ test('falls back to session layer when no git changes → source=session confide
   assert.ok(paths.includes('foo.js') && paths.includes('bar.md'));
 });
 
+// The field the hooks actually write. Reading only `recent_file_edits` — which
+// has no writer anywhere in the repo — made this layer return null every time,
+// so the "3-layer" detector was really 2 layers and the third failed silently.
+function seedSessionRepo() {
+  const repo = createRepo();
+  writeFileSync(join(repo, '.gitignore'), '.claude_review_state.json\n', 'utf8');
+  writeFileSync(join(repo, 'README.md'), '# init', 'utf8');
+  execFileSync('git', ['add', '.gitignore', 'README.md'], { cwd: repo });
+  execFileSync('git', ['commit', '-q', '-m', 'initial'], { cwd: repo });
+  return repo;
+}
+
+function writeState(repo, obj) {
+  writeFileSync(join(repo, '.claude_review_state.json'), JSON.stringify(obj), 'utf8');
+}
+
+test('session layer reads changed_files_since_review, the field the hooks write', () => {
+  const repo = seedSessionRepo();
+  writeState(repo, { changed_files_since_review: [join(repo, 'src/app.js'), 'docs/note.md'] });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.equal(out.source, 'session');
+  const paths = out.files.map(f => f.path).sort();
+  // The absolute entry is relativized to repo root; the relative one passes through.
+  assert.deepEqual(paths, ['docs/note.md', 'src/app.js']);
+});
+
+test('session layer drops absolute paths outside the repo instead of failing the run', () => {
+  const repo = seedSessionRepo();
+  // A session-wide edit log legitimately records scratch files under other job
+  // directories. Those are out of scope, not an attack — exit 4 here would turn
+  // every recap run into a hard failure.
+  writeState(repo, {
+    changed_files_since_review: ['/tmp/other-job/scratch.js', join(repo, 'kept.js')],
+  });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 0, `expected the run to succeed, got ${r.status}: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.files.map(f => f.path), ['kept.js']);
+});
+
+test('session layer still rejects a forged `..` entry in changed_files_since_review → exit 4', () => {
+  // Negative control for the filter above: dropping out-of-repo ABSOLUTE paths
+  // must not also launder a RELATIVE escape into a quiet omission. Delete the
+  // isAbsolute branch and this must stay red.
+  const repo = seedSessionRepo();
+  writeState(repo, { changed_files_since_review: ['../etc/passwd'] });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 4, `expected exit 4, got ${r.status}: ${r.stderr}`);
+  assert.match(r.stderr, /unsafe path/i);
+});
+
+test('changed_files_since_review wins over a stale recent_file_edits', () => {
+  const repo = seedSessionRepo();
+  writeState(repo, {
+    changed_files_since_review: ['live.js'],
+    recent_file_edits: ['stale.js'],
+  });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout).files.map(f => f.path), ['live.js']);
+});
+
 // ---------------------------------------------------------------------------
 // Total fallback failure: exits non-zero + emits fallback_trace
 // ---------------------------------------------------------------------------
@@ -349,4 +417,33 @@ test('rejects path where parent symlink escapes repo even if leaf missing', () =
   );
   const r = runScript(repo);
   assert.equal(r.status, 4, `expected exit 4, got ${r.status}: stdout=${r.stdout} stderr=${r.stderr}`);
+});
+
+test('session layer: a directory whose name starts with two dots is inside the repo', () => {
+  // `rel.startsWith('..')` rejected `..cache/a.js` as an escape. It is an ordinary in-repo
+  // directory, so the edit was silently dropped from the session fallback.
+  const repo = seedSessionRepo();
+  mkdirSync(join(repo, '..cache'), { recursive: true });
+  writeFileSync(join(repo, '..cache', 'a.js'), 'x\n', 'utf8');
+  writeState(repo, { changed_files_since_review: [join(repo, '..cache', 'a.js')] });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.files.map(f => f.path), ['..cache/a.js']);
+});
+
+test('session layer: a real parent traversal is still rejected', () => {
+  // Negative control — narrowing the escape test to `..` and `../` must not open the escape.
+  // An ABSOLUTE path above the root is dropped (out of scope, not an attack); the relative
+  // form stays a hard exit 4, which the forged-`..` test above pins.
+  const repo = seedSessionRepo();
+  writeState(repo, {
+    changed_files_since_review: [join(repo, '..', 'outside.js'), join(repo, 'kept.js')],
+  });
+
+  const r = runScript(repo);
+  assert.equal(r.status, 0, `stderr: ${r.stderr}`);
+  const out = JSON.parse(r.stdout);
+  assert.deepEqual(out.files.map(f => f.path), ['kept.js']);
 });

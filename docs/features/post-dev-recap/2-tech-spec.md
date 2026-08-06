@@ -160,7 +160,7 @@ sequenceDiagram
 3. `session`：掃描當前 Claude session 的 Edit/Write 事件（從 `.claude_review_state.json` 或 PostToolUse hook 紀錄）
 4. 全部空 → `⚠️ Need Human`，輸出 `fallback_trace` 提示使用者手動指定
 
-> **`session` 層實作說明**：v1 先以 `git diff` 結果為主；`session edits` 層在 v1 視為 best-effort，只在 `.claude_review_state.json` 有 `recent_file_edits` 欄位時才消費。缺失時 fallback 到 ⚠️ Need Human 但輸出 hint。
+> **`session` 層實作說明**：v1 先以 `git diff` 結果為主；`session edits` 層在 v1 視為 best-effort。**實際消費的欄位是 `changed_files_since_review`**（hook 真正會寫入的欄位，存絕對路徑，code review 通過時清空）；`recent_file_edits` 保留為 legacy fallback，兩者皆接受、live 的優先。原文只寫 `recent_file_edits` 是錯的——本 repo 從未有任何 writer 寫入該欄位，因此這一層一律回傳 null，是**靜默的 no-op 而非 fallback**（見 `scripts/detect-scope.js:190-199`）。路徑正規化：`realpathBestEffort` 解析後丟棄 repo root 之外者，相對路徑原樣交給安全閘。缺失時 fallback 到 ⚠️ Need Human 但輸出 hint。
 
 #### 3.2.2 Recap doc 結構（`briefing-recap-<YYYY-MM-DD>.md`）
 
@@ -284,7 +284,9 @@ Algorithm:
    - run `git diff --name-only <base>..HEAD`
    - if non-empty → source="branch", confidence="medium"
 4. Else try layer "session":
-   - read .claude_review_state.json recent_file_edits (v1 best-effort)
+   - read .claude_review_state.json changed_files_since_review (the field hooks write);
+     fall back to recent_file_edits (legacy, no writer in this repo)
+   - normalize: realpathBestEffort, drop paths outside repo root, pass relative through
    - if present → source="session", confidence="low"
 5. Else → output fallback_trace with ⚠️ Need Human
 6. For each file, compute lines_changed via `git diff --numstat`
@@ -375,7 +377,7 @@ Phase 4: 結束時 promote 提示
 | R1 | Scope 偵測誤判（feasibility C2）| High | 3-layer fallback + `fallback_trace` 透明化；偵測失敗時不自動猜測，輸出 ⚠️ Need Human |
 | R2 | `/recap-ask` 退化為 `/ask`（feasibility C3）| High | Phase 2 intent classification 強制綁 recap；out-of-scope 主動轉介 `/ask` |
 | R3 | ScopeReport JSON schema 破壞向前相容性 | Medium | `version` 欄位明示；`detect-scope.js` 升級時維持 v1 schema reader |
-| R4 | `briefing-recap-` 與 `briefing-` 既有類型誤判 | Low | `doc-classifier.js` regex 已為 `^briefing-`（[`doc-taxonomy.json:96`](../../scripts/config/doc-taxonomy.json)）；`recap-` 為合法 suffix |
+| R4 | `briefing-recap-` 與 `briefing-` 既有類型誤判 | Low | `doc-classifier.js` regex 已為 `^briefing-`（[`doc-taxonomy.json:96`](../../../scripts/config/doc-taxonomy.json)）；`recap-` 為合法 suffix |
 | R5 | `AskUserQuestion` 多次觸發引發使用者疲勞 | Medium | 預設非 interactive；`--interactive` 為 opt-in；每段選項限 4 個 |
 | R6 | Q&A promote 寫回 tech-spec 導致規格漂移 | Medium | promote 只允許寫 request ticket 或 tech-spec `## Open Questions` 區段，禁止改設計章節 |
 | R7 | 子 skill 間 JSON 傳遞耦合 | Medium | 用檔案路徑 + JSON schema；unit test 覆蓋 schema 版本 |
