@@ -55,8 +55,12 @@ to be restated.
 
 <!-- "enabled" turns on the AUXILIARY injection channel for the Cap Diagnostic Protocol
      (auto-loop.md § Cap Diagnostic Protocol): after a compaction, when
-     total_rounds_session >= max_rounds - 3, the post-compact hook injects the diagnostic
-     taxonomy once per state-file lifetime. The protocol itself is behaviour-layer and fires
-     at the cap regardless of this switch — this only adds the near-cap reminder. -->
+     current_round >= the checkpoint round, the post-compact hook injects the diagnostic
+     taxonomy in full. It is auxiliary because the PRIMARY checkpoint needs no switch — the
+     round-counting hook emits `[STRATEGIC_RESET]` the round the threshold is first crossed
+     (AUTO_LOOP_CHECKPOINT_ROUNDS, default 10). Both channels share `strategic_reset_fired`,
+     so whichever fires first silences the other: one diagnosis per change, cleared when
+     precommit passes and again at SessionStart. The protocol itself is behaviour-layer and fires at the cap regardless
+     of either. -->
 
 <!-- ## Think Harder: enabled -->

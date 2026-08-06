@@ -319,6 +319,36 @@ _lock_staging_file() {
   mktemp "$LOCKDIR/state.XXXXXX" 2>/dev/null
 }
 
+# Staging for `init_state_file`, whose correct placement depends on the CALLER, not on the function:
+# five of its six call sites are inside the critical section and one (`update_aggregate_blocked`) is
+# reached precisely BECAUSE `_lock` failed. Mirrors `_state_staging_file` in post-edit-format.sh.
+_init_staging_file() {
+  if [ "$HAVE_LOCK" -eq 1 ]; then
+    # We took the lock, so the temp belongs inside it — a takeover then carries the temp away with
+    # the lock directory and the later `mv` has nothing to rename, which is the whole placement
+    # argument. `_own_lock` first so we never write into a critical section that is already the
+    # contender's; failing here routes the caller to its own init-failed arm one step earlier.
+    _own_lock || return 1
+    _lock_staging_file
+  else
+    # UNLOCKED-WRITER: reached only when `_lock` FAILED, so `$LOCKDIR` is the contender's and
+    # staging inside it is the intrusion the placement rule exists to prevent. Beside the state
+    # file is correct here; the write is best-effort and the durable record is the `.blocked`
+    # sidecar. Landing it can still discard the holder's transaction — a separate, pre-existing
+    # defect deferred in
+    # docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
+    mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null
+  fi
+}
+
+# May this process rename onto $STATE_FILE? It owns the lock, or it never took one — the declared
+# unlocked callers, whose write is best-effort by contract. Named rather than inlined so the commit
+# stays a one-line `… && mv`, which is the shape both ownership tests anchor on; the same role
+# `_may_commit_state` plays in post-edit-format.sh.
+_may_init_commit() {
+  [ "$HAVE_LOCK" -ne 1 ] || _own_lock
+}
+
 # Read JSON input from stdin
 INPUT=$(cat)
 
@@ -392,16 +422,27 @@ if [[ -z "$TOOL_OUTPUT" ]]; then
 fi
 
 # Initialize state file (if not exists)
-# UNLOCKED-WRITER: creation path. It runs BEFORE any lock is taken (callers invoke it to make the
-# file exist so they have something to lock around), so there is no ownership to re-check and no
-# $LOCKDIR to stage inside. Its commit is create-if-absent, not a rewrite over a committed verdict.
+# The function asserts no ownership of its own; it inherits the caller's. Five of six callers hold
+# the shared lock — `update_state`, the three plan paths (`update_plan_state`,
+# `_update_plan_iteration`, `update_plan_verdict`) and `update_aggregate_gate` ("call within lock")
+# — and the sixth, `update_aggregate_blocked`, is reached precisely BECAUSE `_lock` failed. So both
+# staging and commit branch on `$HAVE_LOCK` rather than picking one placement for both: see
+# `_init_staging_file`, whose unlocked branch carries the `# UNLOCKED-WRITER:` declaration that
+# test/hooks/state-commit-ownership.test.js reads.
+#
+# It is create-if-absent in INTENT only. temp + rename is crash-atomic REPLACEMENT — a reader never
+# sees a truncated file — but `[[ ! -f ]]` followed by an overwriting `mv` is not atomic creation:
+# two processes can both observe an absent file, and the loser's rename replaces whatever the winner
+# has since written with the default document. Recorded, with the fix (hard-link publication treating
+# EEXIST as success, or restricting this to locked callers), in
+# docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
 init_state_file() {
   if [[ ! -f "$STATE_FILE" ]]; then
     # R6: read project max_rounds override for initial value (fallback 30)
     local _mr _pmr
     _mr=$(_read_project_max_rounds 30)
     _pmr=$(_read_project_plan_max_rounds 5)
-    # Atomic create: write to a same-dir temp then rename, so a crash mid-write never
+    # Crash-atomic replacement (NOT atomic create — see above): same-dir temp then rename, so a crash mid-write never
     # leaves a truncated state file that the jq readers (stop-guard etc.) would treat
     # as corrupt. mktemp co-locates the temp with the target so `mv` is a same-fs
     # rename, not a cross-device copy. The write AND its size-guard live in a single `if`
@@ -410,7 +451,7 @@ init_state_file() {
     # orphan temp; here a failed cat (or an empty result) falls to `else` and is cleaned up
     # (fail-closed: no file rather than an empty one). Mirrors session-init.sh's writer.
     local _tmp
-    _tmp=$(mktemp "${STATE_FILE}.XXXXXX") || return 1
+    _tmp=$(_init_staging_file) || return 1
     if cat > "$_tmp" << EOF && [[ -s "$_tmp" ]]; then
 {
   "session_id": "",
@@ -427,7 +468,16 @@ init_state_file() {
   "iteration_history": {"current_round": 0, "max_rounds": ${_mr}, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}
 }
 EOF
-      mv "$_tmp" "$STATE_FILE"
+      # Ownership re-proved AT the rename, not at staging time: a locked caller can lose the lock to
+      # a stale-recovery takeover in between, and this `mv` would then land the all-default document
+      # over the new owner's initialized-and-updated state — every receipt, `has_code_change` and
+      # `iteration_history` reset. The `|| { … }` arm is reached by BOTH a refused commit and a
+      # failed rename (`mv` returns 0 or 1 and nothing else, so the usual `a && b || c` ambiguity
+      # does not arise here), and both mean the same thing to the caller: no state file.
+      _may_init_commit && mv "$_tmp" "$STATE_FILE" || {
+        rm -f "$_tmp" 2>/dev/null || true
+        return 1
+      }
     else
       rm -f "$_tmp" 2>/dev/null || true
       return 1
@@ -1253,6 +1303,7 @@ update_state() {
                  and $m == $rmr
                  and ($r < (if $m < 3 then 3 elif $m > 50 then 50 else $m end))
               then .iteration_history.current_round = 0 | .iteration_history.findings_by_round = []
+                   | .iteration_history.strategic_reset_fired = false
               else . end
           end' \
        "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _own_lock && mv "$tmp" "$STATE_FILE"; then
@@ -1289,6 +1340,19 @@ update_state() {
   fi
 }
 
+# `comm` on two newline-delimited identity sets, counting the selected column. Blank lines are
+# dropped first: `comm` treats an empty line as a member, so an empty set would otherwise count as
+# one element and report a closure that never happened.
+_id_set_count() {
+  local mode="$1" a="$2" b="$3"
+  # stderr is silenced because the callers already degrade to 0 on failure — an absent `comm` would
+  # otherwise print "command not found" three times per round after the failure is fully handled.
+  comm "$mode" \
+    <(printf '%s\n' "$a" | sed '/^$/d' | sort -u) \
+    <(printf '%s\n' "$b" | sed '/^$/d' | sort -u) 2>/dev/null \
+    | sed '/^$/d' | wc -l | tr -d ' '
+}
+
 # Update iteration history (extract finding counts from review output)
 _update_iteration() {
   local tool_output="$1"
@@ -1311,11 +1375,62 @@ _update_iteration() {
   nit_count=$(echo "$tool_output" | grep -cE '^\- \[Nit\]|^#### Nit' 2>/dev/null) || nit_count=0
   total=$((p0_count + p1_count + p2_count + nit_count))
 
+  # Finding IDENTITIES, not just counts. Counts cannot tell "fixed one" from "fixed one and
+  # introduced one" — both read 5 -> 5 — so a churning loop is indistinguishable from a converging
+  # one. The identity is the finding's text with the severity tag stripped and its `file:line`
+  # reduced to `file`, so a fix that shifts surrounding lines does not re-report every untouched
+  # finding in that file as closed-and-reintroduced.
+  #
+  # The substitution LOOPS and is ANCHORED to the location token's trailing edge, so it reduces any
+  # coordinate depth while leaving a colon inside a path intact. It only ever looks at the FIRST
+  # token: a location the reviewer contract's space delimiter cannot bound — a path containing a
+  # space, a `:12-14` range, a filename ending in `:digits` — keeps its line number and is accepted
+  # as a residual rather than guessed at. Searching the rest of the line for something location-
+  # shaped was tried and reverted: it read `timeout 30:5 seconds` as a location and collapsed that
+  # finding onto a real `timeout 30 seconds`, which is a worse defect than the one it closed.
+  #
+  # The two earlier forms that failed, the residuals, and the measurement behind accepting them:
+  # docs/features/auto-loop-autonomy/4-implementation.md §2.2. Behaviour is pinned case-by-case in
+  # test/hooks/identity-normalization.test.js, which runs this exact program under real sed.
+  #
+  # Bounded (40 per round, 120 chars each) because this goes into the state file every round.
+  local cur_ids prev_ids
+  cur_ids=$(printf '%s\n' "$tool_output" \
+    | grep -E '^- \[(P0|P1|P2|Nit)\]' 2>/dev/null \
+    | sed -E 's/^- \[(P0|P1|P2|Nit)\][[:blank:]]*//; s/[[:blank:]]+/ /g; s/[[:blank:]]+$//' \
+    | sed -E -e ':a' -e 's/^([^[:space:]]+):[0-9]+([[:space:]]|$)/\1\2/' -e 'ta' \
+    | cut -c1-120 | sort -u | head -40) || true
+  # `|| true`, NOT `|| cur_ids=""`. `head -40` closes the pipe on its 40th line, `sort` takes
+  # SIGPIPE, and under `set -o pipefail` the whole substitution reports failure — on SUCCESS, once
+  # the findings exceed roughly one pipe buffer of identity text. The old fallback then discarded
+  # the 40 identities the substitution had already captured, so a large review round stored
+  # `ids: []`. The next round reads that as "nothing carried over" and reports `closed=0` with
+  # `persisted + new == findings`, which is exactly the shape § Cap Diagnostic Protocol's
+  # `persisted + new < findings` caveat does NOT flag: the churn signal inverts silently.
+  # The substitution has already assigned whatever was captured; `|| true` only stops `set -e`.
+
   local now tmp
   now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
+  # Mid-loop diagnosis checkpoint. Digit-validated before it reaches jq for the same reason as
+  # every other numeric read here — the env is untrusted input. Rationale for firing on
+  # `current_round` at a fixed round rather than near the cap on `total_rounds_session`:
+  # docs/features/auto-loop-autonomy/4-implementation.md §1.
+  local ckpt="${AUTO_LOOP_CHECKPOINT_ROUNDS:-10}"
+  [[ "$ckpt" =~ ^[0-9]+$ ]] && [[ "$ckpt" -ge 1 ]] || ckpt=10
+  local fired_before
+
   # Acquire lock for state file write (consistent with update_state)
   if _lock; then
+    # INSIDE the lock, with the write and the read-back, so the three are one transaction. Read
+    # outside it, two sessions counting a round concurrently both observe `false`, both see `true`
+    # afterwards, and both emit — the "1 diagnosis per change" cap broken by exactly the
+    # concurrency the shared lock exists to serialize.
+    fired_before=$(jq -r '.iteration_history.strategic_reset_fired // false' "$state_file" 2>/dev/null) || fired_before="unknown"
+    # Same boundary, same reason: the previous round's identities must come from the file this
+    # write is about to replace, not from whatever a concurrent writer left before the lock.
+    prev_ids=$(jq -r '[.iteration_history.findings_by_round[]? | .ids? // empty] | last // [] | .[]' \
+      "$state_file" 2>/dev/null | sort -u) || prev_ids=""
     _migrate_state_v2 "$state_file"
     _reconcile_max_rounds "$state_file"
     # Degrade, never abort — see _migrate_state_v2.
@@ -1331,11 +1446,15 @@ _update_iteration() {
     fi
     if jq --argjson total "$total" --argjson p0 "$p0_count" \
        --argjson p1 "$p1_count" --argjson p2 "$p2_count" \
-       --argjson nit "$nit_count" --arg now "$now" \
+       --argjson nit "$nit_count" --arg now "$now" --argjson ckpt "$ckpt" --arg ids "$cur_ids" \
        '.iteration_history.current_round += 1 |
         .iteration_history.total_rounds_session = ((.iteration_history.total_rounds_session // 0) + 1) |
-        .iteration_history.findings_by_round += [{"round": (.iteration_history.current_round), "total": $total, "p0": $p0, "p1": $p1, "p2": $p2, "nit": $nit, "timestamp": $now}] |
+        .iteration_history.findings_by_round += [{"round": (.iteration_history.current_round), "total": $total, "p0": $p0, "p1": $p1, "p2": $p2, "nit": $nit, "timestamp": $now, "ids": ($ids | split("\n") | map(select(length > 0)))}] |
         .iteration_history.findings_by_round |= (if length > 50 then .[-50:] else . end) |
+        .iteration_history.strategic_reset_fired =
+          (((.iteration_history.strategic_reset_fired // false) == true)
+           or ((.iteration_history.current_round | type) == "number"
+               and .iteration_history.current_round >= $ckpt)) |
         .updated_at = $now' \
        "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
       # The `mv` was previously unchecked, and the HOOK_DEBUG line below then reported
@@ -1346,6 +1465,49 @@ _update_iteration() {
       if _own_lock && mv "$tmp" "$state_file" 2>/dev/null; then
         if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
           echo "[Review State] Iteration updated: total=$total (p0=$p0_count p1=$p1_count p2=$p2_count nit=$nit_count)" >&2
+        fi
+        # The progress ledger. Neutral counts only — this hook does not judge whether the round
+        # was productive, it reports what changed so the behaviour layer can. `closed=0 new=0`
+        # with findings outstanding is the churn signature the round cap alone cannot see.
+        # Identities are never echoed: a finding's text is reviewer-controlled and this record is
+        # whitespace-delimited, so only counts cross the boundary.
+        #
+        # `findings` counts BOTH report shapes (`- [P0]` lines and `#### P0` sections); identities
+        # come only from the line shape, since a section header carries no per-finding text. So
+        # `persisted + new < findings` means the ledger could not see this round's findings, and
+        # its `closed`/`new` are not evidence of anything — read the discrepancy before reading
+        # a `closed=0` as churn.
+        local _closed _persisted _new _round_now
+        # Each carries its own `||`, like `_round_now` below and every other substitution in this
+        # hook — the "degrade, never abort" contract every sibling comment in this file cites
+        # `_migrate_state_v2` for. `_id_set_count` shells out to `comm`, a
+        # dependency this tree did not previously have; if it is missing the bare substitution
+        # aborts the hook under `set -e` AFTER the state commit, so the write lands but
+        # `[STRATEGIC_RESET]`, the `[NIT_DEFERRED]` ledger and the `[AUTO_LOOP_STATE]` fact block
+        # are all skipped — a silent loss of every downstream signal for a missing binary.
+        _closed=$(_id_set_count -23 "$prev_ids" "$cur_ids") || _closed=0
+        _new=$(_id_set_count -13 "$prev_ids" "$cur_ids") || _new=0
+        _persisted=$(_id_set_count -12 "$prev_ids" "$cur_ids") || _persisted=0
+        _round_now=$(jq -r '.iteration_history.current_round // 0' "$state_file" 2>/dev/null) || _round_now=0
+        # `>&2`, like every other model-facing signal THIS hook emits — a `[LOOP_PROGRESS]` line
+        # the model never reads is a ledger that does not exist. `_alf_emit` printf's to stdout and
+        # each CALLER redirects, so the convention is invisible at the printf itself. Scoped to
+        # this hook deliberately: it is not tree-wide and must not be. `user-prompt-review-guard.sh`
+        # is a UserPromptSubmit hook, where stdout IS the injection channel, and
+        # `post-skill-auto-loop.sh` records the same choice in its own header — both call
+        # `_alf_emit` bare. That is exactly why the redirect lives at the caller.
+        printf '[LOOP_PROGRESS] round=%s closed=%s persisted=%s new=%s findings=%s\n' \
+          "${_round_now:-0}" "${_closed:-0}" "${_persisted:-0}" "${_new:-0}" "$total" >&2
+
+        # Emit only on the FLIP, and read the flag back rather than re-deriving it from the round
+        # we think we wrote: the checklist is once per change (rules/auto-loop.md § Cap Diagnostic
+        # Protocol, "1 diagnosis per change"), and the flag in the file is the only record of
+        # whether it already fired. `unknown` from an unreadable before-read suppresses the
+        # emission — a checkpoint printed every round is noise the model learns to skip.
+        local fired_after
+        fired_after=$(jq -r '.iteration_history.strategic_reset_fired // false' "$state_file" 2>/dev/null) || fired_after="unknown"
+        if [[ "$fired_before" == "false" && "$fired_after" == "true" ]]; then
+          printf '[STRATEGIC_RESET] Review round %s reached on this change. Before the next round: diagnose the stall as exactly one class from rules/auto-loop.md § Cap Diagnostic Protocol (ARCHITECTURE / DOC_TOO_LONG / ATTENTION_DIFFUSION / UNVERIFIED_CLAIM / TIER_MISMATCH / REQUIREMENT_AMBIGUITY), state the class and its observed signals, make ONE bounded adjustment, then return to the loop. This is a checkpoint, not a cap — it adjudicates nothing.\n' "${_round_now:-0}" >&2
         fi
       else
         rm -f "$tmp" 2>/dev/null
@@ -2307,6 +2469,12 @@ update_aggregate_gate() {
 # UNLOCKED-WRITER: by definition — this is the path taken when `_lock` FAILED, so it cannot hold
 # the lock it is standing in for. Its JSON write is explicitly best-effort; the fail-closed
 # guarantee comes from the sidecar marker it sets first, not from this rewrite landing.
+#
+# "Best-effort" describes only what happens if the write is LOST. If it LANDS after the lock
+# holder's commit it discards that commit wholesale — the rename is a whole-file replace, and the
+# marker does not restore receipts or iteration history. Same defect as the degraded branch in
+# post-edit-format.sh; recorded in
+# docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
 update_aggregate_blocked() {
   local reason="${1:-unknown}"
   # The return value reports whether the SIDECAR MARKER landed. Only the marker — the JSON write

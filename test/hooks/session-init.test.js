@@ -87,6 +87,41 @@ test('session-init: new session resets review state', () => {
   assert.equal(state.iteration_history.total_rounds_session, 8);
 });
 
+test('a new session clears strategic_reset_fired along with current_round', () => {
+  // The two must move together. The R10 checkpoint fires on `current_round`, which this hook
+  // zeroes, and both channels refuse to fire while the flag is true
+  // (post-tool-review-state.sh requires fired_before == "false"; post-compact-auto-loop.sh
+  // requires RESET_FIRED != "true"). A flag preserved across the reset would therefore make the
+  // checkpoint unreachable for every change after the first one that ever fired it — a latch
+  // lasting the state file's lifetime. It was correct to preserve under the ORIGINAL cumulative
+  // `total_rounds_session` threshold; keying the checkpoint to current_round is what changed it.
+  const workDir = makeTempDir('sd0x-session-init-reset-flag-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'session-that-hit-the-checkpoint',
+      iteration_history: {
+        current_round: 14,
+        total_rounds_session: 14,
+        strategic_reset_fired: true,
+        findings_by_round: [{ round: 14, total: 2 }],
+      },
+    })
+  );
+  const result = runHook({ cwd: workDir, input: { session_id: 'fresh-session' } });
+  assert.equal(result.status, 0);
+
+  const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
+  assert.equal(state.iteration_history.current_round, 0);
+  assert.equal(
+    state.iteration_history.strategic_reset_fired,
+    false,
+    'a preserved flag would silently disable the checkpoint for the whole next session'
+  );
+  assert.equal(state.iteration_history.total_rounds_session, 14, 'the cumulative counter still survives');
+});
+
 test('KNOWN DEFECT — session-init does NOT reset review_mode, so dual survives across sessions', () => {
   // Pins current behaviour, not desired behaviour. The SessionStart transaction
   // (hooks/session-init.sh) rewrites session_id, both change flags, the three review receipts,

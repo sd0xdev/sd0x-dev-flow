@@ -15,6 +15,7 @@ const {
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
 const { spawnSync } = require('node:child_process');
+const { functionRanges, enclosingFunction } = require('../helpers/shell-structure');
 
 const hookPath = resolve(__dirname, '../../hooks/post-tool-review-state.sh');
 const tempDirs = [];
@@ -237,6 +238,11 @@ if (query && query.includes('[$key]') && vars.key) {
       && qualifies(data.iteration_history)) {
     data.iteration_history.current_round = 0;
     data.iteration_history.findings_by_round = [];
+    // Gated on the production filter text, like every other clause in this stub: an
+    // unconditional clear would supply the behaviour the test claims to verify.
+    if (query.includes('.iteration_history.strategic_reset_fired = false')) {
+      data.iteration_history.strategic_reset_fired = false;
+    }
   }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
@@ -350,6 +356,39 @@ if (query && query.includes('.has_code_change')) {
 }
 if (query && query.includes('.has_doc_change')) {
   outputValue(asBoolString(data.has_doc_change));
+  process.exit(0);
+}
+// Mid-loop checkpoint flag READ. Matched EXACTLY, not by substring: the assignment filter embeds
+// this very expression as its own right-hand side, so a substring match here swallowed the whole
+// iteration-update write. Without the branch at all, the read fell through to the empty-string
+// fallback and the hook saw every state as "not true" — indistinguishable from a checkpoint that
+// never fires.
+if (query && query.trim() === '.iteration_history.strategic_reset_fired // false') {
+  outputValue(asBoolString(
+    data.iteration_history && data.iteration_history.strategic_reset_fired
+  ));
+  process.exit(0);
+}
+// Round/cap READS, matched exactly for the same reason. These back \`_alf_common\`'s
+// \`round=n/m\` field as well as the checkpoint message, so without them the double reported
+// every round as blank.
+if (query && query.trim() === '.iteration_history.current_round // 0') {
+  const r = data.iteration_history && data.iteration_history.current_round;
+  outputValue(r === undefined || r === null ? 0 : r);
+  process.exit(0);
+}
+if (query && query.trim() === '.iteration_history.max_rounds // 30') {
+  const m = data.iteration_history && data.iteration_history.max_rounds;
+  outputValue(m === undefined || m === null ? 30 : m);
+  process.exit(0);
+}
+// Progress-ledger READ: the identity set of the most recent round that recorded one. Emitted one
+// element per line, as \`jq -r\` does for a stream.
+if (query && query.includes('.iteration_history.findings_by_round[]? | .ids?')) {
+  const rounds = (data.iteration_history && data.iteration_history.findings_by_round) || [];
+  const withIds = rounds.filter(r => r && Array.isArray(r.ids));
+  const last = withIds.length ? withIds[withIds.length - 1].ids : [];
+  process.stdout.write(last.join('\\n'));
   process.exit(0);
 }
 
@@ -564,6 +603,10 @@ if (query && query.includes('iteration_history.current_round += 1')) {
   data.iteration_history.current_round += 1;
   data.iteration_history.total_rounds_session = (data.iteration_history.total_rounds_session || 0) + 1;
   const entry = { round: data.iteration_history.current_round, total: vars.total || 0, p0: vars.p0 || 0, p1: vars.p1 || 0, p2: vars.p2 || 0, nit: vars.nit || 0, timestamp: vars.now || '' };
+  // Gated on the production filter text, like every other clause here.
+  if (query.includes('"ids": ($ids | split(')) {
+    entry.ids = String(vars.ids || '').split('\\n').filter(s => s.length > 0);
+  }
   data.iteration_history.findings_by_round.push(entry);
   // Retention cap — mirrors the real jq: if length > 50 then .[-50:] else . end
   // (no backticks: this stub lives inside a JS template literal)
@@ -573,6 +616,16 @@ if (query && query.includes('iteration_history.current_round += 1')) {
   // hook's own \`.[-50:]\` slice makes the revert observable here.
   if (query.includes('.[-50:]') && data.iteration_history.findings_by_round.length > 50) {
     data.iteration_history.findings_by_round = data.iteration_history.findings_by_round.slice(-50);
+  }
+  // Mid-loop checkpoint flag. Gated on the production filter text for the same reason as the
+  // retention cap above, and sticky-OR like the real filter: once true it never clears here —
+  // only the convergence reset clears it.
+  if (query.includes('.iteration_history.strategic_reset_fired =')
+      && query.includes('>= $ckpt')) {
+    data.iteration_history.strategic_reset_fired =
+      data.iteration_history.strategic_reset_fired === true
+      || (typeof data.iteration_history.current_round === 'number'
+          && data.iteration_history.current_round >= vars.ckpt);
   }
   data.updated_at = vars.now || '';
   process.stdout.write(JSON.stringify(data));
@@ -6192,20 +6245,11 @@ test('EVERY locked state rewrite stages inside the lock and re-checks ownership 
   const src = readFileSync(hookPath, 'utf8');
   const lines = src.split('\n');
 
-  // Function boundaries, plus the marker block that immediately precedes a declaration.
-  const fns = [];
-  let cur = null;
-  lines.forEach((l, i) => {
-    const m = /^([a-zA-Z_][a-zA-Z0-9_]*)\(\)\s*\{/.exec(l);
-    if (m) {
-      if (cur) { cur.end = i - 1; fns.push(cur); }
-      // Walk back over the contiguous comment block above the declaration.
-      let head = i - 1;
-      while (head >= 0 && /^\s*#/.test(lines[head])) head -= 1;
-      cur = { name: m[1], start: i, end: lines.length - 1, docStart: head + 1 };
-    }
-  });
-  if (cur) fns.push(cur);
+  // Function boundaries, plus the marker block that immediately precedes a declaration. Each range
+  // ends at the function's OWN closing brace — see test/helpers/shell-structure.js for why ending
+  // it at the next declaration (which is what this test used to do) hands file-scope code the
+  // clearance of the function above it.
+  const fns = functionRanges(lines);
 
   const COMMIT = /\bmv "\$_?tmp" "\$(STATE_FILE|state_file)"/;
   const committers = fns.filter((f) => lines.slice(f.start, f.end + 1).some((l) => COMMIT.test(l) && !l.trim().startsWith('#')));
@@ -6230,9 +6274,15 @@ test('EVERY locked state rewrite stages inside the lock and re-checks ownership 
     // the "assertion satisfied by a comment" failure this file is supposed to catch, not commit.
     const code = body.split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
 
+    // `_init_staging_file` is the THIRD case this test's original binary model had no room for: a
+    // committer whose correct placement depends on the CALLER, not on the function. `init_state_file`
+    // has five locked call sites and one reached because `_lock` failed, so it can neither stage
+    // unconditionally under $LOCKDIR nor declare itself unlocked — either choice is wrong for some
+    // caller. It branches on $HAVE_LOCK instead, and the branches are asserted below rather than
+    // taken on trust, so this is a third case rather than a hole.
     assert.match(
       code,
-      /_lock_staging_file/,
+      /_(lock|init)_staging_file/,
       `${f.name}: a LOCKED writer must stage inside $LOCKDIR (or declare itself # UNLOCKED-WRITER:)`
     );
     assert.doesNotMatch(
@@ -6250,13 +6300,73 @@ test('EVERY locked state rewrite stages inside the lock and re-checks ownership 
       if (!COMMIT.test(line) || line.trim().startsWith('#')) continue;
       assert.match(
         line,
-        /_own_lock && mv/,
+        /(_own_lock|_may_init_commit) && mv/,
         `${f.name} (line ${i + 1}): the commit is not guarded ON the mv — an ownership check ` +
           `earlier in the function proves ownership at that earlier moment, not at this one. ` +
           `Offending line: ${line.trim()}`
       );
     }
   }
+
+  // The two-branch helper, asserted rather than assumed. Extending the two checks above to accept
+  // `_init_staging_file` and `_may_init_commit` moves the guarantee INTO those two functions, so if
+  // nothing pinned their shape the extension would be exactly the hole it is meant not to be —
+  // `_init_staging_file` could mktemp beside the state file on both branches and every assertion
+  // above would still pass.
+  const stagingBody = /_init_staging_file\(\)\s*\{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(stagingBody, '_init_staging_file must exist — the assertions above now route through it');
+  const stagingCode = stagingBody[1].split('\n').filter((l) => !l.trim().startsWith('#')).join('\n');
+  assert.match(
+    stagingCode, /\[ "\$HAVE_LOCK" -eq 1 \]/,
+    '_init_staging_file must branch on whether the CALLER holds the lock, not on anything else'
+  );
+  assert.match(
+    stagingCode, /_own_lock \|\| return 1\s*\n\s*_lock_staging_file/,
+    'the locked branch must refuse a lock that is no longer ours, then stage inside it'
+  );
+  assert.match(
+    stagingBody[1], /^\s*#\s*UNLOCKED-WRITER:/m,
+    'the branch that stages beside the state file must DECLARE itself, or the escape is silent'
+  );
+
+  // WHO may call them, not just what they contain. Pinning the shapes above is necessary and not
+  // sufficient: both extended assertions are satisfied by NAME, so any new function could stage
+  // through `_init_staging_file` and commit behind `_may_init_commit` and pass every check in this
+  // file while never taking the lock and never declaring itself — an undeclared unlocked whole-file
+  // replace, which is precisely what the invariants exist to make impossible. Verified by injecting
+  // exactly that writer: it passed all 7 tests in state-commit-ownership.test.js and this one.
+  //
+  // The restriction is narrow on purpose. These two exist ONLY because `init_state_file` is
+  // caller-ambiguous — five locked callers and one reached because `_lock` failed — so a second
+  // caller re-introduces that ambiguity without anyone having redone the analysis. `_own_lock`,
+  // `_lock_staging_file` and the `# UNLOCKED-WRITER:` declaration remain available to every writer;
+  // this closes one door, not the corridor.
+  const SINGLE_CALLER = { _init_staging_file: 'init_state_file', _may_init_commit: 'init_state_file' };
+  for (const [helper, allowed] of Object.entries(SINGLE_CALLER)) {
+    const callers = new Set();
+    lines.forEach((l, i) => {
+      if (l.trim().startsWith('#')) return;
+      if (!new RegExp(`\\b${helper}\\b`).test(l)) return;
+      if (new RegExp(`^${helper}\\(\\)`).test(l)) return; // its own definition
+      const owner = enclosingFunction(fns, i);
+      callers.add(owner ? owner.name : `(file scope, line ${i + 1})`);
+    });
+    assert.deepEqual(
+      [...callers], [allowed],
+      `${helper} must be called from ${allowed} alone — a second caller inherits its ` +
+        `caller-ambiguity exemption without the analysis that justified it. Callers found: ` +
+        `${[...callers].join(', ') || '(none — has it been renamed?)'}`
+    );
+  }
+
+  const mayCommit = /_may_init_commit\(\)\s*\{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(mayCommit, '_may_init_commit must exist — it is what the commit-line guard now names');
+  assert.match(
+    mayCommit[1].split('\n').filter((l) => !l.trim().startsWith('#')).join('\n'),
+    /\[ "\$HAVE_LOCK" -ne 1 \] \|\| _own_lock/,
+    'the predicate must permit ONLY "never held the lock" or "still owns it" — a bare `return 0` ' +
+      'would satisfy every commit-line assertion above while proving nothing'
+  );
 
   // Non-vacuity: the escape hatch must be used sparingly and deliberately. If every committer
   // declared itself unlocked, the assertions above would all be skipped and this test would pass
@@ -6576,3 +6686,379 @@ for (const [persisted, config, why] of [
     assert.equal(ih.findings_by_round[0], 3, 'and the repair must stay a targeted field assignment');
   });
 }
+
+// --- Mid-loop strategic checkpoint (primary channel) ---
+
+function seedCheckpointState(workDir, iteration) {
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 2,
+      has_code_change: true,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      iteration_history: {
+        max_rounds: 30,
+        findings_by_round: [],
+        total_rounds_session: 0,
+        strategic_reset_fired: false,
+        ...iteration,
+      },
+    })
+  );
+}
+
+function runReviewRound(workDir, binDir, env = {}) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ⛔ Blocked\n- [P1] Still wrong',
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir, ...env },
+  });
+}
+
+test('strategic checkpoint fires the round current_round first reaches the threshold', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-fire-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 9 });
+
+  const result = runReviewRound(workDir, binDir);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[STRATEGIC_RESET\] Review round 10/);
+  assert.match(result.stderr, /Cap Diagnostic Protocol/);
+  assert.equal(readState(workDir).iteration_history.strategic_reset_fired, true);
+});
+
+test('strategic checkpoint still fires when the round STARTS above the threshold', () => {
+  // The state can arrive past the checkpoint without ever crossing it: a restored state file, or
+  // AUTO_LOOP_CHECKPOINT_ROUNDS lowered mid-loop. The jq condition is `>= $ckpt` rather than
+  // `== $ckpt` precisely so this case is not silently skipped — and it has to be checked here,
+  // because it is the only reachable state in which BOTH channels could go quiet for a change past
+  // the checkpoint round: the auxiliary one needs `## Think Harder: enabled` and a compaction, so
+  // a primary that fired only on the exact crossing round would leave the change undiagnosed.
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-above-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 15, strategic_reset_fired: false });
+
+  const result = runReviewRound(workDir, binDir);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[STRATEGIC_RESET\] Review round 16/);
+  assert.equal(readState(workDir).iteration_history.strategic_reset_fired, true);
+});
+
+test('strategic checkpoint stays silent below the threshold', () => {
+  // Negative control for the threshold: identical path, one round earlier.
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-below-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 8, total_rounds_session: 40 });
+
+  const result = runReviewRound(workDir, binDir);
+  assert.equal(result.status, 0);
+  assert.ok(!result.stderr.includes('[STRATEGIC_RESET]'), 'round 9 is below 10');
+  assert.equal(readState(workDir).iteration_history.strategic_reset_fired, false);
+});
+
+test('strategic checkpoint fires once per change, not once per round', () => {
+  // The anti-loop cap ("1 diagnosis per change") lives in the flag, so the round
+  // AFTER the checkpoint must be silent while still counting.
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-once-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 10, strategic_reset_fired: true });
+
+  const result = runReviewRound(workDir, binDir);
+  assert.equal(result.status, 0);
+  assert.ok(!result.stderr.includes('[STRATEGIC_RESET]'), 'already diagnosed on this change');
+  assert.equal(readState(workDir).iteration_history.current_round, 11, 'the round still counts');
+});
+
+test('a non-numeric AUTO_LOOP_CHECKPOINT_ROUNDS falls back to 10, never to arithmetic', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-badenv-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 9 });
+
+  const result = runReviewRound(workDir, binDir, {
+    AUTO_LOOP_CHECKPOINT_ROUNDS: `a[$(touch ${join(workDir, 'pwned')})]`,
+  });
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(join(workDir, 'pwned')), false, 'no command substitution may run');
+  assert.match(result.stderr, /\[STRATEGIC_RESET\] Review round 10/, 'default 10 still applies');
+});
+
+test('a passing precommit clears strategic_reset_fired for the next change', () => {
+  // Without the clear, the first change to reach round 10 would be the only one
+  // in the whole state-file lifetime that ever got a diagnosis.
+  const workDir = makeTempDir('sd0x-post-tool-ckpt-clear-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 12, strategic_reset_fired: true });
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/precommit' },
+      tool_output: '## Overall: ✅ PASS',
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+  assert.equal(result.status, 0);
+  const ih = readState(workDir).iteration_history;
+  assert.equal(ih.current_round, 0, 'the cycle reset ran');
+  assert.equal(ih.strategic_reset_fired, false, 'and it cleared the diagnosis flag with it');
+});
+
+// --- Progress ledger ---
+
+function runReviewWithFindings(workDir, binDir, findings) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: `## Gate: ⛔ Blocked\n${findings.join('\n')}`,
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+}
+
+const FIND_A = '- [P1] hooks/stop-guard.sh:214 lock is released before the rename -> take it after';
+const FIND_B = '- [P1] scripts/detect-scope.js:88 absolute path escapes the repo root -> reject it';
+const FIND_C = '- [P2] scripts/lib/utils.js:40 duplicated glob list -> hoist to a constant';
+
+test('progress ledger and checkpoint emit on STDERR, the stream the model reads', () => {
+  // The stream is the whole delivery mechanism, and getting it wrong fails SILENTLY: the hook still
+  // exits 0, the state file still records the round, and every content assertion in this file would
+  // pass just as well against stdout. What breaks is the only thing these lines are for — the model
+  // never sees them, so the ledger and the checkpoint are inert.
+  //
+  // Every model-facing signal in this hook redirects: every `_alf_emit` call site carries `>&2`
+  // (the printf inside `_alf_emit` does not, which is exactly why the convention is easy to miss).
+  // Asserted here as an explicit contract rather than left implicit in the matches above, and
+  // asserted in BOTH directions — the absence check is what catches a line emitted twice or moved
+  // back to stdout while a stderr copy remains.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-stream-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 9 });
+
+  const result = runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /^\[LOOP_PROGRESS\] /m, 'the ledger line must reach the model');
+  assert.match(result.stderr, /^\[STRATEGIC_RESET\] /m, 'and so must the checkpoint');
+  assert.ok(!result.stdout.includes('[LOOP_PROGRESS]'), 'not on stdout — the model would not read it');
+  assert.ok(!result.stdout.includes('[STRATEGIC_RESET]'), 'nor the checkpoint');
+});
+
+test('progress ledger: a first round reports every finding as new', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ledger-first-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const result = runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[LOOP_PROGRESS\] round=1 closed=0 persisted=0 new=2 findings=2/);
+  assert.deepEqual(
+    readState(workDir).iteration_history.findings_by_round[0].ids.length,
+    2,
+    'the identities are recorded, not just the count'
+  );
+});
+
+test('progress ledger: a review round with more findings than the cap TRUNCATES to 40, never to 0', () => {
+  // Regression. The pipeline ends `| sort -u | head -40`, so on a large round `head` closes the pipe
+  // on its 40th line, `sort` takes SIGPIPE, and under `set -o pipefail` the substitution reports
+  // failure — on success. The old `|| cur_ids=""` fallback then threw away the 40 identities it had
+  // already captured, storing `ids: []`. The next round reads that as "nothing carried over" and
+  // reports closed=0 with persisted + new == findings, which is precisely the shape the documented
+  // `persisted + new < findings` caveat does NOT flag: the churn signal inverts in silence.
+  //
+  // The size must exceed one pipe buffer of identity text (~64 KB), not merely the cap of 40 —
+  // 60 findings truncate correctly even with the defect present, so a small case pins nothing.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-sigpipe-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const many = Array.from({ length: 900 }, (_, i) =>
+    `- [P1] hooks/generated/module${String(i).padStart(4, '0')}/handler.sh:${i + 1} ` +
+    'the staged temp is renamed without re-checking ownership -> stage inside the lock directory'
+  );
+  const result = runReviewWithFindings(workDir, binDir, many);
+  assert.equal(result.status, 0);
+
+  const ids = readState(workDir).iteration_history.findings_by_round[0].ids;
+  assert.equal(ids.length, 40, 'the round is capped at 40 identities, not emptied by the SIGPIPE');
+  assert.match(result.stderr, /\[LOOP_PROGRESS\] round=1 closed=0 persisted=0 new=40 findings=900/);
+});
+
+test('progress ledger: fixing one finding and introducing one is not "no change"', () => {
+  // The whole point. Counts alone read 2 -> 2 and look like a stalled round; the ledger
+  // separates the closure from the regression.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-churn-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  const result = runReviewWithFindings(workDir, binDir, [FIND_A, FIND_C]);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[LOOP_PROGRESS\] round=2 closed=1 persisted=1 new=1 findings=2/);
+});
+
+test('progress ledger: an unchanged finding set is the churn signature', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ledger-stall-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  const result = runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  assert.equal(result.status, 0);
+  assert.match(result.stderr, /\[LOOP_PROGRESS\] round=2 closed=0 persisted=2 new=0 findings=2/);
+});
+
+test('progress ledger: a clean round closes everything and reports zero findings', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ledger-clean-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, [FIND_A, FIND_B]);
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ✅ Ready',
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+  assert.equal(result.status, 0);
+  // An empty set must count as zero members, not as the one blank line `comm` would otherwise see.
+  assert.match(result.stderr, /\[LOOP_PROGRESS\] round=2 closed=2 persisted=0 new=0 findings=0/);
+});
+
+test('progress ledger: finding text never crosses into the record', () => {
+  // The identity is reviewer-controlled text and the record is whitespace-delimited, so a finding
+  // naming `new=99` would forge a field if identities were echoed. Only counts are emitted.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-forge-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const result = runReviewWithFindings(workDir, binDir, [
+    '- [P1] a.js:1 closed=99 persisted=99 new=99 -> fix it',
+  ]);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=1 closed=0 persisted=0 new=1 findings=1');
+});
+
+test('progress ledger: the section report shape is counted but not tracked', () => {
+  // `findings` counts both report shapes; identities come only from the `- [P0]` line shape,
+  // because a `#### P0` section header carries no per-finding text. The discrepancy
+  // (persisted + new < findings) is the reader's signal that closed/new say nothing this round —
+  // without this test, that gap reads as a churn signature instead.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-section-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ⛔ Blocked\n#### P1\nlock released before the rename\n#### P2\nduplicated glob list',
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=1 closed=0 persisted=0 new=0 findings=2');
+});
+
+test('progress ledger: the line report shape has no such gap', () => {
+  // Negative control for the above: same two findings in the line shape are fully tracked, so the
+  // gap is a property of the section shape and not of the ledger.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-line-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const result = runReviewWithFindings(workDir, binDir, [FIND_A, FIND_C]);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=1 closed=0 persisted=0 new=2 findings=2');
+});
+
+test('progress ledger: a shifted line number is the SAME finding, not churn', () => {
+  // A fix anywhere in a file shifts the lines below it. If the identity kept `:line`, every
+  // untouched finding in that file would read as closed-and-reintroduced — the churn signature
+  // inverted, on the round that made the most progress.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-shift-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, [
+    '- [P1] hooks/stop-guard.sh:214 lock is released before the rename -> take it after',
+  ]);
+  const result = runReviewWithFindings(workDir, binDir, [
+    '- [P1] hooks/stop-guard.sh:220 lock is released before the rename -> take it after',
+  ]);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=2 closed=0 persisted=1 new=0 findings=1');
+});
+
+test('progress ledger: a different file is still a different finding', () => {
+  // Negative control for the line-stripping above: dropping `:line` must not collapse two
+  // findings that share issue text but sit in different files. The mutant it kills is a
+  // normalizer that discards the PATH as well as the coordinates — not the retention of line
+  // numbers, since these two inputs differ either way. The regex-level table, including the
+  // collision cases a mid-token substitution creates, is test/hooks/identity-normalization.test.js.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-file-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, [
+    '- [P1] hooks/stop-guard.sh:214 lock is released before the rename -> take it after',
+  ]);
+  const result = runReviewWithFindings(workDir, binDir, [
+    '- [P1] hooks/post-edit-format.sh:214 lock is released before the rename -> take it after',
+  ]);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=2 closed=1 persisted=0 new=1 findings=1');
+});
+
+test('progress ledger: a path containing a colon survives intact', () => {
+  // Each pass is anchored to the token's trailing edge, so only a `:digits` that ENDS the
+  // location is removed. Without that anchor the loop eats colons mid-path, truncating
+  // `path/with:colon/f.js` and collapsing every finding under that directory into one identity.
+  const workDir = makeTempDir('sd0x-post-tool-ledger-colon-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindings(workDir, binDir, ['- [P1] path/with:colon/a.js:3 odd -> y']);
+  const result = runReviewWithFindings(workDir, binDir, ['- [P1] path/with:colon/b.js:3 odd -> y']);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=2 closed=1 persisted=0 new=1 findings=1');
+});
+
+test('progress ledger: location numbers are stripped to any depth', () => {
+  const workDir = makeTempDir('sd0x-post-tool-ledger-col-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  // A fixed two passes left `a.yml:12:34:56` as `a.yml:12` — still line-sensitive, which is the
+  // defect this strips for. The loop makes depth irrelevant.
+  runReviewWithFindings(workDir, binDir, ['- [P2] src/a.yml:12:34:56 unused key -> drop it']);
+  const result = runReviewWithFindings(workDir, binDir, [
+    '- [P2] src/a.yml:30:9:1 unused key -> drop it',
+  ]);
+  assert.equal(result.status, 0);
+  const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
+  assert.equal(line, '[LOOP_PROGRESS] round=2 closed=0 persisted=1 new=0 findings=1');
+});

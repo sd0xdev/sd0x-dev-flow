@@ -139,7 +139,9 @@ test('jq-stub defaults in the hook test suites agree with the shipped default', 
     'test/hooks/review-phase.test.js': 6,
     'test/hooks/changed-files.test.js': 3,
     'test/hooks/post-edit-format.test.js': 1,
-    'test/hooks/post-tool-review-state.test.js': 3,
+    // 4 since the stub gained an exact-match read branch for `.iteration_history.max_rounds // 30`
+    // (the round/cap reads behind `_alf_common` and the mid-loop checkpoint).
+    'test/hooks/post-tool-review-state.test.js': 4,
     'test/hooks/stop-guard.test.js': 2,
   };
 
