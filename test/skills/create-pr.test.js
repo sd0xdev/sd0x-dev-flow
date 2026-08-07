@@ -572,6 +572,28 @@ test('Phase A fetches with --prune before classifying layers', () => {
   );
 });
 
+test('generic Step 1 fetches before reading refs/remotes (ls-remote does not update them)', () => {
+  // `git ls-remote` only LISTS the server's refs; without a fetch the
+  // refs/remotes/origin/* reads below it can be missing or stale, so the PR
+  // body would describe old commits — or the workflow would fail outright on
+  // a branch this clone never fetched.
+  const step1Start = skillContent.indexOf('### 1. Gather Info');
+  const step2Start = skillContent.indexOf('### 2. Extract Ticket ID');
+  assert.ok(step1Start !== -1 && step2Start > step1Start, 'Step 1 and Step 2 must exist in order');
+  const step1 = skillContent.slice(step1Start, step2Start);
+  const fetchIdx = step1.indexOf('git fetch --prune origin || exit "$?"');
+  const remoteReadIdx = step1.indexOf("git log --oneline 'refs/remotes/origin/");
+  assert.ok(fetchIdx !== -1,
+    'Step 1 must fetch with Phase A\'s discipline: the exact authorized form plus an explicit '
+    + 'exit, so a failed fetch cannot be followed by reads of stale refs');
+  assert.ok(remoteReadIdx !== -1, 'fixture premise: Step 1 reads refs/remotes/origin/*');
+  assert.ok(fetchIdx < remoteReadIdx,
+    'the fetch must precede the first refs/remotes read, or it refreshes nothing');
+  assert.match(step1, /^### 1\. Gather Info\s*$/m,
+    'the heading itself must carry no parallelism qualifier — the fetch\'s value is its '
+    + 'ordering, and prose below the heading is where the parallel batch is scoped');
+});
+
 test('stack mode is dispatched before the generic gather/create workflow', () => {
   // Without an early branch, the generic Step 1 would run ls-remote and generate
   // content from local refs before Phase A ever fetches.

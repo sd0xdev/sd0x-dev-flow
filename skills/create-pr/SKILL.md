@@ -15,7 +15,7 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(bash:*)
 - `--title`: Override auto-generated title (**rejected** with `--stack`)
 - `--stack`: Stacked PR chain mode, bottom layer first (mutually exclusive with `--head`; the bottom layer's base follows the same `--base` / `{TARGET_BRANCH}` / `main` resolution as normal mode) — see [Stacked PR Mode](#stacked-pr-mode)
 - `--update`: Force update mode (re-generate title/body for existing PR)
-- `--dry-run`: Show command without executing (default)
+- `--dry-run`: Show command without executing (default). Scopes to mutating `gh` calls — the Step 1 `git fetch --prune origin` still runs, so the preview reflects the server's real refs
 - `--execute`: Actually create/update the PR (requires user confirmation)
 - No args: use current branch → default target, dry-run mode. Auto-detects existing PR → update mode
 
@@ -33,7 +33,35 @@ allowed-tools: Bash(git:*), Bash(gh:*), Bash(mktemp:*), Bash(rm:*), Bash(bash:*)
 
 Otherwise continue with Step 1 below.
 
-### 1. Gather Info (parallel)
+### 1. Gather Info
+
+The fetch runs **first and alone** — the ref-range reads below it (`git log` and `git diff`
+over `refs/remotes/origin/*`) depend on the remote-tracking refs it refreshes, so it cannot
+join the parallel batch. It runs even in `--dry-run` (the dry-run promise at the top scopes to
+mutating `gh` calls; refreshing and pruning local remote-tracking refs is how the preview
+describes the commits that would actually ship). `ls-remote` in the next fence only LISTS the
+server's refs — it never updates `refs/remotes/*` — so without this fetch they can be missing
+or stale (another clone pushed, or this one never fetched) and the PR body would describe old
+commits. Same exact form and same discipline as stack mode's Phase A: the explicit exit keeps
+a failed fetch from being followed by reads of stale refs.
+
+**Emit this line in the turn that runs the fetch**, before the fence — `rules/git-workflow.md`
+lists `status | diff | log | branch | rev-parse` as allowed and `git fetch` is in neither that
+list nor the forbidden one, which makes it a Default-tier deviation, and a deviation is declared
+per run, not once during development (same shape as
+[stack-mode.md § Phase A](references/stack-mode.md); the stated reason differs because the
+fetch serves PR-body range generation here, sync classification there):
+
+```
+[DEVIATION] rule=rules/git-workflow.md § allowed ops default=fetch is not in the allowed list chosen=git fetch --prune origin
+reason=the PR body is generated from origin/<base>..origin/<head>; without the fetch every range is computed from stale remote-tracking refs signal=fetch is absent from the forbidden closed set (add|commit|push|stash|reset --hard|rebase) and writes only remote-tracking refs — no working tree, no history
+```
+
+```bash
+git fetch --prune origin || exit "$?"
+```
+
+The rest are independent — run them in parallel:
 
 ```bash
 # Current branch
