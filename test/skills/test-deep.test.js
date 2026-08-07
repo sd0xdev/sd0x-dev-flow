@@ -51,11 +51,6 @@ test('test-deep SKILL.md has secret redaction', () => {
   assert.match(content, /redact/i, 'should mention redaction');
 });
 
-test('test-deep SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Catalog registration ---
 

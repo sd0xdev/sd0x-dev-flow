@@ -3,6 +3,7 @@ name: code-simplifier
 description: Cleanup refactoring expert. Simplifies code, eliminates duplication, preserves behavior.
 tools: Read, Grep, Glob, Edit
 model: opus
+effort: high
 ---
 
 # Code Simplifier

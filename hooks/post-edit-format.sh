@@ -360,6 +360,12 @@ _state_staging_file() {
     _own_lock || return 1
     mktemp "$LOCKDIR/state.XXXXXX" 2>/dev/null
   else
+    # UNLOCKED-WRITER: this branch is reached only when `_lock` FAILED, so `$LOCKDIR` is the
+    # contender's and staging inside it is the intrusion the placement rule exists to prevent.
+    # Beside the state file is correct here; the write is best-effort and carries a `.blocked`
+    # marker. The declaration is what `test/hooks/state-commit-ownership.test.js` reads to tell
+    # this deliberate exception from the drift it hunts — the paragraph above the function says
+    # the same thing in prose, which no test can check.
     mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null
   fi
 }
@@ -960,8 +966,11 @@ init_state_file() {
     # R6: read project max_rounds override for initial value (fallback 30)
     local _mr
     _mr=$(_read_project_max_rounds 30)
-    # Atomic create (see post-tool-review-state.sh init_state_file): temp + rename so a
-    # crash mid-write never leaves a truncated state file for the jq readers to choke on.
+    # Crash-atomic REPLACEMENT, not atomic create: temp + rename means the jq readers never see a
+    # truncated file, but `[[ ! -f ]]` + overwriting rename is still racy create-if-absent — two
+    # processes can both see it absent and the loser's rename discards the winner's document.
+    # Same defect and same fix as post-tool-review-state.sh init_state_file; deferred in
+    # docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
     # The write AND its size-guard share a single `if` CONDITION so `set -euo pipefail` is
     # suppressed for them: a bare `cat > tmp << EOF` that fails (ENOSPC) would otherwise abort
     # the hook BEFORE the guard runs, leaking an orphan temp. A failed/empty write falls to
@@ -1441,9 +1450,16 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
     # UNLOCKED-WRITER: by definition — this whole `else` is the branch taken when `_lock` FAILED,
     # so there is no ownership to assert and `_own_lock`/`_may_commit_state` would refuse every
     # write here. The two `mv`s below are therefore deliberately bare, and the sidecar marker set
-    # above is what makes that safe: the durable record of this doc edit is the marker, not the
-    # JSON. Whatever the lock holder commits may overwrite these bytes at any moment, exactly as
-    # in `update_aggregate_blocked` — which is why the marker, not the write, is the evidence.
+    # above is what makes the GATE safe: the durable record of this doc edit is the marker, not the
+    # JSON, so losing these bytes cannot fail the gate open.
+    #
+    # Gate safety is not transaction safety, and only the first is claimed here. These `mv`s are
+    # whole-file replaces, so the direction that matters is the opposite of the reassuring one: a
+    # snapshot staged before the lock holder commits will, on rename, DISCARD what the holder
+    # wrote — round counts, receipts, iteration history — and the marker restores none of it.
+    # `update_aggregate_blocked` has the same shape. Recorded, with the interleaving and the
+    # sidecar-only fix, in
+    # docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
     #
     # Degrade, never abort: the sidecar above is already set, so skipping the best-effort JSON
     # write is fail-closed — but aborting here would also skip the diagnostic below, leaving the

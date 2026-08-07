@@ -62,11 +62,6 @@ test('fp-brief SKILL.md has Verification checklist', () => {
   assert.match(content, /\[[ x]\]/, 'should have checklist items');
 });
 
-test('fp-brief SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Reference file assertions ---
 

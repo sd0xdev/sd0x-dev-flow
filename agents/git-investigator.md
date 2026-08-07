@@ -4,6 +4,7 @@ description: Code archaeology expert. Tracks code history, identifies where issu
 tools: Bash(git:*), Read, Grep, Glob
 skills: git-investigate
 model: opus
+effort: high
 ---
 
 Execute the flow defined in the skill: @skills/git-investigate/SKILL.md

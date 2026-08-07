@@ -758,3 +758,116 @@ test('real jq: the write filter assigns a number and touches nothing else', { sk
   expected.iteration_history.max_rounds = 30;
   assert.deepEqual(after, expected, 'the write filter must be a single-field assignment');
 });
+
+// --- Mid-loop checkpoint filter (post-tool-review-state.sh) ---
+//
+// Extracted rather than restated for the reason in this file's header: the stub in
+// post-tool-review-state.test.js re-implements the sticky-OR in JavaScript, so deleting the
+// clause from the hook leaves that suite green. These cases run the real filter under real jq.
+
+const postTool = readFileSync(resolve(__dirname, '../../hooks/post-tool-review-state.sh'), 'utf8');
+// The marker must sit BEFORE the program's opening quote — `extractFilter` takes the first `'`
+// after it as the opener, so a marker inside the program yields a slice starting mid-filter.
+const ITER_UPDATE_FILTER = extractFilter(postTool, '--argjson ckpt "$ckpt"');
+
+function runIterUpdate(json, ckpt) {
+  const r = spawnSync(
+    'jq',
+    ['-r', '--argjson', 'total', '0', '--argjson', 'p0', '0', '--argjson', 'p1', '0',
+     '--argjson', 'p2', '0', '--argjson', 'nit', '0', '--arg', 'now', '2026-08-04T00:00:00Z',
+     '--argjson', 'ckpt', String(ckpt), '--arg', 'ids', '', ITER_UPDATE_FILTER],
+    { input: JSON.stringify(json), encoding: 'utf8' }
+  );
+  return { status: r.status, err: r.stderr || '', data: r.status === 0 ? JSON.parse(r.stdout) : null };
+}
+
+const baseIter = round => ({
+  iteration_history: {
+    current_round: round,
+    max_rounds: 30,
+    findings_by_round: [],
+    total_rounds_session: 0,
+    strategic_reset_fired: false,
+  },
+});
+
+test('iteration filter: crossing the checkpoint sets strategic_reset_fired', { skip: !HAVE_JQ }, () => {
+  const r = runIterUpdate(baseIter(9), 10);
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  assert.equal(r.data.iteration_history.current_round, 10);
+  assert.equal(r.data.iteration_history.strategic_reset_fired, true);
+});
+
+test('iteration filter: below the checkpoint the flag stays false', { skip: !HAVE_JQ }, () => {
+  // Negative control — without it the clause could be `= true` unconditionally and pass above.
+  const r = runIterUpdate(baseIter(8), 10);
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.current_round, 9);
+  assert.equal(r.data.iteration_history.strategic_reset_fired, false);
+});
+
+test('iteration filter: an already-set flag is sticky below the checkpoint', { skip: !HAVE_JQ }, () => {
+  // jq's `//` treats `false` as missing, which is the trap this file's header names: written with
+  // `//` instead of an explicit `== true` comparison, a cleared flag and an absent one differ.
+  const seed = baseIter(2);
+  seed.iteration_history.strategic_reset_fired = true;
+  const r = runIterUpdate(seed, 10);
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.strategic_reset_fired, true, 'one diagnosis per change');
+});
+
+test('iteration filter: an absent flag defaults to false, not to fired', { skip: !HAVE_JQ }, () => {
+  const seed = baseIter(3);
+  delete seed.iteration_history.strategic_reset_fired;
+  const r = runIterUpdate(seed, 10);
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.strategic_reset_fired, false);
+});
+
+test('iteration filter: a non-numeric current_round writes nothing at all', { skip: !HAVE_JQ }, () => {
+  // The state file is an ordinary working-tree file, and `"11" >= 10` is TRUE in jq (strings sort
+  // above numbers) — so a string round is exactly the shape that could forge a checkpoint and then
+  // permanently suppress the real one via the sticky flag. It cannot: `+= 1` on a string makes the
+  // whole program error out first, so the hook takes its "jq write failed" path and commits
+  // nothing. The type test on the comparison is the second line of defence, not the first.
+  const seed = baseIter(0);
+  seed.iteration_history.current_round = '99';
+  const r = runIterUpdate(seed, 10);
+  assert.notEqual(r.status, 0, 'real jq must reject the malformed state rather than coerce it');
+  assert.equal(r.data, null, 'and therefore produce no state to commit');
+});
+
+function runIterUpdateIds(json, ids) {
+  const r = spawnSync(
+    'jq',
+    ['-r', '--argjson', 'total', '0', '--argjson', 'p0', '0', '--argjson', 'p1', '0',
+     '--argjson', 'p2', '0', '--argjson', 'nit', '0', '--arg', 'now', '2026-08-04T00:00:00Z',
+     '--argjson', 'ckpt', '10', '--arg', 'ids', ids, ITER_UPDATE_FILTER],
+    { input: JSON.stringify(json), encoding: 'utf8' }
+  );
+  return { status: r.status, err: r.stderr || '', data: r.status === 0 ? JSON.parse(r.stdout) : null };
+}
+
+test('iteration filter: identities are split per line, blanks dropped', { skip: !HAVE_JQ }, () => {
+  const r = runIterUpdateIds(baseIter(0), 'a.js:1 wrong\n\nb.js:2 also wrong\n');
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  assert.deepEqual(r.data.iteration_history.findings_by_round[0].ids,
+    ['a.js:1 wrong', 'b.js:2 also wrong']);
+});
+
+test('iteration filter: a blank-only identity set records an empty array, not phantom members', { skip: !HAVE_JQ }, () => {
+  // Two halves, and only one of them is the guard. Measured (`jq -c '"" | split("\n")'`), jq
+  // yields `[]` for the empty string, NOT `[""]` — so the `''` case below is a boundary check
+  // that would pass with `select(length > 0)` deleted. What `select` actually prevents is the
+  // empty members a real capture carries: a trailing newline and any interior blank line each
+  // become one `""`, and every one of them would read as a finding that persists forever.
+  const empty = runIterUpdateIds(baseIter(0), '');
+  assert.equal(empty.status, 0);
+  assert.deepEqual(empty.data.iteration_history.findings_by_round[0].ids, []);
+
+  // The load-bearing half: `"\n\n" | split("\n")` is `["","",""]`. Delete `select` and this
+  // records three phantom identities, which is exactly the state that never converges.
+  const blanks = runIterUpdateIds(baseIter(0), '\n\n');
+  assert.equal(blanks.status, 0, `real jq rejected the production filter:\n${blanks.err}`);
+  assert.deepEqual(blanks.data.iteration_history.findings_by_round[0].ids, []);
+});

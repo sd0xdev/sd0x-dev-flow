@@ -19,6 +19,7 @@ Execution: Integration/E2E defaults to running a single file only; use `/verify`
 | Assertion | `assert/strict` (or ecosystem equivalent); no empty assertions |
 | Size | ≤ 7 assertions per test case |
 | Data | Realistic inputs; no `"test"`, `"foo"`, `123` without justification |
+| Guards | A test that *refuses* something ships with both directions in the same commit: the case that must fail, **and** the case using the same words as ordinary data that must pass. A one-directional guard is green on the day it lands and false-positives later, where it reads as a new defect rather than a missing control. Check it by deleting the guard — if every existing case stays green, it has no negative control |
 
 ## Evidence Model
 

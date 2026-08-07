@@ -92,12 +92,12 @@ done | sort -t'|' -k2 -rn
 - [x] `rules/docs-writing.md` 新增註解政策，含**數值門檻**與指標格式範例，非僅原則性敘述 — § Code Comments：≥30 blocking、25–29 warning、指標格式含節號範例、move-or-dedupe、豁免清單
 - [x] 導出指令（三棵樹遞迴版）重跑後，≥30 行的連續註解區塊數為 **0**（現況 **15**），且該指令與本張列出的清單同源 — awk 導出重跑輸出為空；更嚴格的 `check-comment-blocks.js`（stateful `/* */` 計數）亦 0 BLOCK、exit 0，並因此多抓到 awk 漏掉的 prune-runs.js 相鄰 49 行 JSDoc（已一併遷移至 workflow-orchestration `4-implementation.md` §1.1）
 - [x] 每個被移除的區塊，其論證皆可在文件中找到對應段落；抽查 3 處以 `grep` 佐證資訊未淨損失 — Codex AC-trace 獨立抽查 3 處（sidecar §3.1/§3.6/§3.7、prune containment/TOCTOU、cleanup capability token）皆命中
-- [x] `post-tool-review-state.sh:443` 改為指標，且涵蓋 `4-implementation.md` **§3.1、§3.6、§3.7** 三節（該區塊跨越集合累積、plane 歸屬與 sidecar lock 三個主題），指標含節號而非僅檔名 — 現位於 `:669`，指標明列三節號
-- [x] 目的地文件皆 ≤ 500 行（`wc -l` 為證）；若觸及上限則依 `@rules/docs-numbering.md` 拆為編號子資料夾，且主檔保留 canonical 檔名 — auto-loop-evolution 295、workflow-orchestration 82（新檔）、necessity-audit 23（新檔）、docs-writing 56（doc review 收斂豁免文字後）
-- [x] `check-comment-blocks.js` 可回報違規位置與行數，並支援豁免清單（授權標頭、`shellcheck`/`eslint` directive 等）— `BLOCK/WARN file:line — N contiguous comment lines` 格式；SPDX/Copyright/eslint-disable/shellcheck-disable 首行豁免 + vendored 目錄名任意深度豁免；`--json`、無效 `--root` fail-closed exit 2
+- [x] `post-tool-review-state.sh:443` 改為指標，且涵蓋 `4-implementation.md` **§3.1、§3.6、§3.7** 三節（該區塊跨越集合累積、plane 歸屬與 sidecar lock 三個主題），指標含節號而非僅檔名 — 指標明列三節號。**不記行號**：本 request 之後的每一輪修改都會把它推移（`:443` → `:669` → 現值），寫死的行號是這份文件反覆漂移的來源。以 `grep -n '§3.1, §3.6, §3.7' hooks/post-tool-review-state.sh` 定位
+- [x] 目的地文件皆 ≤ 500 行（`wc -l` 為證）；若觸及上限則依 `@rules/docs-numbering.md` 拆為編號子資料夾，且主檔保留 canonical 檔名 — **2026-07-26 當日量測**：auto-loop-evolution 295、workflow-orchestration 82（新檔）、necessity-audit 23（新檔）、docs-writing 56（doc review 收斂豁免文字後）。這些檔案之後仍持續增修，數字必然漂移；AC 約束的是「≤ 500」這個性質，不是快照值。重新量測：`wc -l docs/features/*/4-implementation.md rules/docs-writing.md`（2026-08-04 重量：auto-loop-autonomy 352、auto-loop-evolution 295、workflow-orchestration 96、necessity-audit 41、docs-writing 64——全數仍 ≤ 500）
+- [x] `check-comment-blocks.js` 可回報違規位置與行數，並支援豁免清單（授權標頭、`shellcheck`/`eslint` directive 等）— `BLOCK/WARN file:line — N comment lines in one logical block` 格式（2026-08-04 修訂：原為 contiguous，改為 logical block — 空行橋接，見下方 Amendment）；SPDX/Copyright/eslint-disable/shellcheck-disable 首行豁免 + vendored 目錄名任意深度豁免；`--json`、無效 `--root` fail-closed exit 2
 - [x] 既有行為零變更：`test/hooks/*.test.js` 與 `skills/orchestrate` 相關測試全綠，且**被遷移的那 15 個區塊所在的既有檔案**在 diff 中無非註解行異動（本條僅約束受遷移檔；新增的 `check-comment-blocks.js`、其測試與 `rules/docs-writing.md` 的政策段落當然含非註解行，不在此條範圍內）— hook suite 812/810 pass 0 fail；orchestrate 20/20；8 個遷移檔 hunk 級過濾非註解 diff 行 = 0（`post-edit-format.sh` 的非註解 hunk 屬 R4 交付物，經 Codex 以 R4 ticket Related Files 佐證排除）
 - [x] Pass /codex-review-fast — 4 P1（hook 執行位遺失、`/* */` stateful 計數、無效 --root fail-open、豁免錨定層級）修復後 ✅ Ready
-- [x] Pass /precommit — ✅ PASS（2951 tests / 2945 pass / 0 fail）
+- [x] Pass /precommit — ✅ PASS（**2026-07-26 該次 run** 2951 tests / 2945 pass / 0 fail）。收據記錄的是打勾當下的樹，不描述現況；本 request 之後的變更已使全套成長至 3552 tests / 3546 pass / 0 fail（2026-08-04）
 
 ## Design Decision
 
@@ -126,3 +126,13 @@ done | sort -t'|' -k2 -rn
 - 同源主題（context 檔散文縮減）: [Auto-Loop 散文縮減 (R3)](./2026-07-26-auto-loop-prose-reduction-r3.md)
 - 遷移目的地: [Auto-Loop Evolution 實作紀錄](../../auto-loop-evolution/4-implementation.md)
 - 文件尺寸與拆分規範: `@rules/docs-numbering.md` § Size Limit
+
+## Amendment (2026-08-04)
+
+三處與交付結果不符，已修正：
+
+| 項目 | 原始行為 | 現在 |
+|------|---------|------|
+| 計數單位 | contiguous run — 一個空行就切斷區塊 | **logical block** — 空行橋接，只有非註解非空行才結束區塊。原本的規則等於「每 29 行插一個空行」即可規避，改變的是形狀不是量 |
+| 註解語法判定 | 單一 regex，`#`/`//`/`/*`/`*` 一律視為註解 | 依副檔名分派：`.sh` 只認 `#`。原本 shell 的 `case "$1" in /*)` 會被當成 C 區塊註解開頭 |
+| 執行時機 | 僅手動執行，未接 precommit | `/precommit` 的 `comment_blocks` step；**唯有 repo 自己 check in 了 `scripts/check-comment-blocks.js` 才執行**，否則 skip 而非 fail。`/install-scripts` 安裝到 `.claude/scripts/` 的副本刻意不算數——checker 掃的是 repo 自己的 `hooks/ scripts/ skills/`，認它等於拿本 plugin 的規約去審消費端專案的程式碼 |

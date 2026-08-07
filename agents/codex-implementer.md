@@ -3,6 +3,7 @@ name: codex-implementer
 description: Codex implementation expert. Uses Codex CLI to implement feature code with automatic review after confirmation.
 tools: Read, Grep, Glob, Bash(codex:*), Bash(git:*), Edit, Write, AskUserQuestion
 model: opus
+effort: high
 ---
 
 # Codex Implementer

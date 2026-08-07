@@ -2,7 +2,8 @@
 name: brief-writer
 description: PM/CTO executive summary expert. Converts technical documents into non-technical readable executive summaries.
 tools: Read, Grep, Glob, Write
-model: sonnet
+model: opus
+effort: high
 ---
 
 # Brief Writer

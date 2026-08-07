@@ -38,6 +38,14 @@ const {
   buildRecipes,
 } = require('./lib/utils');
 
+// Steps that check repo POLICY rather than validate the project. They can fail a run, but they
+// never satisfy "some validation ran" — see the overallPass comment for the false-green this
+// distinction prevents.
+const POLICY_STEPS = new Set(['comment_blocks']);
+function isPolicyStep(name) {
+  return POLICY_STEPS.has(name);
+}
+
 function readText(p) {
   try {
     return fs.readFileSync(p, 'utf8');
@@ -137,6 +145,36 @@ async function main() {
 
     const steps = [];
     const lintGlobs = loadLintGlobs(repoRoot);
+
+    // comment blocks — static and cheap, so it runs first and reports a blocking
+    // block without waiting for lint/build/test.
+    //
+    // SKIPPED, never failed, unless the repo checked the checker in ITSELF. Two
+    // conditions, and the first is the load-bearing one:
+    //
+    // `scripts/check-comment-blocks.js` only — deliberately NOT the installed
+    // copy at `.claude/scripts/`. `/install-scripts` copies this plugin's
+    // `scripts/*.js` there, so accepting that path runs a plugin CONVENTION over
+    // a consuming project's own code: the checker's scan dirs are the repo's
+    // top-level hooks/ scripts/ skills/ (`.claude/` is exempt), so a Python or
+    // Rust project that merely has a `scripts/` dir would get its comment lengths
+    // judged by this plugin's 30-line rule and could FAIL precommit on it. A repo
+    // that genuinely wants the check vendors the checker into its own `scripts/`,
+    // which is the same act as opting in.
+    //
+    // That one condition is also SUFFICIENT, which is why there is no second
+    // one. The checker exits 2 on a root holding none of hooks/ scripts/ skills/
+    // — a FAIL, not a skip — but finding it at `<root>/scripts/…` already proves
+    // `<root>/scripts` exists, so that root cannot occur. A `hasCommentScanDir`
+    // guard here would be unreachable code asserting a condition its own
+    // predecessor guarantees.
+    const ownChecker = path.join(repoRoot, 'scripts/check-comment-blocks.js');
+    if (fs.existsSync(ownChecker)) {
+      steps.push({ name: 'comment_blocks', cmd: process.execPath, args: [ownChecker] });
+    } else {
+      process.stdout.write('> skip comment_blocks (checker missing)\n');
+      steps.push({ name: 'comment_blocks', status: 'skip', reason: 'checker missing' });
+    }
 
     // lint:fix
     if (hasScript(pkg, 'lint:fix')) {
@@ -245,14 +283,21 @@ async function main() {
       status: r.status,
       reason: r.reason,
     })),
-    // PASS requires at least one REAL (non-skip) step that exited 0. An all-skip
-    // run is NOT a pass: precommit is a merge gate, so "nothing ran" must not be
-    // recorded as "verified". It gets its own sentinel below (⚠️ NO CHECKS RUN)
-    // so hooks fail-closed and the skill falls through to ecosystem detection,
-    // rather than the earlier behavior that minted all-skip as ✅ PASS.
+    // PASS requires at least one REAL (non-skip) VALIDATION step that exited 0. An all-skip run is
+    // NOT a pass: precommit is a merge gate, so "nothing ran" must not be recorded as "verified".
+    // It gets its own sentinel below (⚠️ NO CHECKS RUN) so hooks fail-closed and the skill falls
+    // through to ecosystem detection, rather than the earlier behavior that minted all-skip as
+    // ✅ PASS.
+    //
+    // POLICY steps are excluded from "did anything run". `comment_blocks` is repo-shape policy,
+    // not project validation, and it passes in any repo holding a hooks/scripts/skills directory —
+    // so counting it re-minted the all-skip false-green this sentinel exists to prevent: a Python
+    // or Rust project that installed this plugin and happens to have a top-level `scripts/` would
+    // bank a ✅ PASS receipt with pytest/cargo never invoked. A policy step still FAILS the run.
     overallPass: (() => {
       const ran = results.filter(r => r.status !== 'skip');
-      return ran.length > 0 && ran.every(r => r.code === 0);
+      const ranValidation = ran.filter(r => !isPolicyStep(r.name));
+      return ranValidation.length > 0 && ran.every(r => r.code === 0);
     })(),
     error: summaryError || undefined,
   };
@@ -316,9 +361,15 @@ async function main() {
   lines.push('```');
   lines.push('');
 
-  const allSkipped =
-    results.length > 0 && results.every(r => r.status === 'skip');
-  if (allSkipped) {
+  // "No project validation ran" — policy steps do not count as validation (see overallPass), but a
+  // FAILING policy step must still surface as ❌ FAIL rather than be swallowed by this sentinel.
+  const policyFailed = results.some(
+    r => isPolicyStep(r.name) && r.status !== 'skip' && r.code !== 0
+  );
+  const noValidationRan =
+    results.length > 0 &&
+    results.every(r => r.status === 'skip' || isPolicyStep(r.name));
+  if (noValidationRan && !policyFailed) {
     // Distinct third state — NOT ✅ PASS (would false-green the gate) and NOT
     // ❌ FAIL (would wedge). Matches neither the hooks' pass grep nor their fail
     // grep, so precommit stays unrecorded (fail-closed); skills/precommit/SKILL.md

@@ -10,7 +10,7 @@ const {
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
-const { spawnSync } = require('node:child_process');
+const { spawnSync, spawn } = require('node:child_process');
 
 const {
   AMBIENT_NON_C_ENV,
@@ -461,8 +461,10 @@ test('R9+R10 default template with HTML comments does NOT trigger features', () 
     has_code_change: true,
     code_review: { passed: false },
     iteration_history: {
-      current_round: 3,
-      max_rounds: 10,
+      // Above the checkpoint round on purpose: below it, this test would pass
+      // whether or not the Think Harder gate works.
+      current_round: 11,
+      max_rounds: 30,
       total_rounds_session: 8,
       strategic_reset_fired: false,
     },
@@ -615,8 +617,10 @@ test('R10 strategic reset NOT injected when Think Harder disabled', () => {
     has_code_change: true,
     code_review: { passed: false },
     iteration_history: {
-      current_round: 3,
-      max_rounds: 10,
+      // Above the checkpoint round on purpose: below it, this test would pass
+      // whether or not the Think Harder gate works.
+      current_round: 11,
+      max_rounds: 30,
       total_rounds_session: 8,
       strategic_reset_fired: false,
     },
@@ -636,8 +640,8 @@ test('R10 strategic reset injected at threshold', () => {
     has_code_change: true,
     code_review: { passed: false },
     iteration_history: {
-      current_round: 3,
-      max_rounds: 10,
+      current_round: 11,
+      max_rounds: 30,
       total_rounds_session: 7,
       strategic_reset_fired: false,
     },
@@ -653,7 +657,7 @@ test('R10 strategic reset injected at threshold', () => {
   assert.equal(result.status, 0);
   assert.ok(
     result.stdout.includes('[STRATEGIC_RESET]'),
-    'should inject strategic reset at threshold (7 >= 10-3)'
+    'should inject strategic reset at the checkpoint round (11 >= 10)'
   );
   assert.ok(
     result.stdout.includes('Cap Diagnostic Protocol'),
@@ -716,8 +720,10 @@ test('R10 strategic reset fires only once', () => {
     has_code_change: true,
     code_review: { passed: false },
     iteration_history: {
-      current_round: 5,
-      max_rounds: 10,
+      // Above the checkpoint round, so `strategic_reset_fired` is the only
+      // thing keeping the injection away.
+      current_round: 11,
+      max_rounds: 30,
       total_rounds_session: 9,
       strategic_reset_fired: true,
     },
@@ -831,8 +837,8 @@ function thinkHarderState(cwd) {
     has_code_change: true,
     code_review: { passed: false },
     iteration_history: {
-      current_round: 3,
-      max_rounds: 10,
+      current_round: 11,
+      max_rounds: 30,
       total_rounds_session: 7,
       strategic_reset_fired: false,
     },
@@ -869,9 +875,16 @@ test('strategic reset mark: a lock held by a LIVE owner makes the hook leave the
     readFileSync(statePath, 'utf8'), before,
     'byte-identical: the hook must not replace a file another writer owns'
   );
+  // The injection is skipped WITH the mark, and the direction here was deliberately flipped: this
+  // used to assert the checklist still injects, on the reasoning that a repeat injection is cheap.
+  // It is only cheap if the injection is otherwise correct — but outside the lock this hook cannot
+  // read the flag safely, so injecting means emitting a checklist it never earned, which is the
+  // repeat-firing bug rather than a tolerable cost of it. Skipping leaves the flag false, so the
+  // checkpoint stays eligible and the next successful review round or compaction retries it —
+  // best-effort, not guaranteed: the primary channel skips on lock contention too.
   assert.ok(
-    result.stdout.includes('[STRATEGIC_RESET]'),
-    'the checklist still injects — skipping the mark costs at most one repeat injection'
+    !result.stdout.includes('[STRATEGIC_RESET]'),
+    'no mark means no injection — the reminder belongs to whoever performed the false→true transition'
   );
   assert.ok(existsSync(lockDir), "the foreign owner's lock must survive");
 });
@@ -891,6 +904,68 @@ test('strategic reset mark: with the lock free, the mark is written and the lock
   assert.equal(
     existsSync(join(cwd, '.claude_review_state.json.lockdir')), false,
     'the lock must be released, not held until its 30s TTL'
+  );
+});
+
+test('strategic reset mark: a flag flipped WHILE the hook waits for the lock suppresses the injection', async () => {
+  // The negative control for the read-inside-the-lock contract, and the only one in this file that
+  // a pre-lock read actually fails: every sequential test here passes just as well when the read is
+  // moved back outside, because nothing changes in between. Here something does.
+  //
+  // The interleaving is forced, not raced. The hook is started against a lock held by a live owner
+  // with a fresh ts, so neither stale-recovery arm fires and `_lock` polls (sleep 0.1) until the
+  // directory disappears. While it polls we flip `strategic_reset_fired` to true — standing in for
+  // the primary channel in post-tool-review-state.sh winning the race — and only then release the
+  // lock. A hook that read the flag before `_lock` is holding a stale `false` and emits a checklist
+  // for a cycle another process already diagnosed; a hook that reads inside sees `true` and stays
+  // quiet. The assertion that the child is still running before we flip is what keeps this a
+  // control rather than a coin toss: if it had already exited, the flip would be a no-op and the
+  // test would pass for the wrong reason.
+  const cwd = makeTempDir('sd0x-pc-lock-interleave-');
+  const binDir = setupStubBin();
+  thinkHarderState(cwd);
+
+  const statePath = join(cwd, '.claude_review_state.json');
+  const lockDir = join(cwd, '.claude_review_state.json.lockdir');
+  mkdirSync(lockDir);
+  writeFileSync(join(lockDir, 'pid'), String(process.pid));
+  writeFileSync(join(lockDir, 'ts'), String(Math.floor(Date.now() / 1000)));
+
+  const child = spawn('bash', [hookPath], {
+    cwd,
+    env: {
+      ...process.env,
+      PATH: `${binDir}:${process.env.PATH}`,
+      CLAUDE_PROJECT_DIR: cwd,
+      // Long enough that the poll loop is still running when we flip the flag below.
+      REVIEW_STATE_LOCK_TIMEOUT: '20',
+    },
+  });
+  let stdout = '';
+  child.stdout.on('data', c => { stdout += c; });
+  child.stderr.on('data', () => {});
+  child.stdin.end('{}');
+
+  const exited = new Promise(res => child.on('close', code => res(code)));
+  let exitedEarly = false;
+  child.on('close', () => { exitedEarly = true; });
+
+  await new Promise(res => setTimeout(res, 1200));
+  assert.equal(
+    exitedEarly, false,
+    'the hook must still be waiting on the lock — otherwise the flip below proves nothing'
+  );
+
+  const mid = JSON.parse(readFileSync(statePath, 'utf8'));
+  mid.iteration_history.strategic_reset_fired = true;
+  writeFileSync(statePath, JSON.stringify(mid));
+  rmSync(lockDir, { recursive: true, force: true });
+
+  const code = await exited;
+  assert.equal(code, 0, 'the hook is advisory — contention must not fail it');
+  assert.ok(
+    !stdout.includes('[STRATEGIC_RESET]'),
+    'the flag was already true when the lock was acquired — the other channel owns this diagnosis'
   );
 });
 
@@ -914,4 +989,95 @@ test('strategic reset mark: a STALE lock is reclaimed rather than deferred to fo
   assert.equal(result.status, 0);
   const state = JSON.parse(readFileSync(join(cwd, '.claude_review_state.json'), 'utf8'));
   assert.equal(state.iteration_history.strategic_reset_fired, true, 'stale lock must be reclaimed');
+});
+
+test('R10 strategic reset NOT injected below the checkpoint round', () => {
+  // Negative control for the threshold itself: gate enabled, flag clear, high
+  // cumulative session effort — only `current_round` is below the checkpoint.
+  // The near-cap form this replaced read `total_rounds_session`, and would have
+  // injected here on effort spent on changes that already passed their gates.
+  const cwd = makeTempDir('sd0x-pc-r10-below-');
+  const binDir = setupStubBin();
+  writeStateFile(cwd, {
+    has_code_change: true,
+    code_review: { passed: false },
+    iteration_history: {
+      current_round: 9,
+      max_rounds: 30,
+      total_rounds_session: 40,
+      strategic_reset_fired: false,
+    },
+  });
+  mkdirSync(join(cwd, 'rules'), { recursive: true });
+  writeFileSync(
+    join(cwd, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project\n\n## Think Harder: enabled\n'
+  );
+
+  const result = runHook({ cwd, binDir, env: { CLAUDE_PROJECT_DIR: cwd } });
+  assert.equal(result.status, 0);
+  assert.ok(
+    !result.stdout.includes('[STRATEGIC_RESET]'),
+    'round 9 is below the checkpoint — cumulative session effort must not substitute for it'
+  );
+});
+
+test('R10 checkpoint round is configurable via AUTO_LOOP_CHECKPOINT_ROUNDS', () => {
+  const cwd = makeTempDir('sd0x-pc-r10-env-');
+  const binDir = setupStubBin();
+  writeStateFile(cwd, {
+    has_code_change: true,
+    code_review: { passed: false },
+    iteration_history: {
+      current_round: 4,
+      max_rounds: 30,
+      total_rounds_session: 4,
+      strategic_reset_fired: false,
+    },
+  });
+  mkdirSync(join(cwd, 'rules'), { recursive: true });
+  writeFileSync(
+    join(cwd, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project\n\n## Think Harder: enabled\n'
+  );
+
+  const result = runHook({
+    cwd, binDir,
+    env: { CLAUDE_PROJECT_DIR: cwd, AUTO_LOOP_CHECKPOINT_ROUNDS: '4' },
+  });
+  assert.equal(result.status, 0);
+  assert.ok(result.stdout.includes('[STRATEGIC_RESET]'), 'round 4 meets a threshold of 4');
+});
+
+test('R10 a non-numeric AUTO_LOOP_CHECKPOINT_ROUNDS falls back to 10, never to arithmetic', () => {
+  // The value reaches `[[ -ge ]]`, which expands command substitution inside an
+  // array subscript — the same injection surface the digit guards above exist for.
+  const cwd = makeTempDir('sd0x-pc-r10-badenv-');
+  const binDir = setupStubBin();
+  writeStateFile(cwd, {
+    has_code_change: true,
+    code_review: { passed: false },
+    iteration_history: {
+      current_round: 11,
+      max_rounds: 30,
+      total_rounds_session: 11,
+      strategic_reset_fired: false,
+    },
+  });
+  mkdirSync(join(cwd, 'rules'), { recursive: true });
+  writeFileSync(
+    join(cwd, 'rules', 'auto-loop-project.md'),
+    '# Auto-Loop Project\n\n## Think Harder: enabled\n'
+  );
+
+  const result = runHook({
+    cwd, binDir,
+    env: {
+      CLAUDE_PROJECT_DIR: cwd,
+      AUTO_LOOP_CHECKPOINT_ROUNDS: 'a[$(touch ' + join(cwd, 'pwned') + ')]',
+    },
+  });
+  assert.equal(result.status, 0);
+  assert.equal(existsSync(join(cwd, 'pwned')), false, 'no command substitution may run');
+  assert.ok(result.stdout.includes('[STRATEGIC_RESET]'), 'round 11 still meets the default 10');
 });

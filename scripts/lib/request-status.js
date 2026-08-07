@@ -3,30 +3,17 @@
 /**
  * request-status.js — the single contract for reading a request doc's `Status`.
  *
- * Three consumers had grown three incompatible readings of the same field:
- *
- *   | consumer                                | window     | case        | conventions accepted        |
- *   |-----------------------------------------|------------|-------------|-----------------------------|
- *   | `scripts/lib/fc-extractor.js`           | 30 lines   | insensitive | blockquote, heading, table  |
- *   | `skills/next-step/scripts/analyze.js`   | whole doc  | sensitive   | table, blockquote           |
- *   | `skills/create-request/SKILL.md` (prose)| 15 lines   | —           | —                           |
- *
- * and — the reason this module exists rather than a comment asking people to keep three copies in
- * sync — three different ideas of which values mean "still open". `analyze.js` carried a positive
- * list of four (`pending`, `in development`, `in progress`, `nearly complete`). Measured against
- * the 125 request docs actually in this repo, that list missed `Candidate Complete` (20 docs, the
- * third most common value) and `Spec Complete` (1), while `In Development` and `Nearly Complete`
- * matched nothing at all. So `request-stale` was blind to 21 open requests and `feature-complete`
- * could fire while they were outstanding.
- *
- * The fix is not "add the two missing strings" — that leaves the next value to be forgotten the
- * same way. Openness is defined NEGATIVELY here, exactly as `filterOpenRequests` already
- * documented it: a request is closed only if its Status is one of a short, exhaustive, closed set;
- * anything else — including a value nobody has thought of yet — is open. Unrecognised reads as
- * open, which errs toward reporting work that is finished rather than hiding work that is not.
+ * Openness is defined NEGATIVELY: a request is closed only when its Status is one of a short,
+ * exhaustive, closed set; anything else — including a value nobody has thought of yet — is open.
+ * Unrecognised therefore errs toward reporting work that is finished rather than hiding work that
+ * is not. A positive list of open values was tried first and is what this replaced.
  *
  * `OPEN_REQUEST_STATUS` is the observed open vocabulary. It is documentation and test material,
  * NOT the predicate: nothing branches on membership in it.
+ *
+ * The three divergent readings this module collapsed, and the measurement over the repo's 125
+ * request docs that ruled out simply extending the positive list:
+ * docs/features/feature-completeness/2-tech-spec.md §2.4.
  */
 
 /**

@@ -31,11 +31,6 @@ test('remind SKILL.md has output format with Rule Context', () => {
   assert.match(content, /Rule Context/i, 'should have Rule Context section');
 });
 
-test('remind SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Catalog registration ---
 

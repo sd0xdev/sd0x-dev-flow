@@ -3,6 +3,7 @@ name: feasibility-analyst
 description: Feasibility analysis expert. Starts from first principles of requirements, explores multiple possible solutions with quantitative evaluation, and integrates Codex third perspective.
 tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*)
 model: opus
+effort: high
 ---
 
 # Feasibility Analyst

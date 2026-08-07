@@ -11,13 +11,22 @@ const SCRIPT = path.join(__dirname, '..', '..', 'scripts', 'check-comment-blocks
 const REPO_ROOT = path.join(__dirname, '..', '..');
 const {
   findBlocks,
+  langFor,
   classify,
   isExemptBlock,
+  measurable,
   listFiles,
   scan,
   BLOCK_THRESHOLD,
   WARN_THRESHOLD,
 } = require(SCRIPT);
+
+// Projects blocks to the two fields a boundary test is about. `findBlocks` also returns `headRun`
+// and `restLine` — the bridge bookkeeping the directive exemption reads — and spelling those into
+// every boundary assertion would bury what each one actually pins. They get their own tests below.
+function shape(blocks) {
+  return blocks.map(({ line, count }) => ({ line, count }));
+}
 
 function commentLines(n, prefix = '# ') {
   return Array.from({ length: n }, (_, i) => `${prefix}line ${i + 1}`).join('\n');
@@ -46,27 +55,39 @@ function runCli(args) {
 
 test('findBlocks: contiguous shell comments counted as one block', () => {
   const blocks = findBlocks(`code line\n${commentLines(5)}\ncode line\n`);
-  assert.deepEqual(blocks, [{ line: 2, count: 5 }]);
+  assert.deepEqual(shape(blocks), [{ line: 2, count: 5 }]);
 });
 
-test('findBlocks: blank line splits a block in two', () => {
+test('findBlocks: blank line bridges a block instead of splitting it', () => {
   const content = `${commentLines(3)}\n\n${commentLines(4)}\n`;
   const blocks = findBlocks(content);
-  assert.equal(blocks.length, 2);
-  assert.equal(blocks[0].count, 3);
-  assert.equal(blocks[1].count, 4);
-  assert.equal(blocks[1].line, 5);
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 7 }]);
+});
+
+test('findBlocks: multiple blank lines still bridge; code ends the block', () => {
+  const content = `${commentLines(3)}\n\n\n${commentLines(4)}\ncode();\n${commentLines(2)}\n`;
+  const blocks = findBlocks(content);
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 7 }, { line: 11, count: 2 }]);
+});
+
+test('findBlocks: blanks bridge a header past the threshold (the escape this closes)', () => {
+  // 23 comment lines + blank + 28 comment lines was two compliant runs under the
+  // old contiguous rule; as one logical block it is 51 lines and blocking.
+  const content = `${commentLines(23)}\n\n${commentLines(28)}\ncode();\n`;
+  const blocks = findBlocks(content);
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 51 }]);
+  assert.equal(classify(blocks[0].count), 'block');
 });
 
 test('findBlocks: block at end of file without trailing newline is reported', () => {
   const blocks = findBlocks(`code\n${commentLines(6, '// ')}`);
-  assert.deepEqual(blocks, [{ line: 2, count: 6 }]);
+  assert.deepEqual(shape(blocks), [{ line: 2, count: 6 }]);
 });
 
 test('findBlocks: JSDoc continuation lines (`*`, `/*`, indented) count as comments', () => {
   const content = 'code\n/**\n * a\n * b\n */\ncode\n';
   const blocks = findBlocks(content);
-  assert.deepEqual(blocks, [{ line: 2, count: 4 }]);
+  assert.deepEqual(shape(blocks), [{ line: 2, count: 4 }]);
 });
 
 test('findBlocks: empty content → no blocks', () => {
@@ -78,18 +99,54 @@ test('findBlocks: bare block comment counts unprefixed interior lines (P1 regres
   const interior = Array.from({ length: 28 }, (_, i) => `rationale line ${i + 1}`).join('\n');
   const content = `code();\n/*\n${interior}\n*/\ncode();\n`;
   const blocks = findBlocks(content);
-  assert.deepEqual(blocks, [{ line: 2, count: 30 }]);
+  assert.deepEqual(shape(blocks), [{ line: 2, count: 30 }]);
 });
 
 test('findBlocks: single-line /* ... */ does not trap the scanner in-block', () => {
   const content = '/* one-liner */\ncode();\ncode();\n';
-  assert.deepEqual(findBlocks(content), [{ line: 1, count: 1 }]);
+  assert.deepEqual(shape(findBlocks(content)), [{ line: 1, count: 1 }]);
 });
 
 test('findBlocks: shell/# or // comment containing /* (glob) does not enter block state', () => {
   const content = '# match path/*\ncode\n// see src/*\ncode\n';
   const blocks = findBlocks(content);
-  assert.deepEqual(blocks, [{ line: 1, count: 1 }, { line: 3, count: 1 }]);
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 1 }, { line: 3, count: 1 }]);
+});
+
+// --- language dispatch (shell has no /* */ comment form) ---
+
+test("findBlocks lang=sh: `case $x in /*)` does not open a block state", () => {
+  // Regression: the /* arm made every following line count as a comment, so 35
+  // lines of executable shell were reported as one blocking comment block.
+  const tail = Array.from({ length: 35 }, (_, i) => `path_${i}=$(pwd)`).join('\n');
+  const content = `#!/usr/bin/env bash\ncase "$1" in\n  /*) echo absolute ;;\nesac\n${tail}\n`;
+  const blocks = findBlocks(content, 'sh');
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 1 }]);
+});
+
+test("findBlocks lang=sh: a `*)` default arm is not a comment line", () => {
+  const content = 'case "$1" in\n  *) echo fallback ;;\nesac\n';
+  assert.deepEqual(findBlocks(content, 'sh'), []);
+});
+
+test('findBlocks lang=sh: a genuine 35-line # block is still blocking (negative control)', () => {
+  // Deleting the language dispatch must not make this pass — without it the
+  // shell path is untested and the fix above would read as "flags nothing".
+  const content = `${commentLines(35)}\nexec_command\n`;
+  const blocks = findBlocks(content, 'sh');
+  assert.deepEqual(shape(blocks), [{ line: 1, count: 35 }]);
+  assert.equal(classify(blocks[0].count), 'block');
+});
+
+test('findBlocks lang=js: `#` is not a comment, `//` and JSDoc are', () => {
+  const content = '#!/usr/bin/env node\nconst a = 1;\n// one\n/** two */\n';
+  assert.deepEqual(shape(findBlocks(content, 'js')), [{ line: 3, count: 2 }]);
+});
+
+test('langFor: .sh → sh, .js and anything else → js', () => {
+  assert.equal(langFor('hooks/stop-guard.sh'), 'sh');
+  assert.equal(langFor('scripts/lib/utils.js'), 'js');
+  assert.equal(langFor('scripts/no-extension'), 'js');
 });
 
 // --- classify ---
@@ -113,6 +170,74 @@ test('isExemptBlock: license and directive headers are exempt, prose is not', ()
     assert.equal(isExemptBlock(content, findBlocks(content)[0]), true);
   }
   assert.equal(isExemptBlock(prose, findBlocks(prose)[0]), false);
+});
+
+// --- measurable: the exemption × bridging interaction ---
+//
+// These two rules cancel each other if the exemption is applied to the whole block. Bridging says
+// a blank line does not end a block; the exemption says a block headed by a directive is skipped.
+// Together, one `// SPDX-License-Identifier` line plus a blank exempts everything below it, and the
+// threshold becomes avoidable at the cost of one line — the same escape the bridging rule was added
+// to close, re-opened through the other door. Both directions are pinned: the laundering case must
+// be MEASURED, and the plain licence header the exemption exists for must stay exempt.
+
+test('measurable: a directive header bridged into rationale exempts only the header', () => {
+  const content = `// SPDX-License-Identifier: MIT\n\n${commentLines(60, '// ')}\ncode();\n`;
+  const [block] = findBlocks(content, 'js');
+  assert.deepEqual(
+    { line: block.line, count: block.count, headRun: block.headRun, restLine: block.restLine },
+    { line: 1, count: 61, headRun: 1, restLine: 3 },
+    'the blank bridges, so this is one 61-line block whose exempt head is a single line'
+  );
+  assert.deepEqual(
+    measurable(content, block), { line: 3, count: 60 },
+    'the 60 rationale lines are measured, anchored at their own first line'
+  );
+  assert.equal(classify(measurable(content, block).count), 'block');
+});
+
+test('measurable: an unbridged directive header is exempt in full', () => {
+  // The negative control. Without it, "exempt only the header" could be implemented as "exempt
+  // nothing" and the test above would still pass — while every licence header in the tree started
+  // failing the gate.
+  const content = `// SPDX-License-Identifier: MIT\n${commentLines(60, '// ')}\ncode();\n`;
+  const [block] = findBlocks(content, 'js');
+  assert.equal(block.restLine, 0, 'no bridge, so there is no remainder to measure');
+  assert.equal(measurable(content, block), null);
+});
+
+test('measurable: a bridged block with no directive is measured whole', () => {
+  // The other negative control: the fix must not turn bridging itself off. `headRun` is short here
+  // and the block is not exempt, so the FULL 61 lines stay blocking.
+  const content = `// ordinary rationale\n\n${commentLines(60, '// ')}\ncode();\n`;
+  const [block] = findBlocks(content, 'js');
+  assert.deepEqual(measurable(content, block), block);
+  assert.equal(block.count, 61);
+});
+
+test('measurable: repeated bridges do not each get their own exemption', () => {
+  // `bridged` latches. If it reset per blank line, the last run would head a fresh "block" and a
+  // directive could exempt a run after every blank — laundering restored one paragraph at a time.
+  const content = `# shellcheck disable=SC2086\n\n${commentLines(20)}\n\n${commentLines(20)}\ncode\n`;
+  const [block] = findBlocks(content, 'sh');
+  assert.equal(block.headRun, 1);
+  assert.deepEqual(measurable(content, block), { line: 3, count: 40 });
+});
+
+test('scan: an exempt header cannot launder a long block through a blank line', () => {
+  // End-to-end through the real gate, not just the helper: this is the `comment_blocks` step
+  // /precommit runs, so the finding has to reach the CLI's exit code.
+  const root = makeFixture({
+    'hooks/laundered.sh': `# SPDX-License-Identifier: MIT\n\n${commentLines(40)}\necho done\n`,
+    'hooks/genuine-header.sh': `# SPDX-License-Identifier: MIT\n${commentLines(40)}\necho done\n`,
+  });
+  const findings = scan(root);
+  assert.deepEqual(
+    findings,
+    [{ file: path.join('hooks', 'laundered.sh'), line: 3, count: 40, severity: 'block' }],
+    'only the bridged one is reported, and at the rationale line rather than the directive line'
+  );
+  assert.equal(runCli(['--root', root]).code, 1);
 });
 
 // --- listFiles / scan ---
@@ -163,7 +288,7 @@ test('CLI: exit 1 + BLOCK line when a ≥30 block exists', () => {
   try {
     const { code, stdout } = runCli(['--root', root]);
     assert.equal(code, 1);
-    assert.match(stdout, /BLOCK hooks\/big\.sh:1 — 32 contiguous comment lines/);
+    assert.match(stdout, /BLOCK hooks\/big\.sh:1 — 32 comment lines in one logical block/);
     assert.match(stdout, /docs-writing\.md/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

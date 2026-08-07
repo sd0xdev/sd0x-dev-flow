@@ -123,7 +123,7 @@ skills:
   - command: /create-pr
     category: development
     featured: true
-    use_when: "Creating GitHub pull requests"
+    use_when: "Creating GitHub pull requests, including stacked PR chains (--stack)"
     public: true
   - command: /merge-prep
     category: development
@@ -367,6 +367,10 @@ skills:
     featured: false
     public: true
   - command: /create-request
+    category: docs-tooling
+    featured: false
+    public: true
+  - command: /adr
     category: docs-tooling
     featured: false
     public: true

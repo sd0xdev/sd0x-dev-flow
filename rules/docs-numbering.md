@@ -36,16 +36,32 @@ Operational or supplementary artifacts that belong to no phase. `doc-classifier.
 | Runbook | `runbook-<topic>.md` | Handoff | `handoff-<topic>.md` |
 | Checklist | `checklist-<topic>.md` | Briefing | `briefing-<topic>.md` |
 | ADR | `adr-<number>-<title>.md` | FP Brief | `*-fp-brief.md` |
+| Review Log | `review-log-<topic>.md` | | |
 
 ## Size Limit — 500 Lines
 
-**Over 500 lines, split into a numbered subfolder.** Length is how a document stops being read: past a few hundred lines the reader — human or model — skims, and a detail at line 700 is functionally absent even though it is written down.
+**Scope: the feature documents this file governs** — everything under `docs/features/`. It is not a
+line budget for `.md` files at large. **Functional documents are out of scope entirely** (see Exempt
+below): a functional document is an *instruction surface* — it is loaded as a unit and executed, not
+read section by section, so length costs nothing the way it costs a reader who scrolls, and there is
+no numbered-subfolder shape to split it into. Compressing one to stay under a limit that never
+applied to it removes information for no benefit — which is the failure this paragraph exists to
+prevent.
 
-| Lines | Action |
+**What this rule is actually against is bloat** — the tech spec or requirements doc that keeps
+absorbing sections until no one reads it end to end. The counter-move is **splitting sections out
+into the numbered subfolder**, not deleting content. 500 lines is the *signal* that a prose document
+has probably reached that point, not a mechanical trigger: **the model judges the individual file**.
+A 550-line spec whose sections are genuinely one argument may stand (state the call and the reason);
+a 350-line doc already sprawling across unrelated concerns is better split early. What is not a
+judgment call: letting a lifecycle doc grow unbounded because splitting is work, or compressing away
+information to duck under a number.
+
+| Lines (prose docs under `docs/features/`) | Reading |
 |-------|--------|
 | ≤ 400 | Fine |
-| 401–500 | Split at the next substantive edit rather than growing further |
-| > 500 | **Split now** |
+| 401–500 | Consider splitting at the next substantive edit |
+| > 500 | Split is the default — the model may keep it whole by stating why this file reads better unsplit |
 
 Measure with `wc -l`. Lines, not bytes — that is what the reader scrolls.
 
@@ -60,11 +76,32 @@ docs/features/<feature>/2-tech-spec/
 
 Three constraints, each with a parser behind it: the main file keeps the **canonical filename** (`doc-classifier.js` sets `is_canonical` only on an exact match); the folder keeps the **lifecycle prefix** (`_inferParentType` resolves a directory by its `^[0-4]-`, so no taxonomy entry is needed); and sub-file numbers restart at 1 because the parent's type overrides theirs — `3-core-logic.md` inside `2-tech-spec/` must not leak as a phase-3 architecture doc.
 
-Inbound links break silently, so finish the job: `grep -rn '<old-filename>' docs/ skills/ rules/ scripts/ test/` and repoint every hit — the path gains one directory level, so a sibling `./2-tech-spec.md` becomes `./2-tech-spec/2-tech-spec.md` and a `../` reference gains a `../`. Scripts that hard-code the old path count too. Then run `/codex-review-doc` on the result.
+**A move breaks links in both directions, and only one of them is visible from outside.** Inbound
+links break silently, so finish the job: `grep -rn '<old-filename>' docs/ skills/ rules/ scripts/ test/` and repoint every hit — the path gains one directory level, so a sibling `./2-tech-spec.md` becomes `./2-tech-spec/2-tech-spec.md` and a `../` reference gains a `../`. Scripts that hard-code the old path count too. **Then the other direction**: every relative link *inside* the moved file has shifted by the same amount, and those fail just as silently — verify each one resolves rather than eyeballing it:
+
+```bash
+grep -o '](\.[^)]*)' <moved-file> | sed 's/^](//;s/)$//' | while read -r l; do
+  [ -e "$(dirname <moved-file>)/$l" ] || echo "DEAD $l"
+done
+```
+
+Then run `/codex-review-doc` on the result.
 
 **Cut at the section that dominates**, not at an arbitrary line count. Usually one `##` section carries most of the file, and its `###` boundaries are the natural sub-documents. A split landing mid-argument is worse than the long file.
 
-Exempt: `rules/*.md` loaded via `@` (splitting adds import hops without reducing what loads — reduce the content instead), generated files and fixtures, and any file that is one unsplittable table.
+**Exempt — functional documents**, i.e. every `.md` that is an instruction surface rather than a
+document someone reads:
+
+| Exempt | Why |
+|--------|-----|
+| `skills/**` — `SKILL.md` and its bundled `references/*.md` | Loaded as a unit by the dispatcher; a reference is pulled in whole by the skill that owns it |
+| `agents/*.md`, `commands/*.md` | Same — a system prompt or command body, not a document |
+| `rules/*.md` loaded via `@` | Splitting adds import hops without reducing what loads — reduce the content instead |
+| Templates, generated files and fixtures | Their length is dictated by what they generate or fix |
+| Any file that is one unsplittable table | No cut point exists that is not mid-argument |
+
+The test is *not* the directory but the role: if the file is loaded and acted on as a whole, the
+limit does not apply. `docs/**` prose is the thing it does apply to.
 
 ## Cross-references
 

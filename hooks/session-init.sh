@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # session-init.sh — SessionStart hook: reset review state on new session (D-2)
-# Preserves total_rounds_session and strategic_reset_fired for strategic reset logic.
+# Preserves total_rounds_session (cumulative across sessions). `strategic_reset_fired` is CLEARED
+# here, with `current_round`: the R10 checkpoint fires on current_round, which this hook zeroes, so
+# a preserved flag would leave the next session unable to reach the checkpoint at all. This is the
+# second of the two clear sites in docs/features/auto-loop-autonomy/4-implementation.md §1.2.
 set -euo pipefail
 
 STATE_FILE=".claude_review_state.json"
@@ -587,6 +590,7 @@ if [[ -f "$STATE_FILE" ]]; then
       .aggregate_gate = {"executed":false} |
       .iteration_history.current_round = 0 |
       .iteration_history.findings_by_round = [] |
+      .iteration_history.strategic_reset_fired = false |
       .session_commit_scope = {
         "session_id": $sid,
         "baseline_dirty_files": $bl,

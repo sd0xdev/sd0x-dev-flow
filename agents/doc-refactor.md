@@ -3,6 +3,7 @@ name: doc-refactor
 description: "Document refactoring expert. Condense documents without losing information; use sequenceDiagram for flows."
 tools: Read, Grep, Glob, Edit
 model: opus
+effort: high
 ---
 
 # Doc Refactor

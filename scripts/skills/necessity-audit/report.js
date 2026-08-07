@@ -70,46 +70,21 @@ const FOREIGN_GATE_SENTINELS = [
   /##\s*Gate:/g,              // aggregate gate header
 ];
 
-// stop-guard's recency scan is coarser than the sentinel list: `⛔.*(Block|Needs revision|Must
-// fix)` matches ANY line carrying `⛔` and one of those words. That direction fails CLOSED (a
-// spurious "review not passed"), so it cannot leak a pass — but it would let an audit narrative
-// invalidate an unrelated, genuinely passing gate, which is the same class of cross-plane
-// interference and the reason `⛔ Audit Revise` was chosen over `⛔ Audit Needs revision`.
-//
-// The other half of stop-guard's coarseness, and the one that fails OPEN. Its passing scan is
-// `## Gate: ✅|✅ Mergeable|✅ Ready|Gate.*PASS` — that last alternative needs no emoji, no header
-// and no colon: ANY line holding the word `Gate` with `PASS` later on it is read as a passing
-// review verdict. The `##\s*Gate:` entry in the list above elides only the literal header, so an
-// audit rationale reading "the Gate should PASS once the adapter is removed" went out verbatim and
-// handed the transcript fallback a code-review pass that no reviewer ever emitted.
-//
-// Elide the `Gate` token rather than the verdict word: `PASS`/`FAIL` carry the audit's own meaning
-// in prose about test outcomes, while `Gate` is the token stop-guard actually anchors on. Removing
-// it breaks the match without rewriting what the sentence says. `FAIL` gets the same treatment even
-// though `Gate.*FAIL` fails CLOSED — an audit narrative must not be able to invalidate an unrelated
-// passing gate either, which is the same cross-plane interference the `⛔` rule exists for.
-//
-// This report's own `### Gate` header survives: it carries neither word on its line.
+// stop-guard's recency scan is coarser than the sentinel list, in both directions: `⛔.*(Block|…)`
+// fails CLOSED (cannot leak a pass, but an audit narrative could invalidate an unrelated passing
+// gate — hence `⛔ Audit Revise`, not `⛔ Audit Needs revision`), while `Gate.*PASS` fails OPEN —
+// any line holding `Gate` with `PASS` later on it reads as a review pass. So the `Gate` TOKEN is
+// elided rather than the verdict word: `PASS`/`FAIL` carry the audit's own meaning in prose about
+// test outcomes. This report's own `### Gate` header survives — neither word is on its line.
+// Full derivation: docs/features/necessity-audit/4-implementation.md §3.
 
 /**
- * Both coarse rules were once single regexes — `/⛔(?=[^\n]*(?:Block|…))/g` and
- * `/Gate(?=[^\n]*(?:PASS|FAIL))/g`. Both ask the same question ("is there a trigger word later on
- * this line?") and a `(?=[^\n]*…)` lookahead answers it by re-scanning to end-of-line ONCE PER
- * TOKEN. That is quadratic in tokens-per-line, and measurably so: one line of 40 000 tokens took
- * 533 ms for `⛔` and 1 314 ms for `Gate` (the latter worse only because `Gate` is four characters
- * of scanning per attempt). Reports are assembled from free text that a caller controls, and the
- * JSON branch sweeps every string in the structure, so line length is bounded by nothing here.
- *
- * This computes the answer ONCE for the whole input instead: find where the last trigger starts,
- * then keep only the tokens that end at or before it. Semantics are preserved exactly — a token is
- * elided iff a trigger occurs AFTER it, which is what the lookahead meant.
- *
- * The input is the WHOLE text, not one line: see `neutralizeForeignGates` for why the line was the
- * wrong unit. The ordering rule is what keeps that widening safe — the alternative simplification
- * ("elide on any trigger anywhere") would elide `⛔ Audit Revise` whenever the document said
- * "Must fix" earlier, and the audit's own vocabulary surviving is a property this module is tested
- * on. Because a token is elided only when a trigger FOLLOWS it, and the gate sentinel is the last
- * line of the report by contract, widening the window cannot reach it.
+ * Answers "is there a trigger word later in the input?" ONCE, rather than per token. The lookahead
+ * form this replaced (`/Gate(?=[^\n]*(?:PASS|FAIL))/g`) re-scanned to end-of-line per token —
+ * quadratic, and measurably so on caller-controlled text: 1 314 ms for one 40 000-token line.
+ * Semantics are identical: a token is elided iff a trigger occurs AFTER it. Why the window is the
+ * whole text rather than one line, and why that widening cannot reach the audit's own sentinel:
+ * docs/features/necessity-audit/4-implementation.md §3.1.
  */
 function _elideBeforeTrigger(line, tokenRe, triggerRe, marker) {
   let lastTriggerStart = -1;

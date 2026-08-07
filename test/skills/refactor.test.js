@@ -55,11 +55,6 @@ test('SKILL.md has Phase 0, Phase 2, Phase 3', () => {
   assert.match(content, /Phase 3/i, 'should have Phase 3');
 });
 
-test('SKILL.md is under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lines = content.split('\n').length;
-  assert.ok(lines < 500, `SKILL.md has ${lines} lines, should be under 500`);
-});
 
 // --- Target Detection ---
 

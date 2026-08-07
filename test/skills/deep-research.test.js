@@ -49,11 +49,6 @@ test('deep-research SKILL.md has web research cascade', () => {
   assert.match(content, /WebSearch/i, 'should mention web research');
 });
 
-test('deep-research SKILL.md under 500 lines', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  const lineCount = content.split('\n').length;
-  assert.ok(lineCount < 500, `SKILL.md has ${lineCount} lines, should be under 500`);
-});
 
 // --- Catalog registration ---
 

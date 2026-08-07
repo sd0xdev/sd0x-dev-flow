@@ -49,6 +49,13 @@
       "sync_handler": "generic"
     },
     {
+      "id": "review-log",
+      "namespace": "ancillary",
+      "semantic_pattern": "^review-log-",
+      "heading_signals": ["Review Log", "審查紀錄", "逐輪審查"],
+      "sync_handler": null
+    },
+    {
       "id": "fp-brief",
       "namespace": "ancillary",
       "semantic_pattern": "-fp-brief\\.md$",

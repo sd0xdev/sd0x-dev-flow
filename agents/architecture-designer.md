@@ -3,6 +3,7 @@ name: architecture-designer
 description: Architecture design expert. Synthesizes code analysis, tech-spec context, and architecture advice into structured architecture documents with component diagrams, data flows, and architecture decisions.
 tools: Read, Grep, Glob, Bash(git:*), Bash(node:*)
 model: opus
+effort: high
 ---
 
 # Architecture Designer

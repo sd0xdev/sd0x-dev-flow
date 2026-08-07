@@ -3,6 +3,7 @@ name: refactor-reviewer
 description: Refactoring review expert. Evaluates refactoring risk and verifies behavior preservation.
 tools: Read, Grep, Glob, Bash(git diff *)
 model: opus
+effort: high
 ---
 
 # Refactor Reviewer Agent

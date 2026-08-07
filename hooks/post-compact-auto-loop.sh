@@ -399,7 +399,17 @@ if [[ -n "$NEXT" ]]; then
     ITER_LINE="[ITERATION_STATE] round=${ITER_ROUND}/${ITER_MAX}"
   fi
 
-  # R10: Think harder near-cap (opt-in)
+  # R10: Cap Diagnostic Protocol — AUXILIARY injection channel (opt-in).
+  #
+  # The PRIMARY checkpoint is not here and needs no switch: post-tool-review-state.sh emits
+  # `[STRATEGIC_RESET]` the round `current_round` first crosses the threshold. Both channels share
+  # `strategic_reset_fired`, so whichever fires first silences the other — that is the anti-loop
+  # cap ("1 diagnosis per change", rules/auto-loop.md § Cap Diagnostic Protocol) expressed in
+  # state rather than restated in two places.
+  #
+  # Reads `current_round` (this change's rounds), not the `total_rounds_session` near-cap form it
+  # replaced: that one could not fire at a fixed round at all, and on a long session it fired on
+  # effort already spent on changes that had since passed their gates.
   THINK_HARDER=""
   _PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
   _TH_ENABLED="false"
@@ -411,33 +421,49 @@ if [[ -n "$NEXT" ]]; then
   done
 
   if [[ "$_TH_ENABLED" == "true" ]]; then
-    TOTAL_SESSION=$(jq -r '.iteration_history.total_rounds_session // 0' "$STATE_FILE" 2>/dev/null || echo 0)
-    RESET_FIRED=$(jq -r '.iteration_history.strategic_reset_fired // false' "$STATE_FILE" 2>/dev/null || echo false)
-    # Same digit guard as ITER_ROUND/ITER_MAX above — TOTAL_SESSION reaches `[[ -ge ]]` directly.
-    [[ "$TOTAL_SESSION" =~ ^[0-9]+$ ]] || TOTAL_SESSION=0
-    THRESHOLD=$(( ITER_MAX - 3 ))
-    [[ "$THRESHOLD" -lt 1 ]] && THRESHOLD=1
-    if [[ "$TOTAL_SESSION" -ge "$THRESHOLD" ]] && [[ "$RESET_FIRED" != "true" ]]; then
-      THINK_HARDER="[STRATEGIC_RESET] Approaching iteration cap (${TOTAL_SESSION}/${ITER_MAX}). Diagnose the stall — one class from the closed set (rules/auto-loop.md § Cap Diagnostic Protocol):
-ARCHITECTURE: same defect recurs across files, fixing A breaks B -> stop patching, back to design
-DOC_TOO_LONG: target over the docs-numbering limit, repeated inconsistency findings -> split or shrink first
-ATTENTION_DIFFUSION: fixes introduce new defects -> shrink the batch, verify per item
-UNVERIFIED_CLAIM: blockers cluster on unmeasured claims -> measure first, record the command
-TIER_MISMATCH: findings persistently below the blocking threshold -> converge per tier, next gate
-REQUIREMENT_AMBIGUITY: reviewer and implementer disagree on correct -> ask the human
-Then ONE bounded adjustment, then back to the loop. Disposition — including every exception and the anti-loop cap — is defined by rules/auto-loop.md § Cap Diagnostic Protocol; this reminder adjudicates nothing."
-      # Mark as fired (write to state file). Same-dir mktemp + size guard + cleanup, matching the
-      # writers in post-tool-review-state.sh: a FIXED `${STATE_FILE}.tmp` name collides when two
-      # sessions compact at once (one truncates the other's partial write, then both rename), and
-      # without `-s` a jq that exits 0 having written nothing renames an EMPTY file over the state,
-      # which every downstream jq reader — stop-guard included — then treats as corrupt.
-      #
-      # The jq READ must happen inside the lock, not just the rename: the mtime-ordered `mv` is a
-      # whole-file replace, so anything committed by another writer after this read is discarded.
-      # Taking the lock first is what makes read+replace a single transaction. Lock unavailable →
-      # skip the mark entirely (see the header: re-firing the checklist is the safe direction).
-      if _lock; then
-        _srf_tmp=$(mktemp "${STATE_FILE}.XXXXXX" 2>/dev/null) || _srf_tmp=""
+    # Same digit guard as ITER_ROUND/ITER_MAX above — CKPT reaches `[[ -ge ]]` directly, and the
+    # env is untrusted input.
+    CKPT="${AUTO_LOOP_CHECKPOINT_ROUNDS:-10}"
+    [[ "$CKPT" =~ ^[0-9]+$ ]] && [[ "$CKPT" -ge 1 ]] || CKPT=10
+
+    # LOCK FIRST, then read. The eligibility inputs (round, flag) are re-read inside the lock and
+    # deliberately NOT taken from ITER_ROUND / the pre-lock read this block used to do, because a
+    # decision made outside the lock is stale by the time it is acted on, and both directions of
+    # staleness are wrong in a way that is invisible afterwards:
+    #   - the primary channel crosses the threshold in between → both channels emit for one change,
+    #     breaking "1 diagnosis per change";
+    #   - a passing precommit resets the flag in between → this blind `= true` marks the FRESH
+    #     cycle as already fired, silently disabling the checkpoint for the whole next change.
+    # `mv` is a whole-file replace, so read + rewrite + commit has to be one transaction; the lock
+    # is what makes it one. Lock unavailable → skip entirely (see the header: re-firing the
+    # checklist is the safe direction, marking the wrong cycle is not).
+    if _lock; then
+      _CKPT_ROUND=$(jq -r '.iteration_history.current_round // 0' "$STATE_FILE" 2>/dev/null) || _CKPT_ROUND=0
+      [[ "$_CKPT_ROUND" =~ ^[0-9]+$ ]] || _CKPT_ROUND=0
+      _CKPT_MAX=$(jq -r '.iteration_history.max_rounds // 30' "$STATE_FILE" 2>/dev/null) || _CKPT_MAX=30
+      [[ "$_CKPT_MAX" =~ ^[0-9]+$ ]] || _CKPT_MAX=30
+      # Fail-CLOSED on an unreadable flag, unlike the round/max reads above: those degrade to a
+      # value that only affects display, whereas an unreadable flag means the state file is not
+      # parseable — and the response to that is to leave it alone, not to rewrite it.
+      RESET_FIRED=$(jq -r '.iteration_history.strategic_reset_fired // false' "$STATE_FILE" 2>/dev/null) || RESET_FIRED=true
+
+      if [[ "$_CKPT_ROUND" -ge "$CKPT" ]] && [[ "$RESET_FIRED" != "true" ]]; then
+        # Staged INSIDE `$LOCKDIR`, matching `_lock_staging_file` in post-tool-review-state.sh, and
+        # this placement is a correctness property rather than tidiness. Staging beside the state
+        # file leaves the temp reachable after a takeover, which re-opens the whole window the lock
+        # exists to close: this writer holds the lock past its TTL and stages a temp; a contender
+        # judges the lock stale, renames it aside, acquires the successor and commits a verdict;
+        # this writer resumes and renames its still-reachable temp over that verdict. The
+        # `_own_lock` check before `mv` does not save it — the check can pass and the process be
+        # descheduled before the rename. Inside `$LOCKDIR` the takeover carries the temp away with
+        # the lock directory, so the displaced owner's `mv` has nothing to rename and fails, which
+        # is the outcome that was wanted all along.
+        #
+        # The rest matches the same writers: a FIXED `${STATE_FILE}.tmp` name collides when two
+        # sessions compact at once (one truncates the other's partial write, then both rename), and
+        # without `-s` a jq that exits 0 having written nothing renames an EMPTY file over the
+        # state, which every downstream jq reader — stop-guard included — then treats as corrupt.
+        _srf_tmp=$(mktemp "${LOCKDIR}/state.XXXXXX" 2>/dev/null) || _srf_tmp=""
         if [[ -n "$_srf_tmp" ]] && _own_lock; then
           if jq '.iteration_history.strategic_reset_fired = true' "$STATE_FILE" > "$_srf_tmp" 2>/dev/null \
              && [[ -s "$_srf_tmp" ]]; then
@@ -449,13 +475,28 @@ Then ONE bounded adjustment, then back to the loop. Disposition — including ev
             # four hooks already guards the rename itself (13 of them); this was the lone
             # exception. Losing the mark is harmless by design: the strategic-reset checklist
             # re-fires, which the header documents as the safe direction.
-            _own_lock && mv "$_srf_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_srf_tmp"
+            #
+            # THINK_HARDER is set here and nowhere else: the reminder belongs to the process that
+            # actually performed the false→true transition. Constructing it before the write is
+            # what let a loser of the race emit a checklist it did not earn.
+            if _own_lock && mv "$_srf_tmp" "$STATE_FILE" 2>/dev/null; then
+              THINK_HARDER="[STRATEGIC_RESET] Review round ${_CKPT_ROUND}/${_CKPT_MAX} on this change. Diagnose the stall — one class from the closed set (rules/auto-loop.md § Cap Diagnostic Protocol):
+ARCHITECTURE: same defect recurs across files, fixing A breaks B -> stop patching, back to design
+DOC_TOO_LONG: target over the docs-numbering limit, repeated inconsistency findings -> split or shrink first
+ATTENTION_DIFFUSION: fixes introduce new defects -> shrink the batch, verify per item
+UNVERIFIED_CLAIM: blockers cluster on unmeasured claims -> measure first, record the command
+TIER_MISMATCH: findings persistently below the blocking threshold -> converge per tier, next gate
+REQUIREMENT_AMBIGUITY: reviewer and implementer disagree on correct -> ask the human
+Then ONE bounded adjustment, then back to the loop. Disposition — including every exception and the anti-loop cap — is defined by rules/auto-loop.md § Cap Diagnostic Protocol; this reminder adjudicates nothing."
+            else
+              rm -f "$_srf_tmp"
+            fi
           else
             rm -f "$_srf_tmp"
           fi
         fi
-        _unlock
       fi
+      _unlock
     fi
   fi
 

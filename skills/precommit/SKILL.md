@@ -20,11 +20,14 @@ allowed-tools: Bash(node:*), Bash(pnpm:*), Bash(yarn:*), Bash(npm:*), Bash(npx:*
 
 | Step | Goal | Safety | Skip if Missing |
 |------|------|--------|----------------|
+| comment_blocks | Reject over-long comment blocks (`@rules/docs-writing.md` § Code Comments) | read-only | yes |
 | lint-fix | Auto-fix code style issues | read-write | yes |
 | build | Verify compilation succeeds | read-only | yes |
 | test-unit | Run full test suite | read-only | yes |
 
 **Failure behavior**: continue-all (run all steps, report all results)
+
+`comment_blocks` is a **policy** step, and the asymmetry is deliberate (`scripts/precommit-runner.js:41-46`): it can FAIL the run, but it never counts as "validation ran". A run where policy was the only thing that executed still reports `⚠️ NO CHECKS RUN`, so a repo whose real checks are pytest/cargo cannot bank a `✅ PASS` on a passing comment scan alone. It runs first because it is static and cheap.
 
 ## Task
 
