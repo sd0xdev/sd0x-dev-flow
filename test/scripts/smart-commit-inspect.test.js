@@ -704,7 +704,7 @@ const effectiveOf = (stdout, role) => stdout.trim().split('\n')
 const configuredOf = (stdout, role) => stdout.trim().split('\n')
   .find((l) => l.startsWith(`configured\t${role}\t`));
 
-test('P8r: `configured` answers `no` for both $EMAIL and a bare OS guess, `yes` for config or env', () => {
+test('P8r: `configured` answers `no` for both $EMAIL and a bare OS guess, `yes` for config or env', (t) => {
   // Round 15, P1. `effective` alone cannot tell a configured identity from git's OS guess —
   // both resolve to a `value` line. `configured` is `git -c user.useConfigOnly=true var
   // GIT_<ROLE>_IDENT`, asked the same way `effective` is: it refuses exactly the fallback half
@@ -737,10 +737,27 @@ test('P8r: `configured` answers `no` for both $EMAIL and a bare OS guess, `yes` 
     // it — see the file header comment), so `gitShim`'s `inject-sysconfig` mode is what actually
     // isolates this assertion from the real machine, pointed at `/dev/null` the same way the
     // stripped env var used to (round 21 review, P2).
+    //
+    // Whether the guess RESOLVES is a host property, probed rather than assumed: on a host
+    // whose hostname carries no domain (GitHub's Linux runners) git refuses with `unable to
+    // auto-detect email address … (none)` and the same state is `unresolvable`. Both outcomes
+    // are the finding — either way the source is nothing the operator set, and `configured`
+    // must answer `no`.
     git('config', '--unset', 'user.name');
+    const guessProbe = spawnSync('git', ['-C', dir, 'var', 'GIT_AUTHOR_IDENT'],
+      { encoding: 'utf8', env: gitShim(shimDir, 'inject-sysconfig', '/dev/null') });
+    assert.equal(guessProbe.error, undefined, 'the probe itself must run — a spawn failure is '
+      + 'not a failed guess');
     r = inspect(['identity'], { cwd: dir, env: gitShim(shimDir, 'inject-sysconfig', '/dev/null') });
-    assert.match(effectiveOf(r.stdout, 'author'), /^effective\tauthor\tvalue\t/,
-      'control: git\'s own guess still resolves to SOMETHING, which is the whole finding');
+    if (guessProbe.status === 0) {
+      assert.match(effectiveOf(r.stdout, 'author'), /^effective\tauthor\tvalue\t/,
+        'control: on this host git\'s own guess resolves to SOMETHING, which is the finding');
+    } else {
+      t.diagnostic('OS ident guess fails on this host — the bare-guess control degrades to '
+        + 'asserting git\'s refusal instead of a guessed value');
+      assert.equal(effectiveOf(r.stdout, 'author'), 'effective\tauthor\tunresolvable',
+        'on a host whose OS guess fails outright, the same state is git\'s own refusal');
+    }
     assert.equal(configuredOf(r.stdout, 'author'), 'configured\tauthor\tno',
       'a guess is grouped with EMAIL — from the operator\'s view neither is a value they set, '
       + 'and `git config --local` fixes both the same way');
@@ -758,36 +775,65 @@ test('P8r: `configured` answers `no` for both $EMAIL and a bare OS guess, `yes` 
 
 test('P8s: `configured` is asked per role and does not leak a `yes` from one role to the '
   + 'other; a role left fully unconfigured next to a configured one is `unresolvable`, not a '
-  + 'guess', () => {
+  + 'guess', (t) => {
   // Round 15, P1/P2-1/P2-3. author.*/committer.* outrank user.* for their own role only, so
   // a configured author must not make configured\tcommitter read `yes`. Measured, and
   // surprising enough to pin: this git (2.54.0) does NOT fall through to its OS guess for the
-  // committer's NAME once ANY author.*/committer.* config exists anywhere in the repo — a
-  // bare repo with zero identity config guesses fine for both roles, but author.name +
-  // author.email alone turns GIT_COMMITTER_IDENT into a `fatal: empty ident name` refusal.
-  // That is exactly the existing `unresolvable` row's job, so the design already covers it —
-  // this pins the case rather than assuming a `value` the way an untested guess would.
+  // committer's NAME once ANY author.*/committer.* config exists anywhere in the repo — on a
+  // host whose OS guess resolves at all (a host property, probed below), a bare repo guesses
+  // fine for both roles, yet author.name + author.email alone turns GIT_COMMITTER_IDENT into
+  // a `fatal: empty ident name` refusal. That is exactly the existing `unresolvable` row's
+  // job, so the design already covers it — this pins the case rather than assuming a `value`
+  // the way an untested guess would.
   const { dir, git } = makeRepo('configuredroles');
+  const shimDir = mkdtempSync(resolve(tmpdir(), 'sc-inspect-p8s-shim-'));
   try {
-    // Armed control: with nothing configured, both roles guess successfully.
-    const bare = inspect(['identity'], { cwd: dir });
-    assert.match(effectiveOf(bare.stdout, 'committer'), /^effective\tcommitter\tvalue\t/,
-      'control: a repo with zero identity config still guesses a committer ident');
+    // Armed control: with nothing configured, the committer role falls through to git's OS
+    // guess. Whether that guess RESOLVES is a host property (probed, not assumed — on
+    // GitHub's Linux runners the domainless hostname makes git refuse outright). The probe
+    // and the script read config through the SAME channel — the script unsets
+    // GIT_CONFIG_SYSTEM itself, so only `gitShim`'s `inject-sysconfig` mode isolates both
+    // sides alike from a real machine's system-scope user.*; a `hermetic()` probe next to a
+    // shimmed script call would diverge exactly there.
+    const shimEnv = () => gitShim(shimDir, 'inject-sysconfig', '/dev/null');
+    const bareProbe = spawnSync('git', ['-C', dir, 'var', 'GIT_COMMITTER_IDENT'],
+      { encoding: 'utf8', env: shimEnv() });
+    assert.equal(bareProbe.error, undefined, 'the probe itself must run — a spawn failure is '
+      + 'not a failed guess');
+    const bare = inspect(['identity'], { cwd: dir, env: shimEnv() });
+    if (bareProbe.status === 0) {
+      assert.match(effectiveOf(bare.stdout, 'committer'), /^effective\tcommitter\tvalue\t/,
+        'control: on this host a repo with zero identity config still guesses a committer ident');
+    } else {
+      t.diagnostic('OS ident guess fails on this host — the armed control degrades to '
+        + 'asserting the bare state is already unresolvable');
+      assert.equal(effectiveOf(bare.stdout, 'committer'), 'effective\tcommitter\tunresolvable',
+        'on a host whose OS guess fails outright, the bare state is already unresolvable');
+    }
 
     git('config', 'author.name', 'Author Person');
     git('config', 'author.email', 'author@example.invalid');
-    const r = inspect(['identity'], { cwd: dir });
+    const r = inspect(['identity'], { cwd: dir, env: shimEnv() });
     assert.equal(effectiveOf(r.stdout, 'author'),
       'effective\tauthor\tvalue\tAuthor Person <author@example.invalid>',
       'the configured author role resolves to the configured value');
-    assert.equal(effectiveOf(r.stdout, 'committer'), 'effective\tcommitter\tunresolvable',
-      'measured: author.* alone disables the OS guess for the untouched committer role');
+    if (bareProbe.status === 0) {
+      assert.equal(effectiveOf(r.stdout, 'committer'), 'effective\tcommitter\tunresolvable',
+        'measured: author.* alone disables the OS guess for the untouched committer role');
+    } else {
+      // The causal claim (author.* DISABLED a guess) needs a guess that worked to begin
+      // with; on this host the bare state was already unresolvable, so only the end state
+      // is asserted, without the causation the message above would falsely imply.
+      assert.equal(effectiveOf(r.stdout, 'committer'), 'effective\tcommitter\tunresolvable',
+        'the untouched committer role stays unresolvable next to a configured author');
+    }
     assert.equal(configuredOf(r.stdout, 'author'), 'configured\tauthor\tyes',
       'author.* alone is enough to configure the author role');
     assert.equal(configuredOf(r.stdout, 'committer'), 'configured\tcommitter\tno',
       'author.* does not configure the committer role, whatever effective says about it');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(shimDir, { recursive: true, force: true });
   }
 });
 
@@ -2891,7 +2937,19 @@ test('P18d: unmerged and typechange status codes are real, and SKILL.md has a ro
     git('checkout', '-q', mainBranch);
     writeFileSync(resolve(dir, 'c.txt'), 'mine\n');
     git('commit', '-q', '-am', 'my-side');
-    spawnSync('git', ['-C', dir, 'merge', 'other'], { env: hermetic() }); // conflicts; exit != 0 expected
+    // Identity is passed the same way makeRepo's own git() passes it (all three -c flags) —
+    // `git merge` resolves the committer ident BEFORE touching the index, so on a host whose
+    // OS guess fails (GitHub's Linux runners) an identity-less merge dies up front and no UU
+    // state is ever created. The three assertions pin that regression: the failure must be
+    // the CONFLICT itself, never an ident refusal that silently skips creating the fixture.
+    const merge = spawnSync('git', ['-C', dir, '-c', 'user.email=dev@example.com',
+      '-c', 'user.name=Dev', '-c', 'commit.gpgsign=false', 'merge', 'other'],
+    { encoding: 'utf8', env: hermetic() });
+    assert.equal(merge.error, undefined, 'the merge invocation itself must run');
+    assert.equal(merge.status, 1,
+      `the merge must fail on the CONFLICT, not on ident resolution: ${merge.stderr}`);
+    assert.match(merge.stdout, /CONFLICT/,
+      'regression: an ident refusal dies before any CONFLICT line is printed');
     const unmergedLine = inspect(['status'], { cwd: dir }).stdout.trim();
     assert.match(unmergedLine, /^UU c\.txt$/m, 'control: git really does emit UU for this conflict');
 
