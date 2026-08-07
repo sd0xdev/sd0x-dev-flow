@@ -370,6 +370,10 @@ skills:
     category: docs-tooling
     featured: false
     public: true
+  - command: /adr
+    category: docs-tooling
+    featured: false
+    public: true
   - command: /doc-refactor
     category: docs-tooling
     featured: false
