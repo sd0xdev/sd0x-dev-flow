@@ -13,7 +13,7 @@ v4 gives Claude discretion inside a closed, test-pinned anchor set; hooks preser
 Full control plane on Claude Code. Skills-only distribution for Codex CLI and other compatible agents.
 
 <!-- BEGIN:HERO-COUNT -->
-98 bundled · 98 public skills · 15 agents — ~4% of Claude's context window
+99 bundled · 99 public skills · 15 agents — ~4% of Claude's context window
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -42,12 +42,37 @@ npx skills add sd0xdev/sd0x-dev-flow
 <!-- BEGIN:INSTALL-COVERAGE -->
 | Method | Tools | Coverage |
 |--------|-------|----------|
-| Plugin install | Claude Code | Full (98 bundled skills, hooks, rules, auto-loop) |
-| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (98 public skills) |
+| Plugin install | Claude Code | Full (99 bundled skills, hooks, rules, auto-loop) |
+| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (99 public skills) |
 | `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
 **Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
+
+### Codex MCP registration
+
+```bash
+claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+```
+
+`-c 'model_reasoning_effort="high"'` is the default here because reviewing is the workload that
+pays for depth (`rules/auto-loop.md` § Review Dispatch applies the same principle to `agents/`
+frontmatter). It is a default, not a requirement — adjust or drop the value for your own
+effort/latency tradeoff. `-c` itself works whether it precedes or follows the `mcp-server`
+subcommand (both are documented, identically, by `codex --help` and `codex mcp-server --help`);
+after the subcommand is shown above only because that is the form `codex mcp-server --help` lists.
+
+`--profile` **cannot** be used with `codex mcp-server` at all — `codex --profile <name> mcp-server`
+fails outright (`codex-cli 0.146.0`, verbatim):
+
+```text
+Error: --profile only applies to runtime commands and `codex mcp`: `codex`, `codex exec`, `codex
+review`, `codex resume`, `codex archive`, `codex delete`, `codex unarchive`, `codex fork`, `codex
+mcp`, `codex sandbox`, and `codex debug prompt-input`.
+```
+
+`mcp-server` is not in that list, so a config profile cannot reach the review MCP server this way —
+set `-c` overrides directly on the registration command instead.
 
 ## Why v4
 
@@ -83,7 +108,7 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 | 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` gate sentinels parsed into their respective durable state planes; opt-in dual review additionally aggregates via a machine-facing `REVIEW_GATE=` marker | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (sentinel parser) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (dual-review `REVIEW_GATE=` producer) |
 | 3 | **Context recovery across compaction** | `[AUTO_LOOP_RESUME]` stdout injection after SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 hook event types dispatched to 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 89 of 98 public skills declare `allowed-tools` |
+| 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 90 of 99 public skills declare `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex reviews what Claude wrote, researching the repo independently — never handed a conclusion to confirm | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | Per-tier round budget (default 3 / 5 / 30, overridable 3–50) + cap diagnostic: first cap hit triggers a structured stall classification and one bounded adjustment, with enumerated human exits | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
@@ -257,7 +282,7 @@ Real-world scenarios showing which skills to combine and in what order.
 <!-- BEGIN:WHATS-INCLUDED-COUNT -->
 | Category | Count | Examples |
 |----------|-------|---------|
-| Skills | 98 public (98 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
+| Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
@@ -301,7 +326,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 <!-- BEGIN:FULL-CATALOG -->
 <details>
-<summary>All 98 public skills</summary>
+<summary>All 99 public skills</summary>
 
 ### Development (33)
 
@@ -401,10 +426,11 @@ Skills load on-demand. Idle skills cost zero tokens.
 | `/tech-spec` | Tech spec generation and review. |
 | `/ui-first-principles` | First-principles UI/IA reasoning: turns a `<scenario>` + API field set into JTBD analysis, principle-anchored field-p... |
 
-### Documentation & Tooling (20)
+### Documentation & Tooling (21)
 
 | Skill | Description |
 |-------|-------------|
+| `/adr` | Write an Architecture Decision Record (ADR) for a feature — Context / Decision / Status / Consequences / Alternatives... |
 | `/claude-health` | Claude Code config health check + plugin sync. |
 | `/contract-decode` | EVM contract error and calldata decoder. |
 | `/create-request` | Create, update, or scan per-task request tickets for progress tracking. |
