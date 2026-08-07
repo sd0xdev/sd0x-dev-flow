@@ -6,6 +6,10 @@
 
 **One reviewer — Codex — everywhere by default.** `/codex-review-fast` and `/codex-review-doc` must not launch a secondary. Opt-in dual: `/codex-review-branch --dual` only, off unless the flag is passed. Loop re-review: `--continue` re-dispatches Codex on the same thread. Cycle reset: any code edit invalidates prior verdicts — the reviewer must re-run regardless of prior pass status.
 
+**Codex unavailable is not a fallback — it is `⚠️ Need Human`.** A built-in reviewer agent may be run when the user asks for one, and what it produces is **advisory findings, never a gate verdict**: substituting it silently swaps the reviewer the gate was defined against. The contract lives in `skills/codex-code-review/SKILL.md` § Step 2 and `references/review-common.md` § Degradation Matrix — read those rather than re-deriving it here. Two facts worth knowing before you reach for one: the receipt hook recognizes producers by **command name** (`/codex-review*`, `/review-spec`), so a Task agent closes no gate whatever its output says; and `/review-spec` **is** a recognized doc-plane producer, which makes it the one skill-sanctioned path that both uses a built-in agent and records a receipt.
+
+**Agent defaults**: every agent in `agents/` declares `model: opus` and `effort: high` in its frontmatter. Reviewing is the workload that pays for depth, and an agent that silently ran at a lower tier would look like a passing review. Pinned by `test/agents/frontmatter.test.js`; change the default there and in this line together.
+
 ## Tiers
 
 The configured tier (`auto-loop-project.md ## Tier`, unset → `standard`) is a **baseline, not a ceiling**: choose the effective tier from the change's semantics, escalating above the baseline when warranted, never dropping below it. A security or data-integrity change is treated as `thorough` whatever is configured — escalate, and say that you did.

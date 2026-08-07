@@ -4,6 +4,7 @@ description: Technical spec review expert. Reviews technical documents for compl
 tools: Read, Grep, Glob, Bash(git:*), Bash(node:*)
 skills: tech-spec
 model: opus
+effort: high
 ---
 
 Execute the flow defined in the skill: @skills/tech-spec/SKILL.md

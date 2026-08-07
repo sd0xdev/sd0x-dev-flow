@@ -3,6 +3,7 @@ name: strict-reviewer
 description: "Strict code reviewer. Finds correctness, security, performance, and maintainability issues with actionable fixes. Use proactively after code changes."
 tools: Bash, Read, Grep, Glob
 model: opus
+effort: high
 ---
 
 # Strict Reviewer

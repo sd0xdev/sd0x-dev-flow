@@ -3,6 +3,7 @@ name: verify-app
 description: Verification expert. Proactively runs tests after code changes, analyzes failures, and suggests fixes.
 tools: Read, Grep, Glob, Bash, Edit
 model: opus
+effort: high
 ---
 
 # Verify App

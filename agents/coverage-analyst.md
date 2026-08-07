@@ -3,6 +3,7 @@ name: coverage-analyst
 description: Test coverage analysis expert. Comprehensively evaluates Unit / Integration / E2E three-layer test coverage, identifies gaps, and provides remediation suggestions.
 tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*)
 model: opus
+effort: high
 ---
 
 # Test Coverage Analyst

@@ -3,6 +3,7 @@ name: performance-optimizer
 description: Performance optimization expert. Identifies N+1 queries, memory leaks, and slow queries.
 tools: Read, Grep, Glob
 model: opus
+effort: high
 ---
 
 # Performance Optimizer Agent

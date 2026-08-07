@@ -3,6 +3,7 @@ name: solution-architect
 description: Solution deepening expert. Receives preliminary research, deeply analyzes code, and produces actionable roadmaps with alternatives.
 tools: Read, Grep, Glob, Bash(git:*), Bash(node:*)
 model: opus
+effort: high
 ---
 
 # Solution Architect
