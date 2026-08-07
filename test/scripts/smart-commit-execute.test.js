@@ -118,6 +118,27 @@ function stage(repo, message, files = ['a.txt']) {
   return msgFile;
 }
 
+/**
+ * Re-write already-staged files with identical bytes, so their mtime no longer matches the
+ * index's stat data and `git commit` is forced to re-read them.
+ *
+ * A `clean` filter fires only on that re-read. Straight after `git add` the index's stat
+ * info is fresh and trusted, so git skips the re-read and the filter never runs. Measured
+ * under parallel load: the attributesFile control below lost its marker 5 times in 240 runs
+ * without this call and 0 times in 600 with it — and the commit exited 0 in every one of
+ * those failures, so nothing failed except the filter not running.
+ *
+ * Both sides of that test call this so they differ only in the pin. The skip has been
+ * observed only on the raw-control side; on the pinned side, deleting the pin still fails
+ * the test without this call (measured), so it is symmetry and not a known vacuity.
+ */
+function dirtyStat(dir, files = ['a.txt']) {
+  for (const f of files) {
+    const p = join(dir, f);
+    writeFileSync(p, readFileSync(p));
+  }
+}
+
 /* ------------------------------------------------------------------ dispatch.sh */
 
 test('dispatch.sh --allowlist → exactly the four permitted commands', () => {
@@ -356,8 +377,12 @@ test('commit pins core.fsmonitor=false, so a HOME-configured command cannot run'
   const controlRepo = mkRepo();
   writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
   controlRepo.git('add', 'a.txt');
-  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+  const control = spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
     { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  // Assert the control COMMITTED before reading the marker: a control that never ran leaves
+  // the marker absent too, and reports as "the knob is already suppressed" — the one verdict
+  // this fixture must never produce for free.
+  assert.equal(control.status, 0, `the control commit must succeed: ${control.stderr}`);
   assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the fsmonitor command');
   rmSync(marker, { force: true });
 
@@ -386,12 +411,16 @@ test('commit pins core.attributesFile=/dev/null, so a HOME-configured clean filt
   const controlRepo = mkRepo();
   writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
   controlRepo.git('add', 'a.txt');
-  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+  dirtyStat(controlRepo.dir);
+  const control = spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
     { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.equal(control.status, 0, `the control commit must succeed: ${control.stderr}`);
   assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the clean filter');
   rmSync(marker, { force: true });
 
   const msgFile = stage(repo, 'feat: Add a.txt\n');
+  // The same forced re-read on the pinned side, so the two runs differ only in the pin.
+  dirtyStat(repo.dir);
   const r = run(repo.dir, ['commit', msgFile], { env: { HOME: attackHome } });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(existsSync(marker), false,
@@ -416,8 +445,9 @@ test('commit overrides a non-local core.hooksPath, so a HOME-configured pre-comm
   const controlRepo = mkRepo();
   writeFileSync(join(controlRepo.dir, 'a.txt'), 'content of a.txt\n');
   controlRepo.git('add', 'a.txt');
-  spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
+  const control = spawnSync('git', ['-C', controlRepo.dir, 'commit', '-q', '-m', 'control'],
     { encoding: 'utf8', env: { ...process.env, HOME: attackHome } });
+  assert.equal(control.status, 0, `the control commit must succeed: ${control.stderr}`);
   assert.ok(existsSync(marker), 'the fixture must be live: a raw commit under the attack HOME must run the pre-commit hook');
   rmSync(marker, { force: true });
 
