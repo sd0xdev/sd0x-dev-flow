@@ -6,35 +6,70 @@ const {
   mkdirSync,
   rmSync,
 } = require('node:fs');
-const { join, resolve } = require('node:path');
+const { join, resolve, dirname } = require('node:path');
 const { tmpdir } = require('node:os');
 const { execFileSync } = require('node:child_process');
 
 const scriptPath = resolve(__dirname, '../../skills/risk-assess/scripts/risk-analyze.js');
 const tempDirs = [];
 
+// Identity is passed per-invocation rather than written into the repo config so the
+// fixture never depends on the developer's global gitconfig. `commit.gpgsign=false`
+// is part of that: this repo's own contributors sign by default, and a fixture that
+// inherits it makes every commit wait on a GPG agent that has no business here.
+const COMMIT_CONFIG = [
+  '-c', 'user.name=test',
+  '-c', 'user.email=test@test',
+  '-c', 'commit.gpgsign=false',
+];
+
+// Never `stdio: 'ignore'` — that discards git's stderr, and a failure then reads
+// only "Command failed: git ... commit -m add src/dir5/mod21.ts" with no cause,
+// which is exactly how CI run 31167731942 became undiagnosable.
+function runGit(dir, args, { identity = false } = {}) {
+  const full = identity ? [...COMMIT_CONFIG, ...args] : args;
+  try {
+    return execFileSync('git', full, {
+      cwd: dir,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    const stderr = (err.stderr || '').toString().trim();
+    const stdout = (err.stdout || '').toString().trim();
+    throw new Error(
+      `git ${full.join(' ')} failed (exit ${err.status}) in ${dir}\n` +
+        `  stderr: ${stderr || '(empty)'}\n` +
+        `  stdout: ${stdout || '(empty)'}`
+    );
+  }
+}
+
 function createTempRepo() {
   const dir = mkdtempSync(join(tmpdir(), 'sd0x-risk-'));
   tempDirs.push(dir);
-  execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '--allow-empty', '-m', 'init'],
-    { cwd: dir, stdio: 'ignore' }
-  );
+  runGit(dir, ['init']);
+  runGit(dir, ['commit', '--allow-empty', '-m', 'init'], { identity: true });
   return dir;
 }
 
+// One `git add` + one `git commit` for the whole batch. Callers that only need N
+// files present in HEAD (rather than N distinct commits) must use this: the
+// per-file variant spawns 2 processes each, and a 30-file loop was 60 spawns of
+// which any single transient failure sank the test.
+function commitFiles(dir, entries, message) {
+  for (const [filePath, content] of entries) {
+    mkdirSync(join(dir, dirname(filePath)), { recursive: true });
+    writeFileSync(join(dir, filePath), content);
+  }
+  runGit(dir, ['add', '--', ...entries.map(([filePath]) => filePath)]);
+  runGit(dir, ['commit', '-m', message], { identity: true });
+}
+
+// Single-file convenience wrapper. Use it when the test needs this file to land in
+// its OWN commit (e.g. anything asserting against `HEAD~n`); otherwise batch.
 function commitFile(dir, filePath, content) {
-  const fullPath = join(dir, filePath);
-  mkdirSync(join(dir, require('path').dirname(filePath)), { recursive: true });
-  writeFileSync(fullPath, content);
-  execFileSync('git', ['add', filePath], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', `add ${filePath}`],
-    { cwd: dir, stdio: 'ignore' }
-  );
+  commitFiles(dir, [[filePath, content]], `add ${filePath}`);
 }
 
 function runRisk(dir, extraArgs = []) {
@@ -94,7 +129,7 @@ test('simple file add — Low score, exit 0', () => {
   const dir = createTempRepo();
   // Add a new file without committing (unstaged change)
   writeFileSync(join(dir, 'newfile.ts'), 'const x = 1;\n');
-  execFileSync('git', ['add', 'newfile.ts'], { cwd: dir, stdio: 'ignore' });
+  runGit(dir, ['add', '--', 'newfile.ts']);
   // The diff is HEAD vs staged, so we need to check against HEAD
   // Actually the script diffs against HEAD by default
   const { output, exitCode } = runRisk(dir);
@@ -144,9 +179,14 @@ test('high blast radius — file imported by many others', () => {
   // Create a shared module
   commitFile(dir, 'src/shared.ts', 'export const shared = 1;\n');
   // Create 12 files that import it
-  for (let i = 0; i < 12; i++) {
-    commitFile(dir, `src/consumer${i}.ts`, `import { shared } from './shared';\nconsole.log(shared);\n`);
-  }
+  commitFiles(
+    dir,
+    Array.from({ length: 12 }, (_, i) => [
+      `src/consumer${i}.ts`,
+      `import { shared } from './shared';\nconsole.log(shared);\n`,
+    ]),
+    'add 12 consumers'
+  );
   // Now modify the shared module
   writeFileSync(join(dir, 'src/shared.ts'), 'export const shared = 2;\n');
   const { output } = runRisk(dir);
@@ -162,7 +202,7 @@ test('zero blast radius — new file with no importers', () => {
   commitFile(dir, 'src/existing.ts', 'export const x = 1;\n');
   // Add a brand new file that nobody imports
   writeFileSync(join(dir, 'src/brand-new.ts'), 'export const y = 2;\n');
-  execFileSync('git', ['add', 'src/brand-new.ts'], { cwd: dir, stdio: 'ignore' });
+  runGit(dir, ['add', '--', 'src/brand-new.ts']);
   const { output } = runRisk(dir);
   // The brand-new file should have 0 dependents
   const newFileEntry = output.dimensions.blast_radius.top_affected.find(t => t.file.includes('brand-new'));
@@ -179,10 +219,18 @@ test('zero blast radius — new file with no importers', () => {
 // ---------------------------------------------------------------------------
 test('large scope — many files touched', () => {
   const dir = createTempRepo();
-  // Commit base files
-  for (let i = 0; i < 30; i++) {
-    commitFile(dir, `src/dir${i % 8}/mod${i}.ts`, `export const x${i} = ${i};\n`);
-  }
+  // Commit base files. `change_scope` is measured from `git diff HEAD` alone
+  // (risk-analyze.js: `BASE = argVal('--base') || 'HEAD'`), so these 30 files only
+  // need to be present in HEAD — 30 separate commits bought nothing and cost 60
+  // process spawns, which is where this test used to fail intermittently in CI.
+  commitFiles(
+    dir,
+    Array.from({ length: 30 }, (_, i) => [
+      `src/dir${i % 8}/mod${i}.ts`,
+      `export const x${i} = ${i};\n`,
+    ]),
+    'add 30 base modules'
+  );
   // Modify all of them
   for (let i = 0; i < 30; i++) {
     writeFileSync(join(dir, `src/dir${i % 8}/mod${i}.ts`), `export const x${i} = ${i + 100};\n`);
@@ -213,7 +261,7 @@ test('migration file detected — migration_safety triggered', () => {
   // Add a migration file
   mkdirSync(join(dir, 'migrations'), { recursive: true });
   writeFileSync(join(dir, 'migrations/001_create_users.sql'), 'CREATE TABLE users (id INT);');
-  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  runGit(dir, ['add', '.']);
   const { output } = runRisk(dir);
   assert.equal(output.flags.migration_safety.triggered, true);
   assert.ok(output.flags.migration_safety.files.length > 0, 'Should have migration files');
@@ -227,7 +275,7 @@ test('migration with rollback — has_rollback = true', () => {
   mkdirSync(join(dir, 'migrations'), { recursive: true });
   writeFileSync(join(dir, 'migrations/001_up.sql'), 'CREATE TABLE users (id INT);');
   writeFileSync(join(dir, 'migrations/001_down.sql'), 'DROP TABLE users;');
-  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  runGit(dir, ['add', '.']);
   const { output } = runRisk(dir);
   assert.equal(output.flags.migration_safety.triggered, true);
   assert.equal(output.flags.migration_safety.has_rollback, true);
@@ -245,9 +293,14 @@ test('risk levels — Low/Medium/High/Critical thresholds', () => {
 
   // Medium: need score 30-49 — moderate change scope
   const dir2 = createTempRepo();
-  for (let i = 0; i < 8; i++) {
-    commitFile(dir2, `src/dir${i}/mod${i}.ts`, `export const x${i} = ${i};\n`);
-  }
+  commitFiles(
+    dir2,
+    Array.from({ length: 8 }, (_, i) => [
+      `src/dir${i}/mod${i}.ts`,
+      `export const x${i} = ${i};\n`,
+    ]),
+    'add 8 base modules'
+  );
   for (let i = 0; i < 8; i++) {
     writeFileSync(join(dir2, `src/dir${i}/mod${i}.ts`), `export const x${i} = ${i + 100};\nexport const y${i} = ${i};\n`);
   }
@@ -351,12 +404,14 @@ test('gate sentinels — PASS for low risk', () => {
 test('rename-heavy refactor — high rename_ratio', () => {
   const dir = createTempRepo();
   // Create files then rename them
-  for (let i = 0; i < 5; i++) {
-    commitFile(dir, `src/old${i}.ts`, `export const x${i} = ${i};\n`);
-  }
+  commitFiles(
+    dir,
+    Array.from({ length: 5 }, (_, i) => [`src/old${i}.ts`, `export const x${i} = ${i};\n`]),
+    'add 5 modules to rename'
+  );
   // Rename all files using git mv
   for (let i = 0; i < 5; i++) {
-    execFileSync('git', ['mv', `src/old${i}.ts`, `src/new${i}.ts`], { cwd: dir, stdio: 'ignore' });
+    runGit(dir, ['mv', `src/old${i}.ts`, `src/new${i}.ts`]);
   }
   const { output } = runRisk(dir);
   assert.ok(output.dimensions.change_scope.metrics.rename_ratio > 0, `Expected rename_ratio > 0, got ${output.dimensions.change_scope.metrics.rename_ratio}`);
@@ -419,9 +474,14 @@ test('next_actions commands use qualified /sd0x-dev-flow: prefix when present', 
   const exports = [];
   for (let i = 0; i < 20; i++) exports.push(`export function fn${i}() { return ${i}; }`);
   commitFile(dir, 'src/api.ts', exports.join('\n') + '\n');
-  for (let i = 0; i < 15; i++) {
-    commitFile(dir, `src/consumer${i}.ts`, `import { fn0 } from './api';\nconsole.log(fn0());\n`);
-  }
+  commitFiles(
+    dir,
+    Array.from({ length: 15 }, (_, i) => [
+      `src/consumer${i}.ts`,
+      `import { fn0 } from './api';\nconsole.log(fn0());\n`,
+    ]),
+    'add 15 consumers'
+  );
   // Remove most exports — heavy breaking change
   writeFileSync(join(dir, 'src/api.ts'), 'export function fn0() { return 0; }\n');
   // Also modify many files for high scope
@@ -445,4 +505,80 @@ test('next_actions commands use qualified /sd0x-dev-flow: prefix when present', 
       assert.ok(!cmd.startsWith('/') || cmd.startsWith('/sd0x-dev-flow:'), `Unexpected unqualified command: ${cmd}`);
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// Test 24: regression — a failing git command reports git's own stderr
+//
+// CI run 31167731942 failed here with "Command failed: git ... commit -m add
+// src/dir5/mod21.ts" and nothing else, because every call passed `stdio: 'ignore'`.
+// The cause was unrecoverable from the log. This pins the diagnostic.
+// ---------------------------------------------------------------------------
+test('runGit failure surfaces git stderr, exit status and cwd — not a bare "Command failed"', () => {
+  const dir = createTempRepo();
+
+  // `checkout` of a ref that cannot exist. Measured: exit 1, stderr
+  // "error: pathspec 'no-such-ref-3f9a2c' did not match any file(s) known to git".
+  // `assert.throws` returns undefined, so the error is captured by hand.
+  let err;
+  try {
+    runGit(dir, ['checkout', 'no-such-ref-3f9a2c']);
+  } catch (e) {
+    err = e;
+  }
+  assert.ok(err, 'runGit must throw when git exits non-zero');
+
+  assert.match(err.message, /no-such-ref-3f9a2c/, 'must name the ref git rejected');
+  assert.match(err.message, /stderr:/, 'must carry a stderr section');
+  assert.match(err.message, /exit 1\b/, "must report git's exit status");
+  assert.ok(err.message.includes(dir), 'must name the repo the command ran in');
+  // The old behaviour: node's own message with no cause attached. If `stdio` goes
+  // back to 'ignore', `stderr:` above reads "(empty)" and this line is what says why.
+  assert.doesNotMatch(err.message, /stderr: \(empty\)/, 'stderr must not be discarded');
+});
+
+// ---------------------------------------------------------------------------
+// Test 25: negative control for Test 24 — the guard must not fire on success.
+// Without it, replacing runGit's body with an unconditional `throw` would keep
+// Test 24 green while breaking every other test in this file.
+// ---------------------------------------------------------------------------
+test('runGit returns stdout on success and does not throw', () => {
+  const dir = createTempRepo();
+  const out = runGit(dir, ['rev-list', '--count', 'HEAD']);
+  assert.equal(out.trim(), '1', 'the init commit is the only one in a fresh fixture');
+});
+
+// ---------------------------------------------------------------------------
+// Test 26: regression — commitFiles stages the WHOLE batch in ONE commit
+//
+// The flake's mechanism was 2 process spawns per file. Batching is only a valid
+// substitution if the resulting tree is identical; this asserts both halves —
+// same files in HEAD, fewer commits to get them there.
+// ---------------------------------------------------------------------------
+test('commitFiles produces the same HEAD tree as per-file commits, in a single commit', () => {
+  const entries = [
+    ['src/dir0/a.ts', 'export const a = 1;\n'],
+    ['src/dir1/b.ts', 'export const b = 2;\n'],
+    ['src/dir1/c.ts', 'export const c = 3;\n'],
+  ];
+
+  const batched = createTempRepo();
+  commitFiles(batched, entries, 'add batch');
+
+  const perFile = createTempRepo();
+  for (const [filePath, content] of entries) commitFile(perFile, filePath, content);
+
+  const treeOf = dir => runGit(dir, ['ls-tree', '-r', 'HEAD', '--name-only']).trim().split('\n').sort();
+  const commitsOf = dir => Number(runGit(dir, ['rev-list', '--count', 'HEAD']).trim());
+
+  assert.deepEqual(treeOf(batched), treeOf(perFile), 'both routes must land the same files in HEAD');
+  assert.deepEqual(treeOf(batched), ['src/dir0/a.ts', 'src/dir1/b.ts', 'src/dir1/c.ts']);
+
+  // init + 1 batch vs init + 3 singles — this is the spawn reduction, asserted.
+  assert.equal(commitsOf(batched), 2, 'batch must be exactly one commit on top of init');
+  assert.equal(commitsOf(perFile), 4, 'per-file must be one commit each — the behaviour being replaced');
+
+  // A clean tree afterwards proves `git add` missed nothing (an unstaged leftover
+  // would show here, and would have made the batch silently lossy).
+  assert.equal(runGit(batched, ['status', '--porcelain']).trim(), '', 'no file left unstaged');
 });
