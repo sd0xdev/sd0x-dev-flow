@@ -362,16 +362,44 @@ Check precommit status by change type — structural `.md` under `skills/` has t
 | Code files (`.ts/.js/.py/.go/.rs` etc.) | `/precommit` or `/precommit-fast` passed | Code correctness + lint |
 | Structural `.md` (`skills/**`) | `/precommit-fast` passed | Schema/ref tests cover SKILL.md structure |
 | Other `.md` (README, docs/) | `/codex-review-doc` passed (per CLAUDE.md) | No structural tests; doc review sufficient |
-| Comments / trivial whitespace | Skip allowed | No test coverage expected |
+| Trivial whitespace in non-code files | Skip allowed | No test coverage expected. Comment edits inside code files are **not** here — `CLAUDE.md` classifies them conservatively as code (comments can carry compiler/lint/build directives), so they follow the code-file row above |
 
-| Status | Action |
-|--------|--------|
-| Required check passed **in current session after last edit** | Continue |
-| Not run, stale, or uncertain | **Halt** — ask user to run the required check first |
+**Default: advisory, not a gate.** `/smart-commit` can be invoked before review has ever run — the
+terminal completion invariant (`rules/auto-loop.md`) constrains the moment a *change* is declared
+complete, not the moment this skill is called — so on the common path, where auto-loop already ran
+review and precommit and recorded the receipt, re-halting on the same evidence is friction, not
+added safety.
 
-**Freshness**: A "passed" result is only valid if it ran after the most recent file edits in this session. Stale results from earlier in the session do not count.
+| Status | Default action | `--strict-preflight` action |
+|--------|-----------------|------------------------------|
+| Required check passed **in current session after last edit** | Continue (silent) | Continue (silent) |
+| Not run, stale, or uncertain | ⚠️ **Warn and continue** — name the missing/stale gate(s) and the exact command to close each one | **Halt** — ask user to run the required check first |
 
-**Policy note**: Deliberately stricter than `@rules/auto-loop.md`, which requires only `/codex-review-doc` for `.md`. This is the last gate before commit, and the structural tests above catch reference errors a doc review cannot.
+**`--strict-preflight`**: opt-in flag restoring the original Halt behavior for the not-fresh row —
+the passed row already continues silently in both columns, so there is nothing for the flag to
+change there. Manual and `--execute` modes honor it identically — the flag changes Step 2's own
+decision, not which mode invoked the skill.
+
+**The warning must be actionable** — name the gate and the command, not just "not passed":
+
+```
+⚠️ Pre-flight: 2 of 3 changed files have no fresh check this session.
+  - src/service/rpc.ts (code): run /precommit-fast or /precommit
+  - docs/features/x/2-tech-spec.md (other .md): run /codex-review-doc
+Continuing without --strict-preflight. Pass --strict-preflight to halt on this instead.
+```
+
+**Freshness**: A "passed" result is only valid if it ran after the most recent file edits in this
+session. Stale results from earlier in the session do not count — freshness decides *which* row
+above applies, not whether that row warns or halts.
+
+**Policy note**: see "Default: advisory, not a gate" above for the rationale — this only relaxes
+this skill's own *extra* pass over already-recorded receipts; `@rules/auto-loop.md`'s gates are
+unaffected, and `/precommit`/`/codex-review-doc` are not exempted for anyone still passing through
+them. Worth stating plainly: in this repo's shipped configuration `hooks/stop-guard.sh` defaults to
+`warn`, not `strict` — so Step 2's own Halt was, in practice, the only *blocking* barrier between an
+unreviewed edit and a commit. `--strict-preflight` is how to restore that barrier, not a stylistic
+preference.
 
 **Fast vs full**: `/precommit-fast` runs `test:fast`; CI runs `test:ci`. Deletions (skills, scripts) can leave orphaned test files that only fail in CI, so when only `/precommit-fast` ran, output: `⚠️ Only fast tests ran. If you deleted files, consider /precommit (full suite) to catch orphaned imports before commit.`
 
@@ -514,7 +542,11 @@ INSPECT="$REPO_ROOT/.claude/scripts/smart-commit-inspect.sh"
 /bin/bash -p -- "$INSPECT" branch
 ```
 
-Show grouping plan and ask user to confirm. Include identity, signing, and AI guard metadata from Step 1c/1d/1e:
+Show grouping plan and ask user to confirm. Include identity, signing, and AI guard metadata from
+Step 1c/1d/1e, and the pre-flight verdict from Step 2 — in `--execute` mode this is the same block
+`AskUserQuestion` shows, so the approval screen carries pre-flight state rather than only the
+grouping. **Pre-flight** is one of `passed` / `stale` / `not run`; when it is not `passed`, append
+the same actionable gate+command list Step 2 warns with, and whether `--strict-preflight` is set:
 
 ```
 ## Commit Plan
@@ -523,6 +555,10 @@ Show grouping plan and ask user to confirm. Include identity, signing, and AI gu
 **Author**: Jane Doe <jane@company.com> (local config)
 **Signing**: enabled (GPG, key: ABCD1234)
 **AI guard**: active (commit-msg hook installed)
+**Pre-flight**: stale (2 of 3 changed files have no fresh check this session)
+  - src/service/rpc.ts (code): run /precommit-fast or /precommit
+  - docs/features/x/2-tech-spec.md (other .md): run /codex-review-doc
+  --strict-preflight: not set
 
 | # | Type | Files | Summary |
 |---|------|-------|---------|

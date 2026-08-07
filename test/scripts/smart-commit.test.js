@@ -2120,3 +2120,156 @@ test('F6: the frontmatter pre-authorizes every tool the execute path uses, and n
   assert.deepEqual(grants, ['bash', 'env', 'git'],
     'the execute path issues exactly one shell command — launching the script');
 });
+
+// ── Step 2 pre-flight: advisory default, --strict-preflight opt-in ─────────
+//
+// Step 2 has no shell script of its own — it is prose Claude follows at runtime — so unlike
+// the guard/executor tests above, these pin the SKILL.md TEXT itself: the decision table's
+// wording, the warning example, and the Commit Plan template. A mutation control proves the
+// positive assertion is not vacuous, same discipline as F1k for execute-mode.md.
+
+function step2Section() {
+  const src = readFileSync(skillPath, 'utf8');
+  const start = src.indexOf('### Step 2: Pre-flight Check');
+  const end = src.indexOf('### Step 3: Collect Changes');
+  assert.ok(start > -1 && end > start, 'Step 2 section must exist between its own heading and Step 3');
+  return src.slice(start, end);
+}
+
+// Shared by the positive test and its control below, so a regression in *how* the row is
+// located (not just its wording) breaks both — the control isn't just a duplicated literal.
+function parseDecisionRow(section, needle) {
+  const row = section.split('\n').find((l) => l.trim().startsWith('|') && l.includes(needle));
+  assert.ok(row, `decision table must carry a row containing "${needle}"`);
+  return row.split('|').map((c) => c.trim());
+}
+
+test('Step 2 pre-flight: default action is warn-and-continue, not Halt', () => {
+  const section = step2Section();
+  // Table columns: | Status | Default action | --strict-preflight action |
+  const cols = parseDecisionRow(section, 'Not run, stale, or uncertain');
+  assert.match(cols[2], /Warn and continue/,
+    `default action must be advisory, not a halt: ${cols.join('|')}`);
+  assert.doesNotMatch(cols[2], /^\*\*Halt\*\*/,
+    `default column must not open with Halt — that is the old unconditional behavior: ${cols.join('|')}`);
+  assert.match(cols[3], /\*\*Halt\*\*/,
+    `--strict-preflight column must restore Halt: ${cols.join('|')}`);
+});
+
+test('control: reverting the default column to Halt fails the advisory-default assertion', () => {
+  // Routed through the SAME parseDecisionRow the positive test uses (F1k-style discipline):
+  // a regression in row-location logic, not just row wording, would also break this control.
+  const mutantSection = [
+    '### Step 2: Pre-flight Check',
+    '',
+    '| Status | Default action | `--strict-preflight` action |',
+    '|--------|-----------------|------------------------------|',
+    '| Required check passed **in current session after last edit** | Continue (silent) | Continue (silent) |',
+    '| Not run, stale, or uncertain | **Halt** — ask user to run the required check first | **Halt** — ask user to run the required check first |',
+  ].join('\n');
+  const cols = parseDecisionRow(mutantSection, 'Not run, stale, or uncertain');
+  assert.doesNotMatch(cols[2], /Warn and continue/,
+    'the mutant must NOT satisfy the advisory-default wording — otherwise the real assertion proves nothing');
+});
+
+test('Step 2 pre-flight: --strict-preflight is documented as opt-in, not the default', () => {
+  const section = step2Section();
+  assert.match(section, /^\*\*`--strict-preflight`\*\*: opt-in flag restoring the original Halt behavior/m,
+    'the flag must be introduced as opt-in, restoring the prior behavior — not as the default');
+});
+
+test('control: describing --strict-preflight as default-on fails the opt-in assertion', () => {
+  const mutantLine = '**`--strict-preflight`**: default-on flag restoring the original Halt behavior for the not-fresh row.';
+  assert.doesNotMatch(mutantLine, /^\*\*`--strict-preflight`\*\*: opt-in flag restoring the original Halt behavior/m,
+    'a default-on description must not satisfy the opt-in assertion — otherwise the real assertion proves nothing');
+});
+
+test('Step 2 pre-flight: the warning example names both the gate and a runnable command', () => {
+  const section = step2Section();
+  const exampleFence = section.match(/```\n(⚠️ Pre-flight:[\s\S]*?)\n```/);
+  assert.ok(exampleFence, 'a plain-fenced warning example must exist (not tagged ```bash — it is output, not a command)');
+  const example = exampleFence[1];
+  for (const needle of ['/precommit-fast', '/codex-review-doc', '--strict-preflight']) {
+    assert.ok(example.includes(needle), `warning example must name ${needle}: ${example}`);
+  }
+  // Checked separately from the loop above: '/precommit' is a substring of '/precommit-fast',
+  // so an includes() check on it alone would pass even if the standalone mention were removed.
+  assert.match(example, /(?<!-)\/precommit(?!-fast)\b/,
+    `warning example must name /precommit standalone, not only as part of /precommit-fast: ${example}`);
+});
+
+function commitPlanIntro(src) {
+  const start = src.indexOf('Show grouping plan and ask user to confirm.');
+  const end = src.indexOf('```\n## Commit Plan');
+  assert.ok(start > -1 && end > start, 'Commit Plan intro prose must exist before the template fence');
+  return src.slice(start, end);
+}
+
+function commitPlanFence(src) {
+  const fenceStart = src.indexOf('```\n## Commit Plan');
+  assert.notEqual(fenceStart, -1, 'Commit Plan template fence must exist');
+  const contentStart = fenceStart + 4; // skip the opening ```\n
+  const fenceEnd = src.indexOf('\n```', contentStart);
+  assert.ok(fenceEnd > contentStart, 'Commit Plan template fence must close');
+  return src.slice(contentStart, fenceEnd);
+}
+
+test('Commit Plan intro documents all three pre-flight states before the --execute approval screen', () => {
+  const src = readFileSync(skillPath, 'utf8');
+  const intro = commitPlanIntro(src);
+  assert.match(intro, /`passed`.*`stale`.*`not run`/s,
+    `the intro prose must enumerate all three pre-flight states: ${intro}`);
+  assert.match(intro, /same block[\s\S]*AskUserQuestion[\s\S]*approval screen/i,
+    'the intro must state --execute reuses this same block for approval');
+});
+
+test('control: enumerating only two pre-flight states fails the intro assertion', () => {
+  const mutantIntro = 'Pre-flight is one of `passed` / `stale`; when not `passed`, warn.';
+  assert.doesNotMatch(mutantIntro, /`passed`.*`stale`.*`not run`/s,
+    'an intro missing a state must not satisfy the three-state assertion');
+});
+
+test('Commit Plan template fence shows a concrete Pre-flight line with actionable gate detail', () => {
+  const src = readFileSync(skillPath, 'utf8');
+  const fence = commitPlanFence(src);
+  assert.match(fence, /\*\*Pre-flight\*\*: (passed|stale|not run)\b/,
+    `the template must show a concrete pre-flight state, not the enumeration itself: ${fence}`);
+  assert.ok(fence.includes('--strict-preflight'),
+    'the template must show whether --strict-preflight is set');
+});
+
+test('control: a Commit Plan fence missing the Pre-flight line fails the template assertion', () => {
+  const mutantFence = [
+    '## Commit Plan',
+    '',
+    '**Selection mode**: session-aware (default)',
+    '**Author**: Jane Doe <jane@company.com> (local config)',
+    '**Signing**: enabled (GPG, key: ABCD1234)',
+    '**AI guard**: active (commit-msg hook installed)',
+  ].join('\n');
+  assert.doesNotMatch(mutantFence, /\*\*Pre-flight\*\*: (passed|stale|not run)\b/,
+    'a plan block without the Pre-flight line must not satisfy the template assertion');
+});
+
+test('tech-spec §3.5 stays in sync with SKILL.md — no unconditional-Halt wording survives', () => {
+  const specPath = resolve(__dirname, '../../docs/features/smart-commit-hardening/2-tech-spec.md');
+  const src = readFileSync(specPath, 'utf8');
+  const start = src.indexOf('### 3.5 Step 2');
+  const end = src.indexOf('### 3.6 Runtime Validation');
+  assert.ok(start > -1 && end > start, '§3.5 must exist between its own heading and §3.6');
+  const section = src.slice(start, end);
+
+  // The exact sentence the old Policy note used to assert unconditional strictness — its
+  // survival here, with SKILL.md changed and this section not, is precisely the "matching
+  // Policy note left in contradiction" failure mode the request ticket warned about.
+  assert.ok(!section.includes('不允許跳過任何 tier 的檢查'),
+    'the old unconditional-Halt policy sentence must not survive alongside the new advisory default');
+  // The 目的 line's own former unconditional framing — a narrower, second phrase the sentence
+  // check above cannot see, because it never contained the word "HALT".
+  assert.ok(!section.includes('確認所有變更已通過對應的'),
+    'the 目的 line must not revert to asserting an unconditional pass requirement');
+  assert.ok(section.includes('--strict-preflight'),
+    '§3.5 must name the opt-in flag, not just SKILL.md');
+  assert.ok(section.includes('警告並繼續'),
+    '§3.5 decision table must describe the advisory default in the same terms as SKILL.md');
+});

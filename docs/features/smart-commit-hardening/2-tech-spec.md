@@ -60,13 +60,13 @@ sequenceDiagram
     G-->>C: core.hooksPath + hook existence
     C->>C: Record guard status
 
-    C->>C: Step 2: Pre-flight review check (3-tier)
+    C->>C: Step 2: Pre-flight review check (3-tier, default advisory)
     alt Code files without precommit
-        C->>U: HALT + require /precommit-fast
+        C->>U: Warn (default) + name /precommit-fast, or HALT with --strict-preflight
     else Structural .md without precommit-fast
-        C->>U: HALT + require /precommit-fast
+        C->>U: Warn (default) + name /precommit-fast, or HALT with --strict-preflight
     else Other .md without doc review
-        C->>U: HALT + require /codex-review-doc
+        C->>U: Warn (default) + name /codex-review-doc, or HALT with --strict-preflight
     else All tiers passed (fresh)
         C->>C: Continue
     end
@@ -231,7 +231,7 @@ else                           echo "guard:missing"; fi
 
 **位置**: Step 1e 之後、分組/訊息生成之前
 
-**目的**: `/smart-commit` 是 commit 前最後一道關卡，pre-flight 確認所有變更已通過對應的 review/precommit 檢查。
+**目的**: pre-flight 回報變更是否已通過對應的 review/precommit 檢查，預設 advisory（缺失時警告並繼續）——不是強制關卡；`--strict-preflight` 才恢復成不通過即擋下的行為。
 
 **3-tier 分類**:
 
@@ -240,21 +240,27 @@ else                           echo "guard:missing"; fi
 | 1 — Code | 程式碼檔案（`.js`, `.ts`, `.sh` 等） | `/precommit` 或 `/precommit-fast` | 包含 lint + test |
 | 2 — Structural `.md` | `skills/**/*.md`, `commands/**/*.md` | `/precommit-fast` | 結構性文件影響 skill 行為 |
 | 3 — Other `.md` | 其他 `.md`（docs, README 等） | `/codex-review-doc`（per CLAUDE.md） | 文件品質檢查 |
-| — | Comments / trivial | 跳過 | 無需檢查 |
+| — | 非程式碼檔案內的 trivial whitespace | 跳過 | 無需檢查。程式碼檔案內的註解修改**不在此列**——`CLAUDE.md` 將其保守歸類為 Tier 1，因為註解可能帶編譯器/lint/build 指令 |
 
 **Freshness 條件**: 檢查必須在**當前 session 中、最後一次編輯之後**通過。過期的檢查結果不計入。
 
-**決策邏輯**:
+**決策邏輯**（預設 advisory，`--strict-preflight` opt-in 恢復 HALT）:
 
-| 情境 | 行為 |
-|------|------|
-| 所有 tier 對應檢查皆已通過（fresh） | 靜默繼續 |
-| Code 檔案未通過 precommit | **HALT**：要求先執行 `/precommit-fast` |
-| Structural `.md` 未通過 precommit-fast | **HALT**：要求先執行 `/precommit-fast` |
-| Other `.md` 未通過 doc review | **HALT**：要求先執行 `/codex-review-doc` |
-| 混合變更（code + docs） | 各 tier 獨立檢查，全部通過才繼續 |
+| 情境 | 預設行為 | `--strict-preflight` 行為 |
+|------|---------|--------------------------|
+| 所有 tier 對應檢查皆已通過（fresh） | 靜默繼續 | 靜默繼續 |
+| Code 檔案未通過 precommit | ⚠️ **警告並繼續**：列出缺失 gate 與對應指令（`/precommit-fast` 或 `/precommit`） | **HALT**：要求先執行 `/precommit-fast` |
+| Structural `.md` 未通過 precommit-fast | ⚠️ **警告並繼續**：列出缺失 gate 與對應指令 | **HALT**：要求先執行 `/precommit-fast` |
+| Other `.md` 未通過 doc review | ⚠️ **警告並繼續**：列出缺失 gate 與對應指令（`/codex-review-doc`） | **HALT**：要求先執行 `/codex-review-doc` |
+| 混合變更（code + docs） | 各 tier 獨立檢查；預設下未通過的 tier 個別列入警告，仍繼續 | 全部通過才繼續 |
 
-**Policy note**: 此策略刻意比 `auto-loop.md` baseline 更嚴格。`/smart-commit` 作為 commit 前最後關卡，不允許跳過任何 tier 的檢查。auto-loop 在開發迴圈中容許部分寬鬆（例如 Nit exemption），但 `/smart-commit` 不繼承這些豁免。
+**Policy note**: 預設改為 advisory，因為 `/smart-commit` 常見呼叫時機是 auto-loop 已跑完 review +
+precommit 之後——收據記在 `.claude_review_state.json`，Step 2 原本是對同一份收據的重複驗證，這道
+重複把關在正常流程裡只剩摩擦。`--strict-preflight` 保留給 `auto-loop.md` 一直容許的例外情境：
+`/smart-commit` 在編輯後、review 前被叫起（terminal completion invariant 約束的是宣告完成的時
+點，不是本 skill 被呼叫的時點）。這只放寬本 skill 自己對同一收據的**額外**一道檢查——
+`@rules/auto-loop.md` 本身的 gate 不受影響，仍要求 `/precommit` 與 `/codex-review-doc` 通過；被豁
+免的只是 `/smart-commit` Step 2 這道二次驗證。
 
 ### 3.6 Runtime Validation（Execute 模式增強）
 
@@ -530,5 +536,5 @@ smart-commit-execute.test.js` 在拋棄式 repo 中驅動真實 commit）矛盾�
 
 | # | 偏離的規則 | 處置與理由 | 定性 |
 |---|-----------|-----------|------|
-| D1 | 本檔已越過 `@rules/docs-numbering.md` 的 500 行門檻。**重新以 `wc -l` 量得：round 24 re-review 後仍為 527 行**（與 round 24 doc sync 當時記的數字相同——這次的 D1/D2 編輯只改表格儲存格內的文字，沒有新增或刪除行，所以本檔自身的行數這一輪沒有 drift；上一輪的過期教訓仍然適用，只是這輪剛好沒踩到）。**本次變更（round 24 re-review doc sync，承接 §10.17/§10.18 的原始碼與測試修訂）只編輯 D1/D2 兩列本身，不動其他章節** | **拆檔**：§3 佔 **399 行**（lines 35–433，佔全檔 **75.7%**，以本輪量得的 527 行為分母）且有乾淨的 3.1–3.8 邊界（用會辨識 ```markdown 圍籬的掃描確認——`:422` 的 `## Commit Plan` 在 §3.8 圍籬內，是示範輸出，不是節界）。全檔真正的 `##` 起始行為 3 / 10 / 35 / 434 / 445 / 466 / 511 / 520。目標結構 `2-tech-spec/2-tech-spec.md` + 子檔。**不在本次變更做**——會動到 `test/scripts/smart-commit.test.js` 四處硬編路徑（`SUPERSEDED_SPEC:327`、`hardeningSpec:366`、F1d sweep `:373`、`:310` 的同路徑註解）與 `create-pr-stacked/2-tech-spec.md:178` 及其 review log，屬獨立變更。**明確不採用**「壓縮內容鑽過 500」，規則本身禁止 | **延後，非豁免**。規則給的免拆理由是「這份整著讀比較好」；本列主張的是相反的（該拆，但成本落在別的變更）。超出量：本次變更前 **27 行**（527−500）。round 15/16 之前記的更小數字都是本檔更小時算的，已無參考價值，不再逐一列出 |
+| D1 | 本檔已越過 `@rules/docs-numbering.md` 的 500 行門檻。**重新以 `wc -l` 量得：本次變更（advisory pre-flight 改寫，見 `smart-commit-hardening/requests/2026-08-07-optional-preflight-review.md`）後為 540 行**（較上一輪紀錄的 527 行淨增 6 行；更早輪次記的更小數字已無參考價值，不再逐一列出）。**本次變更的實際編輯範圍**：§3.1 mermaid 的 Step 2 節點語意、§3.5 全節（決策表雙欄化、Policy note 改寫、「目的」一句改寫），以及本列與 D2——**不是**先前紀錄所稱「只編輯 D1/D2 兩列」，該範圍描述已被本輪推翻，一併訂正於此 | **拆檔**：§3 佔 **399 行**（lines 35–433，佔全檔比例隨分母調整為 **73.9%**，以本輪量得的 540 行為分母）且有乾淨的 3.1–3.8 邊界（用會辨識 ```markdown 圍籬的掃描確認——`:422` 的 `## Commit Plan` 在 §3.8 圍籬內，是示範輸出，不是節界）。全檔真正的 `##` 起始行隨本輪編輯已偏移，需下次觸碰本檔時重新量測。目標結構 `2-tech-spec/2-tech-spec.md` + 子檔。**不在本次變更做**——會動到 `test/scripts/smart-commit.test.js` 五處硬編路徑（`SUPERSEDED_SPEC:327`、`hardeningSpec:366`、F1d sweep `:373`、`:310` 的同路徑註解、本輪新增的 §3.5 sync guard `:2201`）與 `create-pr-stacked/2-tech-spec.md:178` 及其 review log，屬獨立變更。**明確不採用**「壓縮內容鑽過 500」，規則本身禁止 | **延後，非豁免**。規則給的免拆理由是「這份整著讀比較好」；本列主張的是相反的（該拆，但成本落在別的變更）。超出量：本次變更後 **40 行**（540−500） |
 | D2 | `4-implementation.md` 同樣越過 500 行門檻。round 24 re-review（新增 § 10.17；隨後第二輪 fallback re-review 又發現 § 10.17 自己新增的哨符防護有 P0 級繞過，新增 § 10.18 記錄該輪發現與修法；同時重新量測 §11 的量測列與其衍生百分比）後，以 `wc -l` 量得：**1750 行**（§10.17 剛寫完、§10.18 尚未新增時為 1691 行；round 24 review 剛收斂、§10.16 寫完時為 1631 行；round 24 初次寫完 §10.16 時為 1624 行） | **拆檔，但不在本次變更做**。最大的 §10 佔 **1183 行（67.6%）**（lines 459–1641，用 `## 11.` 的起始行 1642 反推），現有 10.1–10.18 **十八個** `###` 邊界（新增的 § 10.18 是第二輪 fallback re-review 的產物），正是規則說的「自然的子文件」形狀，且比例逐輪升高，免拆論證已經站不住，照實記在這裡。改為延後的理由只剩一條：拆檔會改動所有指向本檔的引用，而本次變更的 review loop 尚未收斂，在收斂前搬動檔案會讓每一輪的行號引用全部失效。成本：指向本檔的引用仍是 **32 行**，散在 6 個檔案（`SKILL.md` 4、`git-environment.md` 8、`smart-commit-inspect.sh` 11、**`2-tech-spec.md`（本檔）6**、兩支測試 3），其中一行就是本列自己——§ 10.17、§ 10.18 兩段與這兩輪擴充的兩支測試檔（`smart-commit-execute.test.js`、`smart-commit-inspect.test.js`）都沒有新增指向本檔的引用，所以總數自 round 24 doc sync 以來沒再動過。**`4-implementation.md` 對自己沒有引用（0 行）**。推導（表格內的管線符號以 `\|` 跳脫，一道指令涵蓋所有寫法，含只寫檔名不寫路徑的那些）：`grep -rn '4-implementation\.md' skills/smart-commit/ test/scripts/smart-commit-inspect.test.js test/scripts/smart-commit.test.js docs/features/smart-commit-hardening/2-tech-spec.md \| wc -l` → 32（round 23 時為 31；round 24 doc sync 時新增到 32；此後兩輪 re-review 皆未再新增）。**退出條件（round 18 review 新增，此前這條延後沒有終點）**：review loop 一旦收斂（連續兩輪皆 `✅ Ready`/`✅ Mergeable` 且無新增 finding），拆檔排在下一次觸碰本檔的變更之前執行，不得再無限期延後——本列自己就是「延後」被拿來墊檔九輪的證據 | **延後，非豁免**。本檔不屬 `@rules/docs-numbering.md` 的功能性文件豁免（它是 `docs/**` 散文），所以這是一條 `[DEVIATION]` 而非「不適用」。免拆的理由只有一條，且明說其限度：這份文件不是從頭讀到尾的，而是被 `§ N` 指標跳進來的，長度的代價落在捲動的讀者身上。更早幾輪的成本數字曾算錯兩次——兩道指令各自漏算了對方涵蓋的寫法；現行數字改用單一 `grep -rn ... \| wc -l` 指令，兩種寫法一起涵蓋，不再重蹈 |
