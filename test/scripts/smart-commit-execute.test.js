@@ -288,6 +288,56 @@ test('commit when the guard is absent → status 3, no commit, message removed',
   assert.equal(repo.git('rev-parse', '--verify', 'HEAD').status !== 0, true, 'nothing committed');
 });
 
+test('a guard that cannot evaluate the policy → status 8 (environment), never 4', () => {
+  // The guard's exit codes are a contract: 1 is a content verdict, 3 is "the
+  // policy could not be evaluated". Both used to collapse into status 4, so an
+  // environment problem was reported as an AI-content leak.
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, 'scripts/commit-msg-guard.sh'),
+    '#!/bin/bash\necho ENV-FAIL-MARKER >&2\nexit 3\n', { mode: 0o755 });
+  const msgFile = stage(repo, 'feat: Add a.txt\n');
+  const r = run(repo.dir, ['commit', msgFile]);
+  assert.equal(r.status, 8, r.stderr);
+  assert.match(r.stderr, /ENV-FAIL-MARKER/);
+  assert.match(r.stderr, /could not evaluate the policy \(status 3\)/);
+  assert.match(r.stderr, /UNVERIFIED/);
+  assert.doesNotMatch(r.stderr, /AI content detected/,
+    'an environment failure must not be reported as a content leak');
+  assert.equal(repo.git('rev-parse', '--verify', 'HEAD').status !== 0, true, 'nothing committed');
+  assert.equal(existsSync(msgFile), false, 'the message must not be left on disk');
+});
+
+test('a guard exiting an UNKNOWN nonzero status also maps to 8, not 4', () => {
+  // An unrecognized status is by definition not a verdict.
+  const repo = mkRepo();
+  writeFileSync(join(repo.dir, 'scripts/commit-msg-guard.sh'),
+    '#!/bin/bash\nexit 97\n', { mode: 0o755 });
+  const r = run(repo.dir, ['commit', stage(repo, 'feat: Add a.txt\n')]);
+  assert.equal(r.status, 8, r.stderr);
+  assert.match(r.stderr, /could not evaluate the policy \(status 97\)/);
+});
+
+test('invariant: an unusable TMPDIR is an environment failure, never a false AI verdict', () => {
+  // WHERE the run dies on a broken TMPDIR is a host property, probed rather
+  // than assumed: on Linux the guard's own `mktemp -t` honours TMPDIR and
+  // fails (guard exit 3 → status 8), while on macOS `mktemp -t` prefers the
+  // confstr user temp dir and survives, so the executor's later explicit-path
+  // scratch (`${TMPDIR:-/tmp}/smart-commit-attr.*`) is what fails (status 7).
+  // On macOS this therefore does NOT pin the new guard-status mapping — the
+  // platform-independent pins are the stub-guard tests above; what this adds
+  // is the end-to-end invariant both platforms share: an environment failure
+  // is reported as UNVERIFIED — never as "AI content detected", never 4.
+  const repo = mkRepo();
+  const msgFile = stage(repo, `feat: Add a.txt\n\n${AI_LINE}\n`);
+  const r = run(repo.dir, ['commit', msgFile, '--ai-co-author'],
+    { env: { TMPDIR: join(repo.dir, 'no-such-dir') } });
+  assert.ok(r.status === 7 || r.status === 8,
+    `an environment failure must map to 7 or 8, got ${r.status}: ${r.stderr}`);
+  assert.doesNotMatch(r.stderr, /AI content detected/,
+    'callers must not interpret an environment failure as a content leak');
+  assert.equal(repo.git('rev-parse', '--verify', 'HEAD').status !== 0, true, 'nothing committed');
+});
+
 test('commit pins core.fsmonitor=false, so a HOME-configured command cannot run', () => {
   // Round 21 review, P1: `core.fsmonitor` set to a shell command is arbitrary command
   // execution the moment status-touching git runs it — and `commit` (even without `-a`) is
@@ -1520,6 +1570,23 @@ test('verify-last with the guard absent → status 3, reported UNVERIFIED', () =
   const r = run(repo.dir, ['verify-last']);
   assert.equal(r.status, 3);
   assert.match(r.stderr, /UNVERIFIED/);
+});
+
+test('verify-last with a guard that cannot evaluate → status 7 UNVERIFIED, never "leaked"', () => {
+  // Same status contract as cmd_commit: only the guard's exit 1 is a content
+  // verdict. An environment failure during read-back verification must say
+  // UNVERIFIED (7), not accuse the commit of leaking attribution (4).
+  const repo = mkRepo();
+  const setup = run(repo.dir, ['commit', stage(repo, 'feat: Add a.txt\n')]);
+  assert.equal(setup.status, 0, `fixture premise: the setup commit must land: ${setup.stderr}`);
+  writeFileSync(join(repo.dir, 'scripts/commit-msg-guard.sh'),
+    '#!/bin/bash\nexit 3\n', { mode: 0o755 });
+  const r = run(repo.dir, ['verify-last']);
+  assert.equal(r.status, 7, r.stderr);
+  assert.match(r.stderr, /could not evaluate the policy on HEAD \(status 3\)/);
+  assert.match(r.stderr, /UNVERIFIED/);
+  assert.doesNotMatch(r.stderr, /leaked in commit/,
+    'an environment failure must not be reported as a leak by this commit');
 });
 
 test('verify-last reading back an empty message → UNVERIFIED, not "clean"', () => {

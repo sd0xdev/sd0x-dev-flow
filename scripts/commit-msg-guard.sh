@@ -90,11 +90,24 @@ IFS=$' \t\n'
 
 set -euo pipefail
 
+# Exit codes — callers branch on these, so they are a contract, not a habit:
+#   0  clean message
+#   1  policy violation (AI attribution found, or a duplicated whitelist trailer)
+#   3  the policy could NOT be evaluated (missing file, mktemp/grep failure) —
+#      an environment problem, not a verdict about the message
+# As a commit-msg hook any nonzero still rejects the commit; the split exists
+# for programmatic callers (smart-commit-execute.sh), which must not report an
+# environment failure as "AI content detected". Residual: the privileged-mode
+# `${x:?}` aborts above and the `${1:?}` usage abort below expand to status 1 —
+# bash fixes that value, so those aborts are indistinguishable from a violation
+# by status alone; read stderr before concluding the message carried a trailer.
+EXIT_ENV=3
+
 MSG_FILE="${1:?Usage: commit-msg-guard.sh <commit-msg-file>}"
 
 if [ ! -f "$MSG_FILE" ]; then
   echo "commit-msg-guard: file not found: $MSG_FILE" >&2
-  exit 1
+  exit "$EXIT_ENV"
 fi
 
 # WHAT THIS OPT-IN CANNOT DO, stated first because the wording used to imply
@@ -155,8 +168,39 @@ cleanup() {
 trap cleanup EXIT
 
 if [ "${ALLOW_AI_COAUTHOR:-}" = "1" ]; then
+  # Exactly one copy is what the anchor grants, counted on the ORIGINAL message
+  # BEFORE the strip below: `grep -Fxv` removes EVERY byte-identical copy, so
+  # without this count a message carrying the trailer twice would sail through
+  # the scan and the commit would record both — "adds exactly one trailer"
+  # (skills/smart-commit/SKILL.md) defeated by its own whitelist. Zero copies is
+  # fine; the opt-in is permission, not an obligation.
+  set +e
+  trailer_count=$(LC_ALL=C grep -Fxc -e "$ALLOWED_TRAILER" -- "$MSG_FILE")
+  count_status=$?
+  set -e
+  if [ "$count_status" -gt 1 ]; then
+    echo "commit-msg-guard: could not count the whitelisted trailer (status $count_status)" >&2
+    echo "The policy could not be enforced in full, so the commit is rejected." >&2
+    exit "$EXIT_ENV"
+  fi
+  # Non-numeric output would make the -gt below a swallowed error inside an
+  # `if` — a fail-open on the duplicate check. Same guard shape as the lineno
+  # parse in the pattern loop.
+  case "$trailer_count" in
+    ''|*[!0-9]*)
+      echo "commit-msg-guard: the trailer count is not a number; refusing to skip the check" >&2
+      exit "$EXIT_ENV"
+      ;;
+  esac
+  if [ "$trailer_count" -gt 1 ]; then
+    echo "commit-msg-guard: the permitted trailer appears $trailer_count times." >&2
+    echo "ALLOW_AI_COAUTHOR=1 permits exactly ONE copy of:" >&2
+    echo "  $ALLOWED_TRAILER" >&2
+    echo "Remove the duplicates; the whitelist is not a multiplier." >&2
+    exit 1
+  fi
   CLEANUP_FILE="$(mktemp -t commit-msg-guard.XXXXXX)" \
-    || { echo "commit-msg-guard: could not create a temporary file; refusing to skip the check" >&2; exit 1; }
+    || { echo "commit-msg-guard: could not create a temporary file; refusing to skip the check" >&2; exit "$EXIT_ENV"; }
   # -F -x -v: drop lines byte-identical to the permitted trailer, keep the rest.
   # A message that is nothing BUT permitted trailers leaves grep with no output
   # and status 1, which is success here — hence the explicit status handling
@@ -168,7 +212,7 @@ if [ "${ALLOW_AI_COAUTHOR:-}" = "1" ]; then
   if [ "$strip_status" -gt 1 ]; then
     echo "commit-msg-guard: could not apply the --ai-co-author whitelist (status $strip_status)" >&2
     echo "The policy could not be enforced in full, so the commit is rejected." >&2
-    exit 1
+    exit "$EXIT_ENV"
   fi
   SCAN_FILE="$CLEANUP_FILE"
 fi
@@ -218,9 +262,13 @@ for pat in "${PATTERNS[@]}"; do
       case "$lineno" in
         ''|*[!0-9]*)
           echo "commit-msg-guard: grep answered in an unparseable format on pattern $PAT_INDEX" >&2
-          echo "The policy could not be enforced in full, so the commit is rejected." >&2
+          echo "The message DID match the pattern - only the location is unreportable." >&2
           echo "ALLOW_AI_COAUTHOR=1 does NOT help here: it removes one permitted" >&2
           echo "line and then runs this same check, which will fail again." >&2
+          # Exit 1, not EXIT_ENV: this branch is inside `case 0)` — grep DID
+          # report a match, so this IS a content verdict; only the line-number
+          # reporting failed. Calling it an environment failure would make the
+          # executor tell the developer no leak happened when one did.
           exit 1
           ;;
       esac
@@ -238,7 +286,7 @@ for pat in "${PATTERNS[@]}"; do
       # cannot evaluate the policy has an environment problem, not a message
       # problem; `--no-verify` remains their (deliberately blunt) escape.
       echo "This is an environment failure, not a message problem — fix grep." >&2
-      exit 1
+      exit "$EXIT_ENV"
       ;;
   esac
 done

@@ -440,8 +440,13 @@ const PINNED_COPYABLE = [
   + '   Amending would rewrite a different commit and leave this one as it is.\n'
   + '   Where it lives: run [where-1] and [where-2] from § Recovery commands.\n'
   + '   Inspect it first; the correct repair depends on what references it.\n',
+  // The guard's trust-boundary residual, named twice in the opening paragraph: once for the
+  // pre-flight shape, once for the false-positive it can stamp on the verified-leak shape.
+  // Not a git command — pasting it aborts the shell with "x: parameter not set", runs nothing.
+  '${x:?}',
   'commit',
   'verify-last',
+  '${x:?}',
   // The one git command named outside the recovery block: prose naming the operation, with no
   // prefix, no -C and no target. It is not an instruction to run anything.
   'git commit --amend',

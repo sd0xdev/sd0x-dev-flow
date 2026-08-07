@@ -346,6 +346,13 @@ rm -f "$TMPFILE" || echo "⚠️ 無法刪除 $TMPFILE，其中仍是完整 comm
 > 完整可執行版本是 `skills/smart-commit/scripts/smart-commit-execute.sh`（checked-in
 > script）；`references/execute-mode.md` 只解釋它做什麼與為什麼，刻意不放程序副本（見該檔開
 > 頭）。本節是設計說明，三者若分歧以 script 為實作契約，`execute-mode.md` 次之。
+>
+> 已知分歧（示意即止，script 為準）：上方草圖把 guard 的任何失敗都折疊成
+> 「AI content detected」，這正是後來 PR review 抓到的缺陷——guard 的 exit
+> contract 現在區分 1（內容裁定）與 3（環境失敗：檔案不存在、mktemp/grep 失敗），
+> script 的 `cmd_commit` 把 1 映射為 status 4、其餘非零映射為 status 8
+> （UNVERIFIED，環境問題，未產生 commit）；`verify_one` 則把非 1 的失敗併入既有的
+> status 7。重複的白名單 trailer 也在 guard 端計數後拒絕（只准恰好一份）。
 
 **`--ai-co-author` 窄白名單**:
 

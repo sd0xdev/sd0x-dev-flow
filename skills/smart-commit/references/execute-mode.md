@@ -89,12 +89,13 @@ retained only when removal *failed*, which is exactly when the trap should retry
 | 0 | Committed / verified clean | Continue to the next group |
 | 2 | Usage error (bad flag, missing message file, two commit-ish operands) | Fix the call — nothing was consumed |
 | 3 | `commit-msg-guard.sh` not found | Stop. Run `/install-scripts commit-msg-guard` |
-| 4 | AI content refused, or leaked into the commit | **Stop all remaining groups**; see amend guidance below |
-| 5 | `git commit` itself failed | Report git's output; do not retry blind |
+| 4 | AI content refused, or leaked into the commit. Residual, stated rather than hidden: the guard's trust-boundary `${x:?}` aborts also exit 1 (bash fixes that value), so a forged/failed privileged-mode establishment lands here too — read the guard's stderr before concluding the message carried a trailer | **Stop all remaining groups**; see amend guidance below |
+| 5 | `git commit` itself failed. This is also where a guard installed as the repository's `commit-msg` **hook** surfaces an environment failure: its exit 3 makes `git commit` fail, so the same condition reports as 8 pre-flight and 5 from the hook | Report git's output; do not retry blind |
 | 6 | Repository root unresolvable | Stop |
-| 7 | **Unverifiable**: message unreadable/empty on read-back, ref space unreadable, a **graft or shallow** file present, or a commit that appeared during the window carrying attribution that **no reflog entry ties to this invocation** | Stop — the commit is **UNVERIFIED** |
+| 7 | **Unverifiable**: message unreadable/empty on read-back, ref space unreadable, a **graft or shallow** file present, a `filter.<name>.clean/smudge/process` driver named by the repository's own `.gitattributes` but configured outside `local`/`worktree` scope, gitattributes that could not be resolved at all (both refused pre-flight; `diff.<n>.textconv` and `merge.<n>.driver` are deliberately **not** checked — `git commit` never invokes them, and checking them was a measured false-positive source), or a commit that appeared during the window carrying attribution that **no reflog entry ties to this invocation**. `verify-last` **and `commit`'s own post-commit verification** also fold a guard that could not evaluate the policy (see 8) into this status — the same guard condition is 8 before the commit exists and 7 after | Stop — the commit is **UNVERIFIED** |
+| 8 | `commit` **pre-flight** only (after the commit exists the same condition reports as 7): the guard **could not evaluate the policy** — its exit 3 (environment failure: a pattern grep that could not run, or under `--ai-co-author` a mktemp/count/strip failure — the guard's own missing-file case is pre-checked by `commit` as usage status 2) or any unrecognized status, which is by definition not a verdict | Stop — nothing was committed, **UNVERIFIED**; fix the environment, do not read it as a leak |
 
-Statuses 3, 6 and 7 are fail-closed by design: unresolvable means unverified, never "probably
+Statuses 3, 6, 7 and 8 are fail-closed by design: unresolvable means unverified, never "probably
 fine". An empty read-back is treated as unverified for the same reason — the guard reads an
 empty file as a clean message, so the check would otherwise report on a commit it never read.
 
@@ -228,6 +229,13 @@ attack". Resolution is therefore repo-relative only, `.claude/scripts/` before `
 other pattern to what remains. It enforces the whitelist's *content*; a plain environment
 variable cannot prove the exception's *provenance*, which is why the variable is stripped by
 default rather than merely left unset.
+
+The whitelist admits **exactly one** copy of that line. Before stripping, the guard counts
+byte-identical copies on the original message (`grep -Fxc`); two or more exit 1 as a policy
+violation, which `commit` surfaces as status 4. The count exists because `grep -Fxv` removes *every* copy — without it a message
+carrying the trailer twice would sail through, and a duplicated trailer is not the sanctioned
+form. A count that cannot be computed (grep failure, non-numeric result) is the environment
+exit 3, not a verdict.
 
 The opt-in is re-added **inside a subshell, per call** — around the guard, and around the
 `git commit` — and only when the flag was passed. It is never exported process-wide, so on the
@@ -459,8 +467,16 @@ that impractical, not impossible; the read-back is what catches it if it happens
 
 ## On a leak
 
-Status 4 means a leak reached the commit — from `commit`'s own verification, or from
-`verify-last`. The run stops there:
+Status 4 has two shapes, and only the second is a leak. A **pre-flight refusal** — the guard
+rejected the message before the commit was ever attempted (including the `${x:?}` trust-boundary
+residual the status table names) — commits nothing and names no OID; the run stops, and there
+is nothing to amend or inspect. A **verified leak** — from `commit`'s own post-commit
+verification, or from `verify-last` — reports the OID whose recorded message the guard exited 1
+on. That exit is usually a real trailer, but the same `${x:?}` residual can fire during
+verification too, and by status alone it wears this OID-bearing shape with nothing leaked — read
+the guard's stderr before treating the commit as tainted. Step 1 applies to every shape;
+everything from step 2 down — the decision table, both output templates, and § Recovery
+commands — applies only to the verified-leak shape:
 
 1. **Immediately stop** all remaining commit groups (do NOT continue to the next group)
 2. **Read the OID the diagnostic named, and compare it with HEAD, before saying anything about

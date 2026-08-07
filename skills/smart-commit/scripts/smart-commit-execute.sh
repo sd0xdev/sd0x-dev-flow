@@ -12,9 +12,9 @@
 #   commit <msg-file> [--ai-co-author] [--sign|--no-sign]  -> commits AND verifies
 #   verify-last [<commit-ish>] [--ai-co-author]            -> secondary check
 #
-# Exit status: 0 ok | 2 usage | 3 guard not found | 4 AI content or leak
-#              5 git commit failed | 6 repo root or hooks path unresolvable | 7 commit
-#              unreadable, or refused pre-flight (ancestry overlay / untrusted content driver)
+# Exit status: 0 ok | 2 usage | 3 guard not found | 4 AI content or leak | 5 git commit
+#              failed | 6 root/hooks unresolvable | 7 unverifiable | 8 (commit only) guard
+#              could not evaluate — full table: execute-mode.md § How the skill drives it
 #
 # Rationale and threat model for every defence below:
 # skills/smart-commit/references/execute-mode.md
@@ -479,7 +479,7 @@ cmd_alloc() {
 # Verify what was RECORDED. `commit` validated a file; a commit-msg hook may rewrite the
 # message afterwards, so the two are not the same artifact.
 verify_one() {
-  local target=$1 logfile status
+  local target=$1 logfile
   logfile=$(sd_run mktemp -- "${TMPDIR:-/tmp}/smart-commit-log.XXXXXX") || return 7
   own "$logfile"
   # Both failures below leave an EMPTY file, which the guard reads as a clean message: the
@@ -500,12 +500,23 @@ verify_one() {
     warn "❌ message of $target read back empty - UNVERIFIED. Stop here."
     return 7
   fi
-  if run_guard "$logfile"; then status=0; else status=4; fi
+  # Same guard-status contract as cmd_commit: only its status 1 is a content
+  # verdict. Anything else nonzero means the guard never answered, and this
+  # function's own UNVERIFIED convention (7) already says exactly that.
+  local guard_rc=0
+  run_guard "$logfile" || guard_rc=$?
   scrub "$logfile"
-  if [ "$status" -ne 0 ]; then
-    warn "❌ AI attribution leaked in commit $target. Remaining commit groups ABORTED."
-  fi
-  return "$status"
+  case "$guard_rc" in
+    0) return 0 ;;
+    1)
+      warn "❌ AI attribution leaked in commit $target. Remaining commit groups ABORTED."
+      return 4
+      ;;
+    *)
+      warn "❌ the guard could not evaluate the policy on $target (status $guard_rc) - UNVERIFIED. Stop here."
+      return 7
+      ;;
+  esac
 }
 
 # Every tip that can reach a commit: all refs, plus HEAD (detached HEAD is in no ref).
@@ -836,10 +847,22 @@ cmd_commit() {
     return 3
   }
 
-  if ! run_guard "$msg_file"; then
+  # The guard's exit codes are a contract (see its header): 1 is a content
+  # verdict, 3 is "the policy could not be evaluated" — an environment problem.
+  # Collapsing both into 4 made an unwritable TMPDIR read as an AI-content leak;
+  # anything that is neither 0 nor 1 maps to 8 (UNVERIFIED), and unknown codes
+  # land there too, because an unrecognized status is by definition not a verdict.
+  local guard_rc=0
+  run_guard "$msg_file" || guard_rc=$?
+  if [ "$guard_rc" -eq 1 ]; then
     scrub "$msg_file"
     warn '❌ AI content detected after sanitization - aborting commit'
     return 4
+  elif [ "$guard_rc" -ne 0 ]; then
+    scrub "$msg_file"
+    warn "❌ the guard could not evaluate the policy (status $guard_rc) - environment"
+    warn '   failure, not a content verdict. Nothing was committed - UNVERIFIED.'
+    return 8
   fi
 
   refuse_on_ancestry_overlays || { scrub "$msg_file"; return 7; }

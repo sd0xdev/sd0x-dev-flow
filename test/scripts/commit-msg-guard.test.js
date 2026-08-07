@@ -149,12 +149,13 @@ test('ALLOW_AI_COAUTHOR=1 bypasses the guard', () => {
   assert.equal(result.status, 0);
 });
 
-test('missing message file exits 1 with error', () => {
+test('missing message file exits 3 (environment, not a verdict) with error', () => {
   const result = spawnSync('bash', [guardPath, '/nonexistent/COMMIT_EDITMSG'], {
     encoding: 'utf8',
     env: { ...process.env },
   });
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 3,
+    'a file the guard cannot read is an environment failure, not AI content');
   assert.match(result.stderr, /file not found/);
 });
 
@@ -273,7 +274,8 @@ test("grep's own diagnostic for an unusable pattern is not discarded", () => {
     `'${BROKEN_ERE}'`
   );
   const result = runMutatedGuard('feat: add widget\n', mutate);
-  assert.equal(result.status, 1, 'an unusable pattern must reject the commit');
+  assert.equal(result.status, 3,
+    'an unusable pattern must reject the commit as an ENVIRONMENT failure (3), not a verdict (1)');
   assert.ok(
     result.stderr.includes(real.stderr.trim().replace(/^grep: /, '').split('\n')[0].trim()),
     `grep's own reason must survive to the operator; got:\n${result.stderr}`
@@ -290,11 +292,37 @@ test("grep's own diagnostic for an unusable pattern is not discarded", () => {
       return silencedSrc;
     }
   );
-  assert.equal(silenced.status, 1);
+  assert.equal(silenced.status, 3);
   assert.ok(
     !silenced.stderr.includes(real.stderr.trim().replace(/^grep: /, '').split('\n')[0].trim()),
     'discarded, the reason must be absent — otherwise this test proves nothing'
   );
+});
+
+test('a match whose location cannot be parsed is still a VERDICT (exit 1), not an environment failure', () => {
+  // This branch sits inside `case 0)` — grep DID report a match; only the
+  // line-number parse failed. Its exit code flipped 1 → 3 → 1 across review
+  // rounds with nothing pinning it; misclassifying it as environment would
+  // make the executor tell the developer no leak happened when one did.
+  // Forced by dropping `-n`, so $MATCH carries the line text instead of
+  // `<lineno>:<text>` and the numeric parse rejects it.
+  const result = runMutatedGuard(
+    'feat: add widget\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n',
+    (s) => {
+      const m = s.replace('grep -Ein -m1', 'grep -Ei -m1');
+      assert.notEqual(m, s, 'the -n-dropping mutation must actually apply');
+      return m;
+    }
+  );
+  assert.equal(result.status, 1,
+    `a confirmed match is a content verdict whatever the diagnostic trouble (stderr: ${result.stderr})`);
+  assert.match(result.stderr, /DID match the pattern/);
+  assert.doesNotMatch(result.stderr, /noreply@anthropic\.com/,
+    'the unparseable branch must not leak the matched line either');
+  // Control: the unmutated guard on the same message reports a parseable location.
+  const control = runGuard('feat: add widget\n\nCo-Authored-By: Claude <noreply@anthropic.com>\n');
+  assert.equal(control.status, 1);
+  assert.match(control.stderr, /line 3 matched pattern 1/);
 });
 
 // ============================================================================
@@ -390,7 +418,7 @@ test('a grep that cannot answer does NOT advertise the opt-in as a way out', () 
     'feat: add widget\n',
     (s) => s.replace("'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'", "'Co-Authored-By[unclosed'")
   );
-  assert.equal(result.status, 1);
+  assert.equal(result.status, 3);
   assert.match(result.stderr, /could not be enforced in full/);
   assert.match(result.stderr, /environment failure, not a message problem/,
     'the diagnosis must point at the environment, which is where the fix is');
@@ -405,8 +433,8 @@ test('the opt-in genuinely does not rescue a grep failure (the claim, measured)'
     (s) => s.replace("'Co-Authored-By:.*(Claude|Anthropic|\\bAI\\b|GPT|OpenAI|Copilot|Codex|Gemini|noreply@anthropic)'", "'Co-Authored-By[unclosed'"),
     { ALLOW_AI_COAUTHOR: '1' }
   );
-  assert.equal(withOptIn.status, 1,
-    'if this ever passes, the removed guidance was true and should be restored');
+  assert.equal(withOptIn.status, 3,
+    'if this ever exits 0, the removed guidance was true and should be restored');
 });
 
 // ============================================================================
@@ -630,6 +658,27 @@ test('opt-in whitelist matches whole lines only, not substrings', () => {
   // trailer; -Fx is what makes that true.
   const result = runGuard(`fix: t\n\nsee also ${ALLOWED} for context\n`, { ALLOW_AI_COAUTHOR: '1' });
   assert.equal(result.status, 1, result.stderr);
+});
+
+test('opt-in rejects a DUPLICATED whitelisted trailer', () => {
+  // `grep -Fxv` strips every byte-identical copy, so before the count existed
+  // two trailers both vanished and the guard exited 0 while the commit recorded
+  // the trailer twice — "adds exactly one trailer" (skills/smart-commit/SKILL.md)
+  // defeated by its own whitelist.
+  const result = runGuard(`fix: t\n\n${ALLOWED}\n${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
+  assert.equal(result.status, 1,
+    `two copies of the permitted line are a policy violation, not a doubled permission (stderr: ${result.stderr})`);
+  assert.match(result.stderr, /appears 2 times/);
+  assert.match(result.stderr, /exactly ONE copy/);
+});
+
+test('opt-in rejects duplicated trailers even when separated by other lines', () => {
+  const result = runGuard(
+    `fix: t\n\n${ALLOWED}\n\nbody text in between\n\n${ALLOWED}\n`,
+    { ALLOW_AI_COAUTHOR: '1' }
+  );
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /appears 2 times/);
 });
 
 test('opt-in leaves no temporary file behind', () => {
