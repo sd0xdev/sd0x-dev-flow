@@ -16,36 +16,77 @@ The configured tier (`auto-loop-project.md ## Tier`, unset → `standard`) is a 
 
 | Tier | Use for | Blocks on | Round cap |
 |------|---------|-----------|-----------|
-| `fast` | Docs, comments, config, small low-risk edits | P0 | 3 |
-| `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
+| `fast` | Docs, comments, config, small low-risk edits | P0 | 6 |
+| `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 15 |
 | `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
-An explicit `## Max Rounds` (3–50) in `auto-loop-project.md` overrides the tier's cap and is the value the hooks persist. `current_round >= max_rounds` → § Cap Diagnostic Protocol below (the hook reports only the neutral fact "Review round cap reached (n/max)"; the disposition is yours). Architecture-level changes, feature removal, or the user asking to stop exit to ⛔ Need Human at any point. **80 is a passing grade.** When the remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round.
+These caps are deliberately loose: **a cap cannot tell a converging loop from a churning one** — it stops both at the same number. § Stall Detection is what tells them apart, and it fires on evidence, usually many rounds earlier. The cap is left as a runaway backstop.
+
+An explicit `## Max Rounds` (3–50) in `auto-loop-project.md` overrides the tier's cap and is the value the hooks persist. Unset, the two layers diverge: the table above is behaviour-layer, while `[AUTO_LOOP_STATE] round=n/m` reports a flat **30** whatever the tier — so `n/30` at `standard` is the hook reporting the only cap it enforces, not a contradiction with the 15 above. The lower of the two governs. `current_round >= max_rounds` → § Cap Diagnostic Protocol below (the hook reports only the neutral fact "Review round cap reached (n/max)"; the disposition is yours). Architecture-level changes, feature removal, or the user asking to stop exit to ⛔ Need Human at any point. **80 is a passing grade.** When the remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round.
 
 Gate sequence: review Ready (no blocking findings) → `/precommit`; precommit Pass → Adequacy Gate → Doc Sync; a precommit failure is fixed and re-run. Adequacy Gate: when a request doc with `## Acceptance Criteria` maps to the change, run `/codex-test-review --ac-trace <request-path>`; mode comes from `testing-project.md ## Adequacy Mode` (advisory by default, strict is opt-in). Doc Sync: when the change maps to a feature under `docs/features/`, sync the tech spec and request doc, then doc-review the result.
 
+## Stall Detection
+
+A cap answers "how long has this gone on"; what matters is "is anything moving". The round-counting hook answers the second from the progress ledger and emits **`[LOOP_STALL] streak=n threshold=t round=r`**.
+
+A **stall round** is one where all three hold: the ledger could read it (`persisted + new >= findings`), findings are outstanding, and nothing closed (`closed = 0`). The hook counts findings, not severities — a round left correctly unfixed because everything in it is sub-threshold still counts, so the signal can arrive on a loop that has already converged. `t` consecutive stall rounds (`AUTO_LOOP_STALL_ROUNDS`, default **3**) emit the signal. Closing a finding — or leaving none outstanding — resets the streak to zero. A round the ledger could **not** read holds the streak where it was, neither counted nor reset: **absence is not a signal**, and a blind round is no evidence of standing still.
+
+It fires **once per streak**, on the crossing, so it means "this just became true" and never "this is still true"; progress re-arms it. Then run § Cap Diagnostic Protocol — the same three steps, at the point the evidence appeared rather than at an arbitrary round. Nothing blocks. `✅ Ready` with only sub-threshold findings is not a stall; it is `/precommit`. Mechanics: `docs/features/auto-loop-autonomy/4-implementation.md` §3.
+
+### Stall Memory
+
+Trying the same adjustment twice is the failure this prevents. Once a bounded adjustment has resolved — or failed to — record it by **running** the line, so typing it and persisting it are one act:
+
+```bash
+printf '%s\n' '[STALL_MEMORY] class=ATTENTION_DIFFUSION | tried=split the 6-file batch into 2 | outcome=closed 3 of 5, streak reset | 2026-08-07T12:00:00Z'
+```
+
+Field order is fixed, and `class` must be one of the six in § Cap Diagnostic Protocol's table — anything else is logged and dropped. The trailing timestamp is the one optional field (the hook stamps one); `tried=` and `outcome=` are refused empty, out loud. Unlike `[NIT_DEFERRED]`, the hook reads this from the **command**, not from any tool's output: writing the line in prose persists nothing, and `cat`-ing this file forges nothing from the example above. It keeps the **most recent 3** (FIFO) and replays them, indented, beneath the next `[LOOP_STALL]` or `[STRATEGIC_RESET]`, so the record survives a compaction and reaches the diagnosis that would otherwise repeat it.
+
+**Read the replay before choosing an adjustment; never re-try one recorded as failed.** A class appearing twice with two failed adjustments is itself the signal — the class is probably wrong, or it is `ARCHITECTURE` under another name. Scoped to the change: cleared wherever `strategic_reset_fired` is.
+
 ## Cap Diagnostic Protocol
 
-Hitting the round cap is a diagnosis point, not an automatic hand-off — **except** for security or data-integrity changes, which skip this protocol entirely: cap hit → ⚠️ Need Human directly. The trigger is the cap itself, behaviour-layer, independent of whether compaction ever fires.
+Reached from any trigger — `[LOOP_STALL]` (evidence), the round cap (budget), or the round-10 checkpoint below — and from none for security or data-integrity changes, which skip this protocol entirely: **any** trigger → ⚠️ Need Human directly. Otherwise all are diagnosis points, not automatic hand-offs, and all are behaviour-layer, independent of whether compaction ever fires.
 
-There is also an **earlier checkpoint**: at round 10 on the same change (`AUTO_LOOP_CHECKPOINT_ROUNDS`), the round-counting hook emits `[STRATEGIC_RESET]` and you run this same protocol — diagnose, one bounded adjustment, back to the loop. It fires once per change **per session** — `hooks/session-init.sh` clears both the flag and `current_round` at SessionStart, so a change carried into a new session can reach it again after ten fresh rounds — and only matters at `thorough`, where the cap is 30 and ten rounds of circling is already the signal the cap exists to catch. It is a checkpoint, not a cap: nothing blocks, and the round budget is untouched. It is **on by default with no opt-in switch** — the effective opt-out is setting `AUTO_LOOP_CHECKPOINT_ROUNDS` well above the tier's cap, which is why nothing gates it. Well above, not cap+1: nothing clamps `current_round` to `max_rounds`, so a loop running past its cap in `warn` mode can still reach a threshold set just above it. The post-compact injection is an auxiliary channel for the same checklist, never the trigger.
+That checkpoint fires at round 10 on the same change (`AUTO_LOOP_CHECKPOINT_ROUNDS`): the round-counting hook emits `[STRATEGIC_RESET]` and you run this same protocol — diagnose, one bounded adjustment, back to the loop. It fires once per change **per session** — `hooks/session-init.sh` clears both the flag and `current_round` at SessionStart, so a change carried into a new session can reach it again after ten fresh rounds — and round 10 sits inside the budget at `standard` (15) and `thorough` (30) but past it at `fast` (6). Raising `standard` past 10 is what brought it there; before that, only a loop already running past its own cap reached it. It is now the **backstop** rather than the primary signal: § Stall Detection normally fires several rounds earlier and on evidence, and round 10 catches the loop that circles without ever quite producing the `closed=0` run. It is a checkpoint, not a cap: nothing blocks, and the round budget is untouched. It is **on by default with no opt-in switch** — the effective opt-out is setting `AUTO_LOOP_CHECKPOINT_ROUNDS` well above the tier's cap, which is why nothing gates it. Well above, not cap+1: nothing clamps `current_round` to `max_rounds`, so a loop running past its cap in `warn` mode can still reach a threshold set just above it. The post-compact injection is an auxiliary channel for the same checklist, never the trigger.
 
 1. **Diagnose** — classify the stall as exactly one class from the closed table below; state the class and its observed signals in a short block, not free prose.
 2. **One bounded adjustment** — declared *before* it is made: name the scope (which files), the nature (the class's direction column), and the size (a single split, a single re-scope, or ≤ 5 focused edits). An adjustment must never grow into a rewrite mid-loop; if the diagnosis itself shows architecture-level change is needed, exit ⛔ Need Human instead of adjusting.
 3. **Return to the loop** — re-enter review with the adjustment as the change under review.
 
-**Anti-loop cap: 1 diagnosis per change.** The same change hitting the cap a **second** time after a diagnosis → ⚠️ Need Human, no second diagnosis. This split lives entirely here — the hook cannot distinguish first from second (it sees only round/cap), so in `warn` mode this rule is the only enforcement; treat it as binding.
+**Anti-loop budget.** The cap and the stall are budgeted separately, because they mean different things:
 
-**What the diagnosis is made of.** Each **code** review round that commits its counter emits `[LOOP_PROGRESS] round=n closed=a persisted=b new=c findings=d` — finding *identities* closed, carried over, and introduced since the previous round. Not every round: the doc plane never emits one (the ledger rides the code-review branches only), and a code round that loses the lock or fails its write emits nothing. **Absence is not a signal** — diagnose from the lines you have, and never read a missing one as `closed=0`. Counts alone cannot tell "fixed one, introduced one" from "nothing moved"; both read `total=2`. When `persisted + new < findings` the ledger could not read this round's findings (section-shaped reports carry no per-finding text) and its figures are not evidence. Otherwise a run of `closed=0` with findings outstanding is the churn signature and points at `ATTENTION_DIFFUSION` or `ARCHITECTURE`; steady `closed>0 new=0` says the loop is converging and the right move is to keep going, not to diagnose. It is a fact, not a verdict — nothing blocks on it. Mechanics: `docs/features/auto-loop-autonomy/4-implementation.md` §2.
+| Trigger | Budget | On exhaustion |
+|---------|--------|---------------|
+| Round cap | **1** diagnosis per change | The same change hitting the cap a **second** time → ⚠️ Need Human, no second diagnosis |
+| `[LOOP_STALL]` | **3** per change — the stall-memory bound | A **fourth** stall on the same change → ⚠️ Need Human, no fourth diagnosis |
+
+A stall may recur where a cap hit may not: the cap fires at a fixed number, so a second hit says the adjustment bought nothing, whereas a stall re-arms only after real progress, so a second one says the loop moved and stopped again — still addressable. Past three it stops being true, and three is the same number the memory holds — when the replay is full of failed adjustments, a fourth is not the answer.
+
+Both splits live entirely here — the hook counts rounds and streaks, never diagnoses — so in `warn` mode this rule is the only enforcement; treat it as binding. The stall count is yours to keep: the memory holds 3 and drops the oldest, so a full buffer is not a counter.
+
+**What the diagnosis is made of.** Each **code** review round that commits its counter emits `[LOOP_PROGRESS] round=n closed=a persisted=b new=c findings=d` — finding *identities* closed, carried over, and introduced since the previous round. Not every round: the doc plane never emits one (the ledger rides the code-review branches only), and a code round that loses the lock or fails its write emits nothing. **Absence is not a signal** — diagnose from the lines you have, and never read a missing one as `closed=0`. Counts alone cannot tell "fixed one, introduced one" from "nothing moved"; both read `total=2`. When `persisted + new < findings` the ledger could not read this round's findings (section-shaped reports carry no per-finding text) and its figures are not evidence. Otherwise a run of `closed=0` with findings outstanding is the churn signature and points at `ATTENTION_DIFFUSION` or `ARCHITECTURE`; steady `closed>0 new=0` says the loop is converging and the right move is to keep going, not to diagnose. It is a fact, not a verdict — nothing blocks on it. Counting that run is exactly what § Stall Detection mechanized, so `[LOOP_STALL]` and a hand-read run of `closed=0` lines are the same observation and never two independent ones: one streak, one diagnosis. Mechanics: `docs/features/auto-loop-autonomy/4-implementation.md` §2.
 
 | Class | Signals | Bounded direction |
 |-------|---------|-------------------|
 | `ARCHITECTURE` | Same defect recurs across files; fixing A breaks B | Stop patching; back to design, re-scope |
-| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Split or shrink first, then resume review |
-| `ATTENTION_DIFFUSION` | Fixes introduce new defects; the same fact is recorded wrong repeatedly | Shrink the batch; verify each item before merging |
+| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Split or shrink first, then resume review — `/refactor --target <file>` is the sanctioned tool |
+| `ATTENTION_DIFFUSION` | Fixes introduce new defects; the same fact is recorded wrong repeatedly | Shrink the batch; verify each item before merging — `/refactor --target <churning files>` when the diffusion is structural |
 | `UNVERIFIED_CLAIM` | Blocking findings cluster on unmeasured claims | Measure first; write the derivation command into the doc |
 | `TIER_MISMATCH` | Findings persistently below the blocking threshold | Converge per tier and move to the next gate |
 | `REQUIREMENT_AMBIGUITY` | Reviewer and implementer disagree on what "correct" means | Ask the human; stop guessing |
+
+**`/refactor` as a bounded adjustment** — available for those **two classes only**. The other four need something a refactor cannot deliver: `ARCHITECTURE` and `REQUIREMENT_AMBIGUITY` exit rather than adjust, `UNVERIFIED_CLAIM` needs a measurement, `TIER_MISMATCH` needs the loop to stop. Five constraints, none optional:
+
+| Constraint | Why |
+|-----------|-----|
+| `--target <paths>` always, never `--auto` | `--auto` scans the repo for up to 10 targets — the rewrite step 2 forbids growing into. The target list is the scope you declared |
+| It edits files, so the code gate re-opens | Anchor Register #6: prior verdicts are invalid and review re-runs. Re-entering the gate, not routing around it |
+| Its own internal quality check is **not** this loop's precommit gate | `/refactor` runs one per target. The loop's gate is still owed afterwards, on the whole change |
+| Excluded for security and data-integrity changes | Register #3 escalates those to `thorough`; a stalled security change goes to ⚠️ Need Human |
+| It consumes the diagnosis budget, never an extra one | A refactor *is* the one bounded adjustment for that stall |
 
 ## Sub-Threshold Findings
 

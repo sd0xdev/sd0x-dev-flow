@@ -275,7 +275,7 @@ See `references/review-common.md` for:
 Blocked → fix the blocking findings → `/codex-review-fast --continue <threadId>` → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
-Round cap comes from the tier (`fast` 3, `standard` 5, `thorough` 30). Same issue recurring at the cap → report blocker, request intervention.
+Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: `[LOOP_STALL]` (`@rules/auto-loop.md § Stall Detection`) normally fires first, on rounds that close nothing. Same issue recurring at the cap → report blocker, request intervention.
 
 This loop converges on the **review result**, not on the Stop gate. Reaching Ready ends it even if Stop still objects — an aggregate obligation or a `Do NOT auto-retry` line (Step 4.5) is not a finding, and no further round addresses it.
 

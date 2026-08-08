@@ -18,7 +18,7 @@ to be restated.
 
 ## Tier
 
-<!-- fast — P0 blocks; cap 3. standard — P0/P1 block; cap 5 (default).
+<!-- fast — P0 blocks; cap 6. standard — P0/P1 block; cap 15 (default).
      thorough — P0/P1/P2 block; cap 30. Security/data-integrity is thorough regardless
      (Anchor — discretion.md Register #3; no tier setting or override removes it).
      Blank/unrecognized = standard; hooks report `tier=` but never enforce. Uncomment a bare tier name: -->
