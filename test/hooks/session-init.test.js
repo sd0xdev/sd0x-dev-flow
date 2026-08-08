@@ -929,3 +929,29 @@ test('session-init: orphan sidecar clear declines when the lock was taken over m
   );
   assert.match(contended.result.stderr, /clear abandoned — lock was taken over/);
 });
+
+test('a new session clears background_reviews (the task they name cannot survive one)', () => {
+  // The handoff placeholder says it outright: "it does not survive exiting this session." A marker
+  // carried into a new session therefore points at a task that cannot exist, and stop-guard would
+  // offer it as the reason a gate is open and tell the reader to continue a dead thread. Issue #10.
+  const workDir = makeTempDir('sd0x-session-init-bg-markers-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'old-session-abc',
+      has_doc_change: true,
+      doc_review: { executed: false, passed: false },
+      background_reviews: [
+        { plane: 'doc', task: 'kimyfg23u', at: '2026-08-07T12:00:00Z' },
+        { plane: 'code', task: 'kab0s9rzv', at: '2026-08-07T12:05:00Z' },
+      ],
+    })
+  );
+
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-session-xyz' } });
+
+  assert.equal(result.status, 0);
+  const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
+  assert.deepEqual(state.background_reviews, [], 'no marker outlives the session that produced it');
+});

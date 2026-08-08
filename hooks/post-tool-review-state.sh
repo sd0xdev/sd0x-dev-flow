@@ -9,9 +9,40 @@ set -euo pipefail
 # and registered in project settings — if so, exit 0 to avoid double-fire.
 # Dev-mode bypass: hooks/hooks.json at project root = plugin source repo (skip arbitration).
 _SELF_NAME="$(basename "$0")"
+# Identity, not filename: `basename "$0"` says WHICH hook this is, never WHICH COPY. Without the
+# comparison below the local copy satisfies every condition and defers to ITSELF — both copies
+# exit 0 and the hook never runs at all (zero-fire, the opposite of the double-fire this block
+# exists to prevent; issue #9). An unresolvable side leaves the guard false and does NOT defer:
+# double-fire is visible, zero-fire is silent.
+#
+# Deferral is decided by ORIGIN, not by path identity. `hooks/hooks.json` registers the plugin copy
+# under `${CLAUDE_PLUGIN_ROOT}` while settings register the local one under `$CLAUDE_PROJECT_DIR`,
+# so the invoking spelling is what separates them — and it stays separate when `.claude/hooks` is a
+# SYMLINK to the plugin's own hooks dir, the case where both copies are one file and a path
+# comparison says "I am local" for both, so neither defers and the ledger counts every round twice.
+#
+# The origin test is deliberately LEXICAL. `pwd -P` on that symlinked layout resolves the local
+# copy INTO the plugin directory, which would make it look like the plugin's and restore the exact
+# zero-fire this block was written to fix. The resolved comparison stays as the fallback for hosts
+# that do not export CLAUDE_PLUGIN_ROOT, and an invocation matching neither runs rather than defers.
+#
+# It matches the plugin hooks directory EXACTLY, never a descendant of the plugin root. Every
+# `hooks/hooks.json` entry is spelled `${CLAUDE_PLUGIN_ROOT}/hooks/<name>.sh`, so that one
+# directory IS the registered surface, while a `${CLAUDE_PLUGIN_ROOT}/*` prefix also swallows a
+# project nested under the plugin root — calling the LOCAL copy the plugin's and deferring it to
+# itself, which is zero-fire again. Layouts and failure directions: the request doc, issue #9.
+_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || _SELF_DIR=""
+_LOCAL_DIR="$(cd "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/hooks" 2>/dev/null && pwd -P)" || _LOCAL_DIR=""
+_IS_PLUGIN_COPY=false
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+  case "$(dirname "$0")/" in "${CLAUDE_PLUGIN_ROOT%/}"/hooks/) _IS_PLUGIN_COPY=true ;; esac
+elif [[ -n "$_SELF_DIR" && -n "$_LOCAL_DIR" && "$_SELF_DIR" != "$_LOCAL_DIR" ]]; then
+  _IS_PLUGIN_COPY=true
+fi
 if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] \
    && [[ ! -f "${CLAUDE_PROJECT_DIR}/hooks/hooks.json" ]] \
-   && [[ -x "${CLAUDE_PROJECT_DIR}/.claude/hooks/${_SELF_NAME}" ]]; then
+   && [[ "$_IS_PLUGIN_COPY" == "true" ]] \
+   && [[ -x "${_LOCAL_DIR}/${_SELF_NAME}" ]]; then
   _SETTINGS_MATCH=false
   for _sf in "${CLAUDE_PROJECT_DIR}/.claude/settings.json" \
              "${CLAUDE_PROJECT_DIR}/.claude/settings.local.json"; do
@@ -367,16 +398,41 @@ TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // empty' 2>/dev/null)
 # `tool_output` is kept as fallback for backward-compat with older replays.
 # Bash returns structured `{stdout, stderr, interrupted, isImage}`; MCP returns
 # `{content: string | [{type:"text", text}]}`; legacy replays may be plain string.
-# Normalize all three shapes into a single text payload here.
+# Normalize all four shapes into a single text payload here.
+#
+# The fourth is a string that is itself a serialized JSON object — the shape the host actually
+# sends for some synchronous MCP completions (issue #11). Left unparsed it stays one line
+# beginning with `{`, its newlines still literal `\n`, so every start-of-line-anchored review
+# matcher misses and the receipt is silently dropped. Unwrapping is deliberately conditional on
+# the parsed object carrying a payload field we recognize: a review report that merely happens to
+# begin with `{` parses to nothing (or to something without those fields) and passes through
+# unchanged, so this can only add receipts, never reroute an output that already worked.
 TOOL_OUTPUT=$(echo "$INPUT" | jq -r '
+  def unwrap:
+    if (.stdout | type) == "string" then .stdout
+    elif (.content | type) == "string" then .content
+    elif (.content | type) == "array" then [.content[] | select(.type == "text") | .text] | join("\n")
+    else tostring
+    end;
+  def has_payload:
+    ((.stdout | type) == "string") or ((.content | type) == "string") or ((.content | type) == "array");
   (.tool_response // .tool_output) as $r
-  | if ($r | type) == "object" then
-      if ($r.stdout | type) == "string" then $r.stdout
-      elif ($r.content | type) == "string" then $r.content
-      elif ($r.content | type) == "array" then [$r.content[] | select(.type == "text") | .text] | join("\n")
-      else ($r | tostring)
-      end
-    elif ($r | type) == "string" then $r
+  | if ($r | type) == "object" then ($r | unwrap)
+    # A BARE array of content blocks, with no wrapping object. Measured against a live handoff:
+    # this is what the host actually sends — `[{"type":"text","text":"MCP tool …"}]`. Without this
+    # branch such a payload falls through to `empty`, TOOL_OUTPUT is blank, and every branch below
+    # is unreachable. That is how the issue #10 handling first shipped inert: it was verified
+    # against `{content:[…]}` and the real shape was wrongly written off as a bad fixture.
+    # `select(type == "object")` comes first because indexing a string element with `.type` is a jq
+    # ERROR rather than a non-match, and a single stray element would void the whole payload.
+    elif ($r | type) == "array" then
+      ([$r[] | select((type) == "object" and .type == "text") | .text] | join("\n"))
+    elif ($r | type) == "string" then
+      (($r | try fromjson catch null) as $p
+       | if ($p | type) == "object" then
+           (if ($p | has_payload) then ($p | unwrap) else $r end)
+         else $r
+         end)
     else empty
     end // empty' 2>/dev/null)
 
@@ -2495,6 +2551,122 @@ _mcp_code_review_passed() {
   echo "false"
 }
 
+# === Backgrounded MCP review — issue #10 ===
+# When an MCP call outlives the foreground timeout the harness *completes* the tool call with a
+# handoff placeholder and delivers the real report later as a task notification — which is not a
+# PostToolUse event and has no hook firing point anywhere. The verdict therefore exists and is
+# simply unreachable from this process; no output-side predicate can be loosened to find it.
+#
+# What this must NOT do is discharge the gate. No verdict was observed, and manufacturing one is
+# precisely the fail-open that the two-sided provenance design exists to prevent — the same class
+# of defect as issue #9. It records only WHY the receipt is missing. `background_reviews` is an
+# advisory breadcrumb: no consumer reads it as a receipt, and the gate stays shut.
+#
+# Measured against a real transcript, the placeholder arrives as a single-entry text-block array:
+#   MCP tool "codex/codex" is still running after 120s. It was moved to the background as task
+#   kimyfg23u and keeps running; … To stop it, use TaskStop with task_id "kimyfg23u".
+# The normalizer above already flattens that shape, so matching TOOL_OUTPUT directly is enough.
+#
+# Matched on the FIRST non-empty line, and that precision is the whole point. An unanchored pair of
+# substring matches is the exact defect the doc branch below documents: this repo's own issue #10
+# write-ups quote both phrases, so reviewing them yields a report containing both — and since this
+# branch sits ahead of every verdict branch and exits, that review's real verdict would be silently
+# swallowed. A `^`-anchored grep is not enough either, because those quotes sit inside an indented
+# code fence and `^` matches any line. Requiring the placeholder to BE the output removes the class:
+# a report discussing backgrounding still opens with `## Document Review`, never with this sentence.
+_mcp_output_is_background_handoff() {
+  local first
+  first=$(grep -m1 -v '^[[:space:]]*$' <<< "$1") || return 1
+  [[ "$first" =~ ^MCP\ tool\ \"[^\"]*\"\ is\ still\ running\ after ]] \
+    && grep -qF 'moved to the background as task' <<< "$1"
+}
+
+# The id appears twice under two spellings. The `task_id "<id>"` form is quoted and so cannot run
+# on into following prose; it is tried first for that reason, not because it comes first.
+_mcp_background_task_id() {
+  local id
+  id=$(sed -n 's/.*task_id "\([A-Za-z0-9_-]\{1,64\}\)".*/\1/p' <<< "$1" | head -1)
+  if [[ -z "$id" ]]; then
+    id=$(sed -n 's/.*moved to the background as task \([A-Za-z0-9_-]\{1,64\}\).*/\1/p' <<< "$1" | head -1)
+  fi
+  printf '%s' "${id:-unknown}"
+}
+
+# Persisted because stderr does not survive a compaction and this failure is defined by recurring
+# across rounds: without it, `[AUTO_LOOP_RESUME]` re-reads a state file that says `executed:false`
+# and cannot distinguish "never reviewed" from "reviewed, verdict unreachable" — which is the
+# reinforcing loop the issue describes. Degrade, never abort: the stderr fact is the fallback
+# record, so losing the marker costs context, never correctness.
+_record_background_review() {
+  local plane="$1" task_id="$2" ts tmp
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  if ! _lock; then
+    echo "[Review State] background-review marker skipped (lock contention) — the fact above is the only record" >&2
+    return 0
+  fi
+  # Create the file rather than bailing when it is absent. Bailing looks harmless and is not: the
+  # first review of a session can be the one that times out, and that is exactly when losing the
+  # explanation costs the most — the state would then read `executed:false` with nothing at all
+  # saying why. Same degrade-never-abort contract as `update_state`.
+  if ! init_state_file; then
+    _unlock
+    echo "[Review State] background-review marker skipped (state file absent and not creatable)" >&2
+    return 0
+  fi
+  tmp=$(_lock_staging_file) || {
+    echo "[Review State] background-review marker skipped (mktemp unavailable)" >&2
+    _unlock
+    return 0
+  }
+  # Newest last, most recent 5 kept: every hook re-reads this file, so an unbounded list would let
+  # one slow session tax every subsequent read.
+  if jq --arg p "$plane" --arg t "$task_id" --arg at "$ts" \
+       '.background_reviews = (((.background_reviews // []) + [{plane:$p, task:$t, at:$at}]) | .[-5:])' \
+       "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    _own_lock && mv "$tmp" "$STATE_FILE"
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+  _unlock
+  return 0
+}
+
+# Retires a plane's markers the moment a real verdict lands for it. Without this the marker has no
+# lifecycle at all: stop-guard filters on "is this plane's gate open", so a marker survives its own
+# review passing and then re-attaches itself to the NEXT time that gate opens — telling the reader a
+# freshly-reopened gate is waiting on a task that finished long ago, and pointing them at a thread
+# that no longer exists. Clearing on verdict is what makes "open" and "explained by THIS marker" the
+# same question again. Session-level clearing lives in `session-init.sh`, because the placeholder
+# itself says the task does not survive exiting the session.
+_clear_background_reviews() {
+  local plane="$1" tmp
+  [[ -f "$STATE_FILE" ]] || return 0
+  # Cheap textual pre-filter, before any lock or temp file. Markers are rare — the overwhelming
+  # majority of verdicts have none to retire — and taking the lock to stage a rewrite of an
+  # unchanged list would put a second lock/mktemp pair on the hot path of EVERY verdict. It also
+  # keeps the mktemp call ORDINALS on the passing review path unchanged, which
+  # `test/hooks/post-tool-review-state.test.js` pins by number to isolate a lock leak; inserting a
+  # call there silently retargets that test at a different function.
+  # Both keys are required: `background_reviews` alone is still present as `[]` after the last
+  # marker was retired, and `"plane"` appears only inside a marker object.
+  grep -q '"background_reviews"' "$STATE_FILE" 2>/dev/null || return 0
+  grep -q '"plane"' "$STATE_FILE" 2>/dev/null || return 0
+  if ! _lock; then
+    echo "[Review State] background-review marker not cleared for ${plane} (lock contention)" >&2
+    return 0
+  fi
+  tmp=$(_lock_staging_file) || { _unlock; return 0; }
+  if jq --arg p "$plane" \
+       '.background_reviews = ((.background_reviews // []) | map(select(.plane != $p)))' \
+       "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    _own_lock && mv "$tmp" "$STATE_FILE"
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+  _unlock
+  return 0
+}
+
 # D-5: Parse review gate with JSON-first, text sentinel fallback
 # Conflict policy: JSON READY + text BLOCKED → fail-closed BLOCKED
 _parse_review_gate() {
@@ -2822,6 +2994,7 @@ if [[ "$_code_review_matched" == "true" ]]; then
     # the atomicity is not worth the state-machine risk. Deferred by design.
     _alf_begin code_review
     update_state "code_review" "true" "$passed"
+    _clear_background_reviews code
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated: passed=$passed" >&2
@@ -2854,6 +3027,7 @@ if [[ "$_doc_review_matched" == "true" ]]; then
     passed=$(check_passed "$TOOL_OUTPUT")
     _alf_begin doc_review
     update_state "doc_review" "true" "$passed"
+    _clear_background_reviews doc
     echo "[Review State] doc_review updated: passed=$passed" >&2
     _alf_new=$(_alf_receipt doc_review)
     _alf_emit "event=doc_review_verdict change=doc $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$passed")" \
@@ -2982,6 +3156,45 @@ fi
 
 # === MCP sentinel routing (no command to parse) ===
 if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-reply" ]]; then
+  # Priority 0: the call never returned a report at all — it was handed off to the background.
+  # Placed ahead of every namespace branch because the placeholder carries no review header and
+  # would otherwise fall through the whole chain to the generic "no verdict sentinel" line, which
+  # reads as "the reviewer said nothing useful" rather than "the reviewer is still running and its
+  # answer can never reach this hook". Same facts, opposite instruction to the reader.
+  #
+  # Only the REQUEST side can be consulted here — there is no output to corroborate it — so this
+  # deliberately proves less than a verdict branch does. That is sound only because it grants
+  # nothing: the worst case is an advisory line about a plane that was not actually under review.
+  if _mcp_output_is_background_handoff "$TOOL_OUTPUT"; then
+    _bg_task=$(_mcp_background_task_id "$TOOL_OUTPUT")
+    _bg_planes=()
+    _mcp_request_asked_for_doc_review && _bg_planes+=("doc")
+    _mcp_request_asked_for_code_review && _bg_planes+=("code")
+    # The plan plane has no request-side predicate of its own (its branches are output-only), so
+    # it is matched on the template's own heading, the same string those branches key on.
+    grep -qF 'Plan Review' <<< "$TOOL_INPUT" && _bg_planes+=("plan")
+    for _bg_plane in ${_bg_planes+"${_bg_planes[@]}"}; do
+      # Persisted for the two planes stop-guard reads, and for those only. A marker exists to
+      # explain an OPEN GATE at stop time; `plan_review` is warn-only and isolated from the
+      # code/doc gates by design (stop-guard.sh § plan-review pending advisory), so a plan marker
+      # would be state nothing ever reads — and nothing retires either, since every verdict path
+      # that clears markers is code/doc. The in-session fact below is emitted for all three: it
+      # costs no state, and the plan loop runs inside the session where it is read.
+      [[ "$_bg_plane" == "plan" ]] || _record_background_review "$_bg_plane" "$_bg_task"
+      # `receipts=` carries the receipt this event is ABOUT — still false, and now with a stated
+      # reason. Every emitter spells the same five fields so one parser reads them all; the two
+      # additions here (`reason=`, `task=`) are what make the line actionable rather than merely
+      # another way of saying the gate is shut.
+      _alf_emit "event=review_verdict_unrecordable change=${_bg_plane} reason=backgrounded task=${_bg_task}" \
+        "receipts=${_bg_plane}_review:$(_alf_receipt "${_bg_plane}_review")" \
+        "$(_alf_common)" "pending=${_bg_plane}_review" >&2
+    done
+    if [[ ${#_bg_planes[@]} -gt 0 ]]; then
+      echo "[Review State] review moved to the background as task ${_bg_task} — its report arrives as a task notification, which fires no hook, so NO receipt can be recorded and the ${_bg_planes[*]} gate(s) stay shut. Re-running is not the fix: a slower review hits the same timeout. Read the report when it arrives, then re-dispatch a review that fits inside the foreground window (narrower scope, or --continue on the same thread). Issue #10" >&2
+    fi
+    exit 0
+  fi
+
   # Priority 1: doc-specific — namespace-gated on BOTH halves of provenance, BLOCKED-first.
   #
   # This branch used to be `grep -qE '## Document Review' && grep -qE '✅ Mergeable'`: two
@@ -3027,6 +3240,7 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
       if [[ -n "$_mcp_doc_verdict" ]]; then
         _alf_begin doc_review
         update_state "doc_review" "true" "$_mcp_doc_verdict"
+        _clear_background_reviews doc
         echo "[Review State] doc_review updated (MCP): passed=$_mcp_doc_verdict" >&2
         _alf_new=$(_alf_receipt doc_review)
         _alf_emit "event=doc_review_verdict change=doc source=mcp $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$_mcp_doc_verdict")" \
@@ -3087,6 +3301,7 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
     passed=$(_mcp_code_review_passed "$TOOL_OUTPUT")
     _alf_begin code_review
     update_state "code_review" "true" "$passed"
+    _clear_background_reviews code
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated (MCP): passed=$passed" >&2

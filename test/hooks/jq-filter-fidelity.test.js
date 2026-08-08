@@ -986,3 +986,48 @@ test('stall streak: a corrupt persisted streak floors to 0 instead of propagatin
     assert.equal(r.data.iteration_history.stall_streak, 1, `${JSON.stringify(bad)} must floor to 0 before incrementing`);
   }
 });
+
+// --- The tool_response NORMALIZER and its `has_payload` guard (post-tool-review-state.sh, #11) ---
+//
+// This one has to live here for a reason stronger than the file's usual one. The stub in
+// post-tool-review-state.test.js does not merely re-implement the normalizer — it re-implements it
+// *with the guard always applied*, so deleting `has_payload` from the production filter cannot
+// change a single assertion over there. The guard's whole job is to bound the re-parse: an object
+// carrying no recognized payload field passes through as the RAW string rather than being
+// re-serialized, and `tostring` re-serializes with JSON escapes DECODED. That decode is the danger:
+// the plan-review branches match with unanchored `grep`, so a payload-less object whose values hold
+// `## Plan Review` and `[PLAN_REVIEW_SKIPPED]` is inert while guarded and turns
+// into a plan-state write the moment the guard is gone. Measured, not argued — that pair of jq
+// outputs is what the two tests below pin.
+const NORMALIZE_FILTER = extractFilter(reviewState, 'TOOL_OUTPUT=$(echo "$INPUT" | jq -r ');
+
+// An object with no `stdout` / `content` field, whose values carry the plan sentinels in escaped
+// form. Written with literal backslash-u so the guarded path has something to preserve.
+const ESCAPED_PLAN_SENTINELS =
+  '{"foo":"\\u0023\\u0023 Plan Review","bar":"\\u005bPLAN_REVIEW_SKIPPED\\u005d"}';
+
+test('the extracted tool_response normalizer is a program real jq accepts', { skip: !HAVE_JQ }, () => {
+  const r = runFilter(NORMALIZE_FILTER, { tool_response: 'plain text' });
+  assert.equal(r.status, 0, `real jq rejected the production normalizer:\n${r.err}`);
+  assert.equal(r.out, 'plain text');
+});
+
+test('real jq: a payload-less object passes through UNCHANGED, escapes and all', { skip: !HAVE_JQ }, () => {
+  const r = runFilter(NORMALIZE_FILTER, { tool_response: ESCAPED_PLAN_SENTINELS });
+  assert.equal(r.status, 0, `real jq rejected the production normalizer:\n${r.err}`);
+  assert.equal(r.out, ESCAPED_PLAN_SENTINELS, 'the raw string is what passes through, not a re-serialization');
+  // The consequence, spelled out so the assertion above cannot be "simplified" into a shape test:
+  // these are the exact greps `hooks/post-tool-review-state.sh` runs on TOOL_OUTPUT for the plan
+  // plane. Delete `has_payload` and both start matching.
+  assert.doesNotMatch(r.out, /## Plan Review/, 'a decoded sentinel would reach the unanchored plan-review grep');
+  assert.doesNotMatch(r.out, /\[PLAN_REVIEW_SKIPPED\]/, 'and the SKIPPED branch writes state with no provenance check');
+});
+
+// The positive control, and the reason the guard is a guard rather than a refusal: an object that
+// DOES carry a recognized payload must still be unwrapped. Delete the guard and this stays green —
+// delete the `unwrap` call it gates and only this one fails, which is what separates the two.
+test('real jq: an object carrying a recognized payload is still unwrapped', { skip: !HAVE_JQ }, () => {
+  const r = runFilter(NORMALIZE_FILTER, { tool_response: JSON.stringify({ content: '## Document Review\n\n✅ Mergeable' }) });
+  assert.equal(r.status, 0, `real jq rejected the production normalizer:\n${r.err}`);
+  assert.equal(r.out, '## Document Review\n\n✅ Mergeable');
+});

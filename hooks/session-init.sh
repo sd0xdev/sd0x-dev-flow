@@ -593,6 +593,7 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.strategic_reset_fired = false |
       .iteration_history.stall_streak = 0 |
       .iteration_history.stall_memory = [] |
+      .background_reviews = [] |
       .session_commit_scope = {
         "session_id": $sid,
         "baseline_dirty_files": $bl,

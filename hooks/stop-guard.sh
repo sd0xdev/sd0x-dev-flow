@@ -15,9 +15,40 @@ set -euo pipefail
 # and registered in project settings — if so, exit 0 to avoid double-fire.
 # Dev-mode bypass: hooks/hooks.json at project root = plugin source repo (skip arbitration).
 _SELF_NAME="$(basename "$0")"
+# Identity, not filename: `basename "$0"` says WHICH hook this is, never WHICH COPY. Without the
+# comparison below the local copy satisfies every condition and defers to ITSELF — both copies
+# exit 0 and the hook never runs at all (zero-fire, the opposite of the double-fire this block
+# exists to prevent; issue #9). An unresolvable side leaves the guard false and does NOT defer:
+# double-fire is visible, zero-fire is silent.
+#
+# Deferral is decided by ORIGIN, not by path identity. `hooks/hooks.json` registers the plugin copy
+# under `${CLAUDE_PLUGIN_ROOT}` while settings register the local one under `$CLAUDE_PROJECT_DIR`,
+# so the invoking spelling is what separates them — and it stays separate when `.claude/hooks` is a
+# SYMLINK to the plugin's own hooks dir, the case where both copies are one file and a path
+# comparison says "I am local" for both, so neither defers and the ledger counts every round twice.
+#
+# The origin test is deliberately LEXICAL. `pwd -P` on that symlinked layout resolves the local
+# copy INTO the plugin directory, which would make it look like the plugin's and restore the exact
+# zero-fire this block was written to fix. The resolved comparison stays as the fallback for hosts
+# that do not export CLAUDE_PLUGIN_ROOT, and an invocation matching neither runs rather than defers.
+#
+# It matches the plugin hooks directory EXACTLY, never a descendant of the plugin root. Every
+# `hooks/hooks.json` entry is spelled `${CLAUDE_PLUGIN_ROOT}/hooks/<name>.sh`, so that one
+# directory IS the registered surface, while a `${CLAUDE_PLUGIN_ROOT}/*` prefix also swallows a
+# project nested under the plugin root — calling the LOCAL copy the plugin's and deferring it to
+# itself, which is zero-fire again. Layouts and failure directions: the request doc, issue #9.
+_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || _SELF_DIR=""
+_LOCAL_DIR="$(cd "${CLAUDE_PROJECT_DIR:-/nonexistent}/.claude/hooks" 2>/dev/null && pwd -P)" || _LOCAL_DIR=""
+_IS_PLUGIN_COPY=false
+if [[ -n "${CLAUDE_PLUGIN_ROOT:-}" ]]; then
+  case "$(dirname "$0")/" in "${CLAUDE_PLUGIN_ROOT%/}"/hooks/) _IS_PLUGIN_COPY=true ;; esac
+elif [[ -n "$_SELF_DIR" && -n "$_LOCAL_DIR" && "$_SELF_DIR" != "$_LOCAL_DIR" ]]; then
+  _IS_PLUGIN_COPY=true
+fi
 if [[ -n "${CLAUDE_PROJECT_DIR:-}" ]] \
    && [[ ! -f "${CLAUDE_PROJECT_DIR}/hooks/hooks.json" ]] \
-   && [[ -x "${CLAUDE_PROJECT_DIR}/.claude/hooks/${_SELF_NAME}" ]]; then
+   && [[ "$_IS_PLUGIN_COPY" == "true" ]] \
+   && [[ -x "${_LOCAL_DIR}/${_SELF_NAME}" ]]; then
   _SETTINGS_MATCH=false
   for _sf in "${CLAUDE_PROJECT_DIR}/.claude/settings.json" \
              "${CLAUDE_PROJECT_DIR}/.claude/settings.local.json"; do
@@ -1366,6 +1397,36 @@ if [[ -n "${MISSING:-}" ]]; then
   _alf_emit "event=stop_attempt change=${_ALF_CHANGE} mode=${GUARD_MODE} ${_ALF_SOURCE}" \
     "receipts=code_review:${CODE_RECEIPT_PERSISTED},doc_review:${DOC_REVIEW_PASSED},precommit:${PRECOMMIT_PASSED}" \
     "$(_alf_common)" "pending=${_ALF_PENDING:-none}" >&2
+  # A backgrounded review leaves behind a verdict no hook can ever collect (issue #10). Without
+  # this line the reader sees only `Missing steps: /codex-review-doc`, which is indistinguishable
+  # from never having run one — and the rational response to *that* reading is to re-run, the one
+  # action guaranteed to hit the same timeout again. Reported in both modes: warn mode is where a
+  # loop actually churns, since strict at least stops.
+  #
+  # Filtered to planes whose gate is still open, so a marker left by a review that later succeeded
+  # falls silent on its own — no sweep step to forget, and no claim that outlives its evidence.
+  # Restricted to doc/code because those are the gates MISSING enumerates; a plan-plane marker has
+  # no open obligation here to attach itself to.
+  #
+  #
+  # The wording below is deliberately weaker than the marker looks. Two limits it may not outrun:
+  # provenance is a REQUEST-side substring, so a task that merely discusses `Merge Gate` mints one;
+  # and a handoff committing after an edit re-attaches to a gate the edit caused — the edit landing
+  # between DISPATCH and handoff, which is why retirement cannot reach it. Hence "looked like a
+  # review", never "a review ran", and the other two causes named rather than excluded.
+  # Why neither is closed rather than worded around:
+  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md
+  # § No authenticated provenance, § No review generation.
+  if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
+    _BG_OPEN=$(jq -r --arg doc "$DOC_REVIEW_PASSED" --arg code "$CODE_RECEIPT_PERSISTED" '
+      (.background_reviews // [])
+      | map(select((.plane == "doc" and $doc != "true")
+                   or (.plane == "code" and $code != "true")))
+      | map("\(.plane) (task \(.task))") | unique | join(", ")' "$STATE_FILE" 2>/dev/null) || _BG_OPEN=""
+    if [[ -n "$_BG_OPEN" ]]; then
+      echo "[Stop Guard] Note — a Codex task whose request looked like a review of ${_BG_OPEN} was moved to the background: its report arrives as a task notification, which fires no hook, so no verdict was recorded. That is request-side evidence only — it does not prove a review of this plane ran, so read the task's report before deciding. Two other things leave this gate open: an edit made after the task was dispatched — including one that landed before this marker was written, which is the ordering retirement cannot reach — and simply never having completed a review of this plane. Re-running from scratch hits the same timeout; narrow the scope, or continue the existing thread with the current diff. Issue #10" >&2
+    fi
+  fi
   if [[ "$GUARD_MODE" == "strict" ]]; then
     # On exit 2 only stderr reaches the model (stdout JSON is test-consumed),
     # so the actionable instruction must be here, not just in the JSON.

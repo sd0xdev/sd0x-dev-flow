@@ -321,8 +321,33 @@ if (query && (query.includes('.tool_response') || query.includes('.tool_output')
     } else {
       process.stdout.write(JSON.stringify(picked));
     }
+  } else if (Array.isArray(picked)) {
+    // A BARE array of content blocks — the shape a backgrounded MCP handoff actually arrives in.
+    // Mirrors the hook's own array branch, including skipping non-object elements.
+    process.stdout.write(
+      picked.filter(c => c && typeof c === 'object' && c.type === 'text').map(c => c.text).join('\\n'));
   } else if (typeof picked === 'string') {
-    process.stdout.write(picked);
+    // Issue #11: the host sends some synchronous MCP completions as a STRING of serialized JSON.
+    // The hook re-parses it, but only unwraps when the parsed object carries a payload field it
+    // recognizes — so a review report that merely begins with \`{\` passes through unchanged. This
+    // branch must mirror that condition exactly; a stub that unwrapped unconditionally would hide
+    // the very over-reach the negative test exists to catch.
+    let parsed = null;
+    try { parsed = JSON.parse(picked); } catch (e) { parsed = null; }
+    const isObj = parsed && typeof parsed === 'object' && !Array.isArray(parsed);
+    const hasPayload = isObj
+      && (typeof parsed.stdout === 'string' || typeof parsed.content === 'string' || Array.isArray(parsed.content));
+    if (hasPayload) {
+      if (typeof parsed.stdout === 'string') {
+        process.stdout.write(parsed.stdout);
+      } else if (typeof parsed.content === 'string') {
+        process.stdout.write(parsed.content);
+      } else {
+        process.stdout.write(parsed.content.filter(c => c && c.type === 'text').map(c => c.text).join('\\n'));
+      }
+    } else {
+      process.stdout.write(picked);
+    }
   } else {
     process.stdout.write('');
   }
@@ -688,6 +713,25 @@ if (query && query.includes('iteration_history.current_round += 1')) {
       blind ? prev : (total > 0 && closed === 0) ? prev + 1 : 0;
   }
   data.updated_at = vars.now || '';
+  process.stdout.write(JSON.stringify(data));
+  process.exit(0);
+}
+
+// \`background_reviews\` append-and-cap (issue #10). Implemented for real rather than stubbed to a
+// bare exit: an unrecognized query falls through to the empty write below, which the hook reads as
+// a failed jq and discards — so a gap here would be indistinguishable from the hook declining to
+// write the marker, and the test would pass against a stub artifact. The .[-5:] cap is reproduced
+// because it is the property the retention test asserts.
+if (query && query.includes('.background_reviews =') && vars.p) {
+  const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const prior = Array.isArray(data.background_reviews) ? data.background_reviews : [];
+  if (query.includes('.plane != $p')) {
+    // Retire form: drop this plane's markers, leave every other plane alone. Reproduced rather
+    // than short-circuited because "only this plane" is the property under test.
+    data.background_reviews = prior.filter(e => e.plane !== vars.p);
+  } else {
+    data.background_reviews = prior.concat([{ plane: vars.p, task: vars.t, at: vars.at || '' }]).slice(-5);
+  }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
 }
@@ -7498,4 +7542,465 @@ test('stall memory: the replay is SPLIT, so no line of it is an ingestible recor
   // End to end: feeding the whole replay back as a COMMAND must not grow the buffer.
   assert.equal(emitStallMemory(workDir, binDir, replay.join('\n')).status, 0);
   assert.equal(memoryOf(workDir).length, 1, 'the buffer did not grow by being displayed');
+});
+
+// === Issue #10 — a backgrounded MCP review can never record a receipt ===
+//
+// When an MCP call outlives the foreground timeout the harness completes the tool call with a
+// handoff placeholder and delivers the real report later as a task notification, which fires no
+// hook. The verdict is therefore unreachable from this process. The fix does not invent one; it
+// records WHY the receipt is missing. These tests pin both halves of that: the marker appears, and
+// the gate it explains stays shut.
+//
+// PLACEHOLDER is the measured text, copied from a real transcript rather than from the issue
+// report — the two differ in wording, and only the harness's own string is evidence of anything.
+const BACKGROUND_PLACEHOLDER =
+  'MCP tool "codex/codex" is still running after 120s. It was moved to the background as task '
+  + 'kimyfg23u and keeps running; you\'ll receive a notification with the result when it '
+  + 'completes. You can keep working in the meantime. To stop it, use TaskStop with task_id '
+  + '"kimyfg23u". Note: it does not survive exiting this session.';
+
+function runBackgroundHandoff(workDir, binDir, { prompt, output = BACKGROUND_PLACEHOLDER, tool = 'mcp__codex__codex' } = {}) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: tool,
+      tool_input: { prompt },
+      tool_response: { content: [{ type: 'text', text: output }] },
+    },
+  });
+}
+
+test('#10: backgrounded doc review records a marker and leaves the doc gate SHUT', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-doc-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.deepEqual(
+    (state.background_reviews || []).map((e) => `${e.plane}:${e.task}`),
+    ['doc:kimyfg23u'],
+    'the marker names the plane and the task id the placeholder carries',
+  );
+  // The point of the whole fix: it explains the shut gate, it never opens it. A marker that also
+  // banked a receipt would be a worse bug than the one being fixed.
+  assert.equal(state.doc_review.executed, false, 'no verdict was observed, so no receipt is written');
+  assert.equal(state.doc_review.passed, false);
+  assert.match(
+    result.stderr,
+    /event=review_verdict_unrecordable change=doc reason=backgrounded task=kimyfg23u/,
+    'the fact block states the reason so the reader is not left inferring a forgotten review',
+  );
+});
+
+test('#10: backgrounded code review records a code-plane marker', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-code-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, { prompt: REVIEW_PROMPT });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.deepEqual((state.background_reviews || []).map((e) => e.plane), ['code']);
+  assert.equal(state.code_review.executed, false, 'the code gate stays shut too');
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=code/);
+});
+
+test('#10: a prompt asking for both planes records one marker per plane', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-both-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, {
+    prompt: `${DOC_REVIEW_PROMPT}\n\n${REVIEW_PROMPT}`,
+  });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(
+    (readState(workDir).background_reviews || []).map((e) => e.plane),
+    ['doc', 'code'],
+    'both gates are open, so both are explained',
+  );
+});
+
+// The plan plane is deliberately asymmetric, and this pins both halves of that asymmetry so
+// neither can drift into the other. A marker is persisted only for the planes stop-guard reads;
+// `plan_review` is warn-only and isolated from the code/doc gates, so a plan marker would be state
+// with no reader AND no retirement path — every clearing site is code/doc. The in-session fact is
+// still emitted, because that costs no state and the plan loop runs inside the session.
+test('#10: a backgrounded plan review emits the fact but persists no marker', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-plan-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, {
+    prompt: 'Review this plan and report under a ## Plan Review heading.',
+  });
+
+  assert.equal(result.status, 0);
+  assert.match(
+    result.stderr,
+    /event=review_verdict_unrecordable change=plan/,
+    'the lost plan verdict is still stated in-session',
+  );
+  const state = readState(workDir);
+  assert.deepEqual(
+    (state && state.background_reviews) || [],
+    [],
+    'nothing reads a plan marker and nothing retires one — so none is written',
+  );
+});
+
+// The other direction of the same predicate, and the reason stop-guard may not say "a review ran".
+// Provenance here is a REQUEST-side substring, so it cuts both ways: a review prompt that drops the
+// phrase records nothing (which happened in this change's own review history), and a non-review
+// prompt that merely contains it records a marker. This pins the second half so it is a documented
+// property rather than a surprise — the marker grants nothing, and the wording at the consuming end
+// is what keeps it honest.
+test('#10: a backgrounded NON-review prompt containing the marker phrase still records one', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-phrase-only-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, {
+    prompt: 'Find every occurrence of Merge Gate in this repository and summarize how it is parsed.',
+  });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(
+    (readState(workDir).background_reviews || []).map((e) => e.plane),
+    ['code'],
+    'the request-side substring cannot tell a review from a discussion of one — a known, bounded residual',
+  );
+  assert.equal(
+    readState(workDir).code_review.executed,
+    false,
+    'and it grants nothing: the gate is untouched, which is what makes the residual tolerable',
+  );
+});
+
+// Negative control #1. Without it the two positive tests above are satisfied by a hook that
+// records a marker for every MCP call that times out, review or not.
+test('#10: NEG — a backgrounded call that never asked for a review records nothing', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-unrelated-');
+  const binDir = setupStubBin();
+  const result = runBackgroundHandoff(workDir, binDir, { prompt: 'Explain how this module works.' });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state, null, 'nothing to explain means nothing to record');
+  assert.doesNotMatch(result.stderr, /review_verdict_unrecordable/);
+});
+
+// Negative control #2, and the one that shaped the implementation. The detector is anchored to the
+// FIRST non-empty line rather than matched as a substring, because this repo's own issue #10
+// write-ups quote the placeholder inside an indented code fence — and the handoff branch runs
+// AHEAD of every verdict branch and exits. An unanchored match would therefore have swallowed the
+// verdict of any review that so much as discussed backgrounding, including a review of this fix.
+// Deleting the anchor leaves every other test in this file green and fails only this one.
+test('#10: NEG — a real review QUOTING the placeholder still records its own verdict', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-quoting-');
+  const binDir = setupStubBin();
+  const quoting = [
+    '## Document Review',
+    '',
+    'The report describes this placeholder:',
+    '',
+    '```',
+    `   ${BACKGROUND_PLACEHOLDER}`,
+    '```',
+    '',
+    'Findings: None.',
+    '',
+    '✅ Mergeable',
+  ].join('\n');
+  const result = runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT, output: quoting });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, true, 'the review that actually ran keeps its verdict');
+  // Emptiness, not absence: recording the verdict also retires that plane's markers, so the key
+  // legitimately exists as `[]` here. What must not happen is a marker being recorded.
+  assert.deepEqual(state.background_reviews || [], [], 'and is not mistaken for a handoff');
+});
+
+test('#10: the marker list is capped at the 5 most recent, newest last', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-cap-');
+  const binDir = setupStubBin();
+  for (let i = 1; i <= 7; i++) {
+    const placeholder = BACKGROUND_PLACEHOLDER.replace(/kimyfg23u/g, `task${i}`);
+    assert.equal(
+      runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT, output: placeholder }).status,
+      0,
+    );
+  }
+  // Every hook re-reads this file, so an unbounded list taxes every later read.
+  assert.deepEqual(
+    readState(workDir).background_reviews.map((e) => e.task),
+    ['task3', 'task4', 'task5', 'task6', 'task7'],
+  );
+});
+
+// === Issue #11 — a tool_response that is a STRING of serialized JSON ===
+//
+// The host sends this shape for some synchronous MCP completions. Left unparsed it stays one line
+// beginning with `{`, its newlines still literal `\n`, so every start-of-line-anchored review
+// matcher misses and the receipt is silently dropped. Unwrapping is conditional on the parsed
+// object carrying a payload field the hook recognizes, which is what keeps the fix additive: it
+// can only add receipts, never reroute an output that already worked.
+function runJsonStringResponse(workDir, binDir, { prompt, payload, tool = 'mcp__codex__codex-reply' }) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: tool,
+      tool_input: { prompt },
+      // JSON.stringify, never a hand-written escape. A nested JSON string needs its newlines
+      // written `\\n` in the outer document; writing `\n` makes the outer decode a real newline and
+      // the inner JSON becomes invalid — which looks exactly like the fix not working.
+      tool_response: JSON.stringify(payload),
+    },
+  });
+}
+
+test('#11: a JSON-string tool_response carrying a doc verdict records the receipt', () => {
+  const workDir = makeTempDir('sd0x-post-tool-jsonstr-doc-');
+  const binDir = setupStubBin();
+  const result = runJsonStringResponse(workDir, binDir, {
+    prompt: DOC_REVIEW_REPLY_PROMPT,
+    payload: { threadId: 't1', content: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' },
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir).doc_review.passed, true);
+});
+
+test('#11: the same shape on the code plane records the code receipt', () => {
+  const workDir = makeTempDir('sd0x-post-tool-jsonstr-code-');
+  const binDir = setupStubBin();
+  const result = runJsonStringResponse(workDir, binDir, {
+    prompt: REVIEW_REPLY_PROMPT,
+    payload: { content: '## Merge Gate\n\nNo blocking findings.\n\n✅ Ready' },
+  });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.executed, true);
+  // `executed` alone would be satisfied by a normalizer that reached the text and then recorded the
+  // WRONG verdict. The pass is the half of the pair that matters on this plane.
+  assert.equal(state.code_review.passed, true);
+});
+
+// Not the happy path. A normalizer that reached the text but lost the verdict precedence would
+// pass the two tests above and still bank a pass over a ⛔.
+test('#11: a JSON-string carrying a BLOCKED verdict records passed=false', () => {
+  const workDir = makeTempDir('sd0x-post-tool-jsonstr-blocked-');
+  const binDir = setupStubBin();
+  const result = runJsonStringResponse(workDir, binDir, {
+    prompt: DOC_REVIEW_REPLY_PROMPT,
+    payload: { content: '## Document Review\n\n🔴 P0: broken link.\n\n⛔ Needs revision' },
+  });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.executed, true);
+  assert.equal(state.doc_review.passed, false);
+});
+
+// The fourth cell of the two-planes × two-verdicts matrix the AC claims. Verdict precedence is
+// spelled per plane — `⛔ Blocked` for code, `⛔ Needs revision` for doc — so a code-plane
+// regression is not caught by the doc-plane blocked test above.
+//
+// The payload carries BOTH sentinels on purpose, and that is the whole test. `_mcp_code_review_passed`
+// is fail-closed: reaching it with no parseable verdict already returns false, so a payload carrying
+// only `⛔ Blocked` asserts nothing about BLOCKED being recognized — delete the `⛔ Blocked` branch
+// and it stays green on the fallback. With `✅ Ready` also present, deleting that branch makes the
+// parser fall through to READY and the test fails, which is the BLOCKED-first precedence the hook
+// comment claims. Round-7 review caught the weaker version.
+test('#11: the same shape carrying BOTH verdicts records passed=false (BLOCKED first)', () => {
+  const workDir = makeTempDir('sd0x-post-tool-jsonstr-code-blocked-');
+  const binDir = setupStubBin();
+  const result = runJsonStringResponse(workDir, binDir, {
+    prompt: REVIEW_REPLY_PROMPT,
+    payload: {
+      content:
+        '## Merge Gate\n\n- [P0] src/app.ts:1 unguarded write -> add the guard\n\n'
+        + '⛔ Blocked\n\nOnce that P0 is fixed this becomes ✅ Ready\n',
+    },
+  });
+
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.executed, true);
+  assert.equal(state.code_review.passed, false, 'a trailing ✅ Ready must never outrank a ⛔ Blocked');
+});
+
+test('#11: a JSON-string wrapping a text-block array is unwrapped too', () => {
+  const workDir = makeTempDir('sd0x-post-tool-jsonstr-blocks-');
+  const binDir = setupStubBin();
+  const result = runJsonStringResponse(workDir, binDir, {
+    prompt: DOC_REVIEW_REPLY_PROMPT,
+    payload: { content: [{ type: 'text', text: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' }] },
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir).doc_review.passed, true);
+});
+
+// The negative control that bounds the re-parse. Delete the `has_payload` guard in the hook and
+// this stays green — but a review report that merely begins with `{` would start being rerouted.
+// That is why the second assertion checks a payload-less OBJECT, not merely unparseable text.
+test('#11: NEG — output that is not JSON, and JSON without a payload field, are untouched', () => {
+  const binDir = setupStubBin();
+
+  const notJson = makeTempDir('sd0x-post-tool-jsonstr-neg-a-');
+  assert.equal(
+    runHook({
+      cwd: notJson,
+      binDir,
+      input: {
+        tool_name: 'mcp__codex__codex-reply',
+        tool_input: { prompt: DOC_REVIEW_REPLY_PROMPT },
+        tool_response: '{ not json at all, and no review marker anywhere',
+      },
+    }).status,
+    0,
+  );
+  assert.equal(readState(notJson), null, 'unparseable text records nothing');
+
+  const noPayload = makeTempDir('sd0x-post-tool-jsonstr-neg-b-');
+  assert.equal(
+    runJsonStringResponse(noPayload, binDir, {
+      prompt: DOC_REVIEW_REPLY_PROMPT,
+      payload: { foo: 1 },
+    }).status,
+    0,
+  );
+  assert.equal(readState(noPayload), null, 'a parsed object with no recognized payload field is left alone');
+});
+
+// The shape a backgrounded handoff ACTUALLY arrives in — a bare array of content blocks with no
+// wrapping object. Measured from a live handoff after the first version of the #10 fix failed to
+// fire against it: the fix had been verified only against `{content:[…]}`, and the real payload was
+// wrongly written off as a bad fixture. Without the hook's array branch this falls to `empty`,
+// TOOL_OUTPUT is blank, and the entire #10 handling is unreachable.
+test('#10: a BARE content-block array is normalized, so the handoff branch fires', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-bare-array-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_response: [{ type: 'text', text: BACKGROUND_PLACEHOLDER }],
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.deepEqual(
+    (readState(workDir).background_reviews || []).map((e) => `${e.plane}:${e.task}`),
+    ['code:kimyfg23u'],
+  );
+  assert.doesNotMatch(result.stderr, /empty output/, 'the payload must not be read as no output at all');
+});
+
+test('#10: a bare array carrying an ordinary verdict records the receipt', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bare-array-verdict-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_response: [{ type: 'text', text: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' }],
+    },
+  });
+
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir).doc_review.passed, true);
+});
+
+// === Issue #10 marker lifecycle ===
+//
+// A marker with no lifecycle re-attaches itself to the NEXT time its plane's gate opens, telling
+// the reader that a freshly-reopened gate is waiting on a task that finished long ago — and
+// pointing them at a thread that no longer exists. Retiring it on verdict is what keeps "the gate
+// is open" and "THIS marker explains it" the same question.
+test('#10: a foreground verdict retires that plane\'s marker', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-retire-');
+  const binDir = setupStubBin();
+
+  assert.equal(runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT }).status, 0);
+  assert.equal((readState(workDir).background_reviews || []).length, 1, 'marker recorded');
+
+  const verdict = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_response: { content: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' },
+    },
+  });
+
+  assert.equal(verdict.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, true);
+  assert.deepEqual(state.background_reviews, [], 'the marker does not outlive the review it described');
+});
+
+// The code-plane twin of the test above. The cross-plane control below proves a DOC verdict leaves
+// the code marker standing — which is the same evidence read from the other side, and says nothing
+// about whether a code verdict retires its own. Delete the code plane from `_clear_background_reviews`
+// and only this test notices.
+test('#10: a foreground CODE verdict retires the code marker', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-retire-code-');
+  const binDir = setupStubBin();
+
+  assert.equal(runBackgroundHandoff(workDir, binDir, { prompt: REVIEW_PROMPT }).status, 0);
+  assert.equal((readState(workDir).background_reviews || []).length, 1, 'marker recorded');
+
+  const verdict = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_response: { content: '## Merge Gate\n\nNo blocking findings.\n\n✅ Ready' },
+    },
+  });
+
+  assert.equal(verdict.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true);
+  assert.deepEqual(state.background_reviews, [], 'the marker does not outlive the review it described');
+});
+
+// The other plane must be untouched — clearing on any verdict would silently drop an explanation
+// that is still true.
+test('#10: retiring one plane\'s marker leaves the other plane\'s standing', () => {
+  const workDir = makeTempDir('sd0x-post-tool-bg-retire-scoped-');
+  const binDir = setupStubBin();
+
+  assert.equal(
+    runBackgroundHandoff(workDir, binDir, { prompt: `${DOC_REVIEW_PROMPT}\n\n${REVIEW_PROMPT}` }).status,
+    0,
+  );
+  assert.equal((readState(workDir).background_reviews || []).length, 2);
+
+  assert.equal(
+    runHook({
+      cwd: workDir,
+      binDir,
+      input: {
+        tool_name: 'mcp__codex__codex',
+        tool_input: { prompt: DOC_REVIEW_PROMPT },
+        tool_response: { content: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' },
+      },
+    }).status,
+    0,
+  );
+
+  assert.deepEqual(
+    (readState(workDir).background_reviews || []).map((e) => e.plane),
+    ['code'],
+    'the code review is still backgrounded and still needs explaining',
+  );
 });

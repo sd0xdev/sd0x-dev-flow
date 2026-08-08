@@ -119,10 +119,17 @@ if (query && query.includes('[$flag]') && vars.flag) {
   process.exit(0);
 }
 
-// Handle invalidate_review: .[$key].passed = false
+// Handle invalidate_review: .[$key].passed = false [| background_reviews retire for $plane]
+// The marker clause rides the SAME query as the invalidation, so the stub must honour it here
+// rather than in a branch of its own — an unrecognized clause would be silently dropped and the
+// retirement test would pass against a stub that never retired anything.
 if (query && query.includes('.passed = false') && vars.key) {
   if (data[vars.key] && typeof data[vars.key] === 'object') {
     data[vars.key].passed = false;
+  }
+  if (query.includes('.background_reviews =') && vars.plane) {
+    const prior = Array.isArray(data.background_reviews) ? data.background_reviews : [];
+    data.background_reviews = prior.filter((e) => e.plane !== vars.plane);
   }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
@@ -134,6 +141,11 @@ if (query && query.includes('has_doc_change = true') && query.includes('doc_revi
   data.updated_at = vars.now || '';
   if (!data.doc_review) data.doc_review = {};
   data.doc_review.passed = false;
+  // The doc branch hard-codes the plane in its jq rather than passing --arg, so match the literal.
+  if (query.includes('.plane != "doc"')) {
+    const prior = Array.isArray(data.background_reviews) ? data.background_reviews : [];
+    data.background_reviews = prior.filter((e) => e.plane !== 'doc');
+  }
   if (query.includes('aggregate_gate.executed = false') && data.aggregate_gate) {
     data.aggregate_gate.executed = false;
     data.aggregate_gate.gate = null;
@@ -945,6 +957,192 @@ test('code edit invalidates code_review.passed', () => {
   assert.equal(state.code_review.passed, false, 'code_review.passed should be invalidated');
   assert.equal(state.code_review.executed, true, 'code_review.executed should be preserved');
   assert.equal(state.code_review.last_run, 'T1', 'code_review.last_run should be preserved');
+});
+
+// === Background-review markers are retired by the edit that re-opens their plane ===
+//
+// The sequence that made a marker lie: a review is backgrounded and records task T; its report
+// arrives as a task notification, which fires no hook; the report is acted on by editing a file;
+// the edit re-opens the gate. Without this, stop-guard still finds T — the gate IS open, so its
+// filter matches — and tells the reader the gate is open because that review's verdict was lost,
+// naming a thread that already finished and predates the change. Retiring on the invalidating
+// write is what keeps "gate open" and "why" from drifting apart.
+test('#10: a code edit retires the code marker whose gate it re-opens', () => {
+  const workDir = makeTempDir('sd0x-format-bg-retire-code-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      doc_review: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [
+        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
+        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
+      ],
+    })
+  );
+
+  runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
+
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'the edit must re-open the code gate');
+  assert.deepEqual(
+    state.background_reviews.map((e) => e.plane),
+    ['doc'],
+    'the code marker is retired with the receipt it explained; the doc plane is untouched',
+  );
+});
+
+test('#10: a doc edit retires the doc marker whose gate it re-opens', () => {
+  const workDir = makeTempDir('sd0x-format-bg-retire-doc-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [
+        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
+        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
+      ],
+    })
+  );
+
+  runHook({ cwd: workDir, binDir, filePath: '/project/docs/guide.md', env: { HOOK_NO_FORMAT: '1' } });
+
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, false, 'the edit must re-open the doc gate');
+  assert.deepEqual(
+    state.background_reviews.map((e) => e.plane),
+    ['code'],
+    'the doc marker goes with its receipt; a code marker is a different plane and stays',
+  );
+});
+
+// The other direction, so the retirement above cannot quietly become "clear everything on any
+// edit". A cross-plane edit leaves both the receipt and the marker alone — stop-guard still owes
+// the reader the explanation for a gate this edit did not touch.
+test('#10: a doc edit leaves a code marker in place', () => {
+  const workDir = makeTempDir('sd0x-format-bg-retire-crossplane-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      doc_review: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [{ plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' }],
+    })
+  );
+
+  runHook({ cwd: workDir, binDir, filePath: '/project/docs/guide.md', env: { HOOK_NO_FORMAT: '1' } });
+
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, true, 'a doc edit must not re-open the code gate');
+  assert.deepEqual(
+    state.background_reviews.map((e) => e.task),
+    ['k03reia4w'],
+    'the code marker still explains a code gate nothing has re-opened',
+  );
+});
+
+// The contended arm. The doc plane writes its own jq twice — once inside the lock, once as the
+// degraded best-effort rewrite — and only the locked copy carried the retirement clause at first.
+// That asymmetry is invisible from the three tests above, which all run uncontended: the degraded
+// rewrite still re-opens the gate, so a marker surviving it re-attaches to a gate the edit caused.
+// The code plane has the same shape and reaches the retirement through `invalidate_review` rather
+// than a second copy of the transform — but "reaches it through a shared helper" is an argument,
+// not evidence, and the AC-trace review said so. The code-plane twin below is the evidence.
+test('#10: the DEGRADED doc path retires the doc marker too', () => {
+  const workDir = makeTempDir('sd0x-format-bg-retire-degraded-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [
+        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
+        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
+      ],
+    })
+  );
+  // Hold the state lock so `_lock` times out and the doc transaction takes its degraded arm.
+  const stLock = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(stLock, { recursive: true });
+  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/docs/guide.md',
+    env: { HOOK_NO_FORMAT: '1', REVIEW_STATE_LOCK_TIMEOUT: '0' },
+  });
+
+  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, false, 'the degraded rewrite still re-opens the doc gate');
+  assert.deepEqual(
+    state.background_reviews.map((e) => e.plane),
+    ['code'],
+    'so it must retire the doc marker with it — otherwise the marker explains a gate the edit caused',
+  );
+});
+
+// The code-plane twin. The committed code arm and this one both call `invalidate_review`, so the
+// retirement clause lives in one place and cannot diverge the way the doc plane's two transforms
+// did — but that is a claim about the source, and nothing failed if the degraded arm stopped
+// calling it. Dropping `invalidate_review "code_review"` from the contended branch below is exactly
+// the mutation this catches: the gate still re-opens (via the sidecar) while the marker survives to
+// explain it.
+test('#10: the DEGRADED code path retires the code marker through invalidate_review', () => {
+  const workDir = makeTempDir('sd0x-format-bg-retire-degraded-code-');
+  const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: true, passed: true, last_run: 'T1' },
+      background_reviews: [
+        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
+        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
+      ],
+    })
+  );
+  // Hold the state lock so `_lock` times out and the code transaction takes its degraded arm.
+  const stLock = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(stLock, { recursive: true });
+  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
+
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    filePath: '/project/src/app.ts',
+    env: { HOOK_NO_FORMAT: '1', REVIEW_STATE_LOCK_TIMEOUT: '0' },
+  });
+
+  assert.match(result.stderr, /Code change detected \(degraded — lock contention/, 'the degraded code arm is the one under test');
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'the degraded rewrite still re-opens the code gate');
+  assert.deepEqual(
+    state.background_reviews.map((e) => e.plane),
+    ['doc'],
+    'so the code marker goes with it, and the doc plane the edit did not touch is left standing',
+  );
 });
 
 test('code edit invalidates precommit.passed', () => {
