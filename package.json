@@ -1,6 +1,6 @@
 {
   "name": "sd0x-dev-flow",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "description": "Harness engineering for Claude Code — hook-enforced review gates, state-machine gates, and fail-closed safety where it counts.",
   "license": "MIT",
   "scripts": {
