@@ -59,7 +59,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 완료 | 스크립트된 단계 시퀀스 ("수정 → 즉시 재리뷰") | 종결 완료 불변식(terminal completion invariant): 변경 클래스가 요구하는 모든 gate가 마지막 편집 이후 통과했어야 함 |
 | 규칙의 강제력 | 균일 — 모든 규칙이 의무로 읽힘 | 3개 tier: **Anchor** (절대 이탈 불가), **Default** (신호를 명시하고 이탈 가능), **Guidance** (권고) |
 | 리뷰 깊이 | 기본적으로 최대 | 위험도에 비례하는 tier (`fast` / `standard` / `thorough`); 보안과 데이터 무결성은 항상 상향 |
-| 라운드 상한 도달 | 사람에게 인계 | 첫 도달: 구조화된 자가 진단 + 한 번의 제한된 조정 후 재개 — 단, 상한 전용 human exit가 적용되는 경우는 예외 (보안/데이터 무결성, 아키텍처 수준 변경, 요구사항 모호성); 진단 이후 같은 변경이 다시 상한에 도달하면: 항상 사람에게 |
+| 정체 감지 / 라운드 상한 도달 | 사람에게 인계 | 첫 발화: 구조화된 자가 진단 + 한 번의 제한된 조정 후 재개 — 단, human exit가 적용되는 경우는 예외 (보안/데이터 무결성, 아키텍처 수준 변경, 요구사항 모호성); 진단 이후 같은 변경이 다시 상한에 도달하면: 항상 사람에게 |
 
 양보할 수 없는 핵심은 **닫힌 Anchor Register**(`rules/discretion.md`)에 있으며, 어떤 프로젝트 오버라이드도 이를 다운그레이드할 수 없습니다 — 해석은 Anchor 우선이고, Register 항목이 제거되면 테스트 스위트가 의도적으로 실패합니다. 그 경계 안에서 소유권은 명시적입니다:
 
@@ -86,7 +86,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 | 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 98개 skill 중 89개가 `allowed-tools`를 선언 |
 | 6 | **Defense-in-depth 안전장치** | 5개 레이어: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed 마커 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator 분리** | Codex가 Claude의 결과물을 리뷰하며 저장소를 직접 조사 — 결론을 건네받아 승인만 하는 일은 없음 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **점진적 진행 추적** | Tier별 라운드 예산 (기본 3 / 5 / 30, 3–50으로 오버라이드 가능) + 상한 진단: 첫 상한 도달 시 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거하며, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 8 | **점진적 진행 추적** | 증거 기반 정체 감지: `[LOOP_STALL]`은 finding을 하나도 닫지 못한 리뷰 라운드가 3회 연속되면 발화하여 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거합니다. Tier별 라운드 예산 (기본 6 / 15 / 30, 3–50으로 오버라이드 가능) 은 폭주 방지용 백스톱으로 물러나며, 첫 상한 도달 시에도 같은 진단을 수행하고, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop 안전 게이트** | 모든 `/push-ci` push 전 `AskUserQuestion` 승인; 보호 브랜치 push에는 `/dev/tty` pre-push 확인이 최종 credential (non-fast-forward 감지 포함) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **자기 개선 루프** | 지적 → lesson 기록 → 3회 이상 재발 시 rule로 승격 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,7 +108,7 @@ flowchart LR
 
 모든 것은 하나의 규칙을 중심으로 돌아갑니다 — **종결 완료 불변식(terminal completion invariant)**: 어떤 변경에 대한 작업은, 해당 변경 클래스가 요구하는 모든 gate가 *그 클래스의 마지막 편집 이후* 통과했을 때에만 완료로 선언될 수 있습니다. 코드 편집은 독립적인 Codex 리뷰 후 `/precommit`을 요구하고, `.md` 문서는 `/codex-review-doc`을 요구합니다. 언제 실행할지, 편집을 어떻게 배치할지, 얼마나 깊이 리뷰할지는 모델의 판단입니다 — 불변식은 choreography가 아니라 최종 상태를 제약합니다.
 
-Hooks는 **명령이 아니라 사실**을 보고합니다: `[AUTO_LOOP_STATE]` 블록(변경 클래스, gate receipt, 라운드/상한, tier)을 내보내고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 라운드 상한에 도달하면 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 거친 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 다만 상한 전용 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
+Hooks는 **명령이 아니라 사실**을 보고합니다: `[AUTO_LOOP_STATE]` 블록(변경 클래스, gate receipt, 라운드/상한, tier)을 내보내고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 정체 신호(또는 백스톱으로서의 라운드 상한 도달)가 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 촉발하고, 그 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 어느 trigger로 발화했든 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
 
 강제(enforcement)에는 두 가지 모드가 있습니다:
 
@@ -156,15 +156,17 @@ sequenceDiagram
 
 | Tier | 대상 | Blocking | 라운드 상한 |
 |------|------|----------|------------|
-| `fast` | 문서, 설정, 위험이 낮은 소규모 편집 | P0 | 3 |
-| `standard` **(기본값)** | 일반적인 기능 개발과 버그 수정 | P0, P1 | 5 |
+| `fast` | 문서, 설정, 위험이 낮은 소규모 편집 | P0 | 6 |
+| `standard` **(기본값)** | 일반적인 기능 개발과 버그 수정 | P0, P1 | 15 |
 | `thorough` | 보안, 데이터 무결성, 릴리스, 공개 API | P0, P1, P2 | 30 |
 
 설정된 tier는 상한선이 아니라 기준선(baseline)입니다 — 변경이 그럴 만하면 모델이 상향하고, 보안이나 데이터 무결성 변경은 무엇이 설정되어 있든 항상 `thorough`로 리뷰됩니다.
 
 **80점이면 합격입니다.** tier의 blocking 기준 아래 findings는 기록되고(`[NIT_DEFERRED]` — TTL과 함께 저장되어 다음 세션에서 다시 제기되지 않습니다) 루프는 곧바로 `/precommit`으로 진행합니다. 추가 수정 패스도, 추가 리뷰 라운드도 없습니다. 이 항목들은 다음에 `/codex-review-branch`로 깊이 리뷰할 때 다시 다뤄집니다.
 
-위의 라운드 상한은 tier 기본값입니다 — 프로젝트의 `## Max Rounds` 오버라이드(3–50)가 우선합니다. 상한 도달은 자동 인계가 아니라 진단 시점입니다: 모델이 정체를 분류하고(아키텍처, 문서 과다 길이, 주의 분산, 미검증 주장, tier 불일치, 요구사항 모호성), 한 번의 제한된 조정을 한 뒤 재개합니다. 상한 전용 human exit는 그대로 구속력이 있습니다: 보안/데이터 무결성 변경은 진단을 건너뛰고 곧바로 사람에게 가고, 아키텍처 수준이나 요구사항 모호성으로 분류된 정체는 사람에게 exit하며, 진단 이후 같은 변경이 두 번째로 상한에 도달하면 항상 사람에게 갑니다. (아키텍처 수준 변경, 기능 제거, 사용자의 중단 요청은 상한과 무관하게 언제든 사람에게 exit합니다.)
+위의 라운드 상한은 의도적으로 느슨합니다. **상한은 수렴 중인 루프와 헛도는 루프를 구별하지 못하기** 때문입니다 — 둘 다 같은 숫자에서 멈춥니다. 구별해 주는 것은 증거 기반의 정체 신호입니다: `[LOOP_STALL]`은 아무 finding도 닫지 못한 리뷰 라운드가 3회 연속되면 발생하며, 보통 상한 도달보다 훨씬 이르고, 아래의 진단을 실제로 촉발하는 것도 이쪽입니다. 상한은 폭주 방지용 백스톱으로 남습니다.
+
+위의 라운드 상한은 tier 기본값입니다 — 프로젝트의 `## Max Rounds` 오버라이드(3–50)가 우선합니다. 상한 도달은 자동 인계가 아니라 진단 시점입니다: 모델이 정체를 분류하고(아키텍처, 문서 과다 길이, 주의 분산, 미검증 주장, tier 불일치, 요구사항 모호성), 한 번의 제한된 조정을 한 뒤 재개합니다. 어느 trigger로 발화했든 human exit는 그대로 구속력이 있습니다: 보안/데이터 무결성 변경은 진단을 건너뛰고 곧바로 사람에게 가고, 아키텍처 수준이나 요구사항 모호성으로 분류된 정체는 사람에게 exit하며, 진단 이후 같은 변경이 두 번째로 상한에 도달하면 항상 사람에게 갑니다. (아키텍처 수준 변경, 기능 제거, 사용자의 중단 요청은 상한과 무관하게 언제든 사람에게 exit합니다.)
 
 두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 **플래그를 넘기지 않으면 비활성**입니다 — 토큰과 실제 소요 시간이 두 배가 되므로 릴리스나 보안 리뷰에는 값어치를 하지만 일상적인 수정에는 그렇지 않습니다. `--dual`에서는 findings에 심각도 정규화, 중복 제거(파일 + 이슈 키, ±5줄 허용), 소스 귀속이 적용됩니다.
 

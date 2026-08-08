@@ -84,7 +84,7 @@ Frontier models can plan, batch, and recover from structured state — they no l
 | Completion | Scripted step sequence ("fix → immediately re-review") | Terminal completion invariant: every gate the change class requires has passed after the last edit |
 | Rule force | Uniform — every rule reads as mandatory | Three tiers: **Anchor** (never), **Default** (deviate with a stated signal), **Guidance** (advisory) |
 | Review depth | Maximum by default | Risk-scaled tiers (`fast` / `standard` / `thorough`); security and data integrity always escalate |
-| Round cap hit | Hand off to the human | First hit: structured self-diagnosis + one bounded adjustment, then resume — unless a cap-specific human exit applies (security/data-integrity, architecture-level change, requirement ambiguity); the same change hitting the cap again after its diagnosis: always human |
+| Stall detected / round cap hit | Hand off to the human | First hit: structured self-diagnosis + one bounded adjustment, then resume — unless a human exit applies (security/data-integrity, architecture-level change, requirement ambiguity); the same change hitting the cap again after its diagnosis: always human |
 
 The non-negotiable core lives in a **closed Anchor Register** (`rules/discretion.md`) that no project override can downgrade — resolution is Anchor-first, and a test suite fails by design if a Register entry is removed. Inside that boundary, ownership is explicit:
 
@@ -111,7 +111,7 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 | 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 90 of 99 public skills declare `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 layers: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex reviews what Claude wrote, researching the repo independently — never handed a conclusion to confirm | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | Per-tier round budget (default 3 / 5 / 30, overridable 3–50) + cap diagnostic: first cap hit triggers a structured stall classification and one bounded adjustment, with enumerated human exits | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 8 | **Incremental progress tracking** | Evidence-based stall detection: `[LOOP_STALL]` fires after three review rounds that close no findings and triggers a structured classification plus one bounded adjustment. The per-tier round budget (default 6 / 15 / 30, overridable 3–50) is the runaway backstop and runs the same diagnosis on its first hit, with enumerated human exits | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop safety gates** | `AskUserQuestion` approval before every `/push-ci` push; `/dev/tty` pre-push confirmation is the terminal credential for protected-branch pushes (plus non-fast-forward detection) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Correction → record lesson → promote to rule after 3+ recurrences | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -133,7 +133,7 @@ flowchart LR
 
 Everything orbits one rule — the **terminal completion invariant**: work on a change may be declared complete only when every gate its change class requires has passed *after the last edit in that class*. Code edits require an independent Codex review then `/precommit`; `.md` docs require `/codex-review-doc`. When to run them, how to batch edits, and how deep to review are the model's calls — the invariant constrains the end state, not the choreography.
 
-Hooks report **facts, not orders**: they emit `[AUTO_LOOP_STATE]` blocks (change class, gate receipts, round/cap, tier) and the model owns the decision. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. Hitting the round cap triggers a structured self-diagnosis (architecture problem? doc too long? attention diffusion?) and one bounded adjustment before the loop resumes — rather than an automatic hand-off, though the cap-specific human exits stay in force (security and data-integrity changes skip the diagnosis entirely; a stall diagnosed as architecture-level or requirement ambiguity goes to the human).
+Hooks report **facts, not orders**: they emit `[AUTO_LOOP_STATE]` blocks (change class, gate receipts, round/cap, tier) and the model owns the decision. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. A stall signal — or, as a backstop, hitting the round cap — triggers a structured self-diagnosis (architecture problem? doc too long? attention diffusion?) and one bounded adjustment before the loop resumes, rather than an automatic hand-off; the human exits stay in force whichever trigger fired (security and data-integrity changes skip the diagnosis entirely; a stall diagnosed as architecture-level or requirement ambiguity goes to the human).
 
 Enforcement has two modes:
 
@@ -181,15 +181,17 @@ One reviewer — Codex — runs everywhere by default. The **tier** decides how 
 
 | Tier | Use for | Blocks on | Round cap |
 |------|---------|-----------|-----------|
-| `fast` | Docs, config, small low-risk edits | P0 | 3 |
-| `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 5 |
+| `fast` | Docs, config, small low-risk edits | P0 | 6 |
+| `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 15 |
 | `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
 The configured tier is a baseline, not a ceiling — the model escalates when the change warrants it, and security or data-integrity changes are always reviewed at `thorough` whatever is configured.
 
 **80 is a passing grade.** Findings below the tier's blocking severity are logged (`[NIT_DEFERRED]`, persisted with a TTL so they are not re-raised next session) and the loop proceeds to `/precommit` — no extra fix pass, no extra review round. `/codex-review-branch` picks them up when the change is next reviewed at depth.
 
-The round caps above are the tier defaults — a project `## Max Rounds` override (3–50) takes precedence. Hitting the cap is a diagnosis point, not an automatic hand-off: the model classifies the stall (architecture, doc too long, attention diffusion, unverified claims, tier mismatch, requirement ambiguity), makes one bounded adjustment, and resumes. The cap-specific human exits stay binding: security/data-integrity changes skip the diagnosis and go straight to the human, a stall classified as architecture-level or requirement ambiguity exits to the human, and the same change hitting the cap a second time after its diagnosis always does. (Architecture-level changes, feature removal, or a user request to stop exit to the human at any point — cap or no cap.)
+The round caps above are deliberately loose, because **a cap cannot tell a converging loop from a churning one** — it stops both at the same number. What tells them apart is an evidence-based stall signal: `[LOOP_STALL]` fires after three consecutive review rounds that close no findings, normally many rounds before the cap, and it is what triggers the diagnosis below. The cap is left as the runaway backstop.
+
+The round caps above are the tier defaults — a project `## Max Rounds` override (3–50) takes precedence. Hitting the cap is a diagnosis point, not an automatic hand-off: the model classifies the stall (architecture, doc too long, attention diffusion, unverified claims, tier mismatch, requirement ambiguity), makes one bounded adjustment, and resumes. The human exits stay binding whichever trigger fired: security/data-integrity changes skip the diagnosis and go straight to the human, a stall classified as architecture-level or requirement ambiguity exits to the human, and the same change hitting the cap a second time after its diagnosis always does. (Architecture-level changes, feature removal, or a user request to stop exit to the human at any point — cap or no cap.)
 
 A second reviewer is available via `/codex-review-branch --dual` and is **off unless the flag is passed** — worth its doubled token and wall-clock cost on a release or a security review, not on a typical fix. Under `--dual`, findings are severity-normalized, deduplicated (file + issue key, ±5 line tolerance) and source-attributed.
 

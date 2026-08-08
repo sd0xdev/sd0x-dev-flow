@@ -59,7 +59,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 完了 | 台本化されたステップ列（「修正 → 直ちに再レビュー」） | Terminal completion invariant：変更クラスが要求するすべてのゲートが、最後の編集の後にパスしている |
 | ルールの拘束力 | 一律 — すべてのルールが必須として読める | 3 つの tier：**Anchor**（逸脱不可）、**Default**（シグナルを明示して逸脱可）、**Guidance**（助言） |
 | レビュー深度 | デフォルトで最大 | リスクに応じた tier（`fast` / `standard` / `thorough`）。セキュリティとデータ整合性は常にエスカレーション |
-| ラウンド上限到達 | 人間へハンドオフ | 初回到達：構造化された自己診断 + 1 回の限定的な調整で再開 — ただし cap 固有の human exit（セキュリティ/データ整合性、アーキテクチャレベルの変更、要件の曖昧さ）が該当する場合を除く。同じ変更が診断後に再度上限へ到達した場合：常に人間へ |
+| ストール検知 / ラウンド上限到達 | 人間へハンドオフ | 初回発火：構造化された自己診断 + 1 回の限定的な調整で再開 — ただし human exit（セキュリティ/データ整合性、アーキテクチャレベルの変更、要件の曖昧さ）が該当する場合を除く。同じ変更が診断後に再度上限へ到達した場合：常に人間へ |
 
 交渉不可能なコアは、どのプロジェクトオーバーライドもダウングレードできない**閉じた Anchor Register**（`rules/discretion.md`）に収められています — 解決は Anchor-first で、Register のエントリが削除されるとテストスイートが設計どおり失敗します。その境界の内側では、所有権が明示されています：
 
@@ -86,7 +86,7 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 | 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 98 個の公開 skill のうち 89 個が `allowed-tools` を宣言 |
 | 6 | **Defense-in-depth safety** | 5 層構成: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex が Claude の書いたコードをレビュー。リポジトリを自力で調査し、結論を渡されて追認することはない | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | Tier ごとのラウンド予算（デフォルト 3 / 5 / 30、3〜50 でオーバーライド可）+ cap 診断：初回の上限到達で構造化されたストール分類と 1 回の限定的な調整を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Cap Diagnostic Protocol) |
+| 8 | **Incremental progress tracking** | 証拠にもとづくストール検知：`[LOOP_STALL]` は finding を 1 つも閉じないレビューラウンドが 3 回続くと発火し、構造化されたストール分類と 1 回の限定的な調整を起動します。Tier ごとのラウンド予算（デフォルト 6 / 15 / 30、3〜50 でオーバーライド可）は暴走用のバックストップに退き、初回の上限到達でも同じ診断を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop safety gates** | すべての `/push-ci` push の前に `AskUserQuestion` で承認。保護ブランチへの push では `/dev/tty` による pre-push 確認が最終的な資格情報（加えて non-fast-forward 検出） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 是正 → lesson として記録 → 3 回以上の再発で rule に昇格 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,7 +108,7 @@ flowchart LR
 
 すべては 1 つのルール — **terminal completion invariant** — を中心に回ります：ある変更の作業は、その変更クラスが要求するすべてのゲートが*そのクラスの最後の編集の後に*パスして初めて完了と宣言できます。コード編集には独立した Codex レビューとその後の `/precommit` が、`.md` ドキュメントには `/codex-review-doc` が必要です。いつ実行するか、編集をどうバッチするか、どれだけ深くレビューするかはモデルの判断です — invariant が制約するのは最終状態であって、手順の振り付けではありません。
 
-フックは**命令ではなくファクト**を報告します：`[AUTO_LOOP_STATE]` ブロック（変更クラス、ゲート receipts、ラウンド/上限、tier）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ラウンド上限に達すると、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します — ただし cap 固有の human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
+フックは**命令ではなくファクト**を報告します：`[AUTO_LOOP_STATE]` ブロック（変更クラス、ゲート receipts、ラウンド/上限、tier）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ストール信号 — あるいはバックストップとしてのラウンド上限到達 — により、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します。どの trigger で発火しても human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
 
 強制には 2 つのモードがあります：
 
@@ -156,15 +156,17 @@ sequenceDiagram
 
 | Tier | 対象 | Blocking | ラウンド上限 |
 |------|------|----------|-------------|
-| `fast` | ドキュメント、設定、低リスクな小変更 | P0 | 3 |
-| `standard` **（デフォルト）** | 通常の機能開発とバグ修正 | P0、P1 | 5 |
+| `fast` | ドキュメント、設定、低リスクな小変更 | P0 | 6 |
+| `standard` **（デフォルト）** | 通常の機能開発とバグ修正 | P0、P1 | 15 |
 | `thorough` | セキュリティ、データ整合性、リリース、公開 API | P0、P1、P2 | 30 |
 
 設定された tier は天井ではなくベースラインです — 変更がそれを正当化するなら、モデルはエスカレーションします。セキュリティまたはデータ整合性の変更は、何が設定されていようと常に `thorough` でレビューされます。
 
 **80 点で合格です。** tier の blocking 閾値を下回る findings は記録され（`[NIT_DEFERRED]`。TTL 付きで永続化されるため、次のセッションで蒸し返されません）、ループはそのまま `/precommit` へ進みます — 追加の修正パスも、追加のレビューラウンドもありません。これらは次に `/codex-review-branch` で深くレビューする際に拾われます。
 
-上のラウンド上限は tier のデフォルトです — プロジェクトの `## Max Rounds` オーバーライド（3〜50）が優先されます。上限到達は診断ポイントであって、自動的なハンドオフではありません：モデルがストールを分類し（アーキテクチャ、ドキュメントが長すぎる、注意の拡散、未検証の主張、tier の不一致、要件の曖昧さ）、1 回の限定的な調整を行って再開します。cap 固有の human exit は拘束力を持ち続けます：セキュリティ/データ整合性の変更は診断をスキップして直接人間へ、アーキテクチャレベルまたは要件の曖昧さと分類されたストールは人間への exit となり、同じ変更が診断後に 2 度目の上限へ達した場合は常に人間へ向かいます。（アーキテクチャレベルの変更、機能の削除、ユーザーによる停止要求は、上限とは無関係にいつでも人間への exit になります。）
+上のラウンド上限は意図的に緩く設定されています。**上限は収束しているループと空転しているループを区別できない**からです — どちらも同じ数字で止まります。区別できるのは証拠にもとづくストール信号です：`[LOOP_STALL]` は finding を 1 つも閉じられないレビューラウンドが 3 回続いた時点で発火し、通常は上限到達よりはるかに早く、下記の診断を実際に起動するのはこちらです。上限は暴走用のバックストップとして残されています。
+
+上のラウンド上限は tier のデフォルトです — プロジェクトの `## Max Rounds` オーバーライド（3〜50）が優先されます。上限到達は診断ポイントであって、自動的なハンドオフではありません：モデルがストールを分類し（アーキテクチャ、ドキュメントが長すぎる、注意の拡散、未検証の主張、tier の不一致、要件の曖昧さ）、1 回の限定的な調整を行って再開します。どの trigger で発火しても human exit は拘束力を持ち続けます：セキュリティ/データ整合性の変更は診断をスキップして直接人間へ、アーキテクチャレベルまたは要件の曖昧さと分類されたストールは人間への exit となり、同じ変更が診断後に 2 度目の上限へ達した場合は常に人間へ向かいます。（アーキテクチャレベルの変更、機能の削除、ユーザーによる停止要求は、上限とは無関係にいつでも人間への exit になります。）
 
 2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、**フラグを渡さない限り無効**です — トークンと実時間のコストが倍になるため、リリースやセキュリティレビューには見合っても、通常の修正には見合いません。`--dual` 使用時、findings は重要度正規化、重複排除（ファイル + issue キー、±5 行許容）、ソース帰属が行われます。
 

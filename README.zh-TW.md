@@ -59,7 +59,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 完成定義 | 腳本化的步驟序列（「修正 → 立即重新 review」） | Terminal completion invariant：change class 所需的每個 gate 都在最後一次編輯之後通過 |
 | 規則強度 | 一律相同——每條規則讀起來都是強制 | 三個層級：**Anchor**（絕不偏離）、**Default**（陳述訊號後可偏離）、**Guidance**（建議性） |
 | Review 深度 | 預設就是最深 | 依風險分級的 tier（`fast` / `standard` / `thorough`）；安全性與資料完整性一律升級 |
-| 輪次上限觸頂 | 交還給人類 | 第一次觸頂：結構化自我診斷 + 一次有界調整後繼續——除非命中 cap 專屬的人類出口（安全性／資料完整性、架構層級變更、需求歧義）；同一改動在診斷後再次觸頂：一律交給人類 |
+| 偵測到卡關／輪次上限觸頂 | 交還給人類 | 第一次觸發：結構化自我診斷 + 一次有界調整後繼續——除非命中人類出口（安全性／資料完整性、架構層級變更、需求歧義）；同一改動在診斷後再次觸頂：一律交給人類 |
 
 不可協商的核心放在一個**封閉的 Anchor Register**（`rules/discretion.md`）裡，任何專案覆寫都無法將其降級——解析採 Anchor-first，而且移除任何一條 Register 條目都會讓測試套件刻意失敗。在這個邊界之內，所有權是明確的：
 
@@ -86,7 +86,7 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 | 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 98 個公開 skill 中有 89 個宣告 `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 5 層防線:pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 審查 Claude 寫的東西,自行研究 repo——絕不餵結論要它確認 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Review Dispatch) |
-| 8 | **Incremental progress tracking** | 每個 tier 有各自的輪次預算（預設 3 / 5 / 30，可覆寫為 3–50）+ cap 診斷：第一次觸頂會觸發結構化的停滯分類與一次有界調整，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Cap Diagnostic Protocol） |
+| 8 | **Incremental progress tracking** | 證據驅動的卡關偵測：`[LOOP_STALL]` 在連續三輪 review 都沒關掉任何 finding 後發出，觸發結構化的停滯分類與一次有界調整。每個 tier 的輪次預算（預設 6 / 15 / 30，可覆寫為 3–50）退居 runaway backstop，第一次觸頂跑同一套診斷，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Stall Detection + § Cap Diagnostic Protocol） |
 | 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 前都需 `AskUserQuestion` 核准；`/dev/tty` pre-push 確認是保護分支 push 的最終憑證（外加 non-fast-forward 偵測） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 被糾正 → 記錄 lesson → 重複 3 次以上後提升為 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,7 +108,7 @@ flowchart LR
 
 一切繞著一條規則運轉——**terminal completion invariant**：唯有當某項改動的 change class 所需的每個 gate，都在*該 class 的最後一次編輯之後*通過，這項改動才能被宣告完成。程式碼編輯需要一次獨立的 Codex review，接著 `/precommit`；`.md` 文件需要 `/codex-review-doc`。何時執行、如何批次編輯、review 要多深，都是模型的決定——invariant 約束的是終點狀態，不是編排過程。
 
-Hooks 回報的是**事實，不是命令**：它們發出 `[AUTO_LOOP_STATE]` 區塊（change class、gate 憑證、round/cap、tier），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。觸及輪次上限會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續——而不是自動交接；但 cap 專屬的人類出口仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
+Hooks 回報的是**事實，不是命令**：它們發出 `[AUTO_LOOP_STATE]` 區塊（change class、gate 憑證、round/cap、tier），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。卡關訊號——或作為最後防線的輪次上限觸頂——會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續，而不是自動交接；無論由哪一個 trigger 發動，人類出口都仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
 
 強制執行有兩種模式：
 
@@ -156,15 +156,17 @@ sequenceDiagram
 
 | Tier | 適用 | Blocking | 輪次上限 |
 |------|------|----------|----------|
-| `fast` | 文件、設定、低風險小改 | P0 | 3 |
-| `standard` **（預設）** | 一般功能與 bug fix | P0、P1 | 5 |
+| `fast` | 文件、設定、低風險小改 | P0 | 6 |
+| `standard` **（預設）** | 一般功能與 bug fix | P0、P1 | 15 |
 | `thorough` | 安全性、資料完整性、release、public API | P0、P1、P2 | 30 |
 
 設定的 tier 是底線，不是天花板——當改動的性質需要時，模型會往上升級；而安全性或資料完整性改動無論設定為何，一律以 `thorough` 進行 review。
 
 **80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`，帶 TTL 持久化，下次 session 不會重複被提），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
 
-上表的輪次上限是各 tier 的預設值——專案的 `## Max Rounds` 覆寫（3–50）優先。觸頂是一個診斷點，不是自動交接：模型會分類停滯原因（架構、文件太長、注意力發散、未驗證的宣稱、tier 不匹配、需求歧義），做一次有界調整後繼續。cap 專屬的人類出口仍然具約束力：安全性／資料完整性改動跳過診斷直接交給人類；被分類為架構層級或需求歧義的停滯會退出交給人類；同一改動在診斷後第二次觸頂也一律交給人類。（架構層級變更、功能移除、或使用者要求停止，在任何時點都會退出交給人類——無論是否觸頂。）
+上表的輪次上限刻意放寬，因為**上限分不出收斂中的迴圈與空轉的迴圈**——兩者都停在同一個數字。分得出來的是證據驅動的卡關訊號：`[LOOP_STALL]` 在連續三輪 review 都沒有關掉任何 finding 之後發出，通常比觸頂早了許多輪，下面那套診斷實際上是由它觸發的。上限退居 runaway backstop。
+
+上表的輪次上限是各 tier 的預設值——專案的 `## Max Rounds` 覆寫（3–50）優先。觸頂是一個診斷點，不是自動交接：模型會分類停滯原因（架構、文件太長、注意力發散、未驗證的宣稱、tier 不匹配、需求歧義），做一次有界調整後繼續。無論由哪一個 trigger 發動，人類出口都仍然具約束力：安全性／資料完整性改動跳過診斷直接交給人類；被分類為架構層級或需求歧義的停滯會退出交給人類；同一改動在診斷後第二次觸頂也一律交給人類。（架構層級變更、功能移除、或使用者要求停止，在任何時點都會退出交給人類——無論是否觸頂。）
 
 第二位 reviewer 走 `/codex-review-branch --dual`，**不加旗標就不啟用**——它讓每輪的 token 與時間成本翻倍，值得花在 release 或安全審查上，不值得花在日常修正。啟用 `--dual` 時，findings 會做嚴重度正規化、去重（file + issue key，±5 行容差）與來源標記。
 
