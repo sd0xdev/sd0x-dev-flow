@@ -1304,6 +1304,8 @@ update_state() {
                  and ($r < (if $m < 3 then 3 elif $m > 50 then 50 else $m end))
               then .iteration_history.current_round = 0 | .iteration_history.findings_by_round = []
                    | .iteration_history.strategic_reset_fired = false
+                   | .iteration_history.stall_streak = 0
+                   | .iteration_history.stall_memory = []
               else . end
           end' \
        "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _own_lock && mv "$tmp" "$STATE_FILE"; then
@@ -1351,6 +1353,89 @@ _id_set_count() {
     <(printf '%s\n' "$a" | sed '/^$/d' | sort -u) \
     <(printf '%s\n' "$b" | sed '/^$/d' | sort -u) 2>/dev/null \
     | sed '/^$/d' | wc -l | tr -d ' '
+}
+
+# The closed set of stall classes. Single source for the ingest validator below; the same six are
+# the table in rules/auto-loop.md § Cap Diagnostic Protocol.
+STALL_CLASSES="ARCHITECTURE DOC_TOO_LONG ATTENTION_DIFFUSION UNVERIFIED_CLAIM TIER_MISMATCH REQUIREMENT_AMBIGUITY"
+
+# Read-back for rules/auto-loop.md § Stall Detection > Stall Memory: print what has already been
+# tried on this change, beneath the signal that is about to ask for another diagnosis. Silent when
+# nothing is recorded — an empty replay would read as "three attempts, none worth showing".
+#
+# The records are printed as INDENTED continuation lines under a single header. What makes the
+# replay non-re-ingestible is not the indent but the split: the per-record lines carry no
+# `[STALL_MEMORY]` marker at all, and the one line that does carries no `class=`. The ingest regex
+# needs both on the same line, so neither half of the replay is a record — the memory cannot grow
+# by being displayed. Keep the marker off the record lines; that is the whole guarantee.
+#
+# Contents were sanitized on the way in, but the state file is an ordinary file in the working tree
+# that another writer or a hand-edit can reach, so strip control bytes on the way out as well — the
+# input sanitizer is not the boundary that protects this terminal.
+_replay_stall_memory() {
+  local state_file="$1" lines
+  lines=$(jq -r '.iteration_history.stall_memory // [] | .[] |
+    "  class=\(.class) | tried=\(.tried) | outcome=\(.outcome) | \(.ts)"' \
+    "$state_file" 2>/dev/null | tr -d '\000-\011\013-\037\177') || return 0
+  [[ -n "$lines" ]] || return 0
+  printf '[STALL_MEMORY] Already tried on this change (oldest first) — do not repeat a failed adjustment:\n%s\n' "$lines" >&2
+}
+
+# Ingest one `[STALL_MEMORY] class=<C> | tried=<t> | outcome=<o> | <ts>` line into the state file,
+# FIFO-capped at 3 (rules/auto-loop.md § Stall Detection > Stall Memory; the bound is Reflexion's
+# Ω=1–3 episodic buffer, arXiv:2303.11366).
+#
+# Unlike `[NIT_DEFERRED]`, whose text comes from the reviewer, this record is model-authored — but
+# it is still untrusted-by-construction: it round-trips through the state file and back out through
+# `_replay_stall_memory`, so a control byte here becomes a terminal escape sequence in a later
+# session's output. Control bytes are stripped and both free-text fields are truncated rather than
+# rejected, because a malformed record that is silently dropped looks exactly like a diagnosis that
+# was never made — the failure this memory exists to prevent.
+_upsert_stall_memory() {
+  local line="$1" state_file="${2:-$STATE_FILE}"
+  local body class tried outcome ts
+
+  body=$(printf '%s' "$line" | sed -E 's/^\[STALL_MEMORY\][[:space:]]*//')
+  class=$(printf '%s' "$body" | cut -d'|' -f1 | sed -E 's/^[[:space:]]*class=[[:space:]]*//; s/[[:space:]]*$//')
+  tried=$(printf '%s' "$body" | cut -d'|' -f2 | sed -E 's/^[[:space:]]*tried=[[:space:]]*//; s/[[:space:]]*$//')
+  outcome=$(printf '%s' "$body" | cut -d'|' -f3 | sed -E 's/^[[:space:]]*outcome=[[:space:]]*//; s/[[:space:]]*$//')
+  ts=$(printf '%s' "$body" | cut -d'|' -f4 | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//')
+
+  # Fail closed on the class: it selects a row in a closed table, so an unrecognized one is a
+  # malformed record and not a new category. Logged, never silently dropped.
+  case " $STALL_CLASSES " in
+    *" $class "*) ;;
+    *) echo "[Review State] [STALL_MEMORY] skipped (class '${class:-<empty>}' is not one of: $STALL_CLASSES)" >&2; return 0 ;;
+  esac
+
+  tried=$(printf '%s' "$tried" | tr -d '\000-\037\177' | cut -c1-200)
+  outcome=$(printf '%s' "$outcome" | tr -d '\000-\037\177' | cut -c1-200)
+  ts=$(printf '%s' "$ts" | tr -d '\000-\037\177' | cut -c1-40)
+  [[ -n "$tried" && -n "$outcome" ]] || {
+    echo "[Review State] [STALL_MEMORY] skipped (tried= and outcome= are both required)" >&2
+    return 0
+  }
+  [[ -n "$ts" ]] || ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if ! _lock; then
+    echo "[Review State] [STALL_MEMORY] skipped (lock contention) — the adjustment is not recorded" >&2
+    return 0
+  fi
+  local tmp
+  # Degrade, never abort — see _migrate_state_v2.
+  tmp=$(_lock_staging_file) || { echo "[Review State] [STALL_MEMORY] skipped (mktemp unavailable)" >&2; _unlock; return 0; }
+  if jq --arg c "$class" --arg t "$tried" --arg o "$outcome" --arg ts "$ts" \
+     '.iteration_history.stall_memory =
+        (((.iteration_history.stall_memory // [])
+          + [{"class": $c, "tried": $t, "outcome": $o, "ts": $ts}])
+         | if length > 3 then .[-3:] else . end)' \
+     "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _own_lock && mv "$tmp" "$state_file"; then
+    echo "[Review State] [STALL_MEMORY] recorded: class=$class" >&2
+  else
+    rm -f "$tmp" 2>/dev/null
+    echo "[Review State] [STALL_MEMORY] skipped (write failed) — the adjustment is not recorded" >&2
+  fi
+  _unlock
 }
 
 # Update iteration history (extract finding counts from review output)
@@ -1420,6 +1505,16 @@ _update_iteration() {
   [[ "$ckpt" =~ ^[0-9]+$ ]] && [[ "$ckpt" -ge 1 ]] || ckpt=10
   local fired_before
 
+  # Stall streak threshold — rules/auto-loop.md § Stall Detection. Same digit validation and same
+  # untrusted-env reasoning as `ckpt` above. 3 is Reflexion's repeat-action heuristic
+  # (arXiv:2303.11366); the derivation is in docs/features/auto-loop-autonomy/4-implementation.md §3.
+  # `^[1-9][0-9]*$`, not `^[0-9]+$`: bash reads a leading zero as octal, so `08` passes the looser
+  # form and then makes `-ge` print "value too great for base" onto this hook's stderr — the stream
+  # the model reads — before falling back anyway.
+  local stall_t="${AUTO_LOOP_STALL_ROUNDS:-3}"
+  [[ "$stall_t" =~ ^[1-9][0-9]*$ ]] && [[ "$stall_t" -ge 1 ]] || stall_t=3
+  local streak_before
+
   # Acquire lock for state file write (consistent with update_state)
   if _lock; then
     # INSIDE the lock, with the write and the read-back, so the three are one transaction. Read
@@ -1431,6 +1526,25 @@ _update_iteration() {
     # write is about to replace, not from whatever a concurrent writer left before the lock.
     prev_ids=$(jq -r '[.iteration_history.findings_by_round[]? | .ids? // empty] | last // [] | .[]' \
       "$state_file" 2>/dev/null | sort -u) || prev_ids=""
+    # Same boundary again: the streak this write advances must be the one the file holds now.
+    streak_before=$(jq -r '.iteration_history.stall_streak // 0' "$state_file" 2>/dev/null) || streak_before="unknown"
+    [[ "$streak_before" =~ ^[0-9]+$ ]] || streak_before="unknown"
+
+    # The three set differences move AHEAD of the write because jq needs them: the stall streak is
+    # a function of `closed`, and a streak computed after the commit could only be written by a
+    # second one. Each keeps its own `||` fallback — `_id_set_count` shells out to `comm`, which
+    # this tree did not previously depend on, and a bare substitution would abort the hook under
+    # `set -e`. What the placement changed is the blast radius of that abort, not its likelihood:
+    # before the commit it costs the whole round (uncounted, which only ever undercounts), after
+    # it the round landed but every downstream signal was skipped. The `||` is what makes both
+    # moot, and is the reason this is safe to move at all.
+    local _closed _persisted _new
+    _closed=$(_id_set_count -23 "$prev_ids" "$cur_ids") || _closed=0
+    _new=$(_id_set_count -13 "$prev_ids" "$cur_ids") || _new=0
+    _persisted=$(_id_set_count -12 "$prev_ids" "$cur_ids") || _persisted=0
+    [[ "$_closed" =~ ^[0-9]+$ ]] || _closed=0
+    [[ "$_new" =~ ^[0-9]+$ ]] || _new=0
+    [[ "$_persisted" =~ ^[0-9]+$ ]] || _persisted=0
     _migrate_state_v2 "$state_file"
     _reconcile_max_rounds "$state_file"
     # Degrade, never abort — see _migrate_state_v2.
@@ -1447,6 +1561,7 @@ _update_iteration() {
     if jq --argjson total "$total" --argjson p0 "$p0_count" \
        --argjson p1 "$p1_count" --argjson p2 "$p2_count" \
        --argjson nit "$nit_count" --arg now "$now" --argjson ckpt "$ckpt" --arg ids "$cur_ids" \
+       --argjson closed "$_closed" --argjson persisted "$_persisted" --argjson newids "$_new" \
        '.iteration_history.current_round += 1 |
         .iteration_history.total_rounds_session = ((.iteration_history.total_rounds_session // 0) + 1) |
         .iteration_history.findings_by_round += [{"round": (.iteration_history.current_round), "total": $total, "p0": $p0, "p1": $p1, "p2": $p2, "nit": $nit, "timestamp": $now, "ids": ($ids | split("\n") | map(select(length > 0)))}] |
@@ -1455,6 +1570,11 @@ _update_iteration() {
           (((.iteration_history.strategic_reset_fired // false) == true)
            or ((.iteration_history.current_round | type) == "number"
                and .iteration_history.current_round >= $ckpt)) |
+        .iteration_history.stall_streak =
+          (((.iteration_history.stall_streak // 0) | if type == "number" and . >= 0 then . else 0 end) as $s
+           | if ($persisted + $newids) < $total then $s
+             elif $total > 0 and $closed == 0 then $s + 1
+             else 0 end) |
         .updated_at = $now' \
        "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
       # The `mv` was previously unchecked, and the HOOK_DEBUG line below then reported
@@ -1477,17 +1597,10 @@ _update_iteration() {
         # `persisted + new < findings` means the ledger could not see this round's findings, and
         # its `closed`/`new` are not evidence of anything — read the discrepancy before reading
         # a `closed=0` as churn.
-        local _closed _persisted _new _round_now
-        # Each carries its own `||`, like `_round_now` below and every other substitution in this
-        # hook — the "degrade, never abort" contract every sibling comment in this file cites
-        # `_migrate_state_v2` for. `_id_set_count` shells out to `comm`, a
-        # dependency this tree did not previously have; if it is missing the bare substitution
-        # aborts the hook under `set -e` AFTER the state commit, so the write lands but
-        # `[STRATEGIC_RESET]`, the `[NIT_DEFERRED]` ledger and the `[AUTO_LOOP_STATE]` fact block
-        # are all skipped — a silent loss of every downstream signal for a missing binary.
-        _closed=$(_id_set_count -23 "$prev_ids" "$cur_ids") || _closed=0
-        _new=$(_id_set_count -13 "$prev_ids" "$cur_ids") || _new=0
-        _persisted=$(_id_set_count -12 "$prev_ids" "$cur_ids") || _persisted=0
+        # `_closed`, `_persisted` and `_new` are computed before the jq write now — the stall
+        # streak is a function of `closed`, so the filter has to be able to read it. The
+        # "degrade, never abort" reasoning that used to live here moved with them.
+        local _round_now
         _round_now=$(jq -r '.iteration_history.current_round // 0' "$state_file" 2>/dev/null) || _round_now=0
         # `>&2`, like every other model-facing signal THIS hook emits — a `[LOOP_PROGRESS]` line
         # the model never reads is a ledger that does not exist. `_alf_emit` printf's to stdout and
@@ -1506,8 +1619,38 @@ _update_iteration() {
         # emission — a checkpoint printed every round is noise the model learns to skip.
         local fired_after
         fired_after=$(jq -r '.iteration_history.strategic_reset_fired // false' "$state_file" 2>/dev/null) || fired_after="unknown"
+        local _diag_signalled=false
         if [[ "$fired_before" == "false" && "$fired_after" == "true" ]]; then
           printf '[STRATEGIC_RESET] Review round %s reached on this change. Before the next round: diagnose the stall as exactly one class from rules/auto-loop.md § Cap Diagnostic Protocol (ARCHITECTURE / DOC_TOO_LONG / ATTENTION_DIFFUSION / UNVERIFIED_CLAIM / TIER_MISMATCH / REQUIREMENT_AMBIGUITY), state the class and its observed signals, make ONE bounded adjustment, then return to the loop. This is a checkpoint, not a cap — it adjudicates nothing.\n' "${_round_now:-0}" >&2
+          _diag_signalled=true
+        fi
+
+        # Stall detection — rules/auto-loop.md § Stall Detection. The streak itself is computed in
+        # the filter above; this is only the edge detector. Emitting on the CROSSING (below the
+        # threshold before, at or above it after) and not on the level is what makes the signal
+        # mean "this just became true": the streak resets to 0 on any round that closes a finding,
+        # so progress re-arms it, and a fourth consecutive stall round says nothing new.
+        #
+        # `unknown` on either side suppresses the emission, matching `fired_before`/`fired_after`
+        # above — an unreadable before-state cannot establish that a crossing happened, and
+        # guessing one direction or the other either spams the signal or silences it for the rest
+        # of the change. Neither is worth a fabricated edge.
+        local streak_after
+        streak_after=$(jq -r '.iteration_history.stall_streak // 0' "$state_file" 2>/dev/null) || streak_after="unknown"
+        [[ "$streak_after" =~ ^[0-9]+$ ]] || streak_after="unknown"
+        if [[ "$streak_before" != "unknown" && "$streak_after" != "unknown" ]] \
+           && (( streak_before < stall_t )) && (( streak_after >= stall_t )); then
+          printf '[LOOP_STALL] streak=%s threshold=%s round=%s — %s consecutive review rounds closed no finding while findings were outstanding. Run rules/auto-loop.md § Cap Diagnostic Protocol: classify the stall, make ONE bounded adjustment, record it with [STALL_MEMORY], then return to the loop. This is a fact, not a gate — nothing blocks.\n' \
+            "$streak_after" "$stall_t" "${_round_now:-0}" "$streak_after" >&2
+          _diag_signalled=true
+        fi
+
+        # One replay per round even when both signals fire: they are two routes into the same
+        # protocol, and printing the same three records twice reads as six attempts.
+        # `if`, not `[[ … ]] && …` — a false test as the last statement of this block is a
+        # non-zero return, and this hook runs under `set -e`.
+        if [[ "$_diag_signalled" == "true" ]]; then
+          _replay_stall_memory "$state_file"
         fi
       else
         rm -f "$tmp" 2>/dev/null
@@ -2972,6 +3115,40 @@ elif [[ "$TOOL_NAME" == "Bash" ]] && grep -qE '/(sd0x-dev-flow:)?(codex-review|s
 fi
 if [[ "$_NIT_ELIGIBLE" == "true" ]] && grep -qE '^\[NIT_DEFERRED\]|^\[DISMISS_VERDICT\]' <<< "$TOOL_OUTPUT" 2>/dev/null; then
   _parse_nit_sentinels "$TOOL_OUTPUT"
+fi
+
+# === Stall memory routing ===
+# rules/auto-loop.md § Stall Detection > Stall Memory.
+#
+# Read from the COMMAND, not from TOOL_OUTPUT — the opposite of every other sentinel here, and the
+# asymmetry is deliberate. `[NIT_DEFERRED]` is authored by the reviewer, so the reviewer's output is
+# the only place it can come from and a producer allowlist keeps template text out. This record is
+# authored by the MODEL, which has no output stream this hook can see; the command it types is the
+# closest thing to one. Reading the output instead would make `cat rules/auto-loop.md` ingest the
+# format example in that very section — a documented format that silently forges records when read
+# is not a format worth shipping.
+#
+# The full `class= … | tried= … | outcome= …` shape is required, so a command that merely mentions
+# the marker (`grep '\[STALL_MEMORY\]' rules/`) matches nothing. Emit one with, e.g.:
+#   printf '%s\n' '[STALL_MEMORY] class=ATTENTION_DIFFUSION | tried=... | outcome=... | <ISO8601>'
+#
+# ONE regex for the gate and the extraction. They were two patterns, and the extractor's mandatory
+# trailing `| <ts>` was absent from the gate: a record written without a timestamp passed the gate,
+# extracted to nothing, and vanished — the silent drop `_upsert_stall_memory` is written to avoid,
+# and the reason its own `ts` default was unreachable from here. The `ts` group is optional; the
+# field bodies stop at a quote so the shell's closing `'` is not captured as data.
+# Every field body is `*`, not `+`: with `+`, `tried=|outcome=x` (no space) failed to match at all
+# and vanished, while `tried= |outcome=x` (one space) matched and was refused out loud. Same
+# malformed record, two different fates, and the silent one is the failure this memory exists to
+# prevent. Everything that names all three fields now reaches the validator, which fails closed on
+# the class and says so.
+_SM_RE='\[STALL_MEMORY\][[:space:]]*class=[^|]*\|[^|]*tried=[^|]*\|[^|]*outcome=[^|'\''"]*(\|[^'\''"]*)?'
+if [[ "$TOOL_NAME" == "Bash" ]] && grep -qE "$_SM_RE" <<< "$COMMAND" 2>/dev/null; then
+  while IFS= read -r _sm_line; do
+    # `if`, not `[[ … ]] &&`: a false test as the loop body's last status aborts the hook under
+    # `set -e` before the `exit 0` below.
+    if [[ -n "$_sm_line" ]]; then _upsert_stall_memory "$_sm_line"; fi
+  done < <(grep -oE "$_SM_RE" <<< "$COMMAND" 2>/dev/null || true)
 fi
 
 exit 0

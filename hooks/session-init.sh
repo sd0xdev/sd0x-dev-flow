@@ -591,6 +591,8 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.current_round = 0 |
       .iteration_history.findings_by_round = [] |
       .iteration_history.strategic_reset_fired = false |
+      .iteration_history.stall_streak = 0 |
+      .iteration_history.stall_memory = [] |
       .session_commit_scope = {
         "session_id": $sid,
         "baseline_dirty_files": $bl,
