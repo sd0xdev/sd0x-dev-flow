@@ -121,10 +121,10 @@ flowchart TD
 
 | 層 | 值 | 誰讀 | 效果 |
 |----|----|------|------|
-| 行為層 tier cap | `fast` 3 / `standard` 5 / `thorough` 30；未設定即 `standard` | 只有模型自己（`rules/auto-loop.md` § Tiers） | 決定實務上該收手的輪數。tier **名稱**沒有任何 hook 會讀（`auto-loop-project.md:20`），但下面那個覆寫開關會 |
+| 行為層 tier cap | `fast` 6 / `standard` 15 / `thorough` 30（2026-08-07 由 3 / 5 / 30 提高，見 `auto-loop-autonomy`）；未設定即 `standard` | 只有模型自己（`rules/auto-loop.md` § Tiers） | 決定實務上該收手的輪數。tier **名稱**沒有任何 hook 會讀（`auto-loop-project.md:20`），但下面那個覆寫開關會 |
 | Hook 端 `iteration_history.max_rounds` | 預設 30（2026-07-26 由 10 提高） | `stop-guard` 等 hook 讀取並檢查——只有 `strict`／dual 會真的擋下 | 收斂的硬底線 |
 
-`## Max Rounds`（3–50）是**兩層共用的覆寫開關**：設定後行為層 cap 與 hook 持久化的 `max_rounds` 同時採用該值（`rules/auto-loop.md` § Tiers）。兩者只在**未設定**時分岔——`standard` 的行為層 cap 是 5，而 hook 持久化的是 30，前者是自律，後者是背板。且 stop-guard 只在 `strict`／dual 模式真的擋下；預設 `warn` 只寫 stderr 然後 exit 0（`hooks/stop-guard.sh:1181`），所以預設情境下真正的執行者仍是行為層。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改任一數值。
+`## Max Rounds`（3–50）是**兩層共用的覆寫開關**：設定後行為層 cap 與 hook 持久化的 `max_rounds` 同時採用該值（`rules/auto-loop.md` § Tiers）。兩者只在**未設定**時分岔——`standard` 的行為層 cap 是 15，而 hook 持久化的是 30，前者是自律，後者是背板。且 stop-guard 只在 `strict`／dual 模式真的擋下；預設 `warn` 只寫 stderr 然後 exit 0（`hooks/stop-guard.sh:1181`），所以預設情境下真正的執行者仍是行為層。本 spec 擴展既有邏輯加入 convergence detection（fingerprint overlap），不修改任一數值。
 
 #### Nit History File (`.claude_nit_history.json`)
 

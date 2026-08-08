@@ -54,7 +54,7 @@
 | Cap Diagnostic Protocol | `current_round >= max_rounds` | 診斷 → 一次有界調整 → 回到 loop；每個 change 只准一次，第二次觸頂 → ⚠️ Need Human |
 | `[STRATEGIC_RESET]` checkpoint | `current_round >= AUTO_LOOP_CHECKPOINT_ROUNDS`（預設 10） | 同一份清單，但**不擋、不動輪數預算**，每個 change 每個 session 一次 |
 
-checkpoint 在 `fast`／`standard` **通常**構不到——這兩層會先撞 cap——但**並非由構造保證**：沒有任何機制把 `current_round` 夾在 `max_rounds` 以內，而 `warn` 模式（本專案設定）的 stop-guard 不會真的停下 loop，因此跑過 cap 的 `standard` loop 確實會到達 10 並觸發。無害，但寫成不變式就是錯的。設計論證與旗標的兩個清除點見 `./4-implementation.md` §1.1、§1.2。
+checkpoint 在 `fast`（cap 6）構不到——會先撞 cap；`standard`（15）與 `thorough`（30）自 R10 起則**由構造保證可達**。反過來說，「構不到」從來就不是不變式：沒有任何機制把 `current_round` 夾在 `max_rounds` 以內，而 `warn` 模式（本專案設定）的 stop-guard 不會真的停下 loop，因此即使在 R10 之前，跑過 cap 5 的 `standard` loop 一樣會到達 10 並觸發。設計論證與旗標的兩個清除點見 `./4-implementation.md` §1.1、§1.2。
 
 ### 3.3 R9／使用者提問 4 — 進度帳本
 
@@ -72,6 +72,18 @@ checkpoint 在 `fast`／`standard` **通常**構不到——這兩層會先撞 c
 
 hook 輸出事實、行為層做裁決。R4 的敏感路徑只產生 advisory hint，**不改寫 tier**——真正的強制來自 `rules/auto-loop.md` § Tiers 那句 Anchor（Register #3）：安全或資料完整性變更一律以 `thorough` 審查，不論設定為何，覆寫亦然。
 
+### 3.6 R10 — 卡關偵測與卡關記憶
+
+R9 讓迴圈能**描述**自己有沒有在動，R10 讓它能**注意到**自己沒在動。缺的那一環是「學習」：先前沒有任何地方記得上一次診斷試了什麼。
+
+`[LOOP_STALL] streak=n threshold=t round=r`：連續 `AUTO_LOOP_STALL_ROUNDS`（預設 3，Reflexion 的重複行為門檻）個 stall round 後發出。stall round 需三條同時成立——帳本讀得到（`persisted + new >= findings`）、仍有 findings 未結、`closed = 0`。第三種狀態是關鍵：帳本讀不到的輪次**維持** streak 原值，既不計入也不重置，因為 §3.3 的「缺席不是訊號」必須對稱地兩邊都成立。**邊緣偵測**，每個 streak 只發一次；有進展即歸零並自動重新武裝，因此不需要 checkpoint 那種 `*_fired` 旗標。
+
+`[STALL_MEMORY] class=… | tried=… | outcome=… | <ISO8601>`：FIFO 保留最近 3 筆（Reflexion Ω=1–3），在下一次 `[LOOP_STALL]` 或 `[STRATEGIC_RESET]` 之下**縮排**讀回。兩個設計決定各自封住一個具體失效：記錄自 **command** 解析而非 tool output——模型是作者而 tool output 不是模型的串流，且讀 output 會讓一次 `cat rules/auto-loop.md` 把該節的格式範例偽造成真記錄；讀回無法被任一 ingest 路徑重新吃進去——保證來自**拆分**而非縮排：ingest 需要 `[STALL_MEMORY]` 與 `class=` 同行，而讀回把 marker 只放在 header（無 `class=`）、`class=` 只放在記錄行（無 marker），兩半都不是記錄。縮排是給讀的人看的；ingest 從未錨定 column 0。
+
+cap 隨之調整為 `fast` 6／`standard` 15／`thorough` 30。cap 原先兼任 runaway backstop 與卡關偵測器，後者它結構上做不到（收斂的迴圈與空轉的迴圈停在同一個數字）；偵測獨立後 cap 回歸單一職責。`standard` 提到 15 另外修掉一個死角：round-10 checkpoint 在原本 cap 5 的預設 tier **通常**觸發不到（只有跑過 cap 的 `warn` 模式 loop 構得到，見 §3.2），等於是一段幾乎跑不到的活程式碼。行為層 tier cap 與 hook 持久化的 `max_rounds`（未設定時一律 30）是兩個數字，**取較低者**。
+
+`/refactor` 成為 `DOC_TOO_LONG` 與 `ATTENTION_DIFFUSION` 的正式 bounded adjustment，受五項護欄（`--target` 恆用、重開 code gate、內部品質檢查不等於本迴圈 gate、security／data-integrity 排除、共用診斷預算）。機制與論證見 `./4-implementation.md` §3。
+
 ## 4. Risks and Dependencies
 
 | 風險 | 處置 |
@@ -85,6 +97,7 @@ hook 輸出事實、行為層做裁決。R4 的敏感路徑只產生 advisory hi
 | 層 | 檔案 |
 |----|------|
 | 規則結構不變式 | `test/rules/discretion-tiers.test.js`、`test/rules/*.test.js` |
+| 規則↔hook 跨檔一致性 | `test/rules/stall-detection.test.js`（門檻、FIFO 界、六分類閉集、`codex-code-review` 不再自行敘述 cap 數字） |
 | Hook 行為 | `test/hooks/post-tool-review-state.test.js`、`state-commit-ownership.test.js`、`jq-filter-fidelity.test.js` |
 | 共用結構解析 | `test/helpers/shell-structure.test.js` |
 | 註解檢查器 | `test/scripts/check-comment-blocks.test.js` |
@@ -94,6 +107,6 @@ hook 輸出事實、行為層做裁決。R4 的敏感路徑只產生 advisory hi
 ## 6. Cross-References
 
 - `./4-implementation.md` — 實作筆記，所有論證的正本
-- `./requests/` — R1–R9
+- `./requests/` — R1–R10
 - `../auto-loop-evolution/4-implementation.md` — 狀態檔、sidecar、鎖的機制
 - `rules/discretion.md`、`rules/auto-loop.md`、`rules/docs-writing.md`

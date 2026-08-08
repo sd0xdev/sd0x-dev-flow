@@ -1,7 +1,29 @@
 # Auto-Loop Autonomy — Implementation Notes
 
-Archaeology for decisions the hooks reference by pointer. Requests R1–R9 live in `./requests/`;
+Archaeology for decisions the hooks reference by pointer. Requests R1–R10 live in `./requests/`;
 the consolidated spec is `./2-tech-spec.md`.
+
+> **Size** — 544 lines (`wc -l`, 2026-08-08), past the 500 in `@rules/docs-numbering.md` § Size Limit,
+> and **kept whole deliberately for now**. The sections are independent (§1 = R6, §2 = R9, §3 = R10),
+> so this file is a genuine split candidate rather than one long argument — the split is owed, not
+> excused.
+>
+> ```
+> [DEVIATION] rule=@rules/docs-numbering.md § Size Limit  default=past 500 lines, split is the default
+> chosen=keep whole this round; record the target shape and the trigger (before R11 adds a section)
+> reason=the cut is its own change with its own review, not a tail-end edit appended to this one
+> signal=wc -l = 544; 13 inbound references across 9 files, measured below
+> ```
+>
+> § Size Limit requires repointing links in *both* directions, and
+> `grep -rn 'auto-loop-autonomy/4-implementation.md' . --exclude-dir=node_modules --exclude-dir=.git`
+> reports **15 references in 11 files** (2026-08-08). Two of those are self-mentions that no move has
+> to repoint — this note's own grep line, and the path written into the R10 ticket's Deferred
+> Findings row — leaving **13 real inbound references across 9 files** (references by directory:
+> `docs/` 4, `hooks/` 4, `test/` 3, `rules/` 2 — these sum to the 13, not the 9). The `hooks/` ones
+> are comments, which the comment-block checker also reads.
+> Shape to produce: `4-implementation/` with `4-implementation.md` as the main file and
+> `1-cap-diagnosis.md` / `2-progress-ledger.md` / `3-stall-detection.md` beneath it.
 
 ## 1. The mid-loop diagnosis checkpoint
 
@@ -26,17 +48,19 @@ converging — "have I been circling the same defect?" — so a session-cumulati
 different question. Concretely, on a long session it fires on effort already spent on changes that
 have since passed their gates, and it cannot express a fixed round at all: with
 `max_rounds - 3` clamped up to 1 (`hooks/post-compact-auto-loop.sh:418-419` before this change), the
-threshold is 27 at `thorough`, 2 at `standard`, and 1 at `fast` — where the unclamped value is 0, so
+threshold is 27 at `thorough`, 2 at `standard`, and 1 at `fast` (the caps of the time — 30 / 5 / 3;
+R10 raised the latter two, see §3.1) — where the unclamped value is 0, so
 the clamp is doing the work. "Check in at round 10" is unrepresentable at every tier.
 
 The threshold is now a fixed round — `AUTO_LOOP_CHECKPOINT_ROUNDS`, default 10 — read against
-`current_round`. At `fast` (cap 3) and `standard` (cap 5) it is normally out of reach — those tiers
-hit their cap first and the Cap Diagnostic Protocol takes over there — but *not by construction*:
-nothing clamps `current_round` to `max_rounds`, and stop-guard in `warn` mode (this project's
-setting) does not stop the loop, so a standard-tier loop that runs past its cap does reach 10 and
-fire. Harmless, and worth stating rather than implying an invariant that is not enforced. It is the
-long-running `thorough` loop (cap 30) that needed a checkpoint before round 30, and that is exactly
-where it now lands.
+`current_round`. **Caps as of this section: `fast` 3, `standard` 5, `thorough` 30 — R10 raised the
+first two to 6 and 15, see §3.1.** Under those original caps the checkpoint was normally out of
+reach at `fast` and `standard` — those tiers hit their cap first and the Cap Diagnostic Protocol
+took over there — but *not by construction*: nothing clamps `current_round` to `max_rounds`, and
+stop-guard in `warn` mode (this project's setting) does not stop the loop, so a standard-tier loop
+that ran past its cap did reach 10 and fire. Harmless, and worth stating rather than implying an
+invariant that is not enforced. At the time that left the long-running `thorough` loop (cap 30) as
+the only tier that structurally needed a checkpoint before its cap; §3.1 is where that changed.
 
 One consequence is **not** harmless and is recorded here rather than fixed: the `update_state` reset
 that clears `strategic_reset_fired` is guarded by `current_round < max_rounds`, so once a loop is
@@ -258,7 +282,7 @@ close that, and **reverted**. It read `- [Nit] timeout 30:5 seconds` as a locati
 `timeout 30 seconds` — byte-identical to a real `timeout 30 seconds` finding. Identities pass
 through `sort -u`, so that does not merely mislabel one finding, it **deletes** one. Trading a
 residual that misclassifies a finding for one that discards a finding is the wrong direction, and
-the measurement makes the trade unnecessary: **0 of 781 tracked files here contain a space, a
+the measurement makes the trade unnecessary: **0 of 800 tracked files here contain a space, a
 colon, or a terminal `:digits`**. Two rounds of trying to close this residual each introduced a
 worse defect than the residual itself — the signal to stop patching, not to patch more carefully.
 
@@ -273,7 +297,7 @@ for that one finding and nothing collides. **Row 3 does collide** — that is wh
 means here, and it is worth stating rather than letting the summary sentence cover it: measured,
 `src/rev:12:34 stale cache`, `src/rev:34 stale cache` and `src/rev stale cache` all normalize to
 `src/rev stale cache`, so `sort -u` keeps one of the three and the ledger under-counts that round.
-Accepted because the shape requires a filename literally ending in `:digits` — 0 of 781 tracked
+Accepted because the shape requires a filename literally ending in `:digits` — 0 of 800 tracked
 files here — and the counter is advisory. Pinned by an explicit collision assertion, not left to
 the injectivity pairs, which by construction only cover inputs that must stay distinct:
 
@@ -355,3 +379,166 @@ The two are complementary, not redundant. The checkpoint says *when* to stop and
 the ledger supplies *what the diagnosis is made of* — a run of `closed=0` with findings outstanding
 points at `ATTENTION_DIFFUSION` or `ARCHITECTURE`, while steady `closed>0 new=0` says the loop is
 converging and the right move is to keep going, not to diagnose.
+
+## 3. Stall detection and stall memory
+
+Ticket: [R10](./requests/2026-08-07-stall-detection-r10.md).
+
+§2 gave the loop a way to *describe* whether it is moving. It did not give anything a way to
+*notice*. The reader of those `[LOOP_PROGRESS]` lines was the model, and the evidence that the
+model does not reliably notice its own repetition is in this repository: `.claude/sd0x-dev-flow-lessons.md`
+L5 (rounds 81/82), L7 (86/87) and L8 (91/92) are the same lesson — "a green light is a claim about
+who made it green" — recorded three times across one hardening loop, with nothing observing that it
+was the third time.
+
+### 3.1 Why the cap could not do this job
+
+The round cap was doing two jobs: runaway backstop, and stall detector. It is adequate at the first
+and structurally incapable of the second, because it stops a converging loop and a churning one at
+the same number. Everything the user asked for follows from separating them:
+
+| | Before | After |
+|---|---|---|
+| Detects a stuck loop | Round cap (a count) | `[LOOP_STALL]` (evidence) |
+| Fires at | A fixed round, tier-dependent | The round the evidence appears, usually much earlier |
+| Cap's remaining job | Both | Runaway backstop only |
+| Caps | 3 / 5 / 30 | 6 / 15 / 30 |
+
+Raising `standard` past 10 also closed a dead angle: `AUTO_LOOP_CHECKPOINT_ROUNDS` fires at round 10,
+and while the default tier capped at 5 the checkpoint was live, tested code that a default-tier loop
+reached only by running past its own cap — possible in `warn` mode, since nothing clamps
+`current_round` to `max_rounds`, but not a path to design around. That caveat was already on the
+record in `./2-tech-spec.md` §3.2 before this change; what was missing was any reason for the
+default tier to reach round 10 the intended way. It is pinned now
+(`test/rules/stall-detection.test.js`) rather than left to be re-broken by the next cap change.
+
+### 3.2 The streak, and the third state
+
+A stall round is `closed = 0` with findings outstanding **and** a readable ledger. The third
+condition is the one that is easy to leave out, and leaving it out breaks the feature in whichever
+direction the omission falls:
+
+| Round shape | Must do | If it counted instead | If it reset instead |
+|---|---|---|---|
+| `closed=0`, readable | count | — | never fires |
+| `closed>0` | reset | fires on any 3 rounds | — |
+| `persisted + new < findings` | **hold** | manufactures a stall from an unreadable round | one section-shaped report erases three rounds of evidence |
+
+The third row is R9's own caveat promoted to a branch: `persisted + new < findings` means the
+identities could not be extracted, and "absence is not a signal" has to cut both ways. It is
+asserted directly (`test/hooks/jq-filter-fidelity.test.js`, "a round the ledger could not read
+HOLDS the streak") with a paired positive control on the same shape — the guard and its negative
+control shipping together, per `rules/testing.md` § Conventions.
+
+Threshold 3 is Reflexion's repeat-action heuristic (arXiv:2303.11366: "same action and same response
+for more than 3 cycles") taken at its lower bound: the paper's condition is `> 3`, and 3 consecutive
+stall rounds is the first point at which an observer can see the run forming. Erring early is the
+right side to err on here, because the signal blocks nothing. `AUTO_LOOP_STALL_ROUNDS` moves it.
+
+**Edge, not level.** `[LOOP_STALL]` is emitted only when the streak crosses the threshold, and
+because any closing round resets the streak to zero, progress re-arms it automatically — no separate
+`*_fired` flag, unlike the checkpoint. That asymmetry is deliberate: the checkpoint is once per
+change (a fixed round cannot recur), a stall genuinely can recur, and it should, once the loop has
+moved and stopped again.
+
+The three set differences moved **ahead of** the jq write, because the streak is a function of
+`closed` and a value computed after the commit could only be written by a second one. Each keeps its
+own `||` fallback: `_id_set_count` shells out to `comm`, and what the move changed is the blast
+radius of a missing `comm`, not its likelihood. Placed **after** the commit, as it was, a failure
+lets the round land while every downstream signal is skipped; placed **before** it, where it is now,
+the failure costs the whole round, which only undercounts. Undercounting is the safer of the two —
+the streak is evidence for a diagnosis, and a missing round delays one where a landed-but-blind
+round would poison it.
+
+**Both new fields inherit §1.1's past-the-cap latch, and one of them inherits it differently.**
+`stall_streak` and `stall_memory` are cleared on the same passing-precommit branch as
+`strategic_reset_fired` (`hooks/post-tool-review-state.sh:1304-1308`), and that branch is guarded by
+`current_round < max_rounds`. Past the cap the clear stops firing, so both survive into the next
+change until SessionStart. For the flag the consequence is silence — a checkpoint that will not fire
+again. For `stall_memory` it is not silence: change A's failed adjustments are **read back** under
+change B's first `[LOOP_STALL]` and presented as evidence about B. `rules/auto-loop.md` § Stall
+Detection says the memory is "cleared wherever `strategic_reset_fired` is", which is exactly true and
+therefore inherits exactly this window. Recorded rather than fixed for the same reason §1.1 records
+its half: the guard is one condition shared by several fields, and narrowing it is its own change.
+
+### 3.3 Why the memory is read from the command
+
+`[STALL_MEMORY]` is the "learning" half, and it is the half nothing in the repository had. The
+record is model-authored, which creates a problem `[NIT_DEFERRED]` does not have: **the model has no
+output stream the PostToolUse hook can see.** `tool_output` is the tool's, not the model's.
+
+Reading `tool_output` was the obvious design and it is unshippable. The record's format is
+documented in `rules/auto-loop.md` § Stall Detection, so a single `cat rules/auto-loop.md` would
+put a well-formed record on that stream and forge one. A documented format that fabricates records
+when the documentation is read is not a format worth shipping. The command the model types is the
+closest thing to a model-authored stream that exists, so that is what the hook parses, and the full
+`class= … | tried= … | outcome=` shape is required so that naming the marker (`grep '\[STALL_MEMORY\]'`)
+matches nothing.
+
+The read-back closes the loop: entries are replayed under a header, beneath the next `[LOOP_STALL]`
+or `[STRATEGIC_RESET]`, so the memory cannot grow by being shown. **What guarantees that is the
+split, not the indent** — an easy thing to state wrongly, and the first version of both this
+paragraph and the code comment did. The ingest regex needs `[STALL_MEMORY]` *and* `class=` on one
+line; the replay puts the marker on the header, which carries no `class=`, and the records on
+indented lines carrying no marker. Neither half is a record. The indent is for the reader. Keep the
+marker off the record lines and the property holds; move it onto them and indentation saves nothing,
+because the ingest never anchored to column 0.
+
+**One regex, used twice.** The gate and the extraction were two patterns, and only the extractor
+required the trailing `| <ts>`. A record written without a timestamp therefore passed the gate,
+extracted to nothing, and vanished — the silent drop this memory exists to prevent, reintroduced by
+the ingest itself, and the reason `_upsert_stall_memory`'s own `ts` default was unreachable in
+production. They are now the same `_SM_RE`, with the `ts` group optional and the two trailing field
+bodies stopping at a quote so the shell's closing `'` is not stored as data. An empty `outcome=` still
+matches, on purpose: it must reach the validator and be refused out loud rather than match nothing
+and disappear.
+
+Both directions are pinned, and the forgery test carries a realistic `cat` payload rather than an
+empty one, so that pointing the ingest at `tool_output` fails it specifically.
+
+Measured 2026-08-07, one mutation at a time: back up, replace the string, **assert exactly one
+occurrence was replaced**, run, restore, `diff -q`. That assertion is not ceremony — an unapplied
+substitution and a surviving mutant produce identical all-green output.
+
+| Mutation | Killed by |
+|---|---|
+| ingest reads `TOOL_OUTPUT` instead of `COMMAND` | 5 stall-memory tests, incl. the forgery guard |
+| blind-round branch removed (`if ($persisted + $newids) < $total` → `if false`) | exactly the blind-round test |
+| edge → level (drop `(( streak_before < stall_t ))`) | exactly the fires-once test |
+| the two-regex ingest restored | exactly the no-timestamp and empty-outcome tests |
+| ingest field bodies back to `+` | exactly the no-space-record assertion |
+| `[STALL_MEMORY]` moved onto the replayed record lines | the replay-shape and the SPLIT test |
+| `stall_streak`/`stall_memory` clearing deleted from `session-init.sh` | exactly 1 test |
+| the same clearing deleted from the convergence reset | exactly 1 test |
+
+**The seventh row is the one worth reading.** It survived on the first attempt — against a test
+written specifically to catch it. The jq stub in `test/hooks/post-tool-review-state.test.js`
+hardcoded the replayed line's shape, so mutating the production template changed nothing any test
+could observe: the stub supplied the behaviour unconditionally, which is the exact false-pass this
+harness's text-gating discipline exists to prevent, reintroduced one clause at a time. The stub now
+interpolates the shape out of the production filter's own template string. A stub clause may gate on
+production text; it may never restate what the production code does.
+
+### 3.4 `/refactor` as a bounded adjustment
+
+R6 step 2 asks for one bounded adjustment and names a direction per class. Two of the six directions
+are things `/refactor` already does, so it is named for those two and only those two —
+`ARCHITECTURE` and `REQUIREMENT_AMBIGUITY` exit rather than adjust, `UNVERIFIED_CLAIM` needs a
+measurement, `TIER_MISMATCH` needs the loop to stop.
+
+The five constraints in the rule are each load-bearing, and the one worth restating here is that
+`--auto` is forbidden: it scans the repository and takes up to ten targets, which is precisely the
+mid-loop rewrite step 2 exists to prevent. `--target` also makes the adjustment's scope the thing
+that was declared before making it, which is what step 2 asks for.
+
+The budget split follows from §3.2's asymmetry: a cap hit twice means the adjustment bought nothing,
+so it goes to the human; a stall twice means the loop moved and stopped again, which an adjustment
+can still address. Three is where that stops being true, and it is deliberately the same 3 the
+memory holds — when the replay is full of failed adjustments, a fourth is not the answer.
+
+### 3.5 What this is not
+
+It is not a gate. `[LOOP_STALL]` blocks nothing, changes no budget, and closes no receipt; like
+`[LOOP_PROGRESS]` it is a fact, and `rules/auto-loop.md` owns the disposition. Nor does it replace
+the round-10 checkpoint, which stays as the backstop for a loop that circles without ever quite
+producing a `closed=0` run.
