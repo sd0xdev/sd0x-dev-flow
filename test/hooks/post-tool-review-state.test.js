@@ -243,6 +243,14 @@ if (query && query.includes('[$key]') && vars.key) {
     if (query.includes('.iteration_history.strategic_reset_fired = false')) {
       data.iteration_history.strategic_reset_fired = false;
     }
+    // Same text-gating: the stall streak and its memory are scoped to the change, so the
+    // convergence reset clears them alongside the checkpoint flag.
+    if (query.includes('.iteration_history.stall_streak = 0')) {
+      data.iteration_history.stall_streak = 0;
+    }
+    if (query.includes('.iteration_history.stall_memory = []')) {
+      data.iteration_history.stall_memory = [];
+    }
   }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
@@ -380,6 +388,15 @@ if (query && query.trim() === '.iteration_history.current_round // 0') {
 if (query && query.trim() === '.iteration_history.max_rounds // 30') {
   const m = data.iteration_history && data.iteration_history.max_rounds;
   outputValue(m === undefined || m === null ? 30 : m);
+  process.exit(0);
+}
+// Stall-streak scalar read, done twice per round (before and after the write) to detect the
+// crossing. Without this clause the stub falls through to the empty default, the hook reads both
+// sides as \`unknown\` and suppresses the emission — which passes any test asserting [LOOP_STALL]
+// is ABSENT while failing every test asserting it is present.
+if (query && query.trim() === '.iteration_history.stall_streak // 0') {
+  const s = data.iteration_history && data.iteration_history.stall_streak;
+  outputValue(s === undefined || s === null ? 0 : s);
   process.exit(0);
 }
 // Progress-ledger READ: the identity set of the most recent round that recorded one. Emitted one
@@ -595,6 +612,36 @@ if (query && query.includes('plan_review.iteration_history.current_round += 1'))
   process.exit(0);
 }
 
+// Stall memory append, FIFO-capped at 3 (_upsert_stall_memory). Matched before the read-only
+// replay below, since both mention .iteration_history.stall_memory and only this one assigns.
+if (query && query.includes('.iteration_history.stall_memory =')
+    && query.includes('if length > 3 then .[-3:]')) {
+  if (!data.iteration_history) data.iteration_history = {};
+  const mem = Array.isArray(data.iteration_history.stall_memory)
+    ? data.iteration_history.stall_memory : [];
+  mem.push({ class: vars.c, tried: vars.t, outcome: vars.o, ts: vars.ts });
+  data.iteration_history.stall_memory = mem.length > 3 ? mem.slice(-3) : mem;
+  process.stdout.write(JSON.stringify(data));
+  process.exit(0);
+}
+
+// Stall memory read-back (_replay_stall_memory) — a -r query producing one line per entry.
+// The line SHAPE is interpolated from the production filter's own template string, never restated
+// here. A stub that hardcodes the format makes every test blind to a change in it: measured, a
+// mutation moving [STALL_MEMORY] onto the replayed record lines survived the very test written to
+// catch it, because the stub kept emitting the old shape.
+if (query && query.includes('.iteration_history.stall_memory // []')
+    && query.includes('class=\\\\(.class)')) {
+  const mem = (data.iteration_history && Array.isArray(data.iteration_history.stall_memory))
+    ? data.iteration_history.stall_memory : [];
+  const a = query.indexOf('"'), b = query.lastIndexOf('"');
+  const tpl = (a >= 0 && b > a) ? query.slice(a + 1, b) : '';
+  const render = (e) => ['class', 'tried', 'outcome', 'ts'].reduce(
+    (s, k) => s.split('\\\\(.' + k + ')').join(String(e[k])), tpl);
+  process.stdout.write(mem.map(render).join('\\n') + (mem.length ? '\\n' : ''));
+  process.exit(0);
+}
+
 // Handle iteration update: .iteration_history.current_round += 1
 if (query && query.includes('iteration_history.current_round += 1')) {
   if (!data.iteration_history) {
@@ -626,6 +673,19 @@ if (query && query.includes('iteration_history.current_round += 1')) {
       data.iteration_history.strategic_reset_fired === true
       || (typeof data.iteration_history.current_round === 'number'
           && data.iteration_history.current_round >= vars.ckpt);
+  }
+  // Stall streak — rules/auto-loop.md § Stall Detection. Text-gated like every clause around it.
+  // The SEMANTICS are pinned under real jq in jq-filter-fidelity.test.js; this exists so the
+  // hook-behaviour tests (which assert on the emitted [LOOP_STALL] line) see a streak move at all.
+  if (query.includes('.iteration_history.stall_streak =')
+      && query.includes('($persisted + $newids) < $total')) {
+    const prevRaw = data.iteration_history.stall_streak;
+    const prev = (typeof prevRaw === 'number' && prevRaw >= 0) ? prevRaw : 0;
+    const total = vars.total || 0;
+    const closed = vars.closed || 0;
+    const blind = ((vars.persisted || 0) + (vars.newids || 0)) < total;
+    data.iteration_history.stall_streak =
+      blind ? prev : (total > 0 && closed === 0) ? prev + 1 : 0;
   }
   data.updated_at = vars.now || '';
   process.stdout.write(JSON.stringify(data));
@@ -7061,4 +7121,381 @@ test('progress ledger: location numbers are stripped to any depth', () => {
   assert.equal(result.status, 0);
   const line = result.stderr.split('\n').find(l => l.startsWith('[LOOP_PROGRESS]'));
   assert.equal(line, '[LOOP_PROGRESS] round=2 closed=0 persisted=1 new=0 findings=1');
+});
+
+// --- Stall detection: [LOOP_STALL] (rules/auto-loop.md § Stall Detection) --------------------
+
+function runReviewWithFindingsEnv(workDir, binDir, findings, env = {}) {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: `## Gate: ⛔ Blocked\n${findings.join('\n')}`,
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir, ...env },
+  });
+}
+
+const stallLine = (stderr) => stderr.split('\n').find(l => l.startsWith('[LOOP_STALL]'));
+
+test('stall detection: three rounds closing nothing emit [LOOP_STALL] on the third', () => {
+  const workDir = makeTempDir('sd0x-post-tool-stall-fire-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  // The same finding, three rounds running: round 1 introduces it, rounds 2 and 3 carry it over
+  // unchanged. That is the churn signature the counters alone could never separate from progress.
+  const r1 = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+  const r2 = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+  const r3 = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+
+  assert.equal(r3.status, 0);
+  assert.equal(stallLine(r1.stderr), undefined, 'one round is not a streak');
+  assert.equal(stallLine(r2.stderr), undefined, 'two rounds are not a streak either');
+  assert.match(stallLine(r3.stderr) || '', /^\[LOOP_STALL\] streak=3 threshold=3 round=3 /);
+  assert.match(r3.stderr, /Cap Diagnostic Protocol/, 'the signal routes to the protocol');
+  assert.equal(readState(workDir).iteration_history.stall_streak, 3);
+});
+
+test('stall detection: [LOOP_STALL] fires once per streak, not on every round above it', () => {
+  // Edge detector, not a level detector. A signal that repeats every round is one the reader
+  // learns to skip, and it would also read as a fourth and fifth stall in the same run.
+  const workDir = makeTempDir('sd0x-post-tool-stall-once-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  for (let i = 0; i < 3; i++) runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+  const fourth = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+
+  assert.equal(fourth.status, 0);
+  assert.equal(stallLine(fourth.stderr), undefined, 'already above the threshold');
+  assert.equal(readState(workDir).iteration_history.stall_streak, 4, 'but the streak keeps counting');
+});
+
+test('stall detection: closing a finding resets the streak, and progress re-arms the signal', () => {
+  // The negative control for the whole feature. Without it, a `+1` with no reset branch produces
+  // an identical [LOOP_STALL] on round 3 of any three rounds whatsoever.
+  const workDir = makeTempDir('sd0x-post-tool-stall-reset-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+  runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+  // Round 3 closes A and opens B — movement, whatever the totals say.
+  const moved = runReviewWithFindingsEnv(workDir, binDir, [FIND_B]);
+  assert.equal(stallLine(moved.stderr), undefined, 'a round that closed something is not a stall');
+  assert.equal(readState(workDir).iteration_history.stall_streak, 0);
+
+  // Re-armed: three fresh stall rounds must be able to fire again.
+  runReviewWithFindingsEnv(workDir, binDir, [FIND_B]);
+  runReviewWithFindingsEnv(workDir, binDir, [FIND_B]);
+  const again = runReviewWithFindingsEnv(workDir, binDir, [FIND_B]);
+  assert.match(stallLine(again.stderr) || '', /^\[LOOP_STALL\] streak=3 /);
+});
+
+test('stall detection: a clean round resets the streak even though it closes nothing', () => {
+  // `closed=0` with no findings outstanding is convergence, not churn — and it is the shape that
+  // arrives right before /precommit, where a spurious stall signal would be worst.
+  const workDir = makeTempDir('sd0x-post-tool-stall-clean-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0, stall_streak: 2 });
+
+  const clean = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/codex-review-fast' },
+      tool_output: '## Gate: ✅ Ready',
+    },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+  assert.equal(clean.status, 0);
+  assert.equal(stallLine(clean.stderr), undefined);
+  assert.equal(readState(workDir).iteration_history.stall_streak, 0);
+});
+
+test('stall detection: AUTO_LOOP_STALL_ROUNDS moves the threshold, and garbage falls back to 3', () => {
+  const workDir = makeTempDir('sd0x-post-tool-stall-env-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const first = runReviewWithFindingsEnv(workDir, binDir, [FIND_A], { AUTO_LOOP_STALL_ROUNDS: '2' });
+  const second = runReviewWithFindingsEnv(workDir, binDir, [FIND_A], { AUTO_LOOP_STALL_ROUNDS: '2' });
+  assert.equal(stallLine(first.stderr), undefined);
+  assert.match(stallLine(second.stderr) || '', /^\[LOOP_STALL\] streak=2 threshold=2 /);
+
+  // The env is untrusted input, like AUTO_LOOP_CHECKPOINT_ROUNDS beside it. A non-numeric value
+  // must not disable the signal by making the comparison unparseable.
+  const other = makeTempDir('sd0x-post-tool-stall-env-bad-');
+  seedCheckpointState(other, { current_round: 0 });
+  let last;
+  for (let i = 0; i < 3; i++) {
+    last = runReviewWithFindingsEnv(other, binDir, [FIND_A], { AUTO_LOOP_STALL_ROUNDS: 'many' });
+  }
+  assert.match(stallLine(last.stderr) || '', /threshold=3 /, 'garbage falls back to the default');
+
+  // A leading zero is the sharp case: bash reads it as octal, so `08` passes a `^[0-9]+$` check
+  // and then makes the `-ge` comparison print "value too great for base" onto the stderr the model
+  // reads. It must fall back quietly, like any other unusable value.
+  const octal = makeTempDir('sd0x-post-tool-stall-env-octal-');
+  seedCheckpointState(octal, { current_round: 0 });
+  let oct;
+  for (let i = 0; i < 3; i++) {
+    oct = runReviewWithFindingsEnv(octal, binDir, [FIND_A], { AUTO_LOOP_STALL_ROUNDS: '08' });
+  }
+  assert.match(stallLine(oct.stderr) || '', /threshold=3 /, 'a leading zero falls back to the default');
+  assert.doesNotMatch(oct.stderr, /value too great for base/, 'and does so without leaking a bash error');
+});
+
+// --- Stall memory: [STALL_MEMORY] (rules/auto-loop.md § Stall Detection > Stall Memory) -------
+
+function emitStallMemory(workDir, binDir, command, toolOutput = '') {
+  return runHook({
+    cwd: workDir,
+    binDir,
+    input: { tool_name: 'Bash', tool_input: { command }, tool_output: toolOutput },
+    env: { CLAUDE_PROJECT_DIR: workDir },
+  });
+}
+
+const smCommand = (cls, tried, outcome, ts = '2026-08-07T12:00:00Z') =>
+  `printf '%s\\n' '[STALL_MEMORY] class=${cls} | tried=${tried} | outcome=${outcome} | ${ts}'`;
+
+const memoryOf = (workDir) => readState(workDir).iteration_history.stall_memory || [];
+
+test('stall memory: a well-formed record is persisted from the command', () => {
+  const workDir = makeTempDir('sd0x-post-tool-sm-ingest-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const r = emitStallMemory(workDir, binDir,
+    smCommand('ATTENTION_DIFFUSION', 'split the 6-file batch into 2', 'closed 3 of 5, streak reset'));
+  assert.equal(r.status, 0);
+  assert.deepEqual(memoryOf(workDir), [{
+    class: 'ATTENTION_DIFFUSION',
+    tried: 'split the 6-file batch into 2',
+    outcome: 'closed 3 of 5, streak reset',
+    ts: '2026-08-07T12:00:00Z',
+  }]);
+});
+
+test('stall memory: a record written without a timestamp is stamped, not dropped', () => {
+  // The gate regex and the extraction regex were separate patterns, and only the extractor
+  // required the trailing `| <ts>`. A record without one passed the gate, extracted to nothing,
+  // and vanished — indistinguishable from a diagnosis that was never made, which is the exact
+  // failure this memory exists to prevent. Both now run the same regex; ts is optional and
+  // _upsert_stall_memory stamps one.
+  const workDir = makeTempDir('sd0x-post-tool-sm-no-ts-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const r = emitStallMemory(workDir, binDir,
+    "printf '%s\\n' '[STALL_MEMORY] class=DOC_TOO_LONG | tried=split 2-tech-spec into a subfolder | outcome=reviewer still flags inconsistency'");
+  assert.equal(r.status, 0);
+  const mem = memoryOf(workDir);
+  assert.equal(mem.length, 1, 'the record must reach the buffer even with no timestamp field');
+  assert.equal(mem[0].class, 'DOC_TOO_LONG');
+  assert.equal(mem[0].tried, 'split 2-tech-spec into a subfolder');
+  assert.equal(mem[0].outcome, 'reviewer still flags inconsistency',
+    "the shell's closing quote must not be captured as part of the outcome");
+  assert.match(mem[0].ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, 'the hook stamps the missing ts');
+});
+
+test('stall memory: an empty outcome= is refused with a message, not silently swallowed', () => {
+  // The negative control for the test above: making ts optional must not widen the gate into
+  // accepting a record with no outcome. It has to reach the validator and be REFUSED there, so
+  // the model is told — a record that matches nothing at all would be the silent drop again.
+  const workDir = makeTempDir('sd0x-post-tool-sm-empty-out-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const r = emitStallMemory(workDir, binDir,
+    "printf '%s\\n' '[STALL_MEMORY] class=DOC_TOO_LONG | tried=split the spec | outcome='");
+  assert.equal(r.status, 0);
+  assert.deepEqual(memoryOf(workDir), [], 'a record with no outcome must not be stored');
+  assert.match(r.stderr, /\[STALL_MEMORY\] skipped \(tried= and outcome= are both required\)/,
+    'the refusal must be reported, not silent');
+
+  // Whitespace must not decide the fate of a malformed record. With `+` field bodies,
+  // `tried= |outcome=x` (one space) matched and was refused out loud while `tried=|outcome=x`
+  // (none) matched nothing and vanished — same defect, two outcomes, and the silent one is the
+  // failure this memory exists to prevent.
+  const tight = makeTempDir('sd0x-post-tool-sm-tight-');
+  seedCheckpointState(tight, { current_round: 0 });
+  const t = emitStallMemory(tight, binDir,
+    "printf '%s\\n' '[STALL_MEMORY] class=DOC_TOO_LONG|tried=|outcome=x'");
+  assert.equal(t.status, 0);
+  assert.deepEqual(memoryOf(tight), []);
+  assert.match(t.stderr, /\[STALL_MEMORY\] skipped \(tried= and outcome= are both required\)/,
+    'a record with no spaces must reach the validator too, not match nothing');
+});
+
+test('stall memory: the buffer keeps the most recent 3 and drops the oldest', () => {
+  // Reflexion's episodic buffer is Omega=1-3; past that the replay stops being something anyone reads.
+  const workDir = makeTempDir('sd0x-post-tool-sm-fifo-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  for (const n of ['one', 'two', 'three', 'four']) {
+    emitStallMemory(workDir, binDir, smCommand('DOC_TOO_LONG', `attempt ${n}`, 'no change'));
+  }
+  const mem = memoryOf(workDir);
+  assert.equal(mem.length, 3);
+  assert.deepEqual(mem.map(e => e.tried), ['attempt two', 'attempt three', 'attempt four']);
+});
+
+test('stall memory: a class outside the closed set is rejected and logged, not stored', () => {
+  const workDir = makeTempDir('sd0x-post-tool-sm-class-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  const r = emitStallMemory(workDir, binDir, smCommand('VIBES', 'guessed', 'nothing'));
+  assert.equal(r.status, 0, 'a malformed record degrades, it does not fail the hook');
+  assert.deepEqual(memoryOf(workDir), []);
+  assert.match(r.stderr, /\[STALL_MEMORY\] skipped \(class 'VIBES' is not one of/);
+
+  // Paired positive control: the SAME command shape with a listed class must store. Without it
+  // this test stays green if ingestion breaks entirely.
+  emitStallMemory(workDir, binDir, smCommand('TIER_MISMATCH', 'converged per tier', 'moved to precommit'));
+  assert.equal(memoryOf(workDir).length, 1);
+});
+
+test('stall memory: merely MENTIONING the marker forges nothing', () => {
+  // The reason this record is read from the command and not from tool output. A grep for the
+  // marker names it without carrying a record; reading the output instead would let any `cat` of
+  // rules/auto-loop.md ingest the format example printed in that very section.
+  const workDir = makeTempDir('sd0x-post-tool-sm-forge-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  // The OUTPUT of each of these carries a full, well-formed record at column 0 — because that is
+  // what reading the rules file actually prints. Only the command distinguishes them from a real
+  // emission, which is why the command is what the hook reads. Point the ingest at TOOL_OUTPUT
+  // instead and every one of these forges a record.
+  const docExample = [
+    '## Stall Memory',
+    '',
+    smCommand('ATTENTION_DIFFUSION', 'split the 6-file batch into 2', 'closed 3 of 5'),
+    '',
+    "Field order is fixed.",
+  ].join('\n');
+  for (const cmd of [
+    "grep -rn '\\[STALL_MEMORY\\]' rules/",
+    'cat rules/auto-loop.md',
+    "echo 'see [STALL_MEMORY] in the rules for the format'",
+  ]) {
+    const r = emitStallMemory(workDir, binDir, cmd, docExample);
+    assert.equal(r.status, 0);
+    assert.deepEqual(memoryOf(workDir), [], `must not ingest from: ${cmd}`);
+  }
+
+  // Same guard, the other direction: a deliberate emitter with the full shape still gets through.
+  emitStallMemory(workDir, binDir, smCommand('ARCHITECTURE', 're-scoped the module split', 'still blocked'));
+  assert.equal(memoryOf(workDir).length, 1, 'the guard must not also reject real records');
+});
+
+test('stall memory: control bytes are stripped before the record round-trips', () => {
+  // The record is written by the model and printed back by the hook in a later round, so an
+  // unescaped ESC here becomes a terminal escape sequence in that output. Built with
+  // fromCharCode so the byte exists only at runtime, never as a literal in this file.
+  const ESC = String.fromCharCode(27);
+  const workDir = makeTempDir('sd0x-post-tool-sm-ctrl-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, { current_round: 0 });
+
+  emitStallMemory(workDir, binDir,
+    smCommand('UNVERIFIED_CLAIM', `measured wc -l${ESC}[31m`, 'wrote the derivation in'));
+  const [entry] = memoryOf(workDir);
+  assert.equal(entry.tried, 'measured wc -l[31m', 'the ESC is gone, the printable tail stays');
+  assert.equal(entry.outcome, 'wrote the derivation in');
+});
+
+test('stall memory: recorded attempts are replayed beneath [LOOP_STALL]', () => {
+  // The whole point of persisting it: the record has to reach the NEXT diagnosis, which is on the
+  // far side of a compaction that drops anything held only in the conversation.
+  const workDir = makeTempDir('sd0x-post-tool-sm-replay-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, {
+    current_round: 0,
+    stall_memory: [{ class: 'DOC_TOO_LONG', tried: 'split section 4 out', outcome: 'reviewer still flags it', ts: '2026-08-07T09:00:00Z' }],
+  });
+
+  let last;
+  for (let i = 0; i < 3; i++) last = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+
+  assert.match(last.stderr, /^\[LOOP_STALL\] streak=3 /m);
+  assert.match(last.stderr, /\[STALL_MEMORY\] Already tried on this change/);
+  assert.match(last.stderr, /^ {2}class=DOC_TOO_LONG \| tried=split section 4 out \| outcome=reviewer still flags it \| 2026-08-07T09:00:00Z$/m);
+});
+
+test('stall memory: a control byte already in the state file is stripped on the way OUT', () => {
+  // The ingest-side strip (above) only covers records this hook wrote. The state file is a plain
+  // JSON file on disk — an older schema version, a hand edit, or a future writer can put a byte
+  // there that never passed through `_upsert_stall_memory`, and the replay prints it to the model's
+  // stderr. Deleting the output-side `tr -d` failed nothing until this case existed.
+  const ESC = String.fromCharCode(27);
+  const workDir = makeTempDir('sd0x-post-tool-sm-outctrl-');
+  const binDir = setupStubBin();
+  seedCheckpointState(workDir, {
+    current_round: 0,
+    stall_memory: [{
+      class: 'ATTENTION_DIFFUSION',
+      tried: `shrank the batch${ESC}[31m`,
+      outcome: 'new defects still appeared',
+      ts: '2026-08-07T09:00:00Z',
+    }],
+  });
+
+  let last;
+  for (let i = 0; i < 3; i++) last = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+
+  assert.ok(!last.stderr.includes(ESC), 'no raw control byte may reach the model-facing stream');
+  assert.match(
+    last.stderr,
+    /^ {2}class=ATTENTION_DIFFUSION \| tried=shrank the batch\[31m \| outcome=new defects still appeared \| 2026-08-07T09:00:00Z$/m,
+    'and the printable remainder survives — this strips bytes, it does not drop the record'
+  );
+});
+
+// Run the PRODUCTION ingest regex, under the real grep, over arbitrary text. Extracting `_SM_RE`
+// from the hook rather than restating it is the whole point: a test that re-declares the pattern
+// proves what the test author believes, not what the hook does.
+function ingestMatches(text) {
+  const decl = /^_SM_RE=.*$/m.exec(readFileSync(hookPath, 'utf8'));
+  assert.ok(decl, 'the hook must declare its ingest regex once, as _SM_RE');
+  const r = spawnSync('bash', ['-c', `${decl[0]}\ngrep -oE "$_SM_RE" || true`], { input: text, encoding: 'utf8' });
+  return (r.stdout || '').split('\n').filter(Boolean);
+}
+
+test('stall memory: the replay is SPLIT, so no line of it is an ingestible record', () => {
+  // What makes the replay safe is not the indent — the ingest regex has no `^` anchor, so column 0
+  // was never the property. It is the split: the ingest needs `[STALL_MEMORY]` AND `class=` on one
+  // line, and the replay puts the marker on a header that carries no `class=` and the records on
+  // lines that carry no marker. Move the marker onto the record lines and indentation saves
+  // nothing — which is exactly what the negative control below demonstrates.
+  const workDir = makeTempDir('sd0x-post-tool-sm-noecho-');
+  const binDir = setupStubBin();
+  const record = { class: 'ARCHITECTURE', tried: 're-scoped the module split', outcome: 'failed', ts: '2026-08-07T09:00:00Z' };
+  seedCheckpointState(workDir, { current_round: 0, stall_memory: [record] });
+
+  let last;
+  for (let i = 0; i < 3; i++) last = runReviewWithFindingsEnv(workDir, binDir, [FIND_A]);
+
+  const replay = last.stderr.split('\n').filter(l => l.includes('[STALL_MEMORY]') || /^ {2}class=/.test(l));
+  assert.ok(replay.length >= 2, 'precondition: the replay actually printed a header and a record');
+  assert.deepEqual(ingestMatches(replay.join('\n')), [],
+    'no line of the replay may match the production ingest regex');
+
+  // Negative control: the same record with the marker moved onto the indented line IS ingestible.
+  // Without this the assertion above would also pass if the regex simply never matched anything.
+  const ifMarkerMoved = `  [STALL_MEMORY] class=${record.class} | tried=${record.tried} | outcome=${record.outcome} | ${record.ts}`;
+  assert.equal(ingestMatches(ifMarkerMoved).length, 1,
+    'indentation alone does not protect — keeping the marker off the record lines is the guarantee');
+
+  // End to end: feeding the whole replay back as a COMMAND must not grow the buffer.
+  assert.equal(emitStallMemory(workDir, binDir, replay.join('\n')).status, 0);
+  assert.equal(memoryOf(workDir).length, 1, 'the buffer did not grow by being displayed');
 });

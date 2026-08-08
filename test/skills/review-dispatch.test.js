@@ -104,9 +104,12 @@ test('auto-loop.md keeps Loop re-review on the same Codex thread', () => {
 
 test('auto-loop.md tier table defines all three tiers with blocking severity and round cap', () => {
   const content = read('rules/auto-loop.md');
+  // The caps were raised (3/5 → 6/15) once § Stall Detection took over catching a stuck loop —
+  // see test/rules/stall-detection.test.js, which owns the values and their cross-file agreement.
+  // What this row set pins is the table's SHAPE: three tiers, each with a blocking severity list.
   const rows = [
-    [/\| `fast` \|.*\| P0 \| 3 \|/, 'fast: blocks on P0, cap 3'],
-    [/\| `standard` \*\*\(default\)\*\* \|.*\| P0, P1 \| 5 \|/, 'standard: blocks on P0/P1, cap 5'],
+    [/\| `fast` \|.*\| P0 \| 6 \|/, 'fast: blocks on P0, cap 6'],
+    [/\| `standard` \*\*\(default\)\*\* \|.*\| P0, P1 \| 15 \|/, 'standard: blocks on P0/P1, cap 15'],
     [/\| `thorough` \|.*\| P0, P1, P2 \| 30 \|/, 'thorough: blocks on P0/P1/P2, cap 30'],
   ];
   for (const [re, label] of rows) {

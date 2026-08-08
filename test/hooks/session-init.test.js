@@ -87,7 +87,7 @@ test('session-init: new session resets review state', () => {
   assert.equal(state.iteration_history.total_rounds_session, 8);
 });
 
-test('a new session clears strategic_reset_fired along with current_round', () => {
+test('a new session clears strategic_reset_fired, stall_streak and stall_memory along with current_round', () => {
   // The two must move together. The R10 checkpoint fires on `current_round`, which this hook
   // zeroes, and both channels refuse to fire while the flag is true
   // (post-tool-review-state.sh requires fired_before == "false"; post-compact-auto-loop.sh
@@ -105,6 +105,8 @@ test('a new session clears strategic_reset_fired along with current_round', () =
         current_round: 14,
         total_rounds_session: 14,
         strategic_reset_fired: true,
+        stall_streak: 2,
+        stall_memory: [{ class: 'DOC_TOO_LONG', tried: 'split the spec', outcome: 'no change', ts: '2026-08-07T12:00:00Z' }],
         findings_by_round: [{ round: 14, total: 2 }],
       },
     })
@@ -119,6 +121,12 @@ test('a new session clears strategic_reset_fired along with current_round', () =
     false,
     'a preserved flag would silently disable the checkpoint for the whole next session'
   );
+  // The streak counts rounds and the memory is scoped to one change, so both belong to the same
+  // lifetime as current_round. A streak carried into a fresh session lets [LOOP_STALL] fire on
+  // rounds that never happened there; a carried memory replays adjustments from a change that is
+  // no longer under review.
+  assert.equal(state.iteration_history.stall_streak, 0, 'a carried streak fires the stall signal on rounds this session never ran');
+  assert.deepEqual(state.iteration_history.stall_memory, [], 'a carried memory replays another change\'s adjustments');
   assert.equal(state.iteration_history.total_rounds_session, 14, 'the cumulative counter still survives');
 });
 

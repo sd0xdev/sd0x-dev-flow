@@ -244,6 +244,31 @@ test('the extracted reset filter is a program real jq accepts', { skip: !HAVE_JQ
   assert.equal(r.status, 0, `real jq rejected the production reset filter:\n${r.err}`);
 });
 
+test('real jq: convergence clears the stall streak and the stall memory with the round counter', { skip: !HAVE_JQ }, () => {
+  // The reset marks the end of one change. A streak surviving it counts rounds from the change
+  // that just converged against the next one, and a surviving memory replays that change's failed
+  // adjustments under the next change's diagnosis — the memory would then never be about the work
+  // in front of the model.
+  const stalled = {
+    current_round: 4,
+    max_rounds: 15,
+    stall_streak: 3,
+    stall_memory: [{ class: 'ATTENTION_DIFFUSION', tried: 'split the batch', outcome: 'no change', ts: 'T' }],
+    ...RESET_FIXTURE,
+  };
+  const after = runReset(stalled).doc.iteration_history;
+  assert.equal(wasReset(after), true, 'precondition: this input takes the reset path');
+  assert.equal(after.stall_streak, 0);
+  assert.deepEqual(after.stall_memory, []);
+
+  // Negative control: on a path that does NOT reset, both must survive untouched — otherwise the
+  // assertions above would also pass if the clause cleared them unconditionally.
+  const kept = runReset(stalled, { passed: false }).doc.iteration_history;
+  assert.equal(wasReset(kept), false, 'precondition: a failing precommit does not reset');
+  assert.equal(kept.stall_streak, 3, 'a mid-change streak must not be cleared by a failing gate');
+  assert.deepEqual(kept.stall_memory, stalled.stall_memory);
+});
+
 test('real jq: a counter the READER would call exhausted is never refunded by the writer', { skip: !HAVE_JQ }, () => {
   // 51 < 100000 raw, but the reader clamps the cap to the producer contract (3..50) and reads
   // 51/50 = spent. Pinned against the reader's own answer so the two cannot drift apart.
@@ -770,16 +795,43 @@ const postTool = readFileSync(resolve(__dirname, '../../hooks/post-tool-review-s
 // after it as the opener, so a marker inside the program yields a slice starting mid-filter.
 const ITER_UPDATE_FILTER = extractFilter(postTool, '--argjson ckpt "$ckpt"');
 
+/**
+ * Every `--argjson`/`--arg` the production filter reads, in one place. jq fails the whole program
+ * with exit 3 on an undefined variable, so adding a variable to the hook and forgetting it here is
+ * a compile error rather than a wrong answer — which is how the stall-streak arguments announced
+ * themselves. Defaults describe an ordinary non-stall round.
+ */
+function iterArgs({ total = 0, ckpt = 10, ids = '', closed = 0, persisted = 0, newids = 0 } = {}) {
+  return ['--argjson', 'total', String(total), '--argjson', 'p0', '0', '--argjson', 'p1', '0',
+    '--argjson', 'p2', '0', '--argjson', 'nit', '0', '--arg', 'now', '2026-08-04T00:00:00Z',
+    '--argjson', 'ckpt', String(ckpt), '--arg', 'ids', ids,
+    '--argjson', 'closed', String(closed), '--argjson', 'persisted', String(persisted),
+    '--argjson', 'newids', String(newids)];
+}
+
 function runIterUpdate(json, ckpt) {
   const r = spawnSync(
-    'jq',
-    ['-r', '--argjson', 'total', '0', '--argjson', 'p0', '0', '--argjson', 'p1', '0',
-     '--argjson', 'p2', '0', '--argjson', 'nit', '0', '--arg', 'now', '2026-08-04T00:00:00Z',
-     '--argjson', 'ckpt', String(ckpt), '--arg', 'ids', '', ITER_UPDATE_FILTER],
+    'jq', ['-r', ...iterArgs({ ckpt }), ITER_UPDATE_FILTER],
     { input: JSON.stringify(json), encoding: 'utf8' }
   );
   return { status: r.status, err: r.stderr || '', data: r.status === 0 ? JSON.parse(r.stdout) : null };
 }
+
+/** Drive the stall-streak clause directly: one round, described by its ledger figures. */
+function runStall(json, { total, closed, persisted, newids }) {
+  const r = spawnSync(
+    'jq', ['-r', ...iterArgs({ total, closed, persisted, newids }), ITER_UPDATE_FILTER],
+    { input: JSON.stringify(json), encoding: 'utf8' }
+  );
+  return { status: r.status, err: r.stderr || '', data: r.status === 0 ? JSON.parse(r.stdout) : null };
+}
+
+/** Seed a state whose stall streak is already at `streak`. */
+const iterWithStreak = (streak) => {
+  const s = baseIter(0);
+  s.iteration_history.stall_streak = streak;
+  return s;
+};
 
 const baseIter = round => ({
   iteration_history: {
@@ -839,10 +891,7 @@ test('iteration filter: a non-numeric current_round writes nothing at all', { sk
 
 function runIterUpdateIds(json, ids) {
   const r = spawnSync(
-    'jq',
-    ['-r', '--argjson', 'total', '0', '--argjson', 'p0', '0', '--argjson', 'p1', '0',
-     '--argjson', 'p2', '0', '--argjson', 'nit', '0', '--arg', 'now', '2026-08-04T00:00:00Z',
-     '--argjson', 'ckpt', '10', '--arg', 'ids', ids, ITER_UPDATE_FILTER],
+    'jq', ['-r', ...iterArgs({ ids }), ITER_UPDATE_FILTER],
     { input: JSON.stringify(json), encoding: 'utf8' }
   );
   return { status: r.status, err: r.stderr || '', data: r.status === 0 ? JSON.parse(r.stdout) : null };
@@ -870,4 +919,70 @@ test('iteration filter: a blank-only identity set records an empty array, not ph
   const blanks = runIterUpdateIds(baseIter(0), '\n\n');
   assert.equal(blanks.status, 0, `real jq rejected the production filter:\n${blanks.err}`);
   assert.deepEqual(blanks.data.iteration_history.findings_by_round[0].ids, []);
+});
+
+// --- Stall streak (rules/auto-loop.md § Stall Detection) -------------------------------------
+//
+// The clause decides between three outcomes from four ledger figures, and two of them look
+// identical in the state file afterwards: "held because the round was unreadable" and "reset
+// because the round made progress" both leave a streak that did not grow. Only a seeded non-zero
+// streak separates them, which is why every case below starts from one.
+
+test('stall streak: a round that closes nothing while findings are outstanding increments it', { skip: !HAVE_JQ }, () => {
+  const r = runStall(iterWithStreak(1), { total: 2, closed: 0, persisted: 2, newids: 0 });
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  assert.equal(r.data.iteration_history.stall_streak, 2);
+});
+
+test('stall streak: an absent streak starts from 0, not from null arithmetic', { skip: !HAVE_JQ }, () => {
+  // `null + 1` is 1 in jq rather than an error, so this passes with `// 0` deleted. It is here for
+  // the shape below it: the same absence must also survive the type guard.
+  const seed = baseIter(0);
+  delete seed.iteration_history.stall_streak;
+  const r = runStall(seed, { total: 1, closed: 0, persisted: 1, newids: 0 });
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.stall_streak, 1);
+});
+
+test('stall streak: closing a finding resets it to 0', { skip: !HAVE_JQ }, () => {
+  // Negative control for the increment above — without it the clause could be `+1` unconditionally
+  // and every assertion in this block would still pass.
+  const r = runStall(iterWithStreak(2), { total: 2, closed: 1, persisted: 1, newids: 1 });
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.stall_streak, 0, 'progress re-arms the signal');
+});
+
+test('stall streak: a round with no findings outstanding resets it to 0', { skip: !HAVE_JQ }, () => {
+  // `closed=0` alone is not a stall: a clean round closes nothing because there was nothing left.
+  const r = runStall(iterWithStreak(2), { total: 0, closed: 0, persisted: 0, newids: 0 });
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.stall_streak, 0);
+});
+
+test('stall streak: a round the ledger could not read HOLDS the streak, neither counting nor resetting it', { skip: !HAVE_JQ }, () => {
+  // `persisted + new < findings` means the identities could not be extracted (a section-shaped
+  // report carries no per-finding text). "Absence is not a signal" has to cut both ways, and each
+  // direction fails differently: counting it manufactures a stall out of an unreadable round,
+  // resetting it lets a report format erase three rounds of real evidence.
+  const r = runStall(iterWithStreak(2), { total: 3, closed: 0, persisted: 0, newids: 0 });
+  assert.equal(r.status, 0);
+  assert.equal(r.data.iteration_history.stall_streak, 2, 'held, not incremented');
+
+  // The paired positive control: the SAME `closed=0` round, readable this time, must count. Delete
+  // the blind-round branch and this still passes — delete the increment and only this one fails.
+  const readable = runStall(iterWithStreak(2), { total: 3, closed: 0, persisted: 3, newids: 0 });
+  assert.equal(readable.status, 0);
+  assert.equal(readable.data.iteration_history.stall_streak, 3);
+});
+
+test('stall streak: a corrupt persisted streak floors to 0 instead of propagating', { skip: !HAVE_JQ }, () => {
+  // The state file is not a trusted input — `false` is jq's classic `//` trap and a negative
+  // counter would defer the crossing forever. Both must land on the same floor.
+  for (const bad of [false, -5, 'seven', null, []]) {
+    const seed = baseIter(0);
+    seed.iteration_history.stall_streak = bad;
+    const r = runStall(seed, { total: 1, closed: 0, persisted: 1, newids: 0 });
+    assert.equal(r.status, 0, `real jq rejected ${JSON.stringify(bad)}:\n${r.err}`);
+    assert.equal(r.data.iteration_history.stall_streak, 1, `${JSON.stringify(bad)} must floor to 0 before incrementing`);
+  }
 });
