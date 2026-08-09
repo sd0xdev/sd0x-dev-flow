@@ -187,6 +187,31 @@ _alf_begin() {
   _alf_old=$(_alf_receipt "$1")
   _alf_lost0=$(_alf_sidecar_has "verdict_write_failed:$1" && printf 1 || printf 0)
 }
+#
+# Round-25 finding #4: read-back confirmation for callers that must decide whether THIS call's
+# `update_state` write actually landed before treating its bundled epoch/marker retirement as
+# settled — `update_state` returns 0 on every one of its documented failure paths too (see the
+# `_alf_receipt` comment above), so the return code alone cannot answer that. Two checks, both
+# required: the receipt now reads what THIS call requested (`$want`), and no fresh
+# `verdict_write_failed:$plane` sidecar appeared. Confirms a lost PASS only via the receipt check
+# — `_verdict_write_failed` deliberately sets no marker for a lost pass (see its own comment: "the
+# gate is already unsatisfied, so a marker would block on nothing"), so the marker check is a
+# no-op, never a false confirmation, for `$want=true`.
+#
+# Round-26 findings #1/#2 tried to patch the receipt/marker read-back with staleness sensitivity;
+# round-27 finding #1 found that patch still racy — both the receipt and the marker it compares are
+# PLANE-GLOBAL, so a CONCURRENT (not stale) dispatch on the same plane can mutate either between
+# this call's commit and this function's read of it, flipping the verdict wrongly in both
+# directions. `_us_committed` (round-26 #2) is not a proxy for that question — it IS the answer,
+# set by `update_state` itself at the exact `mv` that atomically commits `$want` (and any bundled
+# epoch/marker retirement, same jq transaction). Nothing else runs between that `mv` and this check
+# within one hook invocation, so it cannot be raced from inside this process, and every path that
+# never reaches the `mv` leaves it `0`. The receipt/marker read-back this replaced answered a
+# weaker, racy version of the same question; trust the operation-local fact instead of re-deriving
+# it from global state a concurrent writer can change.
+_alf_write_confirmed() {
+  [[ "${_us_committed:-0}" == "1" ]]
+}
 _alf_transition() {
   local plane="$1" old="$2" now="$3" want="$4" reasons="${5:-}"
   local lost0="${_alf_lost0:-0}" lost1
@@ -234,6 +259,15 @@ _lockdir_mtime() {
 
 _lock() {
   local start end _takeovers
+  # Optional 1st arg: override LOCK_TIMEOUT for this call only. Round-25 findings #2/#3: a
+  # best-effort COMPENSATING release (one that exists only because an earlier write already
+  # failed) has nothing left to fall back to if it also gives up at the default 5s — the reference
+  # it was trying to close leaks with zero durable trace. A caller in that position passes a
+  # longer budget so it keeps polling toward LOCK_TTL's own 30s stale-reclaim horizon instead of
+  # giving up at an arbitrary fraction of it; ordinary (non-compensating) callers pass nothing and
+  # keep the original 5s default — this is not a general slowdown of the lock.
+  local timeout="${1:-$LOCK_TIMEOUT}"
+  [[ "$timeout" =~ ^[0-9]+$ ]] || timeout="$LOCK_TIMEOUT"
   start=$(date +%s)
   # Bounded, because a lost takeover retries instead of returning. Without a cap, a lock directory
   # that can be inspected but not replaced (an unwritable parent, say) combined with
@@ -242,7 +276,7 @@ _lock() {
   _takeovers=0
   while ! mkdir "$LOCKDIR" 2>/dev/null; do
     end=$(date +%s)
-    if [ $((end - start)) -ge $LOCK_TIMEOUT ]; then
+    if [ $((end - start)) -ge $timeout ]; then
       local lock_pid lock_ts now
       lock_pid=$(cat "$LOCKDIR/pid" 2>/dev/null || echo 0)
       lock_ts=$(cat "$LOCKDIR/ts" 2>/dev/null || echo 0)
@@ -394,6 +428,15 @@ fi
 # Extract tool info
 TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // empty' 2>/dev/null)
 TOOL_INPUT=$(echo "$INPUT" | jq -r '.tool_input // empty' 2>/dev/null)
+# Every hook event carries this, and stop-guard has always read it. It is read here for exactly one
+# purpose — recovering the verdict of a review that was moved to the background (issue #10), whose
+# report is delivered into the transcript and nowhere else. See § Backgrounded MCP review.
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+# This script is registered for BOTH PreToolUse and PostToolUse. The Pre branch exists only to pin
+# the tree state at dispatch (§ Backgrounded MCP review); everything else in the file is Post-only,
+# so the branch is taken late, after the function definitions it needs. Absent on replays of older
+# fixtures, which is why it defaults to the Post behaviour rather than to an error.
+HOOK_EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
 # PostToolUse input: official Claude Code v2.1.x spec uses `tool_response`;
 # `tool_output` is kept as fallback for backward-compat with older replays.
 # Bash returns structured `{stdout, stderr, interrupted, isImage}`; MCP returns
@@ -450,11 +493,16 @@ TOOL_OUTPUT=$(echo "$INPUT" | jq -r '
 TOOL_INTERRUPTED=$(echo "$INPUT" | jq -r '((.tool_response // .tool_output) | if type=="object" then (.interrupted == true) else false end)' 2>/dev/null)
 [[ "$TOOL_INTERRUPTED" == "true" ]] || TOOL_INTERRUPTED="false"
 
-# Only process Bash, MCP Codex, and Skill tools
+# Only process Bash, MCP Codex, Skill — and TaskOutput, which is a recovery TRIGGER rather than a
+# fourth content channel. It is listed here solely so it survives to the recovery call further down;
+# the branch immediately after that call sends it straight back out, so it never reaches the routing
+# below. Registering it in `hooks.json` without adding it here made the whole trigger inert, and
+# invisibly: every recovery test drove the hook with `tool_name: "Bash"`.
 if [[ "$TOOL_NAME" != "Bash" ]] && \
    [[ "$TOOL_NAME" != "mcp__codex__codex" ]] && \
    [[ "$TOOL_NAME" != "mcp__codex__codex-reply" ]] && \
-   [[ "$TOOL_NAME" != "Skill" ]]; then
+   [[ "$TOOL_NAME" != "Skill" ]] && \
+   [[ "$TOOL_NAME" != "TaskOutput" ]]; then
   exit 0
 fi
 
@@ -943,6 +991,70 @@ _sidecar_emergency_mark() {
   return 0
 }
 
+# Round-26 finding #5: claims and removes ONE per-event marker whose body is exactly `$1` — same
+# rename-wins-once claim `_lock`'s stale-takeover uses (a specific source path can only be `mv`'d
+# away by one caller; a second `mv` on an already-moved name fails ENOENT), so concurrent
+# consumers cannot double-claim the same marker. Returns 0 only when a marker was actually
+# claimed. Lock-free by construction, matching `_sidecar_emergency_mark` — a caller using this has
+# typically already failed to get the state lock once.
+_sidecar_consume_marker() {
+  local want="$1" f body tomb
+  for f in "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$f" || continue
+    body=$(cat -- "$f" 2>/dev/null || true)
+    [[ "$body" == "$want" ]] || continue
+    # Round-27 finding #5: the old tombstone (`${f}.consumed.…`) still started with
+    # `SIDECAR_EVENT_PREFIX`, so it stayed inside the very glob this loop (and every reader) scans —
+    # a second concurrent consumer could claim the tombstone itself before `rm -f` ran, and both
+    # callers would believe they exclusively consumed the same logical marker. `.blocked.staging.`
+    # is this file's own established out-of-namespace prefix (see `_sidecar_emergency_mark`); landing
+    # the tombstone there removes it from every glob a reader or consumer uses.
+    tomb="${STATE_FILE}.blocked.staging.consumed.$$-${RANDOM}${RANDOM}"
+    mv "$f" "$tomb" 2>/dev/null || continue
+    rm -f "$tomb" 2>/dev/null || true
+    return 0
+  done
+  return 1
+}
+
+# Read-only counterpart to `_sidecar_consume_marker`: for every marker whose body is
+# `${prefix}<digits>`, prints `<path><TAB><count>`, one per line — never removes anything. Round-30
+# finding #1: `_clear_dispatch_epoch` used to DESTROY existing markers to learn their count before
+# knowing whether it could re-represent that value anywhere — a call that drained, then failed BOTH
+# the state transaction and its own replacement write, permanently lost a credit nothing else on
+# disk recorded. Peeking instead lets the caller leave every marker untouched until the transaction
+# it feeds has positively committed, so a total failure of the transaction or the write has nothing
+# to lose: the untouched markers are still there for the next attempt. `^(0|[1-9][0-9]{0,14})$`
+# bounds accepted counts to 15 digits (round-30 finding #2): unbounded-length digit strings reach
+# bash's signed 64-bit `$(( ))` and can wrap to negative — 15 digits is orders of magnitude beyond
+# any real dispatch count while staying far below where summing several such values could overflow.
+_sidecar_peek_counted_markers() {
+  local prefix="$1" f body cnt
+  for f in "${SIDECAR_EVENT_PREFIX}"*; do
+    _sidecar_is_marker "$f" || continue
+    body=$(cat -- "$f" 2>/dev/null || true)
+    case "$body" in
+      "${prefix}"*) cnt="${body#"$prefix"}" ;;
+      *) continue ;;
+    esac
+    [[ "$cnt" =~ ^(0|[1-9][0-9]{0,14})$ ]] || continue
+    printf '%s\t%s\n' "$f" "$cnt"
+  done
+  return 0
+}
+
+# Consumes an EXACT marker path already validated by `_sidecar_peek_counted_markers` — used only
+# once the value it represented has been folded into a successfully committed transaction. Same
+# tombstone-rename mechanics as `_sidecar_consume_marker`.
+_sidecar_consume_marker_path() {
+  local f="$1" tomb
+  _sidecar_is_marker "$f" || return 1
+  tomb="${STATE_FILE}.blocked.staging.consumed.$$-${RANDOM}${RANDOM}"
+  mv "$f" "$tomb" 2>/dev/null || return 1
+  rm -f "$tomb" 2>/dev/null || true
+  return 0
+}
+
 # Every sidecar line, shared file and per-event markers alike. A reader that consults only the
 # shared file cannot see an emergency marker, and missing one is fail-OPEN — the single direction
 # this whole plane exists to prevent.
@@ -1255,6 +1367,52 @@ update_state() {
   # file records WHICH gate passed, not merely THAT one did. Empty = leave the field alone,
   # so every existing 3-arg caller is byte-identical to before.
   local mode="${4:-}"
+  # Optional 5th/6th args: background-review markers to retire IN THIS SAME LOCK SECTION as the
+  # receipt. Consuming under a separate lock and then writing was not enough — it only refused a
+  # marker removed BEFORE the consume. The other ordering still lost a verdict: recovery consumes
+  # marker A, a concurrent foreground review banks `⛔ Blocked`, recovery then writes A's older
+  # `✅ Ready` over it, every write succeeding and no sidecar raised. One lock section makes the two
+  # orderings the only outcomes — the foreground verdict either precedes the check (which then
+  # fails) or follows the write (and correctly wins).
+  #
+  # A non-empty `$ct` retires a marker task-scoped — exactly the (task, plane) pair this call is
+  # banking a verdict for (the recovery path). `$cp` alone (task empty) is the FOREGROUND path: it
+  # sweeps every marker left on the whole plane, dedup-counted by task, plus `$release_self`, then
+  # calls the shared `retire_dispatch_epoch($p; $n)` (defined by `_DISPATCH_EPOCH_RETIRE_DEF`,
+  # prepended ahead of this whole jq program below — see its own comment for why a `def` rather than
+  # a text splice).
+  #
+  # Round-23 finding P1#1: this used to be split across TWO locked transactions — this filter wrote
+  # the receipt, then a SEPARATE call to the (now-deleted) `_clear_background_reviews` swept the
+  # plane under its OWN lock right after. The gap between the two commits was a real window: a
+  # foreground `⛔ Blocked` could commit here while a stray marker for the same plane still stood,
+  # a concurrent recovery could then acquire the lock in that gap, see the marker, consume it, and
+  # overwrite the fresh `⛔ Blocked` with its own older `✅ Ready` — every write succeeding, no
+  # sidecar raised, the exact false-accept the 5th/6th-arg mechanism above was built to close for
+  # the TASK-SCOPED case and had never closed for the PLANE-WIDE one. Folding the sweep into this
+  # SAME jq program, under this SAME lock, closes it the same way: the foreground verdict and the
+  # marker sweep it supersedes now either both land in this write or neither does.
+  #
+  # Round-25 finding #1: `$present` is re-derived FRESH inside this SAME jq read, not trusted from
+  # the separate, earlier precondition check above — see
+  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md § 4.2.6.
+  local consume_task="${5:-}" consume_plane="${6:-}"
+  # 7th arg: does THIS call's own resolving dispatch also owe a release, on top of whatever pending
+  # background markers the plane-wide sweep removes? `true` only from the two MCP-foreground-verdict
+  # sites (an MCP dispatch earns its own PreToolUse increment); `false` (the default) from the two
+  # legacy Bash/Skill sites, which `hooks.json` never registers for PreToolUse tracking and so own
+  # nothing to release. See the plane-wide branch below for why counting is dedup-by-task.
+  local release_self="${7:-false}"
+  local self_n=0
+  [[ "$release_self" == "true" ]] && self_n=1
+
+  # Round-26 finding #2: a GLOBAL (not `local`), reset on every call — the operation-local commit
+  # signal `_alf_write_confirmed` now gates on. Every early-return path below leaves it `0`; only
+  # the one `mv` that actually lands sets it `1`, right where `_clear_own_sidecar` already marks
+  # that same commit. This is a fact about THIS invocation's write, not a value read back from the
+  # file afterward — the two differ exactly when the receipt already held the requested value
+  # before a silently-failed retry, the blind spot a read-back alone cannot see.
+  _us_committed=0
 
   if _lock; then
     # `init_state_file` returns 1 when the state file is ABSENT and cannot be created (mktemp
@@ -1268,6 +1426,20 @@ update_state() {
       _unlock
       _verdict_write_failed "$key" "$passed" "state file absent and could not be created"
       return 0
+    fi
+
+    # The precondition, inside the lock. Return 2 rather than the fail-closed sidecar path: a marker
+    # already gone means another writer resolved this dispatch, which is a reason NOT to write and
+    # not a failure to write. Poisoning the gate here would report a defect that did not happen.
+    # Keyed by `(task, plane)` for the reason `_consume_background_review` carries: one handoff can
+    # write two markers under one task id, and matching on the id alone both passes the precondition
+    # for the wrong plane and deletes the other plane's marker in the filter below.
+    if [[ -n "$consume_task" ]] \
+       && ! jq -e --arg t "$consume_task" --arg cp "$consume_plane" \
+              '((.background_reviews // []) | map(select(.task == $t and .plane == $cp)) | length) > 0' \
+              "$STATE_FILE" >/dev/null 2>&1; then
+      _unlock
+      return 2
     fi
 
     # Reconcile BEFORE the verdict filter below reads the cap. Deferring it to after the filter was
@@ -1343,7 +1515,21 @@ update_state() {
        --argjson passed "$passed" \
        --arg mode "$mode" \
        --arg now "$now" \
-       '.[$key].executed = $executed | .[$key].passed = $passed | .[$key].last_run = $now | .updated_at = $now
+       --arg ct "$consume_task" \
+       --arg cp "$consume_plane" \
+       --argjson self "$self_n" \
+       "${_DISPATCH_EPOCH_RETIRE_DEF}"'.[$key].executed = $executed | .[$key].passed = $passed | .[$key].last_run = $now | .updated_at = $now
+        | (if $cp != "" and $ct != "" then
+             ((((.background_reviews // []) | map(select(.plane == $cp and .task == $ct)) | length) > 0) as $present
+              | .background_reviews = ((.background_reviews // []) | map(select((.plane == $cp and .task == $ct) | not)))
+              | retire_dispatch_epoch($cp; (if $present then 1 else 0 end)))
+           elif $cp != "" then
+             ($cp as $p
+              | ((.background_reviews // []) | map(select(.plane == $p)) | map(.task) | unique | length) as $n0
+              | ($n0 + $self) as $n
+              | .background_reviews = ((.background_reviews // []) | map(select(.plane != $p)))
+              | retire_dispatch_epoch($p; $n))
+           else . end)
         | if $mode != "" then .[$key].mode = $mode else . end
         | (if ($passed == true and $key == "precommit" and (.iteration_history | type) == "object")
            then .iteration_history else null end) as $ih
@@ -1376,6 +1562,7 @@ update_state() {
       # markers belong to post-edit-format.sh and `lock_failure` belongs to the aggregate
       # transition, and neither is superseded by a verdict write. See _clear_own_sidecar.
       _clear_own_sidecar "verdict_write_failed:$key"
+      _us_committed=1
     else
       # `jq` exits 0 having written NOTHING when its input is empty, so without the size guard
       # above an empty temp was renamed over the state on every write — the file then never
@@ -2592,16 +2779,230 @@ _mcp_background_task_id() {
   printf '%s' "${id:-unknown}"
 }
 
-# Persisted because stderr does not survive a compaction and this failure is defined by recurring
-# across rounds: without it, `[AUTO_LOOP_RESUME]` re-reads a state file that says `executed:false`
-# and cannot distinguish "never reviewed" from "reviewed, verdict unreachable" — which is the
-# reinforcing loop the issue describes. Degrade, never abort: the stderr fact is the fallback
-# record, so losing the marker costs context, never correctness.
+# PreToolUse side: record WHEN the reviewer was dispatched, per plane, as a MONOTONIC SEQUENCE
+# NUMBER rather than a wall clock. `.seq_counter` is one counter shared with every edit stamp
+# (`post-edit-format.sh`), incremented under the same lock on every dispatch AND every edit, so
+# "was this plane edited at or after it was dispatched" compares two draws from a single strictly
+# increasing source — never two reads of a clock that is not guaranteed to move forward (leap
+# seconds, NTP step, a suspended sandbox clock). See the request doc § Follow-up (4.2.1).
+#
+# **Set-if-absent for `dispatch_epoch[plane]`, but `dispatch_count[plane]` increments on EVERY
+# call.** Two dispatches in flight on one plane cannot be told apart — the hook payload carries no
+# `tool_use_id` — so keeping the EARLIEST in-flight instant still means any edit after any of them
+# invalidates: every ambiguity resolves toward refusal. What set-if-absent alone could not promise is
+# retirement: an epoch cleared the moment ONE dispatch resolves is free for a LATER, unrelated
+# dispatch on the same plane to inherit, and that dispatch's still-in-flight review then reads a
+# fresh instant as its own and passes staleness checks it should have failed. The count is what
+# closes that: `dispatch_epoch[plane]` retires only once every dispatch that ever incremented the
+# count has also resolved — see `_DISPATCH_EPOCH_RETIRE_JQ` below.
+_record_dispatch_epoch() {
+  local plane="$1" tmp _rde_ok=false
+  # Round-25 finding #3: this is the PreToolUse increment — a silent give-up here means the
+  # PostToolUse release side (driven by request-text predicates, not a per-dispatch token) cannot
+  # tell "this dispatch never got a reference" from "it did", and can end up releasing an
+  # unrelated, still-outstanding dispatch's count instead. A moderately longer budget than the 5s
+  # default measurably shrinks how often that ambiguity is even reached.
+  #
+  # Round-26 finding #5: shrinking the window is not the same as closing it, and every failure
+  # path below now also leaves a durable trace — a `dispatch_acquire_failed:$plane` per-event
+  # marker via `_sidecar_emergency_mark`, lock-free by construction (this function has typically
+  # already failed to get the lock at least once by the time it writes one). `_clear_dispatch_epoch`
+  # consumes it before ever touching the real count — see its own comment and
+  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md § 4.2.7.
+  # Round-27 finding #4 / round-28 finding #2 (architecture-level residual risk, human-reviewed and
+  # accepted — see
+  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md § 4.2.9):
+  # this marker is plane-scoped, not dispatch-scoped, so an unrelated concurrent dispatch on the same
+  # plane can consume the WRONG failure marker. Round 27 read this as an over-conservative leak; round
+  # 28 traced a path where it instead lets a genuinely STALE background-recovered verdict pass a
+  # freshness check — not merely a leaked reference count. No exact per-dispatch fix exists without an
+  # identity the hook payload does not carry; a fail-closed local mitigation exists but trades away
+  # background-recovery availability on the affected plane. The human explicitly chose to accept this
+  # residual risk rather than pay that availability cost — no further code change is planned here.
+  if ! _lock 10; then
+    _sidecar_emergency_mark "dispatch_acquire_failed:${plane}" || true
+    return 0
+  fi
+  if ! init_state_file; then
+    _unlock
+    _sidecar_emergency_mark "dispatch_acquire_failed:${plane}" || true
+    return 0
+  fi
+  tmp=$(_lock_staging_file) || {
+    _unlock
+    _sidecar_emergency_mark "dispatch_acquire_failed:${plane}" || true
+    return 0
+  }
+  if jq --arg p "$plane" \
+       '((.seq_counter // 0) + 1) as $newseq
+        | .seq_counter = $newseq
+        | .dispatch_count = ((.dispatch_count // {}) | .[$p] = ((.[$p] // 0) + 1))
+        | .dispatch_epoch = ((.dispatch_epoch // {}) | (if has($p) then . else .[$p] = $newseq end))' \
+       "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    _own_lock && mv "$tmp" "$STATE_FILE" && _rde_ok=true
+  fi
+  if [[ "$_rde_ok" != "true" ]]; then
+    rm -f "$tmp" 2>/dev/null
+    _sidecar_emergency_mark "dispatch_acquire_failed:${plane}" || true
+  fi
+  _unlock
+  return 0
+}
+
+# Shared by every retirement site (`_clear_dispatch_epoch` below and `update_state`'s own plane-wide
+# sweep): decrement `dispatch_count[plane]`, and only once it reaches zero clear `dispatch_epoch[plane]`
+# and the count entry itself. One filter, not two copies — two independently-written unconditional
+# `del`s is exactly how a leaked epoch went unnoticed by review of the other site. Decrementing an
+# absent count is a no-op: `// 1` floors at zero rather than going negative.
+# Takes `$n` — how many units to release for plane `$p` — as an input variable rather than a
+# hardcoded 1 (round-22 finding #1/#3: a flat, always-1 decrement is only correct when the call
+# retiring markers happens to be retiring exactly one dispatch's worth; a plane-wide sweep that
+# clears N pending markers, or a legacy call that never incremented at all, each need a DIFFERENT
+# release amount). `_clear_dispatch_epoch` runs this bare, as its own whole program (`$p`/`$n` bound
+# via `--arg`/`--argjson`).
+_DISPATCH_EPOCH_RETIRE_JQ='
+  .dispatch_count = ((.dispatch_count // {}) | .[$p] = (((.[$p] // $n) - $n) as $newval | if $newval < 0 then 0 else $newval end))
+  | (if ((.dispatch_count[$p] // 0) <= 0)
+     then (.dispatch_epoch = ((.dispatch_epoch // {}) | del(.[$p])))
+          | (.dispatch_count = ((.dispatch_count // {}) | del(.[$p])))
+     else . end)
+  | (if ((.dispatch_epoch // {}) | length) == 0 then del(.dispatch_epoch) else . end)
+  | (if ((.dispatch_count // {}) | length) == 0 then del(.dispatch_count) else . end)
+'
+
+# The SAME body, wrapped as a jq `def` so `update_state`'s own jq program (below) can CALL it by name
+# instead of splicing its TEXT inline. Splicing text into update_state's program would embed a
+# literal `'` mid-string — that program is one big single-quoted bash literal, and an embedded quote
+# both breaks bash's own parsing and defeats every tool that extracts the filter as one delimited
+# string (`test/hooks/jq-filter-fidelity.test.js`'s `RESET_FILTER`, notably — round-23 review caught
+# exactly this: the splice compiled under bash but produced a truncated, syntactically invalid jq
+# program the moment anything tried to extract and re-run it). Prepended as its own bash-string PIECE
+# immediately before update_state's literal opens (bash concatenates adjacent quoted strings with no
+# operator needed) — never pasted mid-stream the way the removed `_CLEAR_PLANE_MARKERS_JQ` was.
+_DISPATCH_EPOCH_RETIRE_DEF="def retire_dispatch_epoch(\$p; \$n): ${_DISPATCH_EPOCH_RETIRE_JQ} ;
+"
+
+# Retires a plane's dispatch epoch WITHOUT touching its markers (the two retire together, same
+# transaction, only in `update_state`'s own plane-wide branch — see `_DISPATCH_EPOCH_RETIRE_DEF`).
+# Reference-counted via `_DISPATCH_EPOCH_RETIRE_JQ`: `$n` is the release credit THIS call applies —
+# a base unit (1 on this plane's first attempt in this hook invocation, 0 on a same-invocation
+# retry whose base was already parked as a marker — `_cde_attempted_planes` tracks which) plus
+# however many `dispatch_pending_release:$plane:<count>` markers this call PEEKS (never destroys
+# until commit — `_sidecar_peek_counted_markers`, summed). Round-30 finding #1: the previous design
+# destructively drained those markers BEFORE knowing whether the transaction they fed would land —
+# a call that drained, then failed both the transaction and its own single-marker replacement
+# write, permanently lost a credit nothing else recorded anywhere. Peeking removes the loss
+# entirely: every marker this call did not write itself stays on disk untouched until the
+# transaction actually commits (consumed then, by exact path, via `_sidecar_consume_marker_path`);
+# on any failure this call ever marks at most its OWN `_base` (0 or 1) — bounded, one write, same
+# as every pre-round-29 design — never the full `n`, so there is nothing borrowed from an earlier
+# marker to lose. `$2` is a genuine per-call-site lock-timeout override. Return code is meaningful:
+# 0 only on a confirmed release or nothing-to-do, 1 otherwise — the MCP routing chain's
+# `_settled_doc`/`_settled_code` flags check it before marking settlement. Full derivation,
+# round-by-round:
+# docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md § 4.2.7-4.2.11.
+_clear_dispatch_epoch() {
+  local plane="$1" lock_timeout="${2:-}" tmp _retired=false n _drained=0 _base=1 _marked=true
+  local -a _peek_paths=()
+  local _pk_path _pk_cnt _pp
+  _cde_attempted_planes="${_cde_attempted_planes:-}"
+  [[ -f "$STATE_FILE" ]] || return 0
+  # Round-26 finding #5: a durable `dispatch_acquire_failed:$plane` marker means the PreToolUse
+  # increment this release exists to cancel never actually committed — consuming it (symmetric,
+  # lock-free counterpart to `_record_dispatch_epoch`'s own write) cancels that phantom debit
+  # instead of decrementing a real, unrelated dispatch's count. See that function's comment.
+  _sidecar_consume_marker "dispatch_acquire_failed:${plane}" && return 0
+  grep -qE '"dispatch_count"|"dispatch_epoch"' "$STATE_FILE" 2>/dev/null || return 0
+  case " ${_cde_attempted_planes} " in
+    *" ${plane} "*) _base=0 ;;
+  esac
+  # Round-28 finding #1: registering the plane here, unconditionally, meant a same-invocation
+  # retry saw `_base=0` even when THIS call's own credit never landed anywhere — neither committed
+  # to `dispatch_count` nor durably marked, because every `_sidecar_emergency_mark` call below is
+  # best-effort (`|| true`). Registration now happens only once this call's own share is actually
+  # accounted for — see the sites below that append to `_cde_attempted_planes`, guarded on
+  # `_marked`/`_retired`, never unconditionally.
+  #
+  # Round-25 finding #2: every call site is ITSELF compensation for a write that already failed
+  # (`_record_background_review`'s four failure branches) — there is no further fallback if this
+  # lock attempt also gives up. Poll for longer than the 5s default, converging toward LOCK_TTL's
+  # own 30s stale-reclaim horizon, since these call sites are rare and already degraded.
+  if ! _lock "$lock_timeout"; then
+    if [[ "$_base" -gt 0 ]]; then
+      _sidecar_emergency_mark "dispatch_pending_release:${plane}:${_base}" || _marked=false
+      [[ "$_marked" == "true" ]] && _cde_attempted_planes="${_cde_attempted_planes}${_cde_attempted_planes:+ }${plane}"
+    fi
+    return 1
+  fi
+  while IFS=$'\t' read -r _pk_path _pk_cnt; do
+    [[ -n "$_pk_path" ]] || continue
+    _peek_paths+=("$_pk_path")
+    _drained=$((_drained + _pk_cnt))
+  done < <(_sidecar_peek_counted_markers "dispatch_pending_release:${plane}:")
+  n=$((_base + _drained))
+  if [[ "$n" -eq 0 ]]; then
+    # Nothing owed: this plane was already attempted once in this invocation (so its base was
+    # charged there), and nothing is left to peek — an unrelated, different invocation already
+    # consumed and applied it, or there was never anything to release on this retry.
+    _unlock
+    return 0
+  fi
+  tmp=$(_lock_staging_file) || {
+    _unlock
+    if [[ "$_base" -gt 0 ]]; then
+      _sidecar_emergency_mark "dispatch_pending_release:${plane}:${_base}" || _marked=false
+      [[ "$_marked" == "true" ]] && _cde_attempted_planes="${_cde_attempted_planes}${_cde_attempted_planes:+ }${plane}"
+    fi
+    return 1
+  }
+  if jq --arg p "$plane" --argjson n "$n" "$_DISPATCH_EPOCH_RETIRE_JQ" \
+       "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    if _own_lock && mv "$tmp" "$STATE_FILE"; then
+      _retired=true
+    else
+      rm -f "$tmp" 2>/dev/null
+    fi
+  else
+    rm -f "$tmp" 2>/dev/null
+  fi
+  # Only once the transaction has actually committed do the peeked markers stop being needed —
+  # consuming them here, still under the lock, is what makes the peek safe against a concurrent
+  # locked call: nothing else can be mid-peek on the same markers while this one holds the lock.
+  if [[ "$_retired" == "true" ]]; then
+    for _pp in "${_peek_paths[@]}"; do
+      _sidecar_consume_marker_path "$_pp" || true
+    done
+  fi
+  _unlock
+  # A failed transaction leaves every peeked marker untouched — nothing to re-mark for them. Only
+  # THIS call's own base contribution (bounded to at most 1) ever needed representing in the first
+  # place, so only it is marked here.
+  if [[ "$_retired" != "true" && "$_base" -gt 0 ]]; then
+    _sidecar_emergency_mark "dispatch_pending_release:${plane}:${_base}" || _marked=false
+  fi
+  if [[ "$_base" -gt 0 && ( "$_retired" == "true" || "$_marked" == "true" ) ]]; then
+    _cde_attempted_planes="${_cde_attempted_planes}${_cde_attempted_planes:+ }${plane}"
+  fi
+  [[ "$_retired" == "true" ]] && return 0
+  return 1
+}
+
+# Round-24 P1#5: every failure branch below runs AFTER `_record_dispatch_epoch` has already
+# incremented this task's reference at PreToolUse. A marker that never gets written can never be
+# found by recovery — there is exactly one call site for this function (the PostToolUse handoff
+# path), so nothing else will ever look this task up — and retaining the reference only makes a
+# LATER, unrelated dispatch on this plane wait behind a count that no marker will ever explain.
+# `_clear_dispatch_epoch` is the same best-effort releaser every other site already uses; each
+# failure branch below calls it only after its own `_unlock`, so it takes a fresh lock rather than
+# re-entering one this function still holds.
 _record_background_review() {
-  local plane="$1" task_id="$2" ts tmp
+  local plane="$1" task_id="$2" ts tmp _bg_write_ok=false
   ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   if ! _lock; then
     echo "[Review State] background-review marker skipped (lock contention) — the fact above is the only record" >&2
+    # Round-26 finding #3: a bare failing call here is a `set -euo pipefail` abort — `|| true`
+    # matches this file's existing idiom (e.g. line ~3450's `_record_dispatch_epoch ... || true`).
+    _clear_dispatch_epoch "$plane" 25 || true
     return 0
   fi
   # Create the file rather than bailing when it is absent. Bailing looks harmless and is not: the
@@ -2611,59 +3012,342 @@ _record_background_review() {
   if ! init_state_file; then
     _unlock
     echo "[Review State] background-review marker skipped (state file absent and not creatable)" >&2
+    _clear_dispatch_epoch "$plane" 25 || true
     return 0
   fi
   tmp=$(_lock_staging_file) || {
     echo "[Review State] background-review marker skipped (mktemp unavailable)" >&2
     _unlock
+    _clear_dispatch_epoch "$plane" 25 || true
     return 0
   }
+  # The marker carries the DISPATCH instant, not this one. The handoff fires ~120 s after the
+  # request, so stamping "now" here would place the marker after any edit made while the reviewer
+  # was reading — the fail-open this whole mechanism exists to close. `0` when no epoch was
+  # recorded (a dispatch whose own PreToolUse never ran), and the reader refuses on `0`.
+  #
+  # The epoch is NOT consumed here. It is retired by the verdict that resolves the plane, and a
+  # leaked one only makes the next recovery stricter — so unlike the fingerprint this replaced,
+  # there is nothing an unprovable read could bank incorrectly.
+  #
   # Newest last, most recent 5 kept: every hook re-reads this file, so an unbounded list would let
-  # one slow session tax every subsequent read.
+  # one slow session tax every subsequent read. The cap is on the shared array, not per-plane, so a
+  # burst on one plane can evict the other's marker too — the eviction loop below handles either.
+  #
+  # Cap-eviction accounting (round-22 finding #2, refined round-23 P1#2 part 2, refined round-24
+  # P1#3): the evicted prefix is computed BEFORE truncating, deduped to DISTINCT (plane, task) pairs,
+  # then released through the shared retire_dispatch_epoch — see
+  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md § 4.2.3
+  # for why an undeduped per-row release over-credits. Deduping WITHIN the evicted set is not enough:
+  # duplicate rows for one task can straddle the cap boundary — one evicted, one retained — and
+  # crediting the evicted one released a task that is still tracked. `$evicted_pairs - $retained_pairs`
+  # (jq array difference, by value) drops any evicted pair that still has a surviving row.
   if jq --arg p "$plane" --arg t "$task_id" --arg at "$ts" \
-       '.background_reviews = (((.background_reviews // []) + [{plane:$p, task:$t, at:$at}]) | .[-5:])' \
+       "${_DISPATCH_EPOCH_RETIRE_DEF}"'((.dispatch_epoch[$p]) // 0) as $de
+        | ((.background_reviews // []) + [{plane:$p, task:$t, at:$at, dispatch_epoch:$de}]) as $full
+        | ($full | length) as $fulllen
+        | (if $fulllen > 5 then $full[0:($fulllen - 5)] else [] end) as $evicted
+        | ($full[-5:]) as $retained
+        | .background_reviews = $retained
+        | (($evicted | map({plane, task}) | unique) - ($retained | map({plane, task}) | unique)) as $released_pairs
+        | ($released_pairs | group_by(.plane) | map({plane: .[0].plane, n: length})) as $released_by_plane
+        | reduce $released_by_plane[] as $g (.; retire_dispatch_epoch($g.plane; $g.n))' \
        "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
-    _own_lock && mv "$tmp" "$STATE_FILE"
-  else
-    rm -f "$tmp" 2>/dev/null
+    _own_lock && mv "$tmp" "$STATE_FILE" && _bg_write_ok=true
   fi
+  [[ "$_bg_write_ok" == "true" ]] || rm -f "$tmp" 2>/dev/null
   _unlock
+  # `_own_lock` returning false here means the transaction above never landed (a stale-recovery
+  # takeover mid-section, same hazard `update_state` guards against) — that failure mode falls
+  # through to the same compensating release as every branch above, not just the two explicit ones.
+  [[ "$_bg_write_ok" == "true" ]] || _clear_dispatch_epoch "$plane" 25 || true
   return 0
 }
 
-# Retires a plane's markers the moment a real verdict lands for it. Without this the marker has no
-# lifecycle at all: stop-guard filters on "is this plane's gate open", so a marker survives its own
-# review passing and then re-attaches itself to the NEXT time that gate opens — telling the reader a
-# freshly-reopened gate is waiting on a task that finished long ago, and pointing them at a thread
-# that no longer exists. Clearing on verdict is what makes "open" and "explained by THIS marker" the
-# same question again. Session-level clearing lives in `session-init.sh`, because the placeholder
-# itself says the task does not survive exiting the session.
-_clear_background_reviews() {
-  local plane="$1" tmp
-  [[ -f "$STATE_FILE" ]] || return 0
-  # Cheap textual pre-filter, before any lock or temp file. Markers are rare — the overwhelming
-  # majority of verdicts have none to retire — and taking the lock to stage a rewrite of an
-  # unchanged list would put a second lock/mktemp pair on the hot path of EVERY verdict. It also
-  # keeps the mktemp call ORDINALS on the passing review path unchanged, which
-  # `test/hooks/post-tool-review-state.test.js` pins by number to isolate a lock leak; inserting a
-  # call there silently retargets that test at a different function.
-  # Both keys are required: `background_reviews` alone is still present as `[]` after the last
-  # marker was retired, and `"plane"` appears only inside a marker object.
-  grep -q '"background_reviews"' "$STATE_FILE" 2>/dev/null || return 0
-  grep -q '"plane"' "$STATE_FILE" 2>/dev/null || return 0
-  if ! _lock; then
-    echo "[Review State] background-review marker not cleared for ${plane} (lock contention)" >&2
-    return 0
-  fi
-  tmp=$(_lock_staging_file) || { _unlock; return 0; }
-  if jq --arg p "$plane" \
-       '.background_reviews = ((.background_reviews // []) | map(select(.plane != $p)))' \
+# --- Verdict recovery ---
+#
+# Consumes ONE marker, by `(task, plane)`. The task id alone does not identify a marker: one handoff
+# whose prompt asks for both namespaces writes a `doc` AND a `code` marker under the SAME task id, so
+# consuming by task deleted both. Concretely — the doc marker is visited first, its report turns out
+# to be code-only, the plane-routing refusal consumes "the task", and the code iteration that follows
+# finds no marker and refuses a verdict that was there to be recovered.
+# `update_state`'s plane-wide sweep (its own `elif $cp != ""` branch) retires a whole plane, which is right
+# when a foreground verdict lands and wrong here: up to five markers are kept, so recovering an older
+# task's `✅ Ready` also deleted a newer task's marker and the replacement's `⛔ Blocked` had nothing
+# left to attach to — a pass banked and a block lost, from one recovery.
+#
+# **Returns non-zero when the marker did not go away**, and every caller about to bank a verdict must
+# consume FIRST and write only on success. Reversed, a banked receipt stays REPLAYABLE over a newer
+# verdict, and every write in that sequence succeeds so no sidecar fires. Consuming first inverts the
+# failure: the marker is gone before the verdict exists, so a failed write loses the verdict and
+# leaves the gate shut. The A/B interleaving that makes it concrete:
+# docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md
+# § Follow-up (4.2.1) → "Consuming, not clearing".
+_consume_background_review() {
+  local task="$1" plane="$2" tmp rc=1
+  [[ -n "$task" && -n "$plane" ]] || return 1
+  [[ -f "$STATE_FILE" ]] || return 1
+  _lock || return 1
+  tmp=$(_lock_staging_file) || { _unlock; return 1; }
+  # `empty` when the marker is not there, so jq writes nothing and the `-s` test below fails. A plain
+  # filter would have succeeded on a marker that had ALREADY been retired, and "jq and mv succeeded"
+  # is then not evidence that THIS call consumed anything: a concurrent foreground verdict that
+  # cleared the plane and banked `⛔ Blocked` leaves this call reporting success, and the caller
+  # overwrites that block with the recovered `✅ Ready`. Presence is the thing being claimed, so
+  # presence is what has to be checked.
+  #
+  # Round-24 P1#2 (same fix as `update_state`'s task-scoped branch): the marker's removal is this
+  # dispatch's terminal disposition, so releasing its reference (`retire_dispatch_epoch($p; 1)` — this
+  # call always consumes exactly one distinct task's marker) happens in this SAME transaction, not a
+  # separately-locked follow-up call a caller could fail to reach.
+  if jq --arg t "$task" --arg p "$plane" --argjson n 1 \
+       "${_DISPATCH_EPOCH_RETIRE_DEF}"'if ((.background_reviews // []) | map(select(.task == $t and .plane == $p)) | length) == 0 then empty
+        else .background_reviews = ((.background_reviews // [])
+               | map(select((.task == $t and .plane == $p) | not)))
+             | retire_dispatch_epoch($p; $n) end' \
        "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
-    _own_lock && mv "$tmp" "$STATE_FILE"
+    if _own_lock && mv "$tmp" "$STATE_FILE"; then rc=0; else rm -f "$tmp" 2>/dev/null; fi
   else
     rm -f "$tmp" 2>/dev/null
   fi
   _unlock
+  return "$rc"
+}
+
+_bg_recovered_report() {
+  local task="$1" lines="${AUTO_LOOP_BG_SCAN_LINES:-2000}"
+  [[ -n "${TRANSCRIPT_PATH:-}" && -f "$TRANSCRIPT_PATH" ]] || return 0
+  # `first(inputs)` streams and short-circuits: the transcript is routinely tens of MB, and a
+  # duplicate delivery of the same task carries the same verdict, so stopping at the first match is
+  # both cheaper and deterministic. A payload whose own text contains `</result>` truncates, then
+  # fails `fromjson`, then fails `select(type == "object")` — three fail-closed steps, no verdict.
+  #
+  # **The id and status are matched in the ENVELOPE ONLY** — `$parts[0]`, everything before the first
+  # `<result>` — never across the whole entry. Matching the whole entry meant a genuine notification
+  # for task B whose report merely QUOTED `<task-id>task-A</task-id>` satisfied task A's marker and
+  # banked B's verdict against A. Reports in this repository quote exactly that, so it was reachable,
+  # not theoretical. It is also the same defect as #9 and #11 — a payload matched as though it were
+  # metadata — which is why the three structural selects above are not enough on their own: they
+  # authenticate the ENTRY, and this authenticates WHICH DISPATCH the entry answers.
+  tail -n "$lines" "$TRANSCRIPT_PATH" 2>/dev/null | jq -rn --arg id "$task" '
+    first(
+      inputs
+      | select(.type == "user")
+      | select(has("toolUseResult") | not)
+      | select((.origin.kind // "") == "task-notification")
+      | select((.message.content | type) == "string")
+      | .message.content
+      | split("<result>")
+      | select(length > 1)
+      | select(.[0] | contains("<task-id>" + $id + "</task-id>"))
+      | select(.[0] | contains("<status>completed</status>"))
+      | .[1]
+      | split("</result>") | .[0]
+      | (try fromjson catch null)
+      | select(type == "object")
+      | .content
+      | select(type == "string")
+    )
+  ' 2>/dev/null
+}
+
+# Staleness is decided by ORDERING, never by content and never by a wall clock. `invalidate_review`
+# already drops a plane's markers on every Edit/Write, so a surviving marker proves no *tracked
+# edit* has invalidated the plane since dispatch; the check below asks the question directly, using
+# the same monotonic `seq_counter` both the dispatch and the edit stamp: did a tracked edit land at
+# or after the instant the reviewer was dispatched. It does NOT close a Bash-tool mutation (`sed -i`,
+# `git apply`, `lint:fix`) — nothing stamps an edit epoch for those, and that gap is inherent to this
+# whole mechanism, not something this specific check alone happens to miss; see "What this does NOT
+# catch" below, where the same fact is stated with its consequence.
+#
+# The wall-clock window this replaces was wrong in a way worth recording, because it looked right:
+# it is the one mechanism in this class of problem that no authority recommends. GitHub keys a check
+# to `head_sha`, Gerrit to a patch set, Zuul freezes the repo state, Bazel digests the input set —
+# and clocks are not monotonic, so "the result arrived after the last edit" is not a fact the machine
+# can establish. It also failed open twice concretely (Bash octal on `000128`, and an `at_epoch`
+# sampled after lock contention) and its safe-looking direction — raising the window — silently
+# disabled recovery. Sources and the full argument:
+# docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md
+# § Follow-up (4.2.1).
+_recover_background_reviews() {
+  [[ -n "${TRANSCRIPT_PATH:-}" && -f "$TRANSCRIPT_PATH" ]] || return 0
+  [[ -f "$STATE_FILE" ]] || return 0
+  # Cheap textual pre-filter before any jq parse or transcript read — markers are rare, and every
+  # matched event would otherwise pay for both on the common case of nothing pending.
+  grep -q '"background_reviews"' "$STATE_FILE" 2>/dev/null || return 0
+  grep -q '"plane"' "$STATE_FILE" 2>/dev/null || return 0
+
+  local markers plane task marker_de report verdict is_doc is_code _alf_new superseded _rec_guard
+  local edited_at
+  markers=$(jq -r '(.background_reviews // [])[]
+      | select(.plane == "doc" or .plane == "code")
+      | "\(.plane)\t\(.task)\t\(.dispatch_epoch // 0)"' "$STATE_FILE" 2>/dev/null) || return 0
+  [[ -n "$markers" ]] || return 0
+
+  while IFS=$'\t' read -r plane task marker_de; do
+    [[ -n "$plane" && -n "$task" && "$task" != "unknown" ]] || continue
+    # `marker_de` reaches two bash arithmetic `-ge` comparisons below, and `[[ ]]`'s arithmetic
+    # operators recursively evaluate a variable-shaped operand — an unvalidated value crafted like
+    # `a[$(cmd)]` would execute `cmd`. It is state-file content
+    # (`.background_reviews[].dispatch_epoch`), not a value this hook produced itself, so it gets the
+    # same treatment `edited_at` already does below: digits only, else the "no epoch recorded" case
+    # both comparison sites already refuse on. Leading zeros are refused too, not just non-digits —
+    # `^[0-9]+$` alone accepted "000128", which bash arithmetic then parses as octal (base 8, no
+    # digit 8/9 valid) and errors "value too great for base" on the `-ge` below, silently evaluating
+    # the comparison false and defeating the freshness check by a different route than the injection
+    # this guard was written to close. `0` on its own is still accepted (the "no epoch recorded" case
+    # every comparison site already treats as immediate refusal).
+    [[ "$marker_de" =~ ^(0|[1-9][0-9]*)$ ]] || marker_de="0"
+
+    # The report lookup comes first: deliveries arrive for a minority of handoffs (15–29 % across
+    # three measured transcripts), so the common marker is one whose report never comes, and there is
+    # no reason to read state for it. Both checks still have to pass.
+    report=$(_bg_recovered_report "$task")
+    [[ -n "$report" ]] || continue
+
+    # Freshness, as an ORDERING rather than a description of the tree: was this plane edited at or
+    # after the instant the reviewer was dispatched? `>=` and not `>` — an edit landing in the same
+    # second as the dispatch is unordered with respect to it, and unordered resolves to refusal.
+    #
+    # `0` means no dispatch epoch was recorded (a marker written before this mechanism, or a dispatch
+    # whose own PreToolUse never ran), and it refuses. So does an unreadable state read.
+    #
+    # What this does NOT catch is a mutation made through Bash — `sed -i`, `git apply`, `lint:fix` —
+    # because nothing stamps an edit epoch for those. That hole is real and it is the SAME hole every
+    # other gate in this repository has (`post-edit-format.sh` fires on Edit/Write/NotebookEdit
+    # only); the receipt this writes is therefore exactly as trustworthy as a foreground one, which
+    # is the bar it is held to. The content digest that used to close it for this path alone cost
+    # 2.93 s per sample and a dispatch-attribution problem with no in-repo solution — see the request
+    # doc § Follow-up (4.2.1).
+    edited_at=$(jq -r --arg p "$plane" '(.last_edit_epoch_by_plane[$p]) // 0' "$STATE_FILE" 2>/dev/null) || edited_at=""
+    # Same leading-zero refusal as `marker_de` above (round-22 finding #5): both feed the same
+    # bash-arithmetic `-ge` comparison and both are read from the same state-file content, so a
+    # leading-zero value here would hit the identical octal-parse false-negative if left permissive.
+    [[ "$edited_at" =~ ^(0|[1-9][0-9]*)$ ]] || edited_at=""
+    if [[ "$marker_de" == "0" || -z "$edited_at" || "$edited_at" -ge "$marker_de" ]]; then
+      echo "[Review State] backgrounded ${plane} review (task ${task}) NOT recovered — the ${plane} plane was edited after the review was dispatched; the ${plane} gate stays shut" >&2
+      # `_consume_background_review` releases the reference itself, in the same transaction as the
+      # marker removal, only when THIS call is the one that actually found and removed the marker —
+      # a marker another writer already removed means that writer's own resolution path already
+      # released it, and calling again here would double-retire a dispatch still legitimately in
+      # flight. `|| true`: nothing else here depends on which of the two happened.
+      _consume_background_review "$task" "$plane" || true
+      continue
+    fi
+
+    is_doc=false; is_code=false
+    _mcp_output_is_doc_review "$report" && is_doc=true
+    _mcp_output_is_code_review "$report" && is_code=true
+    # Same fail-closed policy the foreground chain applies to a doubly-claimed output: recording
+    # either plane is a guess, and a wrong guess writes a verdict for a plane nobody reviewed.
+    if [[ "$is_doc" == "true" && "$is_code" == "true" ]]; then
+      echo "[Review State] backgrounded review (task ${task}) recovered, but its report claims BOTH the doc and code namespaces — ambiguous provenance, no verdict recorded" >&2
+      _consume_background_review "$task" "$plane" || true
+      continue
+    fi
+    if { [[ "$plane" == "doc" ]] && [[ "$is_doc" != "true" ]]; } \
+       || { [[ "$plane" == "code" ]] && [[ "$is_code" != "true" ]]; }; then
+      echo "[Review State] backgrounded ${plane} review (task ${task}) recovered, but the report is not a ${plane} review — not routing to the ${plane} plane" >&2
+      _consume_background_review "$task" "$plane" || true
+      continue
+    fi
+
+    # The authorization (the ordering comparison above) and the receipt (below) take separate
+    # locks, and the compensation for an edit landing between them is the post-write re-sample at the
+    # end of this iteration. That converges to shut, but it converges LATE: a concurrent Stop hook
+    # firing inside the window reads a passing receipt whose marker is already gone and lets the
+    # session end. The sidecar spans exactly that window — raised before the write, cleared once the
+    # re-sample has had its say — so a Stop arriving mid-recovery fails closed instead of reading a
+    # verdict that is still provisional.
+    # Unique per recovery, and verified to have landed in the SHARED file. The reason set is
+    # de-duplicated, so a plane-wide string would be one line two concurrent recoveries share and
+    # either could lower while the other's receipt is still provisional. And `_set_own_sidecar`
+    # reports success for its emergency per-event marker too — which is deliberately unretirable, so
+    # bracketing on one would strand it for the session. Neither condition met means the window
+    # cannot be guarded, and an unguarded window is a reason not to write, not a reason to proceed.
+    _rec_guard="recovery_in_progress:${plane}_review:$$-${EPOCHSECONDS:-0}-${RANDOM}${RANDOM}"
+    if ! _set_own_sidecar "$_rec_guard" \
+       || ! grep -qxF "$_rec_guard" "${STATE_FILE}.blocked" 2>/dev/null; then
+      echo "[Review State] backgrounded ${plane} review (task ${task}) NOT recovered — the recovery window could not be guarded, so no verdict was recorded from it" >&2
+      continue
+    fi
+
+    if [[ "$plane" == "doc" ]]; then
+      verdict=$(_mcp_doc_review_passed "$report")
+      if [[ -z "$verdict" ]]; then
+        echo "[Review State] backgrounded doc review (task ${task}) carries no verdict sentinel — no state recorded" >&2
+        _clear_own_sidecar "$_rec_guard"
+        _consume_background_review "$task" "$plane" || true
+        continue
+      fi
+      # Marker retirement and receipt are ONE locked transaction — `update_state`'s 5th argument.
+      # Anything less loses a verdict to an interleaved foreground review; the argument's comment
+      # carries the two orderings.
+      _alf_begin doc_review
+      if ! update_state "doc_review" "true" "$verdict" "" "$task" "$plane"; then
+        echo "[Review State] backgrounded doc review (task ${task}) recovered but its marker was already retired — another writer resolved this dispatch, so no verdict was recorded from it" >&2
+        _clear_own_sidecar "$_rec_guard"
+        continue
+      fi
+      # Round-24 P1#2: `update_state`'s task-scoped branch now retires the marker AND releases the
+      # epoch/count in the SAME jq transaction — no separate `_clear_dispatch_epoch` call here. The
+      # old split (marker removed by this call, epoch released by a second, separately-locked call)
+      # permanently orphaned the count whenever the second lock acquisition failed; a second release
+      # here now would double-retire the unit this call already closed.
+      echo "[Review State] doc_review updated (task notification, background task ${task}): passed=$verdict" >&2
+      _alf_new=$(_alf_receipt doc_review)
+      _alf_emit "event=doc_review_verdict change=doc source=task_notification task=${task} $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$verdict")" \
+        "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo doc_review)" >&2
+    else
+      # `_mcp_code_review_passed` resolves BLOCKED-first and always answers, so there is no
+      # empty-verdict arm here to mirror the doc branch's.
+      verdict=$(_mcp_code_review_passed "$report")
+      _alf_begin code_review
+      if ! update_state "code_review" "true" "$verdict" "" "$task" "$plane"; then
+        echo "[Review State] backgrounded code review (task ${task}) recovered but its marker was already retired — another writer resolved this dispatch, so no verdict was recorded from it" >&2
+        _clear_own_sidecar "$_rec_guard"
+        continue
+      fi
+      # Same reasoning as the doc branch above: `update_state` already released the epoch/count in
+      # its own transaction — no separate `_clear_dispatch_epoch` call here.
+      _update_iteration "$report" "$STATE_FILE"
+      echo "[Review State] code_review updated (task notification, background task ${task}): passed=$verdict" >&2
+      _alf_new=$(_alf_receipt code_review)
+      _alf_emit "event=code_review_verdict change=code source=task_notification task=${task} $(_alf_transition code_review "$_alf_old" "$_alf_new" "$verdict")" \
+        "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo precommit || echo code_review)" >&2
+    fi
+    # The checks above ran outside the state lock and `update_state` takes its own, so an edit can
+    # land in between and have its invalidation overwritten by the receipt just written. Re-sampling
+    # the SAME PLANE afterwards detects exactly that, and the compensation is to put the gate back
+    # where the edit wanted it. Not atomic, and it does not claim to be — it converges to shut, which
+    # is the direction that is safe to be late about. A single locked compare-and-consume would be
+    # better and is the right shape if this ever needs to be exact.
+    superseded=false
+    edited_at=$(jq -r --arg p "$plane" '(.last_edit_epoch_by_plane[$p]) // 0' "$STATE_FILE" 2>/dev/null) || edited_at=""
+    # Same leading-zero refusal as `marker_de` above (round-22 finding #5): both feed the same
+    # bash-arithmetic `-ge` comparison and both are read from the same state-file content, so a
+    # leading-zero value here would hit the identical octal-parse false-negative if left permissive.
+    [[ "$edited_at" =~ ^(0|[1-9][0-9]*)$ ]] || edited_at=""
+    # Re-read, not re-sample: an unreadable state file is itself a reason to withdraw, since the
+    # authorization above rested on a number this cannot now confirm.
+    if [[ -z "$edited_at" || "$edited_at" -ge "$marker_de" ]]; then
+      superseded=true
+      update_state "${plane}_review" "true" "false"
+      echo "[Review State] ${plane}_review recovered verdict SUPERSEDED — the ${plane} plane was edited while the verdict was being recorded; the gate is shut again" >&2
+    fi
+    # The receipt now reflects the re-sample either way, so the window is over and the marker comes
+    # down. Note what is deliberately NOT rolled back: `_update_iteration` above. A superseded
+    # verdict is withdrawn, but the review round it counted genuinely ran and produced those
+    # findings — the ledger records rounds, not verdicts, and un-counting one would make the stall
+    # detector read a loop that moved as a loop that did not.
+    _clear_own_sidecar "$_rec_guard"
+    # Deferred until after the supersede check on purpose: this clears the list of files awaiting
+    # review, and doing it before the check emptied it on a verdict that was then withdrawn — an
+    # un-rolled-back side effect of a decision that did not stand.
+    if [[ "$superseded" == "false" && "$plane" == "code" && "$verdict" == "true" ]]; then
+      _reset_changed_files || true
+    fi
+  done <<< "$markers"
   return 0
 }
 
@@ -2844,6 +3528,44 @@ update_aggregate_blocked() {
   return 0
 }
 
+# === Dispatch epoch (PreToolUse) ===
+# The only branch this script takes on a Pre event, and it exits immediately after: nothing below
+# applies to a tool that has not run yet, and falling through would parse an absent `tool_response`.
+#
+# One short lock and one jq, on a plane the request actually asks to review. No filesystem scan, no
+# reservation protocol, and no EXIT trap to unwind — the reservation shape this replaced existed
+# because the digest took 2.93 s and could not be taken under the shared lock; a scalar can.
+if [[ "$HOOK_EVENT" == "PreToolUse" ]]; then
+  _mcp_request_asked_for_doc_review && _record_dispatch_epoch doc || true
+  _mcp_request_asked_for_code_review && _record_dispatch_epoch code || true
+  exit 0
+fi
+
+# === Backgrounded verdict recovery (issue #10) ===
+# The notification is delivered between events and belongs to no tool call of its own, so there is no
+# event that IS the completion — recovery runs on the events this hook already receives and reads the
+# transcript when a marker is pending. `hooks.json` decides which those are, and `TaskOutput` is in
+# the list for a specific reason: it is the harness's own "is that task done yet" call, so it carries
+# the completion in its `tool_input.task_id` and is the promptest trigger available. It is emphatically
+# NOT every event — an earlier comment here claimed that, and the matcher never matched Edit, Write,
+# Read or Agent.
+#
+# Ahead of the routing below so a recovered receipt is already in place for the `[AUTO_LOOP_STATE]`
+# lines this run emits; where the current event carries its own verdict for the same plane, that
+# verdict is written after and wins, which keeps the fresher evidence. Guarded down to two greps on a
+# small file when no marker is pending.
+_recover_background_reviews || true
+
+# TaskOutput ends here. It is a trigger, not a content channel: measured, its `output` is `""` for an
+# `mcp_task`, and its `tool_input` is `{task_id}` — so it carries neither review text nor the
+# request-side provenance the routing below keys on. Exiting makes that true by CONSTRUCTION rather
+# than leaving it to every branch below to decline a tool none of them was written for; the
+# alternative is one normalizer change away from letting a background Bash task's stdout mint a
+# verdict.
+if [[ "$TOOL_NAME" == "TaskOutput" ]]; then
+  exit 0
+fi
+
 # === Process different commands ===
 
 # === emit-review-gate parse branch ===
@@ -2993,8 +3715,14 @@ if [[ "$_code_review_matched" == "true" ]]; then
     # at human cadence, so the extra lock round-trips are uncontended and cheap;
     # the atomicity is not worth the state-machine risk. Deferred by design.
     _alf_begin code_review
-    update_state "code_review" "true" "$passed"
-    _clear_background_reviews code
+    # This is a legacy Bash/Skill dispatch — `hooks.json` registers the PreToolUse
+    # `_record_dispatch_epoch` tracking only for the MCP codex tools, so a command/Skill-triggered
+    # review like this one never incremented `dispatch_count`. The 7th arg (`release_self`) is
+    # therefore `false`: this call releases only whatever pending MCP background markers it sweeps
+    # for the `code` plane (each of which DID earn its own increment at its own PreToolUse), never
+    # an extra unit for itself. Passing `true` here was round-22 finding #3 — it let an unrelated
+    # legacy verdict prematurely retire a still-in-flight MCP dispatch's reservation.
+    update_state "code_review" "true" "$passed" "" "" "code" "false"
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated: passed=$passed" >&2
@@ -3026,8 +3754,9 @@ if [[ "$_doc_review_matched" == "true" ]]; then
   else
     passed=$(check_passed "$TOOL_OUTPUT")
     _alf_begin doc_review
-    update_state "doc_review" "true" "$passed"
-    _clear_background_reviews doc
+    # Legacy Bash/Skill dispatch — see the code-review block above for why `release_self` stays
+    # `false` here too.
+    update_state "doc_review" "true" "$passed" "" "" "doc" "false"
     echo "[Review State] doc_review updated: passed=$passed" >&2
     _alf_new=$(_alf_receipt doc_review)
     _alf_emit "event=doc_review_verdict change=doc $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$passed")" \
@@ -3129,7 +3858,9 @@ if [[ "$_precommit_matched" == "true" ]]; then
     # follows one describes source this run itself changed. The runner cannot tell us whether it
     # actually changed anything — its `## Changed files after lint:fix` list is a plain
     # `git diff --name-only`, i.e. the whole dirty tree — so the honest claim is only that a
-    # mutating step ran. Closing that gap belongs to the fingerprint track, not here.
+    # mutating step ran. Closing that gap needs a content check — the same capability the
+    # request doc's § What is still not done gives up on elsewhere in this file, since a Bash
+    # mutation is invisible to the edit-epoch ordering design end to end. Not pursued here.
     _ALF_FRESH="unknown"
     if grep -q '^> finished lint_fix' <<< "$TOOL_OUTPUT"; then
       _ALF_FRESH="unverified-after-mutating-check"
@@ -3190,7 +3921,7 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
         "$(_alf_common)" "pending=${_bg_plane}_review" >&2
     done
     if [[ ${#_bg_planes[@]} -gt 0 ]]; then
-      echo "[Review State] review moved to the background as task ${_bg_task} — its report arrives as a task notification, which fires no hook, so NO receipt can be recorded and the ${_bg_planes[*]} gate(s) stay shut. Re-running is not the fix: a slower review hits the same timeout. Read the report when it arrives, then re-dispatch a review that fits inside the foreground window (narrower scope, or --continue on the same thread). Issue #10" >&2
+      echo "[Review State] review moved to the background as task ${_bg_task} — its report arrives as a task notification, which fires no hook, so the ${_bg_planes[*]} gate(s) stay shut FOR NOW. The next hook event attempts to recover the verdict from that notification and record the receipt; recovery is refused if the ${_bg_planes[*]} side of the tree has changed since the review was DISPATCHED, or if the delivery cannot be read. Re-running from scratch is not the fix either way: a slower review hits the same timeout. If recovery is refused, read the report and continue the existing thread with the current diff. Issue #10" >&2
     fi
     exit 0
   fi
@@ -3219,6 +3950,15 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
   # `## Document Review` heading at line start entered this branch, failed provenance, and
   # returned — so the code branch below never ran and the `⛔ Blocked` was dropped anyway. A
   # namespace that does not OWN the output must fall THROUGH to the next one.
+  _settled_doc=false
+  _settled_code=false
+  # Round-24 P1#4: which plane(s) THIS invocation actually settled — recorded as it happens, not
+  # inferred from which branch fired. PreToolUse increments a plane's reference whenever the REQUEST
+  # asks for it, independent of what the response turns out to look like; a response recognized as
+  # ONE plane (or as a plan-shaped report matching neither) used to release only that plane, leaving
+  # the other's reference permanently stranded whenever a dual-plane request's response didn't also
+  # carry the other plane's header. The unconditional sweep after this whole chain (below) closes the
+  # gap: it releases whatever the REQUEST acquired that these flags say was not settled here.
   _mcp_doc_owned=false
   if _mcp_output_is_doc_review "$TOOL_OUTPUT"; then
     if _mcp_request_asked_for_doc_review; then
@@ -3235,18 +3975,37 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
       # both gates unsatisfied, and let the loop re-request. Silence here is a re-review; a wrong
       # write is a skipped one.
       echo "[Review State] MCP output claims BOTH the doc and code namespaces — ambiguous provenance, no verdict recorded" >&2
+      # Round-25 finding #4: only mark settled on a CONFIRMED release — an unconfirmed attempt
+      # left unmarked falls through to the unconditional sweep below, which retries the same
+      # `_clear_dispatch_epoch` call rather than silently accepting a leak.
+      _clear_dispatch_epoch doc && _settled_doc=true
+      _clear_dispatch_epoch code && _settled_code=true
     else
       _mcp_doc_verdict=$(_mcp_doc_review_passed "$TOOL_OUTPUT")
       if [[ -n "$_mcp_doc_verdict" ]]; then
         _alf_begin doc_review
-        update_state "doc_review" "true" "$_mcp_doc_verdict"
-        _clear_background_reviews doc
-        echo "[Review State] doc_review updated (MCP): passed=$_mcp_doc_verdict" >&2
+        # This IS an MCP dispatch — `hooks.json`'s PreToolUse tracking covers this tool, so this
+        # verdict's own resolution earns a release on top of whatever pending background markers it
+        # sweeps for the `doc` plane. The 7th arg `release_self=true` is what makes finding #1's
+        # repro net to zero: two background markers plus this resolving dispatch (dispatch_count=3)
+        # now releases 2 (markers) + 1 (self) = 3, retiring cleanly instead of leaking at 2.
+        # Round-26 finding #5: unless THIS dispatch's own increment never committed — a durable
+        # marker says so when that happened; consume it and skip the self-release instead of
+        # releasing a unit this call never actually reserved.
+        _mcp_doc_release_self="true"
+        _sidecar_consume_marker "dispatch_acquire_failed:doc" && _mcp_doc_release_self="false"
+        update_state "doc_review" "true" "$_mcp_doc_verdict" "" "" "doc" "$_mcp_doc_release_self"
         _alf_new=$(_alf_receipt doc_review)
+        # Round-25 finding #4: `update_state` returns 0 on its degraded-failure paths too — settle
+        # only when the read-back receipt proves THIS call's write (and its bundled epoch/marker
+        # retirement, same transaction) actually landed.
+        _alf_write_confirmed doc_review "$_mcp_doc_verdict" && _settled_doc=true
+        echo "[Review State] doc_review updated (MCP): passed=$_mcp_doc_verdict" >&2
         _alf_emit "event=doc_review_verdict change=doc source=mcp $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$_mcp_doc_verdict")" \
           "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo doc_review)" >&2
       else
         echo "[Review State] MCP doc review carries no verdict sentinel — no state recorded" >&2
+        _clear_dispatch_epoch doc && _settled_doc=true
       fi
     fi
   # Priority 1.5: plan-specific (## Plan Review discriminator — isolated namespace).
@@ -3296,24 +4055,83 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
     # `## Merge Gate` header bank a pass on a tree nobody reviewed.
     if ! _mcp_request_asked_for_code_review; then
       echo "[Review State] code_review verdict DROPPED — the MCP output looks like a review report but the request never asked for a Merge Gate; if this WAS a review, restore the template's 'Merge Gate' Output-Format section to the prompt (the aggregate gate from emit-review-gate.sh still applies)" >&2
+      # Round-24 P1#4: this branch exits immediately, before the unconditional sweep below ever
+      # runs — reaching here only proves `_mcp_doc_owned` was false (the OUTPUT had no doc header),
+      # not that the REQUEST never asked for doc. A dual-plane request whose response is this
+      # malformed still owes doc a release.
+      # Round-26 finding #3: `|| true` — `_clear_dispatch_epoch` is now the last command in this
+      # `&&` list, so its meaningful failure return would otherwise abort the hook under `set -e`
+      # before `exit 0` below ever runs.
+      _mcp_request_asked_for_doc_review && _clear_dispatch_epoch doc || true
       exit 0
     fi
     passed=$(_mcp_code_review_passed "$TOOL_OUTPUT")
     _alf_begin code_review
-    update_state "code_review" "true" "$passed"
-    _clear_background_reviews code
+    # MCP dispatch — see the doc-review branch above for why `release_self=true`, and the round-26
+    # finding #5 self-release guard, are both correct here.
+    _mcp_code_release_self="true"
+    _sidecar_consume_marker "dispatch_acquire_failed:code" && _mcp_code_release_self="false"
+    update_state "code_review" "true" "$passed" "" "" "code" "$_mcp_code_release_self"
+    _alf_new=$(_alf_receipt code_review)
+    # Round-25 finding #4: settle only on confirmed read-back — see the doc-review branch above.
+    _alf_write_confirmed code_review "$passed" && _settled_code=true
     [[ "$passed" == "true" ]] && { _reset_changed_files || true; }
     _update_iteration "$TOOL_OUTPUT" "$STATE_FILE"
     echo "[Review State] code_review updated (MCP): passed=$passed" >&2
-    _alf_new=$(_alf_receipt code_review)
     _alf_emit "event=code_review_verdict change=code source=mcp $(_alf_transition code_review "$_alf_old" "$_alf_new" "$passed")" \
       "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo precommit || echo code_review)" >&2
+  else
+    # Priority 2.5 (fallback, round-22 finding #4): nothing above matched — not doc-owned, no plan
+    # token/verdict, and `_mcp_output_is_code_review` false. Every branch above is gated on the
+    # OUTPUT's shape, so an error response, malformed output, or a report simply missing its
+    # expected header reaches none of them — yet this hook's PreToolUse counterpart incremented
+    # `dispatch_count` unconditionally on the REQUEST, with no output-shape condition of its own.
+    # Without this fallback that increment has no retirement path at all: it leaks permanently, and
+    # every later successful dispatch on the plane pays for it by needing one extra unit before its
+    # own count can ever reach zero.
+    #
+    # Request-side proof only, same asymmetry the background-handoff branch (Priority 0, above)
+    # already accepts — there is no output to corroborate against, so this proves less than a
+    # verdict branch does. That is sound only because it grants nothing: the worst case is an
+    # advisory line about a plane that was not actually under review this call.
+    _fb_planes=()
+    _mcp_request_asked_for_doc_review && _fb_planes+=("doc")
+    _mcp_request_asked_for_code_review && _fb_planes+=("code")
+    for _fb_plane in ${_fb_planes+"${_fb_planes[@]}"}; do
+      # Round-25 finding #4: settle only on a confirmed release — see the doc-review branch above.
+      if _clear_dispatch_epoch "$_fb_plane"; then
+        [[ "$_fb_plane" == "doc" ]] && _settled_doc=true
+        [[ "$_fb_plane" == "code" ]] && _settled_code=true
+      fi
+    done
+    if [[ ${#_fb_planes[@]} -gt 0 ]]; then
+      echo "[Review State] MCP output matched no recognized review shape (doc/plan/code) — releasing the ${_fb_planes[*]} dispatch reservation so it cannot leak; no verdict recorded" >&2
+    fi
   fi
   # Priority 3 (MCP `^## Overall:` → precommit verdict) and Priority 4 (generic `✅ All Pass` →
   # code_review pass) both REMOVED — MCP is not the producer of either verdict, and each removed
   # branch was a proven live gate bypass. Full account:
   # docs/features/auto-loop-evolution/4-implementation.md §4.7.
   # Bare ## Gate: ✅/⛔ alone → skip (ambiguity rule)
+
+  # Round-24 P1#4 — unconditional sweep: release whichever plane(s) the REQUEST acquired that no
+  # branch above actually settled (`_settled_doc`/`_settled_code`, set at every genuine settlement
+  # point). This is the general case the priority-2.5 fallback above only covered for "no branch
+  # matched at all" — a request asking for BOTH namespaces whose response is recognized as ONE of
+  # them (doc owned but not a code review too, or vice versa), or as a plan-shaped report matching
+  # neither, used to leave the other plane's PreToolUse increment permanently stranded. Every branch
+  # that already released its plane(s) set the matching flag, so this never double-retires them.
+  _post_planes=()
+  [[ "$_settled_doc" == "true" ]] || { _mcp_request_asked_for_doc_review && _post_planes+=("doc"); }
+  [[ "$_settled_code" == "true" ]] || { _mcp_request_asked_for_code_review && _post_planes+=("code"); }
+  for _post_plane in ${_post_planes+"${_post_planes[@]}"}; do
+    # Round-26 finding #3: `|| true` — a bare call whose meaningful failure return would otherwise
+    # abort the hook under `set -e` mid-sweep, before the rest of this loop or the log line below run.
+    _clear_dispatch_epoch "$_post_plane" || true
+  done
+  if [[ ${#_post_planes[@]} -gt 0 ]]; then
+    echo "[Review State] request acquired the ${_post_planes[*]} plane(s) but this response settled neither a verdict nor an explicit release for it — releasing the dispatch reservation so it cannot leak; no verdict recorded" >&2
+  fi
 fi
 
 # === Nit sentinel routing ===

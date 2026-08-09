@@ -1186,16 +1186,24 @@ _reconcile_max_rounds() {
   return 0
 }
 
-# Invalidate a review's passed flag (preserves executed + last_run)
-#
-# Retires that plane's `background_reviews` markers in the SAME write. A marker says a task that
-# looked like a review of this plane was handed off and left no verdict — once an edit re-opens the
-# gate, the gate is open for the EDIT, and stop-guard would otherwise still name a task that predates
-# the change and advise continuing it. Same write, so a gate cannot be re-opened by an edit THIS
-# hook commits while a stale explanation stays behind. It is not an ordering guarantee in general:
-# a handoff committing after this write appends a marker that predates it, which is the residual
-# stop-guard's own comment records. `$plane` is the key minus its `_review` suffix, so `precommit`
-# yields a plane no marker carries and the clause is a no-op there.
+
+# Twin of `_DISPATCH_EPOCH_RETIRE_JQ`/`_DISPATCH_EPOCH_RETIRE_DEF` in post-tool-review-state.sh —
+# this file has no shared lib to source, so the filter is duplicated rather than split across a
+# process boundary. Same body, same contract: decrement `dispatch_count[$p]` by `$n`, and only once
+# it reaches zero clear `dispatch_epoch[$p]` and the count entry. See the sibling for the full
+# reasoning (round-22 finding #1/#3 on why `$n` is a parameter, not a hardcoded 1).
+_DISPATCH_EPOCH_RETIRE_JQ='
+  .dispatch_count = ((.dispatch_count // {}) | .[$p] = (((.[$p] // $n) - $n) as $newval | if $newval < 0 then 0 else $newval end))
+  | (if ((.dispatch_count[$p] // 0) <= 0)
+     then (.dispatch_epoch = ((.dispatch_epoch // {}) | del(.[$p])))
+          | (.dispatch_count = ((.dispatch_count // {}) | del(.[$p])))
+     else . end)
+  | (if ((.dispatch_epoch // {}) | length) == 0 then del(.dispatch_epoch) else . end)
+  | (if ((.dispatch_count // {}) | length) == 0 then del(.dispatch_count) else . end)
+'
+_DISPATCH_EPOCH_RETIRE_DEF="def retire_dispatch_epoch(\$p; \$n): ${_DISPATCH_EPOCH_RETIRE_JQ} ;
+"
+
 invalidate_review() {
   local key="$1" plane
   plane="${key%_review}"
@@ -1204,9 +1212,34 @@ invalidate_review() {
   fi
   local tmp
   tmp=$(_state_staging_file) || { _edit_write_failed "invalidate_review:$key"; return 0; }
+  # Two things, and they cover two different windows. Dropping the plane's markers covers
+  # handoff → recovery: a marker exists, and this edit says its verdict is stale. Stamping the
+  # plane's edit epoch covers dispatch → handoff — the ~120 s in which the reviewer is reading and
+  # no marker exists yet, so there is nothing to drop. Recovery compares the two instants; an edit
+  # at or after the dispatch refuses the verdict.
+  #
+  # An edit is the event that knows. Nothing sampled at the handoff can reconstruct this: an edit
+  # made while the reviewer read, then reverted, leaves the tree byte-identical to what any later
+  # sample would see, and the reviewer still never read it.
+  # The stamped value is drawn from `.seq_counter`, the same monotonic counter
+  # `_record_dispatch_epoch` draws from (hooks/post-tool-review-state.sh) — not a wall-clock read.
+  # Recovery's `edited_at >= marker_de` comparison only holds if both sides come from one strictly
+  # increasing source; two independent `date`/`EPOCHSECONDS` reads are not guaranteed never to go
+  # backwards (leap seconds, NTP step, a suspended sandbox clock).
+  #
+  # Round-24 finding #1: dropping a marker here is its TERMINAL disposition — once removed, recovery
+  # can never find it again, so the dispatch that marker stood for must release its reference in this
+  # SAME transaction. Skipping that released the marker but not the count, permanently orphaning it
+  # (the plane never returns to zero until SessionStart). `$n` is the distinct-task count among the
+  # plane's markers, computed before they are dropped — the same dedup already used elsewhere.
   if jq --arg key "$key" --arg plane "$plane" \
-       '.[$key].passed = false
-        | .background_reviews = ((.background_reviews // []) | map(select(.plane != $plane)))' \
+       "${_DISPATCH_EPOCH_RETIRE_DEF}"'((.seq_counter // 0) + 1) as $now
+        | .seq_counter = $now
+        | .[$key].passed = false
+        | (((.background_reviews // []) | map(select(.plane == $plane)) | map(.task) | unique | length)) as $n
+        | .background_reviews = ((.background_reviews // []) | map(select(.plane != $plane)))
+        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .[$plane] = $now)
+        | retire_dispatch_epoch($plane; $n)' \
        "$STATE_FILE" > "$tmp" 2>/dev/null \
      && [[ -s "$tmp" ]] && _may_commit_state && mv "$tmp" "$STATE_FILE" 2>/dev/null; then
     return 0
@@ -1432,7 +1465,9 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
     _EDIT_HOLDS_LOCK=1
     # Atomic: merge flag set + review invalidation + aggregate gate reset (3 ops → 1 jq call).
     # The doc plane writes its own jq rather than going through `invalidate_review`, so the marker
-    # retirement documented there is restated here — same reason, same write, doc plane.
+    # retirement AND the edit-epoch stamp documented there are restated here — same reasons, same
+    # writes, doc plane. Omitting the stamp here is not a smaller version of the same bug: it is the
+    # same bug, since the dispatch → handoff window exists on either plane.
     init_state_file
     _doc_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     _doc_has_agg=$(jq 'has("aggregate_gate")' "$STATE_FILE" 2>/dev/null || echo "false")
@@ -1441,23 +1476,39 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
     # aborting the hook under `set -e` with no marker written at all.
     _doc_tmp=$(_state_staging_file) || _doc_tmp=""
     if [[ -n "$_doc_tmp" ]]; then
+      # Round-24 finding #1 (same as invalidate_review's code-plane copy above): dropping the doc
+      # plane's markers here is their terminal disposition, so the dispatch(es) they stood for must
+      # release their reference in this SAME transaction — `$n` is the distinct-task count among
+      # them, computed before they are dropped.
       if [[ "$_doc_has_agg" == "true" ]]; then
-        jq --arg now "$_doc_now" '
-          .has_doc_change = true
+        jq --arg now "$_doc_now" \
+          "${_DISPATCH_EPOCH_RETIRE_DEF}"'
+          ((.seq_counter // 0) + 1) as $de
+          | .seq_counter = $de
+          | .has_doc_change = true
           | .updated_at = $now
           | .doc_review.passed = false
+          | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
           | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
+          | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
           | .aggregate_gate.executed = false
           | .aggregate_gate.gate = null
           | .aggregate_gate.reason = null
+          | retire_dispatch_epoch("doc"; $n)
         ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null \
           && [[ -s "$_doc_tmp" ]] && _may_commit_state && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null && _doc_write_ok=true
       else
-        jq --arg now "$_doc_now" '
-          .has_doc_change = true
+        jq --arg now "$_doc_now" \
+          "${_DISPATCH_EPOCH_RETIRE_DEF}"'
+          ((.seq_counter // 0) + 1) as $de
+          | .seq_counter = $de
+          | .has_doc_change = true
           | .updated_at = $now
           | .doc_review.passed = false
+          | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
           | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
+          | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
+          | retire_dispatch_epoch("doc"; $n)
         ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null \
           && [[ -s "$_doc_tmp" ]] && _may_commit_state && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null && _doc_write_ok=true
       fi
@@ -1513,24 +1564,42 @@ if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
     # write is fail-closed — but aborting here would also skip the diagnostic below, leaving the
     # degraded path completely silent.
     _doc_tmp=$(_state_staging_file) || _doc_tmp=""
+    # Round-24 finding #6 (P2): this degraded arm used to omit both the monotonic edit stamp AND the
+    # marker/reference release the locked arm above performs — a doc edit landing here left
+    # `last_edit_epoch_by_plane.doc` stale (a later recovery could bank a pre-edit review as fresh)
+    # and orphaned any dropped markers' dispatch_count/epoch (finding #1, same fix as the locked arm).
+    # Racy by the file's own contract (a snapshot staged before the lock holder commits can still lose
+    # to that holder's `mv`), but when it DOES land it must be semantically correct, not merely absent.
     if [[ -z "$_doc_tmp" ]]; then
       :
     elif [[ "$_doc_has_agg" == "true" ]]; then
-      jq --arg now "$_doc_now" '
-        .has_doc_change = true
+      jq --arg now "$_doc_now" \
+        "${_DISPATCH_EPOCH_RETIRE_DEF}"'
+        ((.seq_counter // 0) + 1) as $de
+        | .seq_counter = $de
+        | .has_doc_change = true
         | .updated_at = $now
         | .doc_review.passed = false
+        | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
         | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
+        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
         | .aggregate_gate.executed = false
         | .aggregate_gate.gate = null
         | .aggregate_gate.reason = null
+        | retire_dispatch_epoch("doc"; $n)
       ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_doc_tmp" 2>/dev/null
     else
-      jq --arg now "$_doc_now" '
-        .has_doc_change = true
+      jq --arg now "$_doc_now" \
+        "${_DISPATCH_EPOCH_RETIRE_DEF}"'
+        ((.seq_counter // 0) + 1) as $de
+        | .seq_counter = $de
+        | .has_doc_change = true
         | .updated_at = $now
         | .doc_review.passed = false
+        | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
         | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
+        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
+        | retire_dispatch_epoch("doc"; $n)
       ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_doc_tmp" 2>/dev/null
     fi
     echo "[Edit Hook] Doc change detected (degraded — lock contention, sidecar marker set): $file_path" >&2

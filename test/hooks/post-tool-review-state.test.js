@@ -252,6 +252,20 @@ if (query && query.includes('[$key]') && vars.key) {
       data.iteration_history.stall_memory = [];
     }
   }
+  // Round-23 P1#1: the plane-wide marker sweep (previously a SEPARATE \`_clear_background_reviews\`
+  // call, stubbed below at the \`.background_reviews =\` clause) moved into THIS SAME query, under
+  // \`elif $cp != ""\`. Gated on the production filter text, like every other clause here: dropping
+  // the branch from the hook must drop it here too, not leave the stub enforcing a retirement
+  // production no longer performs. \`vars.p\` is not used — \$p is bound INSIDE the jq program
+  // (\`\$cp as \$p |\`), never passed as its own \`--arg\`, so this reads \`vars.cp\` instead. The
+  // match string stops right after \`then\` — production wraps \`($cp as $p\` onto its own indented
+  // line, so a substring spanning both would never match the real multi-line jq program.
+  if (query.includes('elif $cp != "" then')
+      && typeof vars.cp === 'string' && vars.cp !== ''
+      && !(typeof vars.ct === 'string' && vars.ct !== '')) {
+    const prior = Array.isArray(data.background_reviews) ? data.background_reviews : [];
+    data.background_reviews = prior.filter((e) => e.plane !== vars.cp);
+  }
   process.stdout.write(JSON.stringify(data));
   process.exit(0);
 }
@@ -7948,8 +7962,8 @@ test('#10: a foreground verdict retires that plane\'s marker', () => {
 
 // The code-plane twin of the test above. The cross-plane control below proves a DOC verdict leaves
 // the code marker standing — which is the same evidence read from the other side, and says nothing
-// about whether a code verdict retires its own. Delete the code plane from `_clear_background_reviews`
-// and only this test notices.
+// about whether a code verdict retires its own. Delete the code plane from update_state's own
+// plane-wide sweep and only this test notices.
 test('#10: a foreground CODE verdict retires the code marker', () => {
   const workDir = makeTempDir('sd0x-post-tool-bg-retire-code-');
   const binDir = setupStubBin();

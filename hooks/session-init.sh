@@ -530,6 +530,7 @@ _capture_baseline() {
 NEW_SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 if [[ -z "$NEW_SESSION_ID" ]]; then exit 0; fi
 
+
 if [[ -f "$STATE_FILE" ]]; then
   # `|| OLD_SESSION_ID=""` — a bare assignment here aborts the whole hook under `set -euo
   # pipefail` whenever jq cannot parse the file (exit 2 on malformed JSON, 5 on a type error),
@@ -594,6 +595,10 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.stall_streak = 0 |
       .iteration_history.stall_memory = [] |
       .background_reviews = [] |
+      del(.dispatch_epoch) |
+      del(.dispatch_count) |
+      del(.last_edit_epoch_by_plane) |
+      del(.seq_counter) |
       .session_commit_scope = {
         "session_id": $sid,
         "baseline_dirty_files": $bl,

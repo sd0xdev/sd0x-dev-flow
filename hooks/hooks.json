@@ -38,6 +38,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-guard.sh"
           }
         ]
+      },
+      {
+        "matcher": "mcp__codex__codex|mcp__codex__codex-reply",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-review-state.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -51,7 +60,7 @@
         ]
       },
       {
-        "matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply|Skill",
+        "matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply|Skill|TaskOutput",
         "hooks": [
           {
             "type": "command",

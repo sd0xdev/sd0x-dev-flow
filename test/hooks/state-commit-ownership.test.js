@@ -162,6 +162,10 @@ const NON_STATE_DESTINATIONS = [
   { why: 'stale-lock rename-aside', re: /\bmv\s+"\$\{?[A-Za-z0-9_]*LOCKDIR\}?"\s+"\$\{?_tomb\}?"/ },
   { why: 'sidecar event file', re: /\bmv\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s+"\$\{SIDECAR_EVENT_PREFIX\}\$\{stem\}"/ },
   { why: 'sidecar marker', re: /\bmv\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s+"\$\{?sidecar\}?"/ },
+  {
+    why: 'sidecar marker tombstone',
+    re: /\bmv\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s+"\$\{?tomb\}?"/,
+  },
   { why: 'nit ledger', re: /\bmv\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s+"\$\{?nit_file\}?"/ },
   { why: 'cooldown record', re: /\bmv\s+"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"\s+"\$\{?COOLDOWN_FILE\}?"/ },
 ];

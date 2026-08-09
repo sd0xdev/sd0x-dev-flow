@@ -955,3 +955,48 @@ test('a new session clears background_reviews (the task they name cannot survive
   const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
   assert.deepEqual(state.background_reviews, [], 'no marker outlives the session that produced it');
 });
+
+test('a new session clears every freshness clock, so the first dispatch is not born stale', () => {
+  // `dispatch_epoch` is set-if-absent — deliberately, so two dispatches in flight keep the EARLIEST
+  // instant and any edit after either one invalidates. Carried across a session boundary that same
+  // property turns against it: the next dispatch on the plane does not re-stamp, so it inherits
+  // yesterday's instant and every edit made since reads as "edited after dispatch", refusing a
+  // recovery it should have granted. `last_edit_epoch_by_plane` goes with it because the markers it
+  // is compared against are cleared in the same pass. `dispatch_count` and `seq_counter` go with it
+  // too: a leftover `dispatch_count` desynced from a freshly-cleared `dispatch_epoch` would make the
+  // NEXT dispatch's retirement read a stale nonzero count and refuse to ever clear the epoch again,
+  // and a carried `seq_counter` would just mean the ordering source starts mid-sequence rather than
+  // at zero — harmless, but nothing about "outlives the session that took it" makes an exception for
+  // it. All four KEYS are removed rather than emptied: `_clear_background_reviews` and
+  // `_clear_dispatch_epoch` use `dispatch_epoch`'s (and now `dispatch_count`'s) presence as a
+  // textual pre-filter.
+  const workDir = makeTempDir('sd0x-session-init-dispatch-epoch-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      schema_version: 3,
+      session_id: 'old-session-abc',
+      has_code_change: true,
+      code_review: { executed: false, passed: false },
+      dispatch_epoch: { code: 5, doc: 7 },
+      dispatch_count: { code: 1, doc: 1 },
+      last_edit_epoch_by_plane: { code: 6, doc: 8 },
+      seq_counter: 8,
+    })
+  );
+
+  const result = runHook({ cwd: workDir, input: { session_id: 'new-session-xyz' } });
+
+  assert.equal(result.status, 0);
+  const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
+  assert.equal(state.dispatch_epoch, undefined, 'no dispatch instant outlives the session that took it');
+  assert.equal(state.dispatch_count, undefined, 'nor the reference count it is retired against');
+  assert.equal(state.last_edit_epoch_by_plane, undefined, 'nor the edit instant it was compared against');
+  assert.equal(state.seq_counter, undefined, 'nor the sequence source both instants were drawn from');
+  for (const key of ['dispatch_epoch', 'dispatch_count', 'last_edit_epoch_by_plane', 'seq_counter']) {
+    assert.ok(
+      !Object.prototype.hasOwnProperty.call(state, key),
+      `${key} is deleted, not emptied to {} / 0`
+    );
+  }
+});

@@ -18,6 +18,13 @@ const { spawnSync } = require('node:child_process');
 
 const hookPath = resolve(__dirname, '../../hooks/post-edit-format.sh');
 const tempDirs = [];
+// The stub jq above never modelled `dispatch_count`/`dispatch_epoch` retirement — it only fakes the
+// marker-list filter each existing test needed. The round-24 P1#1 fix lives entirely in that
+// arithmetic (`retire_dispatch_epoch`, shared with post-tool-review-state.sh), so a test proving it
+// has to run against the real filter rather than extend the stub to reimplement it. Named distinctly
+// from the `HAVE_JQ` declared later in this file (a different measurement further down) to avoid a
+// redeclaration — this one is only used by the two tests immediately below.
+const HAVE_REAL_JQ = spawnSync('jq', ['--version'], { encoding: 'utf8' }).status === 0;
 
 function makeTempDir(prefix) {
   const dir = mkdtempSync(join(tmpdir(), prefix));
@@ -278,6 +285,18 @@ function runHook({ cwd, binDir, filePath, env = {} }) {
       PATH: `${binDir}:${process.env.PATH}`,
       ...env,
     },
+  });
+}
+
+// Real jq, unstubbed — `PATH` is left as-is (no binDir prepended) so the system `jq` resolves, and
+// `HOOK_NO_FORMAT=1` skips the prettier/npx path entirely so no stub is needed for that either.
+function runRealHook({ cwd, filePath, env = {} }) {
+  const input = { tool_input: { file_path: filePath } };
+  return spawnSync('bash', [hookPath], {
+    cwd,
+    input: JSON.stringify(input),
+    encoding: 'utf8',
+    env: { ...process.env, HOOK_NO_FORMAT: '1', ...env },
   });
 }
 
@@ -1143,6 +1162,220 @@ test('#10: the DEGRADED code path retires the code marker through invalidate_rev
     ['doc'],
     'so the code marker goes with it, and the doc plane the edit did not touch is left standing',
   );
+});
+
+// === invalidate_review releases the dispatch reference the retired marker stood for (round-24 P1#1) ===
+//
+// The four tests above (stub jq) prove the marker is dropped. They cannot prove the OTHER half of
+// the fix — the dispatch reference that marker's removal is the terminal disposition for is also
+// released, in the SAME transaction — because the stub never modelled `dispatch_count`/
+// `dispatch_epoch` at all. Both run against real jq.
+
+test('invalidate_review credits by DISTINCT TASK among the dropped markers, not by row (round-24 P1#1)', { skip: !HAVE_REAL_JQ }, () => {
+  // Two rows share task `tk-dup` (the same backgrounded handoff observed twice — the exact duplicate
+  // shape `background-verdict-recovery.test.js` already covers for consumption); a third, `tk-other`,
+  // is a distinct dispatch. Dropping all three code-plane markers as this edit's side effect must
+  // release exactly 2 units (one per distinct task) — crediting by ROW would release 3 and
+  // over-retire a genuinely unrelated fourth dispatch that has no marker at all yet.
+  const workDir = makeTempDir('sd0x-format-p1-dedup-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      doc_review: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [
+        { plane: 'code', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
+        { plane: 'code', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
+        { plane: 'code', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
+      ],
+      dispatch_count: { code: 3 },
+      dispatch_epoch: { code: 1 },
+    })
+  );
+
+  const result = runRealHook({ cwd: workDir, filePath: '/project/src/app.ts' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = readState(workDir);
+  assert.equal(state.code_review.passed, false, 'the edit still re-opens the code gate');
+  assert.deepEqual(state.background_reviews, [], 'all three code-plane markers are dropped');
+  assert.equal(state.dispatch_count.code, 1,
+    'exactly 2 units released for 2 distinct tasks — crediting by row would have released 3 and dropped this below the one genuinely unrelated dispatch still outstanding');
+  assert.ok(state.dispatch_epoch.code, 'the epoch survives — the plane is not fully retired yet');
+});
+
+test('invalidate_review retires the plane\'s dispatch_count/epoch entirely when the last reference releases (round-24 P1#1)', { skip: !HAVE_REAL_JQ }, () => {
+  const workDir = makeTempDir('sd0x-format-p1-fullretire-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      doc_review: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [{ plane: 'code', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
+      dispatch_count: { code: 1 },
+      dispatch_epoch: { code: 1 },
+    })
+  );
+
+  const result = runRealHook({ cwd: workDir, filePath: '/project/src/app.ts' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = readState(workDir);
+  assert.deepEqual(state.background_reviews, []);
+  assert.equal(state.dispatch_count, undefined,
+    'the last reference on the plane releases — under the bug this stuck at {code: 1} forever, since nothing ever retires a marker-only leak');
+  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
+});
+
+// === doc-plane dispatch-reference retirement, real jq (round-25 finding #5) ===
+//
+// The pair above proves the CODE plane's reference-counting arithmetic against real jq, because it
+// runs through the shared `invalidate_review` helper (one copy of `retire_dispatch_epoch`, one thing
+// to verify). The doc plane does NOT go through that helper — it writes its own jq inline, TWICE
+// (the locked arm above ~line 1483 and the degraded arm's best-effort rewrite below it), and each of
+// those has its OWN `if $doc_has_agg` / `else` split (whether `aggregate_gate` exists in the seed
+// state), for four independently-written jq programs total. The stub-jq tests above (`#10: ...`)
+// prove each of those four drops the right MARKER; none of them can prove the reference-count half,
+// because the stub never modelled `dispatch_count`/`dispatch_epoch` at all — same limitation the
+// comment above the code-plane pair already names. These four run the real filter, one per variant.
+
+test('doc edit (locked, aggregate_gate present) credits by distinct task among dropped doc markers', { skip: !HAVE_REAL_JQ }, () => {
+  const workDir = makeTempDir('sd0x-format-doc-p5-locked-agg-dedup-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+      background_reviews: [
+        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
+        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
+        { plane: 'doc', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
+      ],
+      dispatch_count: { doc: 3 },
+      dispatch_epoch: { doc: 1 },
+    })
+  );
+
+  const result = runRealHook({ cwd: workDir, filePath: '/project/docs/guide.md' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, false, 'the edit still re-opens the doc gate');
+  assert.deepEqual(state.background_reviews, [], 'all three doc-plane markers are dropped');
+  assert.equal(state.dispatch_count.doc, 1,
+    'exactly 2 units released for 2 distinct tasks — crediting by row would have released 3 and dropped this below the one genuinely unrelated dispatch still outstanding');
+  assert.ok(state.dispatch_epoch.doc, 'the epoch survives — the plane is not fully retired yet');
+});
+
+test('doc edit (locked, no aggregate_gate) retires dispatch_count/epoch entirely on the last reference', { skip: !HAVE_REAL_JQ }, () => {
+  const workDir = makeTempDir('sd0x-format-doc-p5-locked-noagg-fullretire-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [{ plane: 'doc', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
+      dispatch_count: { doc: 1 },
+      dispatch_epoch: { doc: 1 },
+    })
+  );
+
+  const result = runRealHook({ cwd: workDir, filePath: '/project/docs/guide.md' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const state = readState(workDir);
+  assert.deepEqual(state.background_reviews, []);
+  assert.equal(state.dispatch_count, undefined,
+    'the last reference on the plane releases — under the bug this stuck at {doc: 1} forever, since nothing ever retires a marker-only leak');
+  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
+});
+
+test('doc edit (DEGRADED, aggregate_gate present) still credits by distinct task', { skip: !HAVE_REAL_JQ }, () => {
+  const workDir = makeTempDir('sd0x-format-doc-p5-degraded-agg-dedup-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+      background_reviews: [
+        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
+        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
+        { plane: 'doc', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
+      ],
+      dispatch_count: { doc: 3 },
+      dispatch_epoch: { doc: 1 },
+    })
+  );
+  // Hold the state lock so `_lock` times out and the doc transaction takes its degraded
+  // (unlocked-writer) arm — the jq program under test here is the SECOND, independently-written
+  // copy, not the locked one the two tests above exercised.
+  const stLock = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(stLock, { recursive: true });
+  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
+
+  const result = runRealHook({
+    cwd: workDir,
+    filePath: '/project/docs/guide.md',
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
+  });
+
+  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, false, 'the degraded rewrite still re-opens the doc gate');
+  assert.deepEqual(state.background_reviews, [], 'all three doc-plane markers are dropped');
+  assert.equal(state.dispatch_count.doc, 1,
+    'exactly 2 units released for 2 distinct tasks, same arithmetic as the locked arm — the degraded rewrite is a SEPARATE jq program and must not diverge from it');
+  assert.ok(state.dispatch_epoch.doc, 'the epoch survives — the plane is not fully retired yet');
+});
+
+test('doc edit (DEGRADED, no aggregate_gate) retires dispatch_count/epoch entirely on the last reference', { skip: !HAVE_REAL_JQ }, () => {
+  const workDir = makeTempDir('sd0x-format-doc-p5-degraded-noagg-fullretire-');
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      has_code_change: false,
+      has_doc_change: false,
+      code_review: { executed: false, passed: false, last_run: '' },
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: false, passed: false, last_run: '' },
+      background_reviews: [{ plane: 'doc', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
+      dispatch_count: { doc: 1 },
+      dispatch_epoch: { doc: 1 },
+    })
+  );
+  const stLock = join(workDir, '.claude_review_state.json.lockdir');
+  mkdirSync(stLock, { recursive: true });
+  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
+
+  const result = runRealHook({
+    cwd: workDir,
+    filePath: '/project/docs/guide.md',
+    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
+  });
+
+  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
+  const state = readState(workDir);
+  assert.deepEqual(state.background_reviews, []);
+  assert.equal(state.dispatch_count, undefined,
+    'the last reference on the plane releases even through the degraded, unlocked rewrite');
+  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
 });
 
 test('code edit invalidates precommit.passed', () => {
