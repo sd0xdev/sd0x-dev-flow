@@ -131,6 +131,27 @@ function outputValue(val) {
   process.stdout.write(JSON.stringify(val));
 }
 
+// Handle the advisory doc-plane counters (_bump_doc_counter). Distinctive: it is the only
+// production filter that touches \`.doc_iteration_history\`. The incremented field names are read
+// back out of the query TEXT rather than hardcoded here, so a clause dropped from the production
+// filter shows up as a missing increment instead of being masked by a stub that knows better.
+// The real-jq counterpart of this filter lives in test/hooks/jq-filter-fidelity.test.js.
+if (query && query.includes('.doc_iteration_history')) {
+  if (!data || typeof data !== 'object') data = {};
+  if (!data.doc_iteration_history || typeof data.doc_iteration_history !== 'object') {
+    data.doc_iteration_history =
+      { dispatches: 0, verdicts: 0, passes: 0, blocks: 0, no_verdict: 0, legacy: 0 };
+  }
+  const bumpRe =
+    /\\.doc_iteration_history\\.([a-z_]+) = \\(\\(\\.doc_iteration_history\\.\\1 \\/\\/ 0\\) \\+ 1\\)/g;
+  let bump;
+  while ((bump = bumpRe.exec(query)) !== null) {
+    data.doc_iteration_history[bump[1]] = (data.doc_iteration_history[bump[1]] || 0) + 1;
+  }
+  process.stdout.write(JSON.stringify(data));
+  process.exit(0);
+}
+
 // Handle aggregate_gate PENDING mutation (review_mode + executed=false)
 if (query && query.includes('review_mode') && query.includes('aggregate_gate.executed = false')) {
   data.review_mode = 'dual';
@@ -2054,8 +2075,13 @@ test('Bash /precommit slash command with an embedded newline records no verdict 
   );
 });
 
-test('/review-spec sets doc_review passed', () => {
-  const workDir = makeTempDir('sd0x-post-tool-review-spec-');
+// `/review-spec` now dispatches Codex over the shared MCP doc-review route (its real producer
+// shape is pinned in test/skills/review-spec.test.js and by the MCP cases further down). The
+// direct-Bash route below still exists in the hook, so both directions of it stay pinned here \u2014
+// and both must land in `legacy`, never in `verdicts`: this route never incremented `dispatches`,
+// so counting it as a verdict would drive `dispatches - verdicts` negative.
+test('/review-spec via the legacy Bash route records a pass and counts as legacy', () => {
+  const workDir = makeTempDir('sd0x-post-tool-review-spec-pass-');
   const binDir = setupStubBin();
   const result = runHook({
     cwd: workDir,
@@ -2069,6 +2095,104 @@ test('/review-spec sets doc_review passed', () => {
   assert.equal(result.status, 0);
   const state = readState(workDir);
   assert.equal(state.doc_review.passed, true);
+  assert.equal(state.doc_iteration_history.legacy, 1);
+  assert.equal(state.doc_iteration_history.verdicts, 0);
+});
+
+test('/review-spec via the legacy Bash route records a block and counts as legacy', () => {
+  const workDir = makeTempDir('sd0x-post-tool-review-spec-block-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: '/review-spec' },
+      tool_output: '\u26d4 Needs revision',
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_review.passed, false);
+  assert.equal(state.doc_iteration_history.legacy, 1);
+});
+
+// --- Doc-plane instrumentation (advisory counters; never affect a gate) ---
+
+// The PreToolUse `dispatches` counter and its code-plane negative control live in
+// test/hooks/background-verdict-recovery.test.js: that suite runs against REAL jq, and the
+// PreToolUse path writes through `_record_dispatch_epoch`'s filter, which this suite's stub does
+// not evaluate — a case placed here would assert nothing about the production filter.
+
+test('an MCP doc verdict increments verdicts and the matching outcome field', () => {
+  const binDir = setupStubBin();
+
+  const passDir = makeTempDir('sd0x-post-tool-doc-counter-pass-');
+  runHook({
+    cwd: passDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\n\u2705 Mergeable' },
+    },
+  });
+  const passState = readState(passDir);
+  assert.equal(passState.doc_iteration_history.verdicts, 1);
+  assert.equal(passState.doc_iteration_history.passes, 1);
+  assert.equal(passState.doc_iteration_history.blocks, 0);
+
+  const blockDir = makeTempDir('sd0x-post-tool-doc-counter-block-');
+  runHook({
+    cwd: blockDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\n\u26d4 Needs revision' },
+    },
+  });
+  const blockState = readState(blockDir);
+  assert.equal(blockState.doc_iteration_history.verdicts, 1);
+  assert.equal(blockState.doc_iteration_history.blocks, 1);
+  assert.equal(blockState.doc_iteration_history.passes, 0);
+});
+
+test('a doc report carrying no sentinel increments no_verdict, not verdicts', () => {
+  const workDir = makeTempDir('sd0x-post-tool-doc-counter-noverdict-');
+  const binDir = setupStubBin();
+  const result = runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\nThe document reads well overall.' },
+    },
+  });
+  assert.equal(result.status, 0);
+  const state = readState(workDir);
+  assert.equal(state.doc_iteration_history.no_verdict, 1);
+  assert.equal(state.doc_iteration_history.verdicts, 0);
+  assert.equal(state.doc_review.executed, false);
+});
+
+test('doc-plane counters leave the code-plane iteration_history untouched', () => {
+  const workDir = makeTempDir('sd0x-post-tool-doc-counter-isolation-');
+  const binDir = setupStubBin();
+  runHook({
+    cwd: workDir,
+    binDir,
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\n\u2705 Mergeable' },
+    },
+  });
+  const state = readState(workDir);
+  assert.equal(state.doc_iteration_history.passes, 1);
+  assert.equal(state.iteration_history.current_round, 0);
+  assert.deepEqual(state.iteration_history.findings_by_round, []);
 });
 
 // =============================================================================

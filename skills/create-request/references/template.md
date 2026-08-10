@@ -16,8 +16,8 @@
 > **Status**: Pending
 > **Note**: {optional — any commentary about the Status goes HERE, never on the Status line}
 > **Priority**: {P0|P1|P2}
-> **Tech Spec**: [Link](../2-tech-spec.md) <- Technical detail (primary source)
-> **Requirements**: [Link](../1-requirements.md) <- Feature-level problem-space rationale (include this line ONLY IF `../1-requirements.md` exists — omit otherwise to avoid dead links)
+> **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) <- Technical detail (primary source)
+> **Requirements**: [1-requirements.md](../1-requirements.md) <- Feature-level problem-space rationale (include this line ONLY IF `../1-requirements.md` exists — omit otherwise to avoid dead links)
 
 ## Background
 

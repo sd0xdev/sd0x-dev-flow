@@ -6,7 +6,7 @@
 
 **One reviewer — Codex — everywhere by default.** `/codex-review-fast` and `/codex-review-doc` must not launch a secondary. Opt-in dual: `/codex-review-branch --dual` only, off unless the flag is passed. Loop re-review: `--continue` re-dispatches Codex on the same thread. Cycle reset: any code edit invalidates prior verdicts — the reviewer must re-run regardless of prior pass status.
 
-**Codex unavailable is not a fallback — it is `⚠️ Need Human`.** A built-in reviewer agent may be run when the user asks for one, and what it produces is **advisory findings, never a gate verdict**: substituting it silently swaps the reviewer the gate was defined against. The contract lives in `skills/codex-code-review/SKILL.md` § Step 2 and `references/review-common.md` § Degradation Matrix — read those rather than re-deriving it here. Two facts worth knowing before you reach for one: the receipt hook recognizes producers by **command name** (`/codex-review*`, `/review-spec`), so a Task agent closes no gate whatever its output says; and `/review-spec` **is** a recognized doc-plane producer, which makes it the one skill-sanctioned path that both uses a built-in agent and records a receipt.
+**Codex unavailable is not a fallback — it is `⚠️ Need Human`.** A built-in reviewer agent may be run when the user asks for one, and what it produces is **advisory findings, never a gate verdict**: substituting it silently swaps the reviewer the gate was defined against. The contract lives in `skills/codex-code-review/SKILL.md` § Step 2 and `references/review-common.md` § Degradation Matrix — read those rather than re-deriving it here. One fact first: the receipt hook recognizes a producer two ways — the legacy Bash/Skill route by **command name** (`/codex-review*`, `/review-spec`), the MCP route by all three of a request asking for the review, an output headed as one, and its sentinel. A Task agent hits neither, so it closes no gate; `/review-spec` counts via MCP.
 
 **Agent defaults**: every agent in `agents/` declares `model: opus` and `effort: high` in its frontmatter. Reviewing is the workload that pays for depth, and an agent that silently ran at a lower tier would look like a passing review. Pinned by `test/agents/frontmatter.test.js`; change the default there and in this line together.
 
@@ -72,7 +72,7 @@ Both splits live entirely here — the hook counts rounds and streaks, never dia
 | Class | Signals | Bounded direction |
 |-------|---------|-------------------|
 | `ARCHITECTURE` | Same defect recurs across files; fixing A breaks B | Stop patching; back to design, re-scope |
-| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Split or shrink first, then resume review — `/refactor --target <file>` is the sanctioned tool |
+| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Shrink via `/refactor --target <file>`, which **condenses**; splitting is manual — `@rules/docs-numbering.md` § Size Limit |
 | `ATTENTION_DIFFUSION` | Fixes introduce new defects; the same fact is recorded wrong repeatedly | Shrink the batch; verify each item before merging — `/refactor --target <churning files>` when the diffusion is structural |
 | `UNVERIFIED_CLAIM` | Blocking findings cluster on unmeasured claims | Measure first; write the derivation command into the doc |
 | `TIER_MISMATCH` | Findings persistently below the blocking threshold | Converge per tier and move to the next gate |

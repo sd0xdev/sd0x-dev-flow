@@ -1,43 +1,62 @@
 # Doc Review Phasing — Tech Spec
 
-> Status: Draft (planning approved via /codex-brainstorm Nash equilibrium, 2026-08-08)
-> Scope: doc-plane review scoping, phase derivation, instrumentation, producer repair
-> Origin: adversarial Claude+Codex debate — 3 rounds, 10 attacks, both initial positions revised
+> **Doc role**: Design record
+> **Status**: Draft (design converged; see § Provenance)
+> **Current behavior authority**: No — until Step 4 creates `4-implementation.md`, the only current authority for this feature is the code and `rules/` themselves
+> **Scope**: doc-plane review cost — artifact authority classification, review profiles, deterministic pre-dispatch resolution, upfront-gate repair
 
 ## 1. Problem
 
 The doc plane burns review rounds out of proportion to what changed. A 3-line edit to a
 500-line document triggers a whole-document, five-dimension review; each fix re-opens the
-gate and the next round re-reads the whole file. Measured state of the corpus:
+gate and the next round re-reads the whole file. Measured state of the corpus **at commit
+`3744d58`**, read from the commit rather than from the worktree — `git ls-tree -r --name-only
+3744d58 -- docs | grep '\.md$'`, then `git show 3744d58:<path> | wc -l` per file. (`git
+ls-files` would answer for the index, which by then already carried this feature's own edits.)
+"Markdown-only" means a commit **every** one of whose changed paths ends in `.md`, anywhere in
+the repo and not only under `docs/` — counted in one pass, `--root` included so the initial
+commit is not silently dropped:
+
+```bash
+git log --no-merges --format='%H' --name-only --root 3744d58 | awk '
+/^[0-9a-f]{40}$/ { if (n>0) { tot++; if (md==n) allmd++ }; n=0; md=0; next }
+NF==0 { next } { n++; if ($0 ~ /\.md$/) md++ }
+END { if (n>0) { tot++; if (md==n) allmd++ }; print allmd, "of", tot }'
+```
 
 | Metric | Value |
 |--------|-------|
-| `docs/**/*.md` | 255 files / 46,138 lines |
-| Tech specs (`2-tech-spec*.md`) | 59 files / 22,518 lines (48.8% of corpus; median 397 lines) |
-| Request docs | 143 files / 12,261 lines (26.6%) |
+| `docs/**/*.md` | 255 files / 45,904 lines |
+| Tech specs (`2-tech-spec*.md`) | 59 files / 22,518 lines (49.1% of corpus; median 397 lines) |
+| Request docs | 143 files / 12,027 lines (26.2%) |
 | Closed-but-unarchived requests | 61 files / 4,845 lines (only 3 requests actually archived) |
 | Feature docs added / deleted over 488 commits | 241 / 0 |
-| Markdown-only commits | 235 of 488 |
+| Markdown-only commits | 209 of 488 (43%); a further 142 touch `.md` alongside code (351 in total) |
 | Doc-plane round counter | does not exist (`current_round` is code-only, `post-tool-review-state.sh` §_update_iteration) |
 
 ## 2. Root Causes (ranked)
 
+> **This section is the diagnosis baseline at `3744d58`, not a description of the current
+> tree.** Step 1 of § 4 has since landed in this working tree, so the first half of cause 5
+> and the `/review-spec` paragraph below are already repaired. Line numbers are quoted
+> `@ 3744d58` where the file has moved since; read them against that commit.
+
 | # | Cause | Evidence |
 |---|-------|----------|
-| 1 | **Phase-blind reviewer attention** — every doc review reads the full file and must rate 5 dimensions (Architecture / Performance / Security / Quality / Consistency), even post-implementation sync where design was already reviewed on the code plane | `skills/doc-review/references/codex-prompt-doc.md` ("Read the full document"; 5-slot output table) |
-| 2 | **Undifferentiated authority space** — closed requests, review logs, and live specs share one namespace; `doc-classifier.js` already excludes `requests/`+`archived/` but `/codex-review-doc` never consults it | `scripts/lib/doc-classifier.js` (classifier exists, unused by review path) |
-| 3 | **Unscoped global receipt** — `/codex-review-doc` is single-target; `feature-dev` Doc Sync runs it *per updated file*; a pass writes one boolean with no record of which files were covered | `skills/feature-dev/SKILL.md` § Doc Sync; `doc_review.passed` in state schema |
-| 4 | **No write-time budget** — tech specs are routinely produced near 400 lines; completed requests stay live | corpus distribution above |
+| 1 | **Every document is treated as a living document owing perpetual code alignment** — a frozen design record and a live behaviour reference are reviewed under the same obligation | `skills/doc-review/references/codex-prompt-doc.md` (5 fixed dimensions for every target); no classification consulted anywhere on the review path |
+| 2 | **Role-blind reviewer attention** — every doc review reads the full file and rates 5 dimensions (Architecture / Performance / Security / Quality / Consistency), even post-implementation sync where the design was already reviewed on the code plane | `skills/doc-review/SKILL.md` Step 2 (whole-file read); `codex-prompt-doc.md:21` ("Read the full document") |
+| 3 | **Undifferentiated authority space** — closed requests, review logs and live specs share one namespace; `doc-classifier.js` already excludes `requests/`+`archived/` from the canonical map but `/codex-review-doc` never consults it, and `canonical_docs` still hands a frozen tech spec to research consumers as though it described current behaviour | `scripts/lib/doc-classifier.js:206` `pickCanonicalDocs`; consumers `skills/ask/SKILL.md:84`, `skills/runbook/SKILL.md:128`, `skills/feasibility-study/SKILL.md:39` |
+| 4 | **Unscoped global receipt** — `/codex-review-doc` is single-target; `feature-dev` Doc Sync runs it *per updated file*; a pass writes one boolean with no record of which files were covered | `skills/feature-dev/SKILL.md` § Doc Sync; `doc_review.passed` in the state schema |
+| 5 | **No upfront gate actually fires** — the design-time review that would prevent late churn is either unrecordable or switched off | `/review-spec` verdict is unparseable (below); `rules/auto-loop-project.md:40` `## Plan Review` is commented out |
+| 6 | **No write-time budget and no prune step** — tech specs are routinely produced near 400 lines; completed requests stay live; 241 feature docs added, 0 deleted | corpus distribution above |
 
-Additional defect found during research: `/review-spec` emits `✅ Approved / ⚠️ Needs
-revision / ❌ Needs redesign` (`skills/review-spec/SKILL.md`), but the hook's doc-plane
-parser (`_mcp_doc_review_passed`, `_skill_output_has_verdict`) recognizes only
-`✅ Mergeable` / `⛔ Needs revision`. Every documented `/review-spec` outcome — pass or
-fail — records **no verdict at all**. The existing test passes only because it feeds the
-undocumented `✅ Mergeable` sentinel. Impact is bounded in practice: `/review-spec` is
-rarely used — the dominant doc-plane producer is `/codex-review-doc` — so the repair is
-folded into Step 3 (where the prompts are rewritten anyway, and aliasing `/review-spec`
-onto the shared path dissolves the sentinel mismatch) rather than shipped as its own step.
+At `3744d58`, `/review-spec` emitted `✅ Approved / ⚠️ Needs revision / ❌ Needs redesign`
+(`skills/review-spec/SKILL.md:67 @ 3744d58`), while the hook's doc-plane parser
+(`_mcp_doc_review_passed`, `_skill_output_has_verdict`) recognized only `✅ Mergeable` /
+`⛔ Needs revision`. Every documented `/review-spec` outcome — pass **or** fail — recorded
+**no verdict at all**; the one test that passed did so by feeding the undocumented
+`✅ Mergeable` sentinel. It was also an `Agent` dispatch, invisible to dispatch accounting.
+Step 1 converted it to the shared MCP path and pinned both directions.
 
 ### Why `/refactor` is not the lever
 
@@ -47,180 +66,255 @@ onto the shared path dissolves the sentinel mismatch) rather than shipped as its
 | Tool | For `.md`, `/refactor` dispatches `/doc-refactor`, which **condenses**; `rules/docs-numbering.md` prescribes **splitting** and states no skill performs it |
 | Cost | Refactor edits files → gates re-open → up to 3 internal doc rounds per target; `--auto` can select 10 targets |
 
-## 3. Design — One Gate, Two Modes
+## 3. Design — Classify the artifact, declare the intent, resolve deterministically
 
-No new gate. The existing `doc_review` plane, receipt, and sentinel pair
-(`✅ Mergeable` / `⛔ Needs revision`) are unchanged. A hook-derived `doc_phase` selects
-review dimensions and scope:
+No new gate. The existing `doc_review` plane, receipt and sentinel pair
+(`✅ Mergeable` / `⛔ Needs revision`) are unchanged. Three layers decide **how deep** a
+review runs and **what the reviewer reads** — never *whether* it runs.
 
-| Mode | When | Dimensions | Scope |
-|------|------|-----------|-------|
-| `spec` | Pre-implementation spec landing; doc-only design work; `/review-spec` always | Full set: completeness, feasibility, architecture, risk, security, testing | Changed/new spec sections |
-| `final` | Post-precommit Doc Sync | Exactly two questions: (1) does any reviewed section contradict the implementation? (2) is any affected cross-reference dead? | Changed hunks + enclosing `##` sections + preamble; never whole-file for existing docs; new/untracked files reviewed whole (all lines are new) |
+| Layer | Answers | Owned by |
+|-------|---------|----------|
+| **Artifact classification** | What is this document, and does it owe code alignment at all? | `scripts/lib/doc-metadata.js` — path defaults + optional in-document metadata |
+| **Producer intent** | Why is this review happening — design landing, post-implementation sync, record edit? | the dispatching skill, as a named review profile |
+| **Deterministic resolution** | Is the requested profile supported by the evidence? | `scripts/resolve-review-profile.js`, run **before** the prompt is assembled |
 
-### Phase derivation (producer marker + hook validation, never model-chosen)
+### 3.1 Artifact classification (zero migration)
 
-State alone cannot discriminate the phase. `precommit.passed && has_code_change &&
-review_phase == idle` misclassifies unrelated same-session design work as `final`
-(`has_code_change` is session-wide, reset only by `session-init.sh`). A bare
-`doc_sync_pending` state token is also insufficient on its own: it would arm on every
-precommit pass even when the change maps to no feature docs, and an unrelated doc review
-could consume it before the intended sync. And once `/review-spec` shares the MCP path
-(Step 3), the nested `mcp__codex__codex` event carries no parent-skill identity, so the
-hook cannot see "this request came from `/review-spec`" from the event alone.
+Four roles, closed set: `Current authority` · `Design record` · `Work record` ·
+`History record`. Resolution mirrors `scripts/lib/request-status.js` — **defined
+negatively and failing toward the deeper obligation**: a document is exempt from code
+alignment only when it resolves to a non-authority role; anything unrecognised resolves to
+`Current authority`, which owes the fullest review.
 
-The design is therefore **two-factor**: a trusted producer marker in the MCP request,
-validated by the hook against a state token — `final` requires both.
+Precedence: (1) explicit in-document metadata; (2) path default; (3) `Current authority`.
 
-| Factor | Mechanism |
-|--------|-----------|
-| Pre-dispatch resolver | A hook-owned script (`scripts/resolve-doc-phase.sh`) reads the token under the state lock and prints `spec` or `final`. The producer **must call it before assembling the MCP prompt** — the PreToolUse hook only records dispatches (`_record_dispatch_epoch` neither rewrites nor rejects requests), so a prompt built with the wrong depth would otherwise already be delivered by the time the hook sees it. |
-| Producer marker | The producer embeds `[DOC_PHASE_REQUEST] <resolved>` in its MCP prompt — `skills/review-spec` always embeds `spec` (no resolver call needed); the `feature-dev` Doc Sync flow embeds the resolver's answer. Producer-owned template text, not a public/model-selected flag. Persisted in the dispatch pin so foreground and background outcomes resolve the same phase. |
-| State token | `doc_sync_pending` — set (same locked transaction as the precommit receipt) when precommit passes with `has_code_change`; cleared (same transaction as the owning write) on a `final`-phase doc-gate pass or when a code edit invalidates precommit; reset in the same atomic SessionStart transaction as the other session-scoped fields (`session-init.sh`). |
+Path defaults — chosen so the change is **code-only and behaves correctly on day one across
+all 255 existing documents with no migration**:
 
-> **Known gap — the dispatch pin needs a correlation key before Step 2 ships it (flagged 2026-08-09,
-> round-22 review of the unrelated receipt-integrity fix in
-> `docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md`).**
-> "Persisted in the dispatch pin" above describes a shared, set-if-absent, **per-plane** scalar — the
-> same shape as the fingerprint/dispatch-pin mechanism that request deleted (Half B) precisely
-> because the hook payload carries no `tool_use_id`-equivalent correlation key. The same hole applies
-> here: two concurrent doc dispatches on the same plane, one `spec` and one `final`, cannot be told
-> apart by a single per-plane pin — the later one inherits whichever phase the earlier one set,
-> which can misclassify a shallow `final` report as `spec` (or the reverse) and satisfy the wrong
-> depth of gate. This is an architecture-level decision for whoever implements Step 2, out of scope
-> for the receipt-integrity fix that surfaced it: either persist `doc_phase` in the **task-scoped**
-> `background_reviews` marker created at handoff (that structure already exists, is keyed by
-> `(task, plane)`, and is exactly what the receipt-integrity rework above now reference-counts
-> correctly) instead of a shared per-plane scalar, or introduce a genuine correlation key. Resolve
-> this before the "dispatch pin" persistence in Step 2's table is implemented as written.
+| Path | Default role | Current behaviour authority |
+|------|--------------|------------------------------|
+| `docs/features/*/requests/**` | Work record | No |
+| `docs/features/**/review-log-*.md`, `adr-*.md` | History record | No |
+| `docs/features/**/{0-feasibility-study,1-requirements,2-tech-spec,3-architecture}*` | Design record | No |
+| `docs/features/**/4-implementation*` | Current authority | Yes |
+| `skills/**`, `rules/**`, `agents/**`, `commands/**` | Current authority (instruction surface) | Yes |
+| everything else under `docs/`, `README*` | Current authority | Yes (fail-closed) |
 
-```
-marker spec  (or no marker)                              ⇒ spec
-marker final && doc_sync_pending == true                 ⇒ final
-marker final && doc_sync_pending != true                 ⇒ dispatch poisoned — the
-    delivered prompt was too shallow for its authorization, so the verdict is NOT
-    recorded (fail-closed, same mechanism as ambiguous-provenance routing) and the
-    review re-runs at spec
+Explicit metadata overrides the default **in both directions** — a tech spec that really is
+the living behaviour reference declares it and is reviewed as one. Format is a
+top-of-document blockquote, not YAML front matter: measured over the 59 tech specs, 4 carry
+any status line and **zero** carry a machine-readable `lifecycle:`/`maintenance:` key, so
+front matter would be a format nothing in the corpus uses. The blockquote form is already
+what `request-status.js` parses (`> **Status**: …`), so one parser shape covers both.
+
+```markdown
+> **Doc role**: Design record
+> **Status**: Accepted
+> **Current behavior authority**: No
 ```
 
-The third arm cannot silently record `spec` — the reviewer already ran the two-question
-prompt, so accepting its verdict at any phase would bank a shallow review; poisoning is
-the only fail-closed disposition. It is a producer-bug path, not a normal path: the
-resolver exists so the prompt is built at the right depth in the first place.
+Same 30-line head window and exact-match-after-trim discipline as `request-status.js`; an
+annotated value (`Design record (mostly)`) does not match and falls through to the path
+default rather than being guessed at.
 
-Consequences: an unrelated `/review-spec` or plain `/codex-review-doc` during the sync
-window carries no `final` marker, so it neither runs as `final` nor consumes the token; a
-token armed by a code change that needs no Doc Sync expires unused (next code edit or
-SessionStart reset) without ever downgrading a review; a `final` marker forged outside
-the Doc Sync flow still needs the token, and without it the dispatch is poisoned. The
-marker sits at the same cooperative-trust boundary as the existing `## Document Review`
-header (`post-tool-review-state.sh` § residual-gap comment: trust root is `.claude/`
-integrity, adversarial producers are out of scope). Regression cases pinned by test:
-(a) code lifecycle done → Doc Sync passes → unrelated design doc edited same session ⇒
-`spec`; (b) `/review-spec` while token armed ⇒ dispatched review, emitted `doc_phase`,
-and `by_phase` all `spec`; (c) precommit pass with no doc-mapped change → next doc
-review ⇒ `spec`, token untouched; (d) final-marked request with token missing/false/
-corrupt ⇒ no verdict recorded, re-run required at `spec`; (e) unused token does not
-survive SessionStart. Case (b) is exercised at the rule level in Step 2 (an explicitly
-`spec`-marked MCP request during an armed window) and end to end against the real
-converted `/review-spec` producer in Step 3.
+### 3.2 Authority-aware source sets
 
-Published as a new `doc_phase=` field in `[AUTO_LOOP_STATE]` — separate from the existing
-`phase=` (`review_phase` is the code-plane state machine).
+`pickCanonicalDocs` currently answers one question — "which file is the tech spec" — and
+every research consumer reads that as "which file describes the system". Splitting the
+output makes the tombstone **mechanical** rather than a banner a reader may ignore:
 
-### Guardrails (Anchor-compatible)
+| Source set | Contents | Answers |
+|------------|----------|---------|
+| `current_authority` | **document paths only** — `4-implementation*` and docs explicitly marked authoritative | "what does the system do now", once the consumer adds code and `rules/` |
+| `design_records` | tech specs, architecture, feasibility, requirements | "why was it built this way" |
+| `work_records` | `requests/**` | "what was asked for, and is it still open" |
+| `history_records` | review logs, ADRs | "what was decided, when" |
+
+`canonical_docs` is retained as a deprecated alias computed from `current_authority` +
+`design_records` so the eight existing consumers keep working while they migrate
+(`scripts/lib/feature-resolver.js:24`, `scripts/classify-docs-cli.js:30`,
+`scripts/lib/fc-aggregator.js:65`, `skills/ask`, `skills/runbook`,
+`skills/feasibility-study`, `skills/tech-spec/references/feature-context-resolution.md`).
+
+### 3.3 Review profiles
+
+| Profile | Used when | Reviewer reads | Questions |
+|---------|-----------|----------------|-----------|
+| `full-design` | Design landing pre-implementation; unknown classification; security / data-integrity; any escalation | Whole changed document + linked design context | Completeness, feasibility, architecture, risk, security, testing |
+| `implementation-sync` | Current-authority doc updated after code landed | Changed hunks + enclosing `##` sections + preamble + link definitions | (1) Does any reviewed section contradict the implementation? (2) Is any affected cross-reference dead? |
+| `living-sync` | Current-authority doc, doc-only edit | Changed sections | Accuracy and internal consistency |
+| `record-diff` | Design / work / history record | Changed hunks | Is the edit internally coherent and correctly marked as a record? **No code-alignment obligation** |
+| `executable` | Instruction surfaces (`skills/**`, `rules/**`) | Changed sections + the file's own contract | Does the instruction still execute? Any conflicting directive? |
+
+New (untracked) files are read whole under any profile — every line is new.
+
+### 3.4 Deterministic resolution, and why it replaces the state machine
+
+`scripts/resolve-review-profile.js` takes the changed-file list and the producer's requested
+profile, and emits the resolved profile plus a batched dispatch plan. It **escalates** —
+never de-escalates — when:
+
+| Condition | Resolution |
+|-----------|------------|
+| Classification unknown or metadata malformed | `full-design` |
+| Diff touches a `##` section the shallow profile's whitelist does not cover | `full-design` |
+| A changed path matches `scripts/config/sensitive-paths.json` | `full-design` (Anchor Register #3) |
+| `--tier` argument is `thorough`, absent, or unparseable | `full-design` (Anchor Register #3) |
+| Requested profile shallower than the artifact's role permits | the role's profile |
+
+The whitelist is the load-bearing control: `implementation-sync` is granted only when the
+diff is confined to the sections the producer declared, so a producer that names a shallow
+profile for a sweeping rewrite gets `full-design` anyway.
+
+**Sensitivity has two inputs, and neither is `sensitivity_hint`.** That field is transient
+hook output (`hooks/post-edit-format.sh:260` prints it onto an `[AUTO_LOOP_STATE]` line) and
+is persisted nowhere, so it cannot be read at dispatch — an earlier draft of this section
+depended on it and was wrong. Instead: (a) the resolver **recomputes** path hits itself from
+`scripts/config/sensitive-paths.json`, using that file's own segment-anchored matching; and
+(b) the producer passes its **effective tier** as a required `--tier` argument, which is what
+carries a *semantic* security change on a generic path. Input (a) is a floor, never a
+ceiling — the config's own `_comment` states it is example coverage and that security
+semantics often live in paths no rule catches. Input (b) fails closed: a missing or
+unparseable `--tier` resolves to `full-design`, so a producer cannot obtain a shallow review
+by omitting it.
+
+Apart from those two inputs, everything the resolver reads is derived from `git diff`
+**at dispatch time**. That single property
+retires the entire two-factor state machine the previous draft of this spec specified:
+
+| Retired mechanism | Failure it carried | Why it is unnecessary now |
+|-------------------|--------------------|---------------------------|
+| `doc_sync_pending` state token | `.claude_review_state.json` persists across sessions, so authorization leaked; armed on precommit passes mapping to no doc at all; needed its own atomic `session-init.sh` reset | Evidence is recomputed per dispatch; there is no armed window to leak |
+| `doc_phase` persisted in the dispatch pin | The pin is a shared, set-if-absent **per-plane** scalar and the hook payload carries no correlation key — two concurrent doc dispatches inherit one another's phase, satisfying the wrong depth of gate (the gap flagged 2026-08-09 in `../auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md`) | Nothing is persisted; each dispatch resolves independently, so concurrent dispatches cannot alias |
+| Poison-on-mismatch (record no verdict, re-run) | A fail-closed patch over a producer-bug path — by then the shallow prompt had already been delivered | The resolver runs *before* the prompt is assembled; a shallow prompt is never built |
+| `doc_phase=` in `[AUTO_LOOP_STATE]` across all six emitter hooks | A byte-identical block in six files plus a field-order test, changed together | Profile is not session state and is not published |
+
+`[DOC_PHASE_REQUEST]` and `doc_phase` are therefore **not** introduced. The producer names
+its profile in the resolver call, and the resolver's answer is what the prompt is built from.
+
+### 3.5 Guardrails (Anchor-compatible)
 
 | Guardrail | Basis |
 |-----------|-------|
-| Security / data-integrity change ⇒ full dimension set in either phase | Anchor Register #3 (`thorough` whatever is configured); dropping the Security dimension on such a change would operationally downgrade it |
-| Scope narrows what the reviewer *reads*, never *whether* review runs; edits still re-open their plane's gate | Anchor Register #5, #6 |
-| Missing/corrupt state ⇒ `spec` | Fail toward the deeper mode |
-| No cap ever auto-passes an incomplete review | Existing enforcement model |
+| Security / data-integrity change ⇒ `full-design` regardless of classification or requested profile | Anchor Register #3 (`thorough` whatever is configured) |
+| Profile narrows what the reviewer *reads*, never *whether* review runs; edits still re-open their plane's gate | Anchor Register #5, #6 |
+| Unknown / unreadable classification ⇒ `full-design` | Fail toward the deeper mode |
+| No resolver outcome auto-passes a review; sentinels and receipts unchanged | Existing enforcement model |
 
 ## 4. Implementation Roadmap
 
-Each step lands in one review cycle, independently shippable, in this order.
+Six steps, each independently shippable in one review cycle, in this order. Steps 1–3 are
+prerequisites for Step 4 being cheap; Step 4 is the causal fix.
 
-### Step 1 — Doc-plane instrumentation
-
-| | |
-|---|---|
-| Files | `hooks/post-tool-review-state.sh`, `test/hooks/post-tool-review-state.test.js`, `test/hooks/background-verdict-recovery.test.js` |
-| Change | Lazily create `doc_iteration_history` `{dispatches, verdicts, passes, blocks, no_verdict, background_recovered, legacy, by_phase, completed_cycles, last_cycle_rounds, total_rounds_session}`. Count dispatches at the existing PreToolUse doc-dispatch detection (`_record_dispatch_epoch` path); count outcomes at existing routing branches. `legacy` counts direct-Bash verdicts only and is excluded from both `dispatches − verdicts` loss and the ordinary pass/block totals. No caps, no stalls, no blocking. |
-| Why first | The complaint is a *rate*; today it is unmeasurable. `dispatches − verdicts` is itself a churn metric (timeouts, sentinel mismatches, lost background tasks are invisible today). Baseline must exist before the causal fix ships. Scope: instrumentation covers MCP producers; verdicts arriving via the legacy direct-Bash routes are recorded under a separate `legacy` outcome excluded from dispatch-loss calculations. |
-| AC | Doc dispatch increments counter; each verdict type routes to its field; code-plane counters untouched; lazy creation does not disturb existing state schema tests. |
-
-### Step 2 — Publish `doc_phase`
+### Step 1 — Repair the upfront gates, and baseline the doc plane
 
 | | |
 |---|---|
-| Files | all six emitter hooks — `hooks/post-tool-review-state.sh`, `hooks/post-edit-format.sh`, `hooks/post-skill-auto-loop.sh`, `hooks/post-compact-auto-loop.sh`, `hooks/stop-guard.sh`, `hooks/user-prompt-review-guard.sh` — plus `hooks/session-init.sh`, new `scripts/resolve-doc-phase.sh`, and tests: `test/hooks/auto-loop-state.test.js`, `test/hooks/session-init.test.js`, `test/hooks/post-tool-review-state.test.js`, `test/hooks/post-edit-format.test.js`, `test/hooks/background-verdict-recovery.test.js` |
-| Change | Add `doc_phase=spec\|final` per the §3 two-factor rule: ship the pre-dispatch resolver script; parse the `[DOC_PHASE_REQUEST]` producer marker at dispatch, persist it in the dispatch pin, validate `final` against `doc_sync_pending`, and poison the dispatch on a final-marker/token mismatch (no verdict recorded). Token lifecycle: set in the same locked transaction as the precommit receipt (when `has_code_change`); cleared in the same transaction as a `final`-phase doc-gate pass or a code edit's precommit invalidation — never by a `spec`-phase pass; reset in the same atomic SessionStart transaction as the other session-scoped fields (`session-init.sh` today knows nothing of this field — `.claude_review_state.json` persists across sessions, so omitting this leaks stale authorization into the next session). The `_alf_common` emitter block is byte-identical across the six hooks and order-pinned by tests — update all six + the fixed-order test together. Record phase into Step 1's `by_phase`. |
-| AC | The five §3 regression cases pinned by test — (a) unrelated same-session design edit ⇒ `spec`; (b) an explicitly `spec`-marked MCP request during an armed window ⇒ `spec` end to end incl. `by_phase` (rule-level only — the real `/review-spec` producer does not exist until Step 3 and its end-to-end case lands there); (c) no-doc-mapped change ⇒ token expires unused; (d) final-marked request with token missing/false/corrupt ⇒ dispatch poisoned, no verdict recorded, delivered-prompt assertion shows full spec dimensions on the re-run; (e) SessionStart resets the token for both existing-state and fresh-state cases. Marker absent/malformed ⇒ `spec`. Background-recovered verdict resolves the pinned phase, not a re-derived one. Byte-identity across six hooks preserved; field order test updated; real-`jq` cases for missing/false/true token state and failed token-clear writes (fail-closed sidecar per existing pattern). |
+| Status | **Landed in this working tree** (uncommitted). The rows below are the ticket as written; § 2's baseline describes what it replaced |
+| Files | `skills/review-spec/SKILL.md`, `rules/auto-loop.md` (`/review-spec` producer sentence; Cap Diagnostic `DOC_TOO_LONG` row), `hooks/post-tool-review-state.sh`, **new** `test/skills/review-spec.test.js` (absent from `3744d58`), `test/hooks/post-tool-review-state.test.js` (its `/review-spec sets doc_review passed` case at line 2057 is the synthetic one to replace), `test/hooks/background-verdict-recovery.test.js` (the real-jq PreToolUse counter cases, the code-plane negative control, and the `no_verdict` counting-on-claim cases), `test/hooks/jq-filter-fidelity.test.js` (the counter's jq filter is assembled dynamically in shell; these reassemble it exactly as the hook does) |
+| Change | Convert `/review-spec` from an `Agent` dispatch to the shared `mcp__codex__codex` doc-review path emitting the parsed sentinels (`✅ Mergeable` / `⛔ Needs revision`), and update `allowed-tools`. Correct the `DOC_TOO_LONG` row, which names `/refactor --target` for a splitting operation no skill performs. Add lazily-created `doc_iteration_history` counters `{dispatches, verdicts, passes, blocks, no_verdict, legacy}` at the existing PreToolUse doc-dispatch detection — no caps, no stalls, nothing blocking |
+| Blocked | **Enabling `## Plan Review` is deferred to a prerequisite change.** `/install-rules` seeds an absent consumer override *from* `rules/auto-loop-project.md`, restamping only the install metadata as it copies (`skills/install-rules/SKILL.md:74,76`) — an activated setting would carry through unchanged. This repo has exactly one copy of that file (`.claude/rules` is a symlink to `rules/`) — so it is the shipped scaffold and the live config at once, and an activation here ships to every installer. Three tests refuse it by design. The prerequisite is to give the scaffold a distinct home; that is an `install-rules` change, not this step's |
+| AC | A failing `/review-spec` records `doc_review.passed=false` and a passing one records `true` (both directions tested, per `rules/testing.md` § Conventions — Guards); `dispatches − verdicts` is observable; code-plane counters untouched; no rule names a remedy no tool performs |
+| Why first | The complaint is a *rate*, and today it is unmeasurable. Also the cheapest real win: the design-time gate that prevents late churn currently records nothing and is switched off |
 
-### Step 3 — Phase-conditioned section review (the causal fix)
-
-| | |
-|---|---|
-| Files | `skills/doc-review/SKILL.md`, `skills/doc-review/references/codex-prompt-doc.md`, `skills/doc-review/references/review-loop-doc.md`, `skills/review-spec/SKILL.md`, `skills/feature-dev/SKILL.md` (retire the "per updated file" Doc Sync line), `rules/auto-loop.md` (the sentence describing `/review-spec` as the built-in-agent doc producer), `test/hooks/post-tool-review-state.test.js` |
-| Change | `spec`: full design dimensions on design-bearing docs. `final`: the two questions only; read changed hunks + enclosing `##` sections + preamble + link-reference definitions; do not `cat` whole existing files; new files reviewed whole. Multiple changed docs: review selected sections together in one dispatch (retire "per updated file" in `feature-dev` Doc Sync). Security/data-integrity or effective `thorough`: full dimensions in either phase, honoring `sensitivity_hint=high`. **`/review-spec` alias-and-repair** (rarely used in practice; dominant producer is `/codex-review-doc`): convert it from an Agent dispatch to the shared `mcp__codex__codex` doc-review path at `spec` depth with the `[DOC_PHASE_REQUEST] spec` marker — the built-in-agent path is invisible to dispatch accounting, and its `Approved/Needs redesign` sentinels are unparseable (§2); the alias dissolves both. Update `allowed-tools`, rewrite the `rules/auto-loop.md` producer sentence, and replace the synthetic Bash-only test with pass **and** fail tests on the real MCP producer shape. |
-| AC | Final-phase dispatch reads sections not files; multi-doc change produces one dispatch; sensitive change gets full dimensions; `feature-dev` Doc Sync references the batched form; failing `/review-spec` records `doc_review.passed=false` and passing records `true` via the shared path (`dispatches == verdicts` holds; no `hooks/hooks.json` change — MCP events already observed); §3 regression case (b) end to end against the real converted producer (armed window ⇒ dispatched review, emitted `doc_phase`, and `by_phase` all `spec`); `rules/auto-loop.md` no longer claims the built-in-agent path. |
-
-### Step 4 — Deterministic link/anchor checker
+### Step 2 — Artifact classification, zero migration
 
 | | |
 |---|---|
-| Files | new `scripts/check-doc-links.js`, new `test/scripts/check-doc-links.test.js`, `skills/doc-review/SKILL.md`, optionally `package.json` |
-| Change | Validate repo-relative Markdown targets + local fragments against GitHub-style heading slugs and explicit HTML anchors; skip external URLs/`mailto:`/templated placeholders. Run *before* the LLM review; feed only failures to the reviewer. (`markdownlint` does not check link resolution.) |
-| AC | Dead relative link detected; valid fragment passes; duplicate-heading slugs handled; external URLs skipped; checker is advisory input to review, not a new gate. |
+| Files | new `scripts/lib/doc-metadata.js`, new `test/scripts/doc-metadata.test.js`, `scripts/lib/doc-classifier.js`, `scripts/lib/feature-resolver.js`, `scripts/classify-docs-cli.js`, `scripts/config/doc-taxonomy.json`, `test/scripts/doc-classifier.test.js` |
+| Change | Parse the § 3.1 blockquote metadata (30-line head window, exact match after trim, fail-closed to path default then `Current authority`). Add the path-default table. Extend `scanFeatureDocs` to emit the four source sets of § 3.2, keeping `canonical_docs` as a computed deprecated alias. **Propagate them**: `feature-resolver.js` copies only `doc_inventory` and `canonical_docs` out of the scan today (`scripts/lib/feature-resolver.js:31,35`) and `classify-docs-cli.js` serializes only those two (`scripts/classify-docs-cli.js:30`) — adding sets to `scanFeatureDocs` alone leaves every consumer blind to them. Both boundaries must forward the sets, including empty-set defaults on every null / early-return path |
+| AC | All four roles resolve from path with no metadata present; explicit metadata overrides in both directions; malformed / annotated values fall through rather than being guessed; unknown path ⇒ `Current authority`; every existing `doc-classifier` test still passes against the alias; the sets survive `feature-resolver` and the CLI, with empty-set defaults asserted on the `key: null` and CLI/branch/diff early returns |
 
-### Step 5 — Measure, then decide on impact machinery
-
-After ~20 completed doc cycles: compare final-phase dispatches/cycle vs Step 1 baseline,
-dispatch-to-verdict loss, sections/bytes per dispatch, and blocking findings *outside*
-selected sections later found by humans or `/codex-review-branch`. Build the deferred
-recall machinery (§5) only if untouched-but-invalidated sections are actually being missed.
-
-### Step 6 — Write-time budgets + lifecycle (separate small patches)
+### Step 3 — Migrate research consumers to source sets
 
 | | |
 |---|---|
-| Files | `skills/tech-spec/SKILL.md` + template, `skills/create-request/SKILL.md` + template; then request-archive automation |
-| Change | `/tech-spec`: target ≤ ~300 active lines; at 400 require a stated cohesion exception or extract reference material; never append review chronology to the canonical design. `/create-request`: target ~100 lines, AC ≤ 8, overwrite progress cells instead of appending rounds, reference the tech spec instead of inlining. On completion, archive the request (link-safe move) or state why it stays live. Migrate the 61 closed-but-unarchived requests as a deliberate, tested migration — not a blind bulk move. |
-| AC | New docs conform to budgets; completed request produces archive action or stated reason; migration rewrites inbound links (`grep -rn` sweep per `rules/docs-numbering.md`). |
+| Files | `skills/ask/SKILL.md`, `skills/runbook/SKILL.md`, `skills/architecture/SKILL.md`, `skills/feasibility-study/SKILL.md`, `skills/tech-brief/SKILL.md`, **both** copies of `references/feature-context-resolution.md` (`skills/tech-spec/`, `skills/create-request/`), their tests |
+| Change | "What does the system do now" resolves against code + `rules/` + `current_authority`; `design_records` are consulted only for "why was it designed this way" and are labelled as such in the answer |
+| AC | A frozen tech spec is no longer returned as a current-behaviour source (test asserts the absence, not just the presence of the new set); design questions still reach it |
 
-### Step 7 — Rule text alignment
+### Step 4 — The cheap review path (causal fix)
 
 | | |
 |---|---|
-| Files | `rules/auto-loop.md` (Cap Diagnostic table), `rules/docs-numbering.md` |
-| Change | Stop implying `/refactor --target` performs document *splitting* for `DOC_TOO_LONG` — it condenses. Point the row at condensation (`/doc-refactor`) and manual splitting per `docs-numbering.md`, or defer to Step 5 evidence before building a splitter. |
-| AC | No rule names a remedy no tool performs. |
+| Files | new `scripts/resolve-review-profile.js`, new `scripts/check-doc-links.js`, their tests, `scripts/config/doc-taxonomy.json` (the review-budget keys), `skills/doc-review/SKILL.md`, `skills/doc-review/references/codex-prompt-doc.md`, `skills/doc-review/references/review-loop-doc.md`, `skills/feature-dev/SKILL.md`, new `docs/features/doc-review-phasing/4-implementation.md` |
+| Change | Ship the five profiles and the resolver of § 3.3–3.4, including the two sensitivity inputs. The batch plan is a **per-file** profile mapping, not one profile for the batch: one file's escalation raises that file's questions and, when it escalates to `full-design`, the batch's shared dimensions — it never strips the record files' exemption from code-alignment questions. Run the deterministic link/anchor checker **before** the LLM review and feed it only failures (`markdownlint` does not resolve links); resolve every target with `realpath` and reject anything outside the repository root or reached through a symlink escape. Replace `feature-dev`'s per-updated-file Doc Sync line with **one logical review plan** covering all changed `.md` — the plan is the unit, and it holds one or more physical batches. Within the file/byte budget the plan is exactly **one** batch and therefore one dispatch, which is the case that buys the saving. Over budget the resolver fails **loud**: it splits the plan by feature folder in a deterministic order, says which batches it produced and why, and dispatches each — never silently truncating, and never claiming one dispatch it did not make. The budget is **12 files or 200,000 bytes of changed-file content, whichever is hit first** (the corpus median is 397 lines, so 12 median files ≈ 190 KB — the two limits bite at roughly the same place); it lives in `scripts/config/doc-taxonomy.json` alongside the path defaults, which is already the per-repo configuration surface. Splitting is **two passes, and the second is what makes the bound real**: (a) group by feature folder, with every `.md` outside `docs/features/**` in one final `(root)` group; (b) chunk each group, files in path order, starting a new batch at the file that would exceed either limit. Grouping alone does not bound anything — `auto-loop-evolution/` is 25 files / 319,862 bytes and `create-pr-stacked/` is 11 / 428,170 at `3744d58`, so a feature-folder batch is routinely over on its own. Every emitted batch is then within budget, with exactly one exception, which is reported rather than hidden: a batch holding a single file that alone exceeds the byte limit. Boundaries are inclusive: 12 files and 200,000 bytes are within budget; the 13th file or the 200,001st byte opens the next batch. A single file over 200,000 bytes is its own batch and is reported as over-budget rather than skipped — there is nothing left to split, and dropping it would be the silent truncation this whole clause exists to prevent. Groups are emitted in path order and their union is always the full changed set. Stop `cat`-ing whole existing files. Write `4-implementation.md` as the feature's current-authority record of the shipped mechanics (nothing else creates it; `/update-docs` syncs an existing target, it does not author a missing one) |
+| AC | Shallow profile with an out-of-whitelist diff escalates to `full-design`; a `sensitive-paths.json` hit escalates; a missing or unparseable `--tier` escalates; a semantic security change on a generic path escalates via `--tier thorough` with zero path hits; a within-budget multi-doc change produces one plan, one batch, one dispatch, with per-file profiles; a `record-diff` file carries no code-alignment question even when another file in the same batch escalated; an over-budget plan splits loudly and **every emitted batch is itself within budget, except a reported single-file batch whose one file exceeds 200,000 bytes** — a 25-file feature folder chunks further, boundaries pinned at 12/13 files and at 200,000/200,001 bytes, a single over-sized file forms its own batch and is reported, and the union of batches is the full changed set; dead relative link and dead fragment detected, valid fragment, external URL and templated placeholder pass, traversal and symlink-escape targets rejected; the checker is advisory input, not a gate; `4-implementation.md` exists and describes what shipped |
 
-## 5. Deferred (re-entry criteria: Step 5 shows recall failure)
+### Step 5 — Rewrite the Doc Sync contract; freeze requests on completion
+
+| | |
+|---|---|
+| Files | `rules/auto-loop.md` § Tiers Doc Sync sentence, `skills/feature-dev/SKILL.md`, `skills/update-docs/SKILL.md`, `skills/create-request/SKILL.md`, `test/rules/*` |
+| Change | Doc Sync becomes: update the affected **current-authority** docs and close out the active request; do **not** rewrite design or history records to mirror subsequent code; when the implementation diverged from the design, append a bounded Outcome/Deviations note or write a superseding record; a single batched doc review covers all `.md` edited. On completion a request is marked closed and frozen (`record-diff` thereafter) |
+| AC | Sentence is Default-tier and replaced coherently across rule and skills (no surviving "per updated file"); a completed request produces a freeze action or a stated reason; Anchor rows untouched — verified against `test/rules/discretion-tiers.test.js` |
+
+### Step 6 — Prune-first, write-time budgets, and measurement
+
+| | |
+|---|---|
+| Files | `rules/docs-numbering.md`, `rules/docs-writing.md`, `skills/tech-spec/SKILL.md` + template, `skills/create-request/SKILL.md` + template |
+| Change | Make **prune / merge first** the default response to bloat, alongside splitting — the current text's "the remedy is splitting, never deleting content" is the line under which 241 docs were added and 0 removed. Write-time budgets: `/tech-spec` targets ≤ ~300 active lines (cohesion exception must be stated at 400); `/create-request` targets ~100 lines, AC ≤ 8, overwriting progress cells instead of appending rounds. After ~20 completed doc cycles compare dispatches/cycle, bytes/dispatch, profile mix and dispatch-to-verdict loss against the Step 1 baseline |
+| AC | New docs conform to the budgets; the prune path is named as a first-class remedy; measurement is reported before any deferred machinery (§ 5) is built |
+
+## 5. Deferred (re-entry criterion: Step 6 measurement shows recall failure)
 
 Identifier/symbol extraction, repo-wide authority search, one-hop semantic link traversal,
 `covers:` ownership metadata, file/section manifest hashes, scope hashes echoed by
 reviewers, receipt consumption by covered section, `DOC_IMPACT_UNRESOLVED`, automatic
-chunking. Rationale: this machinery's own delivery cost (a feature folder, a spec, hook
-schema surgery, dozens of review rounds) is drawn from exactly the budget it claims to
-save; it must be justified by measured recall failure, not anticipated.
+**semantic section chunking** (not Step 4's physical dispatch batching, which ships),
+and a one-time backfill of role banners across the 255 existing documents.
+Rationale: this machinery's delivery cost (a feature folder, a spec, hook schema surgery,
+dozens of review rounds) is drawn from exactly the budget it claims to save; it must be
+justified by measured recall failure, not anticipated.
 
 ## 6. Risks Accepted
 
 | Risk | Bound |
 |------|-------|
-| Untouched section invalidated by a code change is missed in `final` | Step 5 measures it; deferred machinery is the answer if observed |
-| Cross-section contradiction escapes section scope | Same |
-| A `final` marker pasted into an ad-hoc review prompt while the token happens to be armed would run as `final` | Cooperative-trust boundary, identical to the existing `## Document Review` header (hook's stated threat model; adversarial producers out of scope); full fix (per-run nonce) is the same deferred item the hook already documents for review provenance generally |
-| New 400-line doc is still a 400-line review | Its content is all new; write-time budgets (Step 6) shrink the population |
-| Anchor-slug edge cases (Unicode, duplicate headings) | Checker tests pin behavior; advisory-only, so a miss costs one LLM finding, not a gate |
-| Semantic security escalation remains partly model-enforced | Effective tier is not persisted today; prompt preserves the escalation obligation and reacts to `sensitivity_hint=high` |
+| An unstructured `grep`/`Glob` reaches a frozen design record and reads it as current behaviour | Source sets remove it from the *default* research path, not from the filesystem; § 3.1 metadata gives a human-visible banner where it matters. Backfill is deferred |
+| A producer names a shallow profile it is not entitled to | The changed-section whitelist is the control, and it is deterministic. Same cooperative-trust boundary as the existing `## Document Review` header (the hook's stated threat model: trust root is `.claude/` integrity; adversarial producers are out of scope) |
+| A section untouched by the diff is invalidated by the code change and is missed under a shallow profile | Step 6 measures it; the § 5 machinery is the answer only if observed |
+| Path defaults are right for this repo and may be wrong elsewhere | They live in `doc-taxonomy.json`, which is already the per-repo configuration surface |
+| Anchor-slug edge cases (Unicode, duplicate headings) in the link checker | Tests pin behaviour; advisory-only, so a miss costs one finding, not a gate |
+| The upfront design gate stays off, because `## Plan Review` cannot be activated where the scaffold and the live config are one file (Step 1 § Blocked) | Until the scaffold gets its own home — an `install-rules` change, not this feature's — the opt-in is per session: ask for `/plan-review` explicitly. When it is activated it inherits `## Plan Review Max Rounds` (default 5), and Step 6 measures it with the rest |
 
-## 7. Non-Goals / Invariants Preserved
+## 7. Testing Strategy
 
-- No change to *whether* review runs, gate re-opening, receipt semantics, or sentinel pairs.
-- No second gate; `/review-spec` is the spec-depth producer of the existing doc gate.
-- No new human exit ("spec not landed" is just an open doc gate).
+| Step | Layer | Key cases |
+|------|-------|-----------|
+| 1 | Unit (`test/skills/`, `test/hooks/`) | `/review-spec` pass **and** fail both record a verdict; counters increment on dispatch and on each outcome; code-plane counters unchanged |
+| 2 | Unit (`test/scripts/`) | Role resolution from path for all four roles; metadata override both directions; malformed / annotated / missing values; unknown path ⇒ `Current authority`; alias parity with existing classifier tests |
+| 3 | Integration | Frozen tech spec absent from current-behaviour sources; present for design questions |
+| 4 | Unit + integration | Whitelist escalation; sensitivity escalation; batching; per-profile question sets; link checker positive and negative cases |
+| 5 | Rules tests | Replaced sentence coherent across rule + skills; Anchor rows intact |
+| 6 | Measurement | Reported against the Step 1 baseline, not asserted by test |
+
+Guard cases follow `rules/testing.md` § Conventions — Guards: every refusal ships with the matching
+acceptance case in the same change.
+
+## 8. Non-Goals / Invariants Preserved
+
+- No change to *whether* review runs, gate re-opening, receipt semantics or sentinel pairs.
+- No second gate, no new human exit, no new `[AUTO_LOOP_STATE]` field.
 - `/refactor` trigger probability is deliberately **not** raised.
-- Code-plane counters, stall detection, and cap protocol untouched.
+- Code-plane counters, stall detection and the Cap Diagnostic Protocol are untouched.
+- No bulk rewrite of the 255 existing documents is required for any step to work.
+
+## 9. Open Questions
+
+| # | Question | Owner / when |
+|---|----------|--------------|
+| 1 | Should `4-implementation*` really be the only lifecycle doc defaulting to current authority, or should an explicitly `Status: Accepted` tech spec also qualify? | Decide from Step 2 test evidence over this repo's 59 specs |
+| 2 | Does `executable` need to be distinct from `living-sync`, or does the instruction-surface question collapse into accuracy? | Decide at Step 4 from the first ten dispatches |
+| 3 | Whether the deprecated `canonical_docs` alias is removed after Step 3 or kept indefinitely for external consumers | After Step 3 lands |
+
+## Provenance
+
+Design converged through adversarial Claude+Codex debate: an initial 3-round exchange (10
+attacks, both positions revised) produced the state-machine draft this document replaces; a
+second exchange under `/best-practices` (thread `019fe228-5796-7091-ac99-fe002636768f`,
+early convergence at round 2, all four attacks conceded) retired the state machine in favour
+of the classification + intent + resolver design above, benchmarked against Google's
+minimum-viable-documentation and design-doc practice, ADR immutability, and
+deterministic-checks-before-human-review.

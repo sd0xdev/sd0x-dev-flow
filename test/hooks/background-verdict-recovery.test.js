@@ -702,6 +702,117 @@ function runBackgroundHandoff(cwd, prompt, taskId) {
   });
 }
 
+// --- Doc-plane instrumentation (advisory; `_bump_doc_counter`) ---
+// These live here rather than in post-tool-review-state.test.js because the PreToolUse path writes
+// through real jq filters that this suite, and only this suite, actually evaluates.
+
+test('a doc-plane PreToolUse dispatch increments the advisory doc counter', { skip: !HAVE_JQ }, () => {
+  const dir = makeTempDir('sd0x-bg-doccount-doc-');
+  writeTranscript(dir, []);
+  seedState(dir, { markers: [] });
+
+  runPreHook(dir, DOC_REQUEST);
+  const afterOne = readState(dir);
+  assert.equal(afterOne.doc_iteration_history.dispatches, 1, 'the doc dispatch is counted');
+  assert.equal(afterOne.doc_iteration_history.verdicts, 0, 'no verdict has arrived yet');
+
+  runPreHook(dir, DOC_REQUEST);
+  assert.equal(readState(dir).doc_iteration_history.dispatches, 2, 'a second dispatch adds one');
+});
+
+// Negative control for the case above. Without it, a bump wired to every dispatch — rather than to
+// the doc plane's — would look identical: the doc test would still pass.
+test('a code-plane PreToolUse dispatch leaves the doc counter untouched', { skip: !HAVE_JQ }, () => {
+  const dir = makeTempDir('sd0x-bg-doccount-code-');
+  writeTranscript(dir, []);
+  seedState(dir, { markers: [] });
+
+  runPreHook(dir, CODE_REQUEST);
+  const state = readState(dir);
+  assert.equal(state.dispatch_count.code, 1, 'the code dispatch itself was recorded');
+  assert.equal(state.doc_iteration_history, undefined, 'but no doc counter was created');
+});
+
+// A report that carries the doc-review header but no Gate sentinel: recognized as ours, unusable as
+// a verdict. That is exactly the `no_verdict` bucket — the one that separates "came back malformed"
+// from "never came back", which is the whole point of counting dispatches against verdicts.
+const DOC_NO_SENTINEL = '## Document Review\n\n### Review Summary\n\nRatings only; the Gate section never got written.';
+
+test('a background-recovered doc report with no sentinel counts as no_verdict, not as a lost dispatch', { skip: !HAVE_JQ }, () => {
+  // Arrange
+  const dir = makeTempDir('sd0x-bg-doccount-noverdict-');
+  const t = setup(dir, {
+    markers: [marker('doc', 'tk-nv1')],
+    entries: [genuineDelivery('tk-nv1', DOC_NO_SENTINEL)],
+  });
+
+  // Act
+  const result = runHook(dir, t);
+
+  // Assert
+  assert.match(result.stderr, /carries no verdict sentinel/);
+  const state = readState(dir);
+  assert.equal(state.doc_iteration_history.no_verdict, 1, 'the returned-but-malformed report is counted');
+  assert.equal(state.doc_iteration_history.verdicts, 0, 'and it is not counted as a verdict');
+  assert.equal(state.doc_review.executed, false, 'no receipt is banked from it');
+  assert.deepEqual(state.background_reviews, [], 'its marker is consumed either way');
+});
+
+// Negative control for the counting site: the increment is bound to CLAIMING the marker, not to
+// reaching the branch. Without this, moving the bump ahead of `_consume_background_review` would
+// look identical above — and every replayed delivery would inflate the baseline.
+test('a replayed delivery of the same malformed report does not count a second time', { skip: !HAVE_JQ }, () => {
+  const dir = makeTempDir('sd0x-bg-doccount-replay-');
+  const t = setup(dir, {
+    markers: [marker('doc', 'tk-nv2')],
+    entries: [genuineDelivery('tk-nv2', DOC_NO_SENTINEL)],
+  });
+
+  runHook(dir, t);
+  assert.equal(readState(dir).doc_iteration_history.no_verdict, 1);
+
+  // Same transcript, same task, marker already gone — the second pass has nothing left to claim.
+  const second = runHook(dir, t);
+  assert.doesNotMatch(second.stderr, /carries no verdict sentinel/);
+  assert.equal(readState(dir).doc_iteration_history.no_verdict, 1, 'one returned report, counted once');
+});
+
+// The behavioural pair above stops at the state prefilter on its second pass, so neither case ever
+// re-enters the guarded branch with the marker already consumed — the race that matters is two
+// processes both reaching the branch on the same marker, which no fixture can stage
+// deterministically. That leaves the guard itself unpinned: sequencing it as
+// `_consume_background_review ...; _bump_doc_counter no_verdict` would double-count that race and
+// keep every test above green. So the structure is asserted directly.
+test('the no_verdict bump is bound to a SUCCESSFUL consume, structurally', { skip: !HAVE_JQ }, () => {
+  // The branch runs from its own stderr line to the `continue` that ends it — bounded by what the
+  // branch IS, so a comment growing or shrinking inside it cannot silently move the window off the
+  // code being pinned.
+  const start = HOOK_SRC.indexOf('carries no verdict sentinel');
+  assert.notEqual(start, -1, 'the branch this test pins still exists');
+  const branch = HOOK_SRC.slice(start, HOOK_SRC.indexOf('\n        continue', start));
+
+  assert.match(branch, /if\s+_consume_background_review\s+"\$task"\s+"\$plane";\s*then\s+_bump_doc_counter no_verdict;\s*fi/,
+    'the bump must sit inside the consume conditional, not after it');
+  assert.doesNotMatch(branch, /_consume_background_review "\$task" "\$plane"[^\n]*\n\s*_bump_doc_counter/,
+    'an unconditional bump on the following line would count a report a second writer already claimed');
+});
+
+test('a doc report refused for staleness is NOT counted as no_verdict', { skip: !HAVE_JQ }, () => {
+  // The refusal happens before the sentinel is ever read: nothing came back as far as the ledger is
+  // concerned, so this belongs in the dispatch-loss residual, not in the malformed bucket.
+  const dir = makeTempDir('sd0x-bg-doccount-stale-');
+  const t = setup(dir, {
+    markers: [marker('doc', 'tk-nv3', NOW - 600)],
+    editedAt: { doc: NOW - 60 },
+    entries: [genuineDelivery('tk-nv3', DOC_NO_SENTINEL)],
+  });
+
+  const result = runHook(dir, t);
+
+  assert.match(result.stderr, /was edited after the review was dispatched/);
+  assert.equal(readState(dir).doc_iteration_history, undefined, 'no counter is created by a refusal');
+});
+
 test('reference counting: a plane resolving does not clear the epoch while a second, still-outstanding dispatch on it needs it (P1#1 regression)', { skip: !HAVE_JQ }, () => {
   // Reproduces the false-accept round-21 review found: an unconditional `del` on `dispatch_epoch`
   // let a still-in-flight second dispatch's EVENTUAL marker freeze a value inherited from an

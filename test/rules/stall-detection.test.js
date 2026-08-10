@@ -113,6 +113,29 @@ test('/refactor is offered for exactly two classes, and constrained where it is'
   assert.match(autoLoop, /Excluded for security and data-integrity changes/);
 });
 
+// The row above pins WHICH classes offer /refactor. It does not pin what the rule claims /refactor
+// does — and the two came apart: the row used to read "Split or shrink first … /refactor is the
+// sanctioned tool", naming a splitting operation no skill performs (`/refactor` on a `.md` target
+// dispatches `/doc-refactor`, which condenses; `docs-numbering.md` § Size Limit states splitting is
+// manual). That wording passed every assertion above. A rule that names a remedy no tool performs
+// sends the loop to a dead end, so the claim itself is pinned here.
+test('the DOC_TOO_LONG remedy describes what /refactor actually does — condense, not split', () => {
+  const row = autoLoop.match(/^\| `DOC_TOO_LONG` \| [^|]+\| ([^|]+)\|/m);
+  assert.ok(row, 'the DOC_TOO_LONG row still exists');
+  const remedy = row[1];
+
+  assert.match(remedy, /condenses/, 'the row must say what /refactor does to the target');
+  assert.match(remedy, /splitting is manual/, 'and must not leave splitting looking automated');
+  assert.doesNotMatch(remedy, /\bSplit or shrink\b/,
+    'the retired wording named splitting as the tool\'s job');
+
+  // Negative control, in the direction that matters: the claim must agree with the skill it names.
+  // `/doc-refactor` is the `.md` path `/refactor` dispatches to, and it condenses.
+  const docRefactor = read('agents/doc-refactor.md');
+  assert.match(docRefactor, /[Cc]ondense/,
+    'if /doc-refactor ever gains a splitting mode, this row and this test move together');
+});
+
 // --- The anti-loop budget --------------------------------------------------------------------
 
 test('the two triggers carry separate budgets, and the stall budget matches the memory bound', () => {

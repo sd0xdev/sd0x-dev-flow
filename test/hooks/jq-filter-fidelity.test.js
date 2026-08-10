@@ -1114,3 +1114,65 @@ test('real jq: an object carrying a recognized payload is still unwrapped', { sk
   assert.equal(r.status, 0, `real jq rejected the production normalizer:\n${r.err}`);
   assert.equal(r.out, '## Document Review\n\n✅ Mergeable');
 });
+
+// --- The advisory doc-plane counter (`_bump_doc_counter`) ---
+// This filter is BUILT at runtime (a default-object base, then one appended clause per field), so
+// it never exists in the source as one delimited program. Both pieces are extracted from the hook
+// text and reassembled here exactly as the shell does, which keeps the fidelity guarantee: change
+// either piece in the hook and this test either fails to find it or evaluates the new semantics.
+
+const DOC_COUNTER_BASE = (() => {
+  const marker = "jq_expr='.doc_iteration_history //=";
+  const at = reviewState.indexOf(marker);
+  assert.notEqual(at, -1, '_bump_doc_counter base filter not found in post-tool-review-state.sh');
+  const open = reviewState.indexOf("'", at);
+  const close = reviewState.indexOf("'", open + 1);
+  assert.notEqual(close, -1, 'could not delimit the _bump_doc_counter base filter');
+  return reviewState.slice(open + 1, close);
+})();
+
+/** The appended clause, with the shell's `${f}` expansion performed the way the hook performs it. */
+function docCounterFilter(...fields) {
+  const clause = (() => {
+    const marker = 'jq_expr+=" | .doc_iteration_history.';
+    const at = reviewState.indexOf(marker);
+    assert.notEqual(at, -1, '_bump_doc_counter increment clause not found');
+    const open = at + 'jq_expr+="'.length;
+    const close = reviewState.indexOf('"', open);
+    assert.notEqual(close, -1, 'could not delimit the _bump_doc_counter increment clause');
+    return reviewState.slice(open, close);
+  })();
+  return DOC_COUNTER_BASE + fields.map((f) => clause.split('${f}').join(f)).join('');
+}
+
+test('real jq: the doc counter creates its object lazily and increments the named field', { skip: !HAVE_JQ }, () => {
+  const r = runFilter(docCounterFilter('dispatches'), { doc_review: { passed: false } });
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  const out = JSON.parse(r.out);
+  assert.equal(out.doc_iteration_history.dispatches, 1, 'the named field is incremented');
+  assert.equal(out.doc_iteration_history.verdicts, 0, 'every sibling field is seeded at zero');
+  assert.deepEqual(out.doc_review, { passed: false }, 'and nothing else in the document is touched');
+});
+
+test('real jq: the doc counter preserves existing counts and bumps two fields in one write', { skip: !HAVE_JQ }, () => {
+  const seeded = {
+    doc_iteration_history:
+      { dispatches: 4, verdicts: 2, passes: 1, blocks: 1, no_verdict: 0, legacy: 0 },
+  };
+  const r = runFilter(docCounterFilter('verdicts', 'passes'), seeded);
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  const out = JSON.parse(r.out);
+  assert.equal(out.doc_iteration_history.dispatches, 4, '`//=` must not reset an existing object');
+  assert.equal(out.doc_iteration_history.verdicts, 3);
+  assert.equal(out.doc_iteration_history.passes, 2);
+  assert.equal(out.doc_iteration_history.blocks, 1, 'the untouched outcome field stays put');
+});
+
+// The counter must never be able to fail the state document it rides on: `iteration_history` is
+// the code plane's, and a doc-plane bump that reset or reshaped it would corrupt stall detection.
+test('real jq: the doc counter leaves the code-plane iteration_history alone', { skip: !HAVE_JQ }, () => {
+  const seeded = { iteration_history: { current_round: 7, max_rounds: 30, stall_streak: 2 } };
+  const r = runFilter(docCounterFilter('no_verdict'), seeded);
+  assert.equal(r.status, 0, `real jq rejected the production filter:\n${r.err}`);
+  assert.deepEqual(JSON.parse(r.out).iteration_history, seeded.iteration_history);
+});

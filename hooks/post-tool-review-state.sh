@@ -2849,6 +2849,43 @@ _record_dispatch_epoch() {
   return 0
 }
 
+# === Doc-plane instrumentation (advisory — never affects a gate) ===
+# The doc plane has no round counter: `current_round` counts code-review rounds only, so the doc
+# plane's *rate* — the thing the "dozens of rounds" complaint is about — is currently unmeasurable.
+# These counters make it observable without giving the plane a cap, a stall detector, or any
+# blocking behaviour. `dispatches - verdicts` is the loss metric (timeouts, lost background tasks);
+# `no_verdict` isolates the subset where a report DID come back but carried no sentinel; `legacy`
+# holds direct Bash/Skill verdicts, which never incremented `dispatches` and would otherwise read
+# as loss. Field semantics and what the numbers are compared against:
+# docs/features/doc-review-phasing/2-tech-spec.md § 4 Step 1.
+#
+# Deliberately NOT folded into `_record_dispatch_epoch` or `update_state`: those carry the receipt
+# and reference-count invariants this file has spent thirty review rounds on, and a counter that is
+# advisory by construction must never be able to fail one of their transactions. The price is that
+# a counter can drift from a receipt when a bump loses the lock — acceptable for instrumentation,
+# and why every call site ignores the return value and why this always returns 0.
+_bump_doc_counter() {
+  local tmp f jq_expr _bdc_ok=false
+  [[ $# -gt 0 ]] || return 0
+  jq_expr='.doc_iteration_history //= {"dispatches":0,"verdicts":0,"passes":0,"blocks":0,"no_verdict":0,"legacy":0}'
+  for f in "$@"; do
+    case "$f" in
+      dispatches|verdicts|passes|blocks|no_verdict|legacy) ;;
+      *) return 0 ;;  # unknown field: write nothing rather than inventing a key
+    esac
+    jq_expr+=" | .doc_iteration_history.${f} = ((.doc_iteration_history.${f} // 0) + 1)"
+  done
+  _lock 5 || return 0
+  if ! init_state_file; then _unlock; return 0; fi
+  tmp=$(_lock_staging_file) || { _unlock; return 0; }
+  if jq "$jq_expr" "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+    _own_lock && mv "$tmp" "$STATE_FILE" && _bdc_ok=true
+  fi
+  [[ "$_bdc_ok" == "true" ]] || rm -f "$tmp" 2>/dev/null
+  _unlock
+  return 0
+}
+
 # Shared by every retirement site (`_clear_dispatch_epoch` below and `update_state`'s own plane-wide
 # sweep): decrement `dispatch_count[plane]`, and only once it reaches zero clear `dispatch_epoch[plane]`
 # and the count entry itself. One filter, not two copies — two independently-written unconditional
@@ -3277,7 +3314,15 @@ _recover_background_reviews() {
       if [[ -z "$verdict" ]]; then
         echo "[Review State] backgrounded doc review (task ${task}) carries no verdict sentinel — no state recorded" >&2
         _clear_own_sidecar "$_rec_guard"
-        _consume_background_review "$task" "$plane" || true
+        # A report that came back malformed is `no_verdict`, not a lost dispatch — the same call the
+        # foreground MCP branch makes. Counted only when THIS call is the one that claimed the
+        # marker: a replayed delivery or a concurrent writer that already consumed it would
+        # otherwise count one returned report twice, and `dispatches - verdicts` is the figure this
+        # instrumentation exists to make honest. `if` and not `&&` for what it says, not for
+        # errexit — a failing left-hand command in an AND-list is exempt from `set -e`, so both
+        # forms are safe here: the `if` states that counting is bound to marker OWNERSHIP, and
+        # yields a harmless status when a competing writer wins the consume.
+        if _consume_background_review "$task" "$plane"; then _bump_doc_counter no_verdict; fi
         continue
       fi
       # Marker retirement and receipt are ONE locked transaction — `update_state`'s 5th argument.
@@ -3294,6 +3339,7 @@ _recover_background_reviews() {
       # old split (marker removed by this call, epoch released by a second, separately-locked call)
       # permanently orphaned the count whenever the second lock acquisition failed; a second release
       # here now would double-retire the unit this call already closed.
+      _bump_doc_counter verdicts "$([[ "$verdict" == "true" ]] && echo passes || echo blocks)"
       echo "[Review State] doc_review updated (task notification, background task ${task}): passed=$verdict" >&2
       _alf_new=$(_alf_receipt doc_review)
       _alf_emit "event=doc_review_verdict change=doc source=task_notification task=${task} $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$verdict")" \
@@ -3537,6 +3583,8 @@ update_aggregate_blocked() {
 # because the digest took 2.93 s and could not be taken under the shared lock; a scalar can.
 if [[ "$HOOK_EVENT" == "PreToolUse" ]]; then
   _mcp_request_asked_for_doc_review && _record_dispatch_epoch doc || true
+  # Advisory doc-plane counter, separate write on purpose — see `_bump_doc_counter`.
+  _mcp_request_asked_for_doc_review && _bump_doc_counter dispatches || true
   _mcp_request_asked_for_code_review && _record_dispatch_epoch code || true
   exit 0
 fi
@@ -3757,6 +3805,9 @@ if [[ "$_doc_review_matched" == "true" ]]; then
     # Legacy Bash/Skill dispatch — see the code-review block above for why `release_self` stays
     # `false` here too.
     update_state "doc_review" "true" "$passed" "" "" "doc" "false"
+    # `legacy` only: this route never incremented `dispatches` (PreToolUse tracking covers the MCP
+    # tools alone), so counting it as a verdict would make `dispatches - verdicts` go negative.
+    _bump_doc_counter legacy
     echo "[Review State] doc_review updated: passed=$passed" >&2
     _alf_new=$(_alf_receipt doc_review)
     _alf_emit "event=doc_review_verdict change=doc $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$passed")" \
@@ -4000,11 +4051,13 @@ if [[ "$TOOL_NAME" == "mcp__codex__codex" || "$TOOL_NAME" == "mcp__codex__codex-
         # only when the read-back receipt proves THIS call's write (and its bundled epoch/marker
         # retirement, same transaction) actually landed.
         _alf_write_confirmed doc_review "$_mcp_doc_verdict" && _settled_doc=true
+        _bump_doc_counter verdicts "$([[ "$_mcp_doc_verdict" == "true" ]] && echo passes || echo blocks)"
         echo "[Review State] doc_review updated (MCP): passed=$_mcp_doc_verdict" >&2
         _alf_emit "event=doc_review_verdict change=doc source=mcp $(_alf_transition doc_review "$_alf_old" "$_alf_new" "$_mcp_doc_verdict")" \
           "$(_alf_common)" "pending=$([[ "$_alf_new" == "true" ]] && echo none || echo doc_review)" >&2
       else
         echo "[Review State] MCP doc review carries no verdict sentinel — no state recorded" >&2
+        _bump_doc_counter no_verdict
         _clear_dispatch_epoch doc && _settled_doc=true
       fi
     fi

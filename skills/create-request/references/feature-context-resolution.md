@@ -82,11 +82,11 @@ When creating or updating documents, enforce bidirectional links:
 
 | When creating... | Must link to... | Link format |
 |-----------------|----------------|-------------|
-| Requirements doc | Tech spec (if exists) | `> **Tech Spec**: [Link](./<canonical_docs.tech_spec.file>)` |
+| Requirements doc | Tech spec (if exists) | `> **Tech Spec**: [<canonical_docs.tech_spec.file>](./<canonical_docs.tech_spec.file>)` |
 | Requirements doc | Active request(s) | `> **Requests**: [Title](./requests/YYYY-MM-DD-*.md)` |
-| Request doc | Requirements (if exists) | `> **Requirements**: [Link](../<canonical_docs.requirements.file>)` |
-| Request doc | Tech spec (if exists) | `> **Tech Spec**: [Link](../<canonical_docs.tech_spec.file>)` |
-| Tech spec | Requirements (if exists) | `> **Requirements**: [Link](./<canonical_docs.requirements.file>)` |
+| Request doc | Requirements (if exists) | `> **Requirements**: [<canonical_docs.requirements.file>](../<canonical_docs.requirements.file>)` |
+| Request doc | Tech spec (if exists) | `> **Tech Spec**: [<canonical_docs.tech_spec.file>](../<canonical_docs.tech_spec.file>)` |
+| Tech spec | Requirements (if exists) | `> **Requirements**: [<canonical_docs.requirements.file>](./<canonical_docs.requirements.file>)` |
 | Tech spec | Active request(s) | `> **Requests**: [Title](./requests/YYYY-MM-DD-*.md)` |
 | Update-docs report | All applicable | In report summary section |
 
