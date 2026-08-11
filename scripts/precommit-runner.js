@@ -14,6 +14,12 @@
 
 const fs = require('fs');
 const path = require('path');
+
+// stdout is a diagnostic sink, never the verdict channel: an early-closing pipe
+// (e.g. `runner | head`) raises EPIPE, and an unhandled one would kill the
+// process before the receipt append. Losing the sink must not lose the gate.
+process.stdout.on('error', () => {});
+process.stderr.on('error', () => {});
 const {
   nowISO,
   sha1,
@@ -37,6 +43,20 @@ const {
   loadLintGlobs,
   buildRecipes,
 } = require('./lib/utils');
+
+// Content-addressed receipt producer (WB2,
+// docs/features/auto-loop-evolution/2-tech-spec/2-content-addressed-receipts.md §3.4).
+// Optional: the installed copy in a consuming project may not ship these libs — there the
+// legacy stdout-parsing route still governs, so absence degrades to today's behaviour.
+let receiptLog = null;
+let treeDigest = null;
+try {
+  receiptLog = require('./lib/receipt-log');
+  treeDigest = require('./lib/tree-digest');
+} catch {
+  receiptLog = null;
+  treeDigest = null;
+}
 
 // Steps that check repo POLICY rather than validate the project. They can fail a run, but they
 // never satisfy "some validation ran" — see the overallPass comment for the false-green this
@@ -131,9 +151,31 @@ async function main() {
   };
   writeJson(path.join(logDir, 'meta.json'), meta);
 
+  // Writability preflight: a producer must not run the gate silently degraded —
+  // an unwritable receipt log discovered only at append time would let the run's
+  // evidence vanish while its stdout still looked authoritative.
+  if (!receiptLog || !treeDigest) {
+    process.stdout.write(
+      '> ⚠️ content-addressed receipt producer unavailable (lib/tree-digest.js or lib/receipt-log.js not installed) — legacy stdout-route receipts only\n'
+    );
+  }
+  if (receiptLog) {
+    const pre = receiptLog.preflightWritable(repoRoot);
+    if (!pre.ok) {
+      process.stdout.write(
+        `# Precommit (${args.mode})\n\n` +
+          `❌ receipt log unwritable — refusing to run the gate silently degraded.\n` +
+          `   ${pre.error}\n\n` +
+          `## Overall: ❌ FAIL\n`
+      );
+      return;
+    }
+  }
+
   let statusBefore = '';
   let statusAfter = '';
   let changedAfterLint = [];
+  let baseline = null; // code-plane digest after lint:fix — the validation baseline
   const results = [];
   let summaryError = '';
   const pm = detectPackageManager(repoRoot);
@@ -237,6 +279,9 @@ async function main() {
       if (s.status === 'skip') {
         results.push(s);
         appendLog(runnerLog, `[${nowISO()}] step_skip ${s.name} (${s.reason})\n`);
+        if (s.name === 'lint_fix' && treeDigest) {
+          baseline = treeDigest.computeTreeState(repoRoot).planes.code;
+        }
         continue;
       }
       appendLog(runnerLog, `[${nowISO()}] step_start ${s.name}\n`);
@@ -262,6 +307,12 @@ async function main() {
       process.stdout.write(`> finished ${s.name} (code=${r.code})\n`);
       if (s.name === 'lint_fix') {
         changedAfterLint = await gitDiffNameOnly(repoRoot);
+        // Baseline sits after the last intentionally-mutating step and before
+        // build/test; overallPass recomputes it and a PASS receipt requires the
+        // endpoints to be equal (§3.4).
+        if (treeDigest) {
+          baseline = treeDigest.computeTreeState(repoRoot).planes.code;
+        }
       }
     }
 
@@ -301,8 +352,123 @@ async function main() {
     })(),
     error: summaryError || undefined,
   };
-  writeJson(path.join(logDir, 'summary.json'), summary);
-  appendLog(runnerLog, `[${nowISO()}] summary_written\n`);
+  // Content-addressed verdict append (WB2): the producer records what it knows,
+  // independent of stdout surviving truncation, piping, or backgrounding. It
+  // runs BEFORE any diagnostic write (summary.json, summary.md) — evidence
+  // production must not die to a failing diagnostic sink. The NO CHECKS RUN
+  // state appends nothing — an all-skip run is not evidence in either
+  // direction; a crashed run (summaryError) has no verdict to record.
+  const receiptPolicyOnly =
+    results.length > 0 &&
+    results.every(r => r.status === 'skip' || isPolicyStep(r.name));
+  const receiptPolicyFailed = results.some(
+    r => isPolicyStep(r.name) && r.status !== 'skip' && r.code !== 0
+  );
+  if (
+    receiptLog &&
+    treeDigest &&
+    !summaryError &&
+    !(receiptPolicyOnly && !receiptPolicyFailed)
+  ) {
+    try {
+      const endpoint = treeDigest.computeTreeState(repoRoot).planes.code;
+      const verdict = summary.overallPass ? 'pass' : 'fail';
+      const endpointsMatch =
+        baseline &&
+        !baseline.partial &&
+        !endpoint.partial &&
+        baseline.digest === endpoint.digest;
+      if (verdict === 'pass' && !endpointsMatch) {
+        // The tree drifted between lint:fix and overallPass (or a digest was
+        // partial): a PASS receipt is refused — loudly — and the gate stays
+        // open. FAIL is exempt below: negative evidence names what it observed.
+        process.stdout.write(
+          `> ⚠️ receipt withheld: baseline digest ${
+            (baseline && baseline.digest) || '(partial)'
+          } != endpoint ${endpoint.digest || '(partial)'} — tree changed during checks\n`
+        );
+        appendLog(runnerLog, `[${nowISO()}] receipt_withheld endpoint_mismatch\n`);
+      } else {
+        const rec = {
+          v: 1,
+          kind: 'verdict',
+          plane: 'precommit',
+          digest: endpoint.digest,
+          verdict,
+          mode: args.mode,
+          head: short,
+          time: nowISO(),
+          producer: 'precommit-runner',
+        };
+        if (endpoint.partial) rec.partial = true;
+        if (verdict === 'pass' && endpoint.digest) {
+          // Resolution is recorded only after actually reading the fallback
+          // file; an unreadable fallback resolves nothing (over-block, §4).
+          const ts = receiptLog.readTombstones(repoRoot);
+          if (ts.ok) {
+            const ids = receiptLog.matchingTombstoneIds(
+              ts.records,
+              'precommit',
+              endpoint.digest
+            );
+            if (ids.length) {
+              rec.resolves = ids.map(id => ({
+                plane: 'precommit',
+                digest: endpoint.digest,
+                id,
+              }));
+            }
+          }
+        }
+        try {
+          const { file } = receiptLog.resolveReceiptPaths(repoRoot);
+          receiptLog.appendRecords(file, [rec]);
+          appendLog(runnerLog, `[${nowISO()}] receipt_appended verdict=${verdict}\n`);
+        } catch (e) {
+          // Primary append failed: tombstone the pair on the fallback path so an
+          // older same-digest PASS cannot silently close this gate (§4).
+          appendLog(
+            runnerLog,
+            `[${nowISO()}] receipt_append_failed ${String(e && e.message)}\n`
+          );
+          try {
+            if (!endpoint.digest) {
+              // A partial digest matches nothing, so there is no (plane, digest)
+              // pair an older PASS could close — nothing to tombstone.
+              throw new Error('endpoint digest partial — no pair to block');
+            }
+            receiptLog.appendTombstone(repoRoot, [
+              { plane: 'precommit', digest: endpoint.digest },
+            ]);
+            process.stdout.write(
+              `> ⚠️ receipt append failed (${String(
+                e && e.message
+              )}); tombstone written — this (plane, digest) stays blocked until a later run resolves it\n`
+            );
+          } catch (e2) {
+            process.stdout.write(
+              `> ❌ receipt append AND tombstone write failed: ${String(
+                e && e.message
+              )} / ${String(e2 && e2.message)}\n`
+            );
+          }
+        }
+      }
+    } catch (e) {
+      process.stdout.write(
+        `> ⚠️ receipt production failed: ${String((e && e.message) || e)}\n`
+      );
+    }
+  }
+
+  try {
+    writeJson(path.join(logDir, 'summary.json'), summary);
+    appendLog(runnerLog, `[${nowISO()}] summary_written\n`);
+  } catch (e) {
+    process.stdout.write(
+      `> ⚠️ summary.json write failed (diagnostic only): ${String((e && e.message) || e)}\n`
+    );
+  }
 
   // Output concise Markdown (for Claude Code context)
   const lines = [];
