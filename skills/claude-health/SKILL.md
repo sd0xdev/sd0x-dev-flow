@@ -177,7 +177,7 @@ plugin_hash    = git hash-object --no-filters <plugin-path>  # source of truth
 |----------|-----------|--------------|-------|
 | Rules | `.claude/rules/*.md` | `rules/*.md` | `auto-loop.md`, `codex-invocation.md`, `fix-all-issues.md`, `framework.md`, `testing.md`, `security.md`, `git-workflow.md`, `logging.md`, `docs-writing.md`, `docs-numbering.md`, `self-improvement.md`, `context-management.md` |
 | Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` | `pre-edit-guard.sh`, `post-edit-format.sh`, `post-tool-review-state.sh`, `stop-guard.sh`, `post-compact-auto-loop.sh` |
-| Scripts | `.claude/scripts/` | `scripts/` | `precommit-runner.js`, `verify-runner.js`, `dep-audit.sh`, `commit-msg-guard.sh`, `pre-push-gate.sh`, `lib/utils.js` |
+| Scripts | `.claude/scripts/` | `scripts/` | `precommit-runner.js`, `verify-runner.js`, `dep-audit.sh`, `commit-msg-guard.sh`, `pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` |
 
 #### S2.5: Override Safeguard Checks
 

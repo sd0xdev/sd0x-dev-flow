@@ -77,7 +77,8 @@ const CANONICAL_SYNC_CHECKS =
   '`pre-edit-guard.sh`, `post-edit-format.sh`, `post-tool-review-state.sh`, `stop-guard.sh`, ' +
   '`post-compact-auto-loop.sh` | | Scripts | `.claude/scripts/` | `scripts/` | ' +
   '`precommit-runner.js`, `verify-runner.js`, `dep-audit.sh`, `commit-msg-guard.sh`, ' +
-  '`pre-push-gate.sh`, `lib/utils.js` | #### S2.5: Override Safeguard Checks 6 checks for project ' +
+  '`pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` | #### S2.5: ' +
+  'Override Safeguard Checks 6 checks for project ' +
   'override files (e.g., `auto-loop-project.md`): | # | Check | Severity | Detection | ' +
   'Recommendation | |---|-------|----------|-----------|----------------| | 1 | Override drift | P2 ' +
   '| `based_on` hash comment in project file vs the hash of **the base file that comment names** ' +

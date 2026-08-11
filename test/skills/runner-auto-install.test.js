@@ -66,7 +66,7 @@ test('project-setup SKILL.md contains Phase 6.5', () => {
   );
 });
 
-test('project-setup Phase 6.5 installs 3 scripts', () => {
+test('project-setup Phase 6.5 installs 5 scripts', () => {
   assert.ok(
     skillMd.includes('precommit-runner.js'),
     'SKILL.md should reference precommit-runner.js'
@@ -78,6 +78,38 @@ test('project-setup Phase 6.5 installs 3 scripts', () => {
   assert.ok(
     skillMd.includes('lib/utils.js'),
     'SKILL.md should reference lib/utils.js'
+  );
+  assert.ok(
+    skillMd.includes('lib/tree-digest.js'),
+    'SKILL.md should reference lib/tree-digest.js (receipt producer dependency)'
+  );
+  assert.ok(
+    skillMd.includes('lib/receipt-log.js'),
+    'SKILL.md should reference lib/receipt-log.js (receipt producer dependency)'
+  );
+});
+
+test('precommit-fast auto-install copies both receipt libs alongside the runner', () => {
+  const step1Fast = precommitFast.slice(0, precommitFast.indexOf('### Step 2'));
+  assert.ok(
+    step1Fast.includes('lib/tree-digest.js'),
+    'precommit-fast Step 1 copy list should include lib/tree-digest.js'
+  );
+  assert.ok(
+    step1Fast.includes('lib/receipt-log.js'),
+    'precommit-fast Step 1 copy list should include lib/receipt-log.js'
+  );
+});
+
+test('claude-health managed inventory lists both receipt libs', () => {
+  const claudeHealth = readFileSync(resolve(ROOT, 'skills/claude-health/SKILL.md'), 'utf8');
+  const scriptsRow = claudeHealth
+    .split('\n')
+    .find(l => l.startsWith('| Scripts |'));
+  assert.ok(scriptsRow, 'claude-health should have a Scripts inventory row');
+  assert.ok(
+    scriptsRow.includes('lib/tree-digest.js') && scriptsRow.includes('lib/receipt-log.js'),
+    'Scripts inventory row should list lib/tree-digest.js and lib/receipt-log.js'
   );
 });
 

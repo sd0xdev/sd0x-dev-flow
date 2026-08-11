@@ -356,13 +356,15 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 ### 6.5.2 Copy Scripts
 
 1. `mkdir -p ${REPO_ROOT}/.claude/scripts/lib`
-2. Copy 3 scripts:
+2. Copy 5 scripts:
 
 | Script | Purpose | Dependencies |
 |--------|---------|--------------|
-| `precommit-runner.js` | Precommit runner for `/precommit`, `/precommit-fast` | `lib/utils.js` |
+| `precommit-runner.js` | Precommit runner for `/precommit`, `/precommit-fast` | `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` |
 | `verify-runner.js` | Verify runner for `/verify` | `lib/utils.js` |
 | `lib/utils.js` | Shared utilities | None |
+| `lib/tree-digest.js` | Per-plane content digests (content-addressed receipts) | None |
+| `lib/receipt-log.js` | Receipt log append/read for the runner's verdict records | None |
 
 1. Conflict strategy: same as Phase 5.2.
 
@@ -394,6 +396,8 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 | precommit-runner.js | Installed/Skipped/Conflict |
 | verify-runner.js | Installed/Skipped/Conflict |
 | lib/utils.js | Installed/Skipped/Conflict |
+| lib/tree-digest.js | Installed/Skipped/Conflict |
+| lib/receipt-log.js | Installed/Skipped/Conflict |
 
 **Installed**: N / **Skipped**: M / **Conflicts**: K
 ```
@@ -545,7 +549,7 @@ Summarize all phases and perform closed-loop check:
 - [ ] `.claude/rules/` contains 15 `.md` files (13 managed + 2 override templates) (unless `--no-rules` or `--lite`)
 - [ ] `.claude/hooks/` contains 5 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
-- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, and `lib/utils.js` (unless `--lite` or `--detect-only`)
+- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, `lib/utils.js`, `lib/tree-digest.js`, and `lib/receipt-log.js` (unless `--lite` or `--detect-only`)
 - [ ] `.claude/CLAUDE.md` contains `@rules/auto-loop.md` reference (unless `--lite`)
 - [ ] `env.STOP_GUARD_MODE` is set in target settings file (unless `--detect-only` or `--lite`)
 - [ ] `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set in target settings file when 1M model detected (unless `--detect-only` or `--lite`)

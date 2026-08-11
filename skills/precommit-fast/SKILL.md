@@ -44,7 +44,7 @@ Use Glob to check if `.claude/scripts/precommit-runner.js` exists in the project
      - `Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/scripts/precommit-runner.js`
      - Plugin-relative: try reading `@scripts/precommit-runner.js`
   3. **Plugin not found** → fall through to Step 2.
-  4. **Plugin found** → copy runner + lib/utils.js (skip on conflict) → run.
+  4. **Plugin found** → copy runner + lib/utils.js + lib/tree-digest.js + lib/receipt-log.js (skip on conflict) → run. The two receipt libs are the runner's content-addressed receipt producer dependencies — without them the runner degrades loudly and appends no verdict.
 
 ### Step 2: Fallback (no runner script)
 
