@@ -1241,7 +1241,12 @@ test('P8z4: an inherited HOME cannot make `status` run an attacker-configured co
     writeFileSync(resolve(dir, 'watched.txt'), 'x\n');
     git('add', '--', 'watched.txt');
     git('commit', '-q', '-m', 'seed a tracked file for the attributes match to apply to');
-    writeFileSync(resolve(dir, 'watched.txt'), 'x\nchanged\n');
+    // The modification keeps the committed length. With sizes unequal, git may settle "modified"
+    // from stat alone and skip the content re-read that fires the clean filter — measured at
+    // roughly 1 failure in 6 runs on the control below, the same skip `dirtyStat` in the
+    // execute-side suite exists to close. Equal sizes leave stat unable to decide, so the re-read
+    // through the filter is forced on every run.
+    writeFileSync(resolve(dir, 'watched.txt'), 'y\n');
 
     const attrFile = resolve(attackHome, 'gitattributes');
     writeFileSync(attrFile, '* filter=evil\n');
