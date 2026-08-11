@@ -65,4 +65,4 @@
 ## References
 
 - Tech Spec: [2-tech-spec.md](../2-tech-spec.md)
-- Feature Context Resolution: [feature-context-resolution.md](../../../skills/tech-spec/references/feature-context-resolution.md)
+- Feature Context Resolution: [feature-context-resolution.md](../../../../skills/create-request/references/feature-context-resolution.md) — repointed 2026-08-11: the `/tech-spec` duplicate this line named was merged into this canonical copy

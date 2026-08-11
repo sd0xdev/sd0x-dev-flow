@@ -186,8 +186,12 @@ allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Write, Agent, Skill,
 #### Phase 0: Context Resolution
 
 ```bash
-node scripts/resolve-feature-cli.js --feature <key> 2>/dev/null || echo '{}'
+node scripts/resolve-feature.js --feature <key>
 ```
+
+The wrapper, not `resolve-feature-cli.js`, and no `|| echo '{}'`: the wrapper emits the full payload
+with `scan_error: true` for every failure it can observe, whereas `{}` carries no `scan_error` at all
+and a gate spelled `scan_error === true` reads it as success. Gate on `scan_error !== false`.
 
 | State | Mode |
 |-------|------|
@@ -294,7 +298,7 @@ Write `docs/features/<key>/1-requirements.md` from template.
 |------|--------|------------|
 | Boundary drift with `/feasibility-study` | High | Hard contract in SKILL.md: problem-space only, explicit "must NOT" list |
 | Cargo-culting for small features | Medium | Scope gate: AskUserQuestion before creating `1-requirements.md` for trivial changes |
-| Shared schema drift (two `feature-context-resolution.md`) | Medium | Declare `create-request/references/` as canonical; tech-spec version must symlink or cross-reference |
+| ~~Shared schema drift (two `feature-context-resolution.md`)~~ | Resolved | doc-review-phasing r2 merged the two copies: `create-request/references/` is the single canonical file, the `tech-spec/` duplicate is deleted, and `/tech-spec` reads its own command-free `references/native-feature-resolution.md` |
 | Research cost at deep tier | Medium | Budget cap: `/deep-research --budget medium`; early-exit criteria |
 | Web tool unavailability | Low | Graceful degradation to code-only analysis |
 
@@ -311,7 +315,7 @@ Write `docs/features/<key>/1-requirements.md` from template.
 | W7 | Update feasibility-study SKILL.md (consume) | `skills/feasibility-study/SKILL.md` | S | W1 |
 | W8 | Update tech-spec SKILL.md (source-of-truth) | `skills/tech-spec/SKILL.md` | S | W1 |
 | W9 | Update create-request SKILL.md + template (link) | `skills/create-request/SKILL.md`, `references/template.md` | S | W1 |
-| W10 | Update feature-context-resolution.md (both copies) | `create-request/references/`, `tech-spec/references/` | S | W4 |
+| W10 | Update feature-context-resolution.md (one canonical copy) | `skills/create-request/references/feature-context-resolution.md` | S | W4 |
 | W11 | Update tech-spec template (header metadata + requirements link) | `skills/tech-spec/references/template.md` | S | W1 |
 | W12 | Update next-step SKILL.md (document new heuristic) | `skills/next-step/SKILL.md` | XS | W5 |
 | W13 | Update tech-spec SKILL.md trigger (remove "requirement analysis" overlap) | `skills/tech-spec/SKILL.md` | XS | W1 |
@@ -338,5 +342,5 @@ Write `docs/features/<key>/1-requirements.md` from template.
 ## 7. Open Questions
 
 - [x] ~~Should `1-requirements.md` be mandatory before `/tech-spec` can run, or advisory only?~~ **Resolved: Advisory only.** `/tech-spec` works without it but uses it as source-of-truth when present. `next-step` suggests it at P3 priority only when ambiguity is detected.
-- [ ] Should the two `feature-context-resolution.md` copies be consolidated into one canonical source? (Codex review flagged drift risk)
+- [x] ~~Should the two `feature-context-resolution.md` copies be consolidated into one canonical source?~~ **Resolved (doc-review-phasing r2, 2026-08-10): yes, and consolidation alone was not the fix.** The copy now lives with `/create-request`, which is permitted to run the commands it teaches; `/tech-spec` grants `Bash(git:*)` only and got its own command-free `references/native-feature-resolution.md`. Drift was the visible half of the problem — the other half was a skill owning a reference full of commands it cannot execute.
 - [ ] Should `/req-analyze` support `--update` mode for incremental requirement refinement, or is manual editing + `/codex-review-doc` sufficient?

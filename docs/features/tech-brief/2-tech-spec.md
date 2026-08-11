@@ -55,7 +55,7 @@
 | `agents/brief-writer.md` | PM/CTO brief agent (sonnet) | 參考 agent 結構，但不複用 |
 | `skills/fp-brief/SKILL.md` | First-principles brief | 參考 depth 分級、output template pattern |
 | `skills/fp-brief/references/output-template.md` | FP-brief output template | 參考 depth matrix pattern |
-| `skills/tech-spec/references/feature-context-resolution.md` | Feature resolution cascade | 直接複用 |
+| `skills/create-request/references/feature-context-resolution.md` | Feature resolution cascade | 直接複用 —— *後繼參考；下方 Stage 1 記錄的是 doc-review-phasing r2 之前的設計，仍以 role-blind 的 `canonical_docs` 作為權威選擇器* |
 
 ### Files Requiring Changes
 

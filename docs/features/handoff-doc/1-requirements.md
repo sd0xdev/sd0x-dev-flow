@@ -137,7 +137,7 @@
   - `skills/recap-doc/SKILL.md` — 事後 recap
   - `skills/tech-spec/SKILL.md` — 設計階段文件
   - `skills/project-brief/SKILL.md` — PM/CTO 摘要
-- **Context resolution 模式**：`skills/tech-spec/references/feature-context-resolution.md`（behavior + code layer cascade）
+- **Context resolution 模式**：`skills/create-request/references/feature-context-resolution.md`（behavior + code layer cascade）
 - **Output template 參考**：`skills/tech-brief/references/` + `skills/runbook/references/`
 - **Request tickets**: `./requests/`（建立後）— 每個執行任務的追蹤票
 - **Tech Spec**: 尚未產出（建議下一步：`/feasibility-study` → `/tech-spec`）

@@ -163,7 +163,7 @@ Priority: Must / Should / Could / Won't (MoSCoW)
 - Precedent templates:
   - `skills/best-practices/SKILL.md` Non-Negotiable Rules 區段 — 本 skill Rules #2-#4 沿用
   - `skills/doc-review/references/codex-prompt-doc.md` — Codex prompt template 起點（6 維度替換後可用）
-  - `skills/tech-spec/references/feature-context-resolution.md` — 共享 feature resolver（含 slug regex；本 skill **另外追加** Post-resolve containment 驗證，見 NFR-4）
+  - `skills/create-request/references/feature-context-resolution.md` — 共享 feature resolver（含 slug regex；本 skill **另外追加** Post-resolve containment 驗證，見 NFR-4）
   - `scripts/lib/feature-resolver.js` — Resolver 實際程式碼（NFR-4 引用，slug regex 來源）
   - `docs/features/codex-review-spec/1-requirements.md` NFR-9 — Redaction 先例（NFR-11 對齊基準）
 - Research artifacts: Phase 2 code analysis（Explore agent report, 2026-04-20）

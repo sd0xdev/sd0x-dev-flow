@@ -26,8 +26,7 @@
 | `scripts/config/file-classification.json` | Code/doc/ignore extension classifier | No change (different concern) |
 | `commands/update-docs.md` | `/update-docs` skill definition | Add inventory + handler dispatch |
 | `rules/docs-numbering.md` | Naming convention rules | Add dual namespace |
-| `skills/tech-spec/references/feature-context-resolution.md` | Shared resolution algorithm spec | Update schema |
-| `skills/create-request/references/feature-context-resolution.md` | Duplicated resolution spec | Sync with canonical |
+| `skills/create-request/references/feature-context-resolution.md` | Shared resolution algorithm spec — the single canonical copy since doc-review-phasing r2 merged the `/tech-spec` duplicate into it | Update schema |
 | `scripts/resolve-feature.sh` | Shell wrapper (output docs) | Update output schema docs |
 | `skills/next-step/scripts/analyze.js:255,530` | Hardcoded `2-tech-spec.md` path | Migrate to `canonical_docs` |
 | `skills/next-step/SKILL.md:37` | Schema consumer docs | Update schema reference |

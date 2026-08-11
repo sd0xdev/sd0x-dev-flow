@@ -29,7 +29,7 @@
 | `skills/feasibility-study/SKILL.md` | 已有 5-Why 分解和第一性原理 DNA；但在文件之前執行，非之後 |
 | `skills/feasibility-study/references/analysis-phases.md` | Phase 1 Requirement Decomposition 可複用 |
 | `skills/codex-explain/SKILL.md` | `brief/normal/deep` 三級深度 UX 模式的規範來源 |
-| `skills/tech-spec/references/feature-context-resolution.md` | 5-level feature context cascade；fp-brief 可複用路徑偵測 |
+| `skills/create-request/references/feature-context-resolution.md` | 5-level feature context cascade；fp-brief 可複用路徑偵測 |
 | `skills/deep-research/SKILL.md` | 多 phase 結構化 skill 的成熟範例 |
 
 ### Reusable Components

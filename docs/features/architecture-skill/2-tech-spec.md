@@ -34,7 +34,7 @@
 | `skills/codex-architect/SKILL.md` | Architecture consulting (3 modes) | No change (reuse as sub-step) |
 | `commands/deep-analyze.md` | Roadmap generation | No change (separate responsibility) |
 | `skills/tech-spec/SKILL.md` | Tech spec creation | No change (complementary) |
-| `skills/tech-spec/references/feature-context-resolution.md` | 5-level feature detection | Reuse directly |
+| `skills/create-request/references/feature-context-resolution.md` | 5-level feature detection | Reuse directly — *successor reference; the procedure recorded below predates doc-review-phasing r2 and still calls `resolve-feature-cli.js` directly, which that reference now says not to do* |
 | `rules/docs-numbering.md` | Phase numbering | Update Phase 3 command reference |
 | `agents/architecture-designer.md` | Agent definition | **New** — architecture-focused (derived from solution-architect) |
 
