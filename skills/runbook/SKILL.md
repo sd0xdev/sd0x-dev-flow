@@ -41,13 +41,13 @@ sequenceDiagram
     participant RB as runbook-release.md
 
     U->>S: /runbook [feature] [--update|--check] [--request path]
-    S->>FR: node scripts/resolve-feature-cli.js
-    FR-->>S: {key, doc_inventory, canonical_docs}
+    S->>FR: node scripts/resolve-feature.js
+    FR-->>S: {key, doc_inventory, source sets}
     S->>S: Mode dispatch + Request selection
 
     alt Create Mode
-        S->>CB: Read canonical docs + active requests
-        S->>CB: Scoped discovery (4-priority cascade)
+        S->>CB: Read current_authority + requests/*.md
+        S->>CB: Scoped discovery (5-priority cascade)
         S->>RB: Write runbook-release.md from template
     else Update Mode
         S->>RB: Read existing runbook + provenance
@@ -64,29 +64,53 @@ sequenceDiagram
 
 Resolve feature using the 5-level cascade:
 
+The wrapper, not the CLI directly: `resolve-feature.js` owns the failure payload, so the full
+shape with `scan_error: true` arrives however the CLI fails — a nonzero exit, a signal, a partial
+write, a payload that is not the agreed shape. (It cannot survive `node` itself being unavailable:
+nothing running under `node` can. What it removes is the CLI's failure domain, not the
+interpreter's.) Calling the CLI with `|| echo '{}'` produces a payload the gate below cannot
+recognise as a failure.
+
+**Decide the branch yourself, then run one command.** This skill grants `Bash(node:*)`, which
+matches a direct `node …` invocation and nothing else — a shell `if`/`[ … ]`/`$(…)` compound is not
+a `node` command and cannot run here. Parse `$ARGUMENTS` first (Step 1 below), then issue exactly
+one of:
+
 ```bash
-# If positional feature arg provided, pass as --feature
-if [ -n "$FEATURE_ARG" ]; then
-  FEATURE_JSON=$(node scripts/resolve-feature-cli.js --feature "$FEATURE_ARG" 2>/dev/null || echo '{}')
-else
-  FEATURE_JSON=$(node scripts/resolve-feature-cli.js 2>/dev/null || echo '{}')
-fi
+node scripts/resolve-feature.js --feature <the feature key from $ARGUMENTS>
 ```
+
+```bash
+node scripts/resolve-feature.js
+```
+
+Use the first when `$ARGUMENTS` carried a positional feature key, the second otherwise. Pass the key
+as a separate argv token — never interpolate it into a larger shell expression.
 
 | Source | Mapping |
 |--------|---------|
-| `/runbook auth` | `FEATURE_ARG=auth` → `--feature auth` (two separate argv tokens) |
+| `/runbook auth` | Positional key `auth` → `--feature auth` (two separate argv tokens) |
 | `/runbook` (no arg) | No `--feature`, resolver uses branch/diff/fallback |
 | `/runbook --check` | No `--feature`, parse flags only |
 
 | Step | Action |
 |------|--------|
 | 1 | Parse `$ARGUMENTS` for feature key or `--check`/`--update`/`--request` flags |
-| 2 | Run feature resolver, get `key`, `doc_inventory`, `canonical_docs` |
+| 2 | Run feature resolver, get `key`, `doc_inventory`, and the four source sets (`current_authority`, `design_records`, `work_records`, `history_records`) |
+| 2b | **If `scan_error !== false`, stop** — not `=== true`: a payload missing the field is a failure too. See the gate below |
 | 3 | Check for `runbook-release.md` specifically in feature directory (not any `runbook-*.md`) |
 | 4 | Determine mode: create (`runbook-release.md` absent) / update (`runbook-release.md` exists) / check (`--check` flag) |
 
-> **Note**: Mode dispatch keys off the specific file `runbook-release.md`, not any runbook-typed doc in `doc_inventory`. A feature may have `runbook-deploy.md` (a different topic) without triggering update mode for the release runbook.
+> **`scan_error` gate.** Gate on **`scan_error !== false`**, not on `scan_error === true`. When it
+> is not exactly `false` the four source sets are **unknown, not empty** — the corpus could not be
+> enumerated (unreadable directory, broken taxonomy, no repository), *or* the resolver never ran
+> and a shell fallback supplied a payload with no such field at all. `{}` is the shape that made
+> the stricter test useless: it has no `scan_error`, so `=== true` is false and the gate passes a
+> payload that contains nothing. Do not proceed as though the feature has no authority documents —
+> report and take the ⚠️ Need Human exit. A `key` may still be present, so a non-null `key` is not
+> evidence the sets are complete.
+
+**Note**: Mode dispatch keys off the specific file `runbook-release.md`, not any runbook-typed doc in `doc_inventory`. A feature may have `runbook-deploy.md` (a different topic) without triggering update mode for the release runbook.
 
 ### Request Selection
 
@@ -104,9 +128,21 @@ Use **scoped discovery cascade** — narrow to wide, with confidence degradation
 | Priority | Scope | Confidence |
 |----------|-------|------------|
 | 1 | Request `Related Files` paths | High |
-| 2 | Canonical docs (tech-spec, architecture) | High |
-| 3 | Feature-local paths (`docs/features/{feature}/`) | Medium |
-| 4 | Repo-wide grep | Low (tag results) |
+| 2 | `current_authority` — code, `rules/`, and the docs that claim to be current | High |
+| 3 | `design_records` (tech spec, architecture) | Medium — *intent only*, mark steps unverified |
+| 4 | Feature-local paths (`docs/features/{feature}/`) | Medium |
+| 5 | Repo-wide grep | Low (tag results) |
+
+**A P1 path is classified before it is used.** `Related Files` is High confidence because the
+request author named those paths deliberately — not because a path in that table is exempt from the
+role split. Resolve each one first: a path landing in `design_records` (a tech spec, an architecture
+doc) is treated as **P3** — Medium, marked unverified — even though it arrived via P1. Otherwise the
+row the split removed comes straight back through the front door, since a request's Related Files
+table routinely names `2-tech-spec.md`.
+
+Priorities 2 and 3 used to be one row reading "canonical docs (tech-spec, architecture) — High",
+which is the confusion this feature exists to remove: a tech spec is a design record, and a
+runbook built from one describes a procedure that may never have been built.
 
 See `references/discovery-heuristics.md` for per-section mapping.
 
@@ -125,8 +161,16 @@ When mining configs/workflows/logs into committed markdown:
 
 ### Create Mode
 
-1. Read canonical docs via `canonical_docs` map (tech_spec, architecture, requirements)
-2. Read active request(s) for AC, scope, related files
+1. Read `current_authority` first — a runbook describes what operators will actually run, so the
+   sources are code, `rules/`, and the docs that claim to be current. Fall back to
+   `design_records` (tech spec, architecture) only for the *intent* behind a step, and mark any
+   step sourced that way as unverified in the provenance manifest: a design record may describe a
+   procedure that was never built
+2. Read active request(s) by enumerating `docs/features/{feature}/requests/*.md` — **not** by
+   filtering `work_records`. That set answers "is this document a work record", and a ticket that
+   resolves to some other role — authority `Yes`, or a `Doc role` naming one of the other three —
+   leaves it while staying an open ticket; selecting from the set would drop exactly that ticket's
+   AC, scope and related files
 3. Run scoped discovery for each template section
 4. Fill template from `references/template.md`
 5. Embed `<!-- runbook-provenance -->` manifest with source SHAs
@@ -161,7 +205,7 @@ Read-only validation — does **not** modify the runbook file.
 
 ## Verification
 
-- [ ] Feature resolved via `resolve-feature-cli.js`
+- [ ] Feature resolved via `node scripts/resolve-feature.js`, and `scan_error` was exactly `false`
 - [ ] Runbook detected in `doc_inventory` (ancillary/runbook type)
 - [ ] Template has all 9 sections (see `references/template.md`)
 - [ ] Provenance manifest embedded with multi-source SHA tracking

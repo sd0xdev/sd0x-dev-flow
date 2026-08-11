@@ -140,11 +140,21 @@ Only when change maps to a feature under `docs/features/`. Target detection uses
 ```
 precommit Pass
   → Locate feature docs (see /update-docs 3-level fallback)
-  → /update-docs docs/features/<feature>/2-tech-spec.md
-  → /create-request --update docs/features/<feature>/requests/<date>-<title>.md
-  → /codex-review-doc (per updated file)
+  → /update-docs docs/features/<feature>/2-tech-spec.md      (current-authority doc)
+  → /create-request --update docs/features/<feature>/requests/<date>-<title>.md   (record: status + outcome only)
+  → /codex-review-doc            (ONE dispatch for every doc touched above)
   → Safety valve: new code diff? → back to review loop (see /update-docs)
 ```
+
+**Sync the current-authority doc; append to the record.** The tech spec states what is true now, so
+code landing makes it stale and it is rewritten. A request ticket, review log or ADR states what was
+decided or done at a point in time — it is updated with status and outcome, never rewritten to match
+today's code, because rewriting it destroys the record. `scripts/lib/doc-metadata.js` decides which a
+file is; `/codex-review-doc` reviews each under the profile that classification earns.
+
+One `/codex-review-doc` for all of them, not one per file: the changed docs are a single review plan
+(`skills/doc-review/SKILL.md` § Workflow). Per-file dispatch is what multiplied a three-file doc sync
+into three whole-document reviews.
 
 ## Review Loop
 

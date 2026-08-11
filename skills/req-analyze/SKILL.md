@@ -115,11 +115,26 @@ sequenceDiagram
 
 Detect the target feature using the 5-level cascade.
 
-See `@skills/tech-spec/references/feature-context-resolution.md` for the full algorithm.
+See `@skills/create-request/references/feature-context-resolution.md` for the full algorithm.
 
 ```bash
-node scripts/resolve-feature-cli.js 2>/dev/null || echo '{}'
+node scripts/resolve-feature.js
 ```
+
+**`scan_error` gate.** `scan_error !== false` ⇒ the source sets are **unknown, not empty** —
+report it and take the ⚠️ Need Human exit rather than analysing requirements against a corpus you could not read, which
+produces a requirements doc whose "no existing spec" finding is an artefact of the failure. Gate on `!== false`, not
+`=== true`: a `{}` payload from a shell fallback carries no such field at all, and a non-null `key`
+is not evidence the sets are complete — `scan_error` rides alongside a resolved key.
+
+The wrapper, and no `|| echo '{}'`: that fallback emits a payload with **no `scan_error` field**,
+which a gate written as `scan_error === true` — and any consumer that does not inspect the field at
+all — reads as success. (The role-aware skills gate on `scan_error !== false` precisely so a missing
+field counts as failure; the `{}` fallback is what made the stricter spelling necessary.) It can
+also be concatenated after the CLI's partial stdout, so `JSON.parse` throws before any gate runs. `resolve-feature.js` exits 0 and emits the full shape with
+`scan_error: true` for every failure it can observe — a nonzero CLI exit, a signal, a truncated
+write, a payload that is not the agreed shape. Not for `node` itself being unavailable: that
+produces no JSON at all, which is the one case the caller still handles.
 
 | State | Mode |
 |-------|------|
@@ -331,7 +346,7 @@ After Write completes, auto-trigger `/codex-review-doc` per `@rules/auto-loop.md
 
 - `references/output-template.md` — Output template for `1-requirements.md`
 - `references/research-cascade.md` — Shared web research cascade pattern
-- `@skills/tech-spec/references/feature-context-resolution.md` — 5-level feature detection
+- `@skills/create-request/references/feature-context-resolution.md` — 5-level feature detection
 
 ## Examples
 

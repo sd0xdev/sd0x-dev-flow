@@ -353,6 +353,67 @@ test('qa-prompt.md promote-digest template uses "Follow-up Q&A" heading', () => 
   );
 });
 
+// --- The corpus-scan marker is a cross-skill contract ---
+
+test('the recap-ask scan_error gate reads a marker /recap-doc actually writes', () => {
+  // The gate was added to `/recap-ask` before there was anything for it to read: the recap document
+  // recorded no `scan_error` at all, so "read the Corpus scan line" was an instruction that could
+  // never fire and a skill that fails closed on paper only. The producer half was then added to
+  // `/recap-doc`'s template — and nothing pinned the two together, which is the state this test
+  // ends. Either half renamed alone, and the gate silently stops finding its input.
+  const MARKER = '> **Corpus scan**:';
+  const template = readFileSync(resolve(ROOT, 'skills/recap-doc/references/output-template.md'), 'utf8');
+  const skill = readFileSync(SKILL, 'utf8');
+
+  assert.ok(template.includes(MARKER),
+    'the producer must emit the marker — /recap-doc writes the recap this gate reads');
+  assert.match(template, /Corpus scan[^\n]*scan_error/,
+    'and the marker must name the field it is derived from, not just a prose label');
+  assert.ok(skill.includes(MARKER),
+    'the consumer must name the same literal marker — a paraphrase is not something a reader can grep for');
+});
+
+test('every non-complete reading of the corpus-scan marker has its own Need Human exit', () => {
+  // The previous version of this test searched the whole step for "Need Human" and concluded both
+  // branches failed closed. They did not: the `unknown` branch took the exit, the absent-marker
+  // branch said "mention it in the answer" and fell through to Phase 2 — and the single match from
+  // the neighbouring branch made the test green over exactly that gap. So each row is now read on
+  // its own, and the consequence must appear in the row that states the condition.
+  // Comments stripped first, and that is not a detail: `| absent | … | say so <!-- Need Human --> |`
+  // satisfies a raw-text search for the consequence while showing the reader nothing. It is the same
+  // invisible-instruction defect the global gate surface was built to refuse, arriving in the test
+  // that was written to make each branch's consequence *visible*.
+  const skill = readFileSync(SKILL, 'utf8').replace(/<!--[\s\S]*?-->/g, '');
+  const step = skill.match(/^4b\. \*\*`scan_error` gate\*\*[\s\S]*?(?=^\d+[a-z]?\. )/m);
+  assert.ok(step, 'step 4b must be a numbered step in Phase 1 — the gate has to run before the answer');
+
+  const rows = step[0].split('\n').filter((l) => /^\s*\|/.test(l) && !/^\s*\|[\s|:-]+\|$/.test(l));
+  assert.ok(rows.length >= 5, `the gate must enumerate its readings as rows, got ${rows.length}`);
+
+  const rowFor = (label) => rows.find((r) => new RegExp(`^\\s*\\|\\s*\`?${label}\`?\\s*\\|`).test(r));
+  for (const label of ['unknown', 'absent', 'anything else']) {
+    const row = rowFor(label);
+    assert.ok(row, `the gate must state a reading for: ${label}`);
+    assert.match(row, /Need Human/, `${label}: the consequence must be in its own row, not borrowed from a neighbour`);
+  }
+
+  // And the positive row, without which "everything is Need Human" would satisfy the loop above
+  // and the gate would block every recap ever written.
+  const complete = rowFor('complete');
+  assert.ok(complete, 'the gate must state which value proceeds');
+  assert.doesNotMatch(complete, /Need Human/, 'a complete scan proceeds — that is what makes this a gate rather than a wall');
+  assert.match(step[0], /Only the exact value `complete` proceeds/,
+    'the gate is an allowlist of one value, not a denylist of the two spellings someone thought of');
+  assert.match(step[0], /unknown, not empty/, 'an unknown scan means the sets are unknown, not empty');
+
+  // Supplied text, because the live file has no such comment — the rule must be pinned by design
+  // rather than by what the corpus happens not to contain.
+  const smuggled = '| absent | the recap predates the field | say so <!-- ⚠️ Need Human exit --> |';
+  assert.doesNotMatch(smuggled.replace(/<!--[\s\S]*?-->/g, ''), /Need Human/,
+    'a consequence hidden in a comment must not satisfy the row it is written into');
+  assert.match(step[0], /!==\s*false/, 'the comparison is `!== false`, not `=== true`');
+});
+
 // --- Skill directory wiring ---
 
 test('recap-ask skill directory has required files', () => {

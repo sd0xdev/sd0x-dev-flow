@@ -1,6 +1,17 @@
 # Codex Architecture Research Prompt
 
-Used in Phase 1 Track C with `mcp__codex__codex`:
+Used in Phase 1 Track C with `mcp__codex__codex`.
+
+`${DESIGN_RECORD_PATH}` is `docs/features/<key>/` joined with the `file` of the tech-spec entry
+`SKILL.md` selects from `design_records` — its four candidate cases, and **not** `canonical_docs.tech_spec`,
+which is role-blind. When that selection finds **no** such entry, pass the literal string
+`(none — do not read a spec)` rather than a guessed path: a Codex told to find the spec itself will
+find whichever file is named like one.
+
+`scan_error !== false` is **not** one of the cases this reference handles. `SKILL.md` § Phase 0 takes
+the ⚠️ Need Human exit there, so Track C is never reached and there is no prompt to fill in — an
+earlier version of this paragraph offered a substitute value for it, which read as permission to
+continue into a Codex research pass on a corpus nobody could enumerate.
 
 ```typescript
 mcp__codex__codex({
@@ -8,7 +19,7 @@ mcp__codex__codex({
 
 ## Feature Context
 - Feature: ${FEATURE_KEY}
-- Tech spec exists: ${HAS_TECH_SPEC}
+- Tech spec (design record): ${DESIGN_RECORD_PATH}
 - Related files: ${RELATED_FILES}
 
 ## ⚠️ Important: You must independently research the project ⚠️
@@ -22,7 +33,11 @@ You **must** read the actual code and project structure yourself. Do NOT rely on
 4. Read changed files: \`cat <changed file> | head -200\`
 5. Check project structure: \`ls src/ skills/ scripts/ hooks/\`
 6. Read architecture docs: \`cat docs/architecture.md | head -100\`
-7. Read tech spec (if exists): \`cat docs/features/${FEATURE_KEY}/2-tech-spec.md | head -200\`
+7. Read the tech spec **at the path given above**, when one is given:
+   \`cat ${DESIGN_RECORD_PATH} | head -200\`. Do not go looking for it by name — the resolver already
+   chose it from \`design_records\`, and the filename does not identify the role. A feature can hold a
+   \`2-tech-spec.md\` that has been marked a history record beside a \`2-tech-spec-v2.md\` that is the
+   live design, and listing the directory picks the wrong one of the two
 8. Trace related modules: \`cat <related file> | head -150\`
 
 ### Project Research

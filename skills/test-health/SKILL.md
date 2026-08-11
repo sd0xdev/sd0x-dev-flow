@@ -59,7 +59,18 @@ flowchart TD
 
 ### Phase A: Feature Coverage
 
-Resolve docs path using `scripts/resolve-feature.sh` (same cascade as other skills). If `has_tech_spec=true`, dispatch `/check-coverage <docs_path>` via Skill tool. If feature not resolved or no tech spec, skip Phase A with advisory: `"Phase A skipped: no feature docs detected"`.
+Resolve docs path using `bash scripts/resolve-feature.sh` (same cascade as other skills) — the shim over the wrapper, which emits the full shape with `scan_error: true` rather than a bare `{}` however the CLI fails: nonzero exit, signal, partial write, or a payload that is not the agreed shape. It cannot cover `node` itself being unavailable — the shim would exit 127 with no JSON — so treat an empty or non-JSON reply as a failure too. **Gate on `scan_error !== false` before reading anything else** — never on `=== true`, because an
+empty or non-JSON reply carries no such field at all and the stricter test is false for it. Only once
+the flag is exactly `false` does any other field mean what it says: the failure payload sets
+`has_tech_spec` false along with everything else, so branching on that field first reports an
+unreadable corpus as a feature with no documents, and the coverage of a real feature disappears
+behind a reassuring advisory.
+
+| Payload | Phase A |
+|---------|---------|
+| `scan_error !== false` (including an empty or non-JSON reply) | Skip, advisory `"Phase A skipped: feature docs could not be read (scan_error) — coverage is unknown, not absent"` |
+| `scan_error: false`, `has_tech_spec: true` | Dispatch `/check-coverage <docs_path>` via Skill tool |
+| `scan_error: false`, feature unresolved or no tech spec | Skip, advisory `"Phase A skipped: no feature docs detected"` |
 
 ### Phase B: Test Inventory + Coverage Collection
 

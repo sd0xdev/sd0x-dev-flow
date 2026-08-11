@@ -26,12 +26,40 @@ allowed-tools: Read, Grep, Glob, Bash(git:*), Write
 
 ## Context-Aware Mode (Upsert)
 
-When invoked without a full requirement description, the skill auto-detects the target feature using the 5-level cascade from `references/feature-context-resolution.md`.
+When invoked without a full requirement description, the skill auto-detects the target feature using
+the cascade in `references/native-feature-resolution.md` — this skill's own reference, and
+deliberately command-free.
+
+This skill grants `Bash(git:*)` and not `Bash(node:*)`, so the resolver script is not a command it
+may run — and it does not link the shared reference that teaches it, because a file of unrunnable
+commands inside this skill's reachable graph is the defect, not the annotation on it. The cascade
+needs nothing beyond `$ARGUMENTS`, `git branch --show-current`, `git diff --name-only HEAD` and a
+`Glob` over `docs/features/*`. What that does **not** produce is the four document source sets or
+`scan_error` — this skill consumes neither. A skill that needs the sets (`/architecture`,
+`/tech-brief`, `/runbook`, `/ask`) grants `Bash(node:*)` and reads the shared reference itself.
+
+**Canonical discovery is still owed, and testing one literal path does not deliver it.** The spec
+may have been split into a folder or may carry a variant name, and `docs/features/auto-loop-evolution/2-tech-spec/2-tech-spec.md`
+in this repo is the live proof. Resolve it with a `Glob` over `docs/features/<key>/`, in this
+order — the first hit wins:
+
+| # | Glob | Meaning |
+|---|------|---------|
+| 1 | `docs/features/<key>/2-tech-spec.md` | Unsplit canonical spec |
+| 2 | `docs/features/<key>/2-tech-spec/2-tech-spec.md` | Split spec — the folder keeps the lifecycle prefix, the main file keeps the canonical filename (`@rules/docs-numbering.md` § Size Limit) |
+| 3 | `docs/features/<key>/2-tech-spec*.md`, **minus** any hit matching `-fp-brief.md` or `-tech-brief.md` | A variant (`2-tech-spec-v2.md`). The two suffixes are excluded because they are not specs: `scripts/config/doc-taxonomy.json` carries the same `exclude_pattern` for the same reason, and `docs/features/seek-verdict/` holds a live `2-tech-spec-fp-brief.md` that this glob would otherwise return as the canonical spec. **Two or more remaining hits is ambiguity, not a match** — report and take the Need Human exit rather than picking one |
+
+Requirements docs (`1-requirements.md`) resolve the same three ways, **without** the suffix
+exclusion — `doc-taxonomy.json` carries `exclude_pattern` on the `tech-spec` type only, and copying
+it to requirements here would put this skill out of step with the classifier rather than in step. A `Glob` that errors, or a
+`<key>` that resolved with `low` confidence and matches nothing, is **not** the same as "no spec
+exists" — say which of the two it was; do not silently drop into create mode.
 
 | Filesystem State | Action |
 |-----------------|--------|
-| `docs/features/<key>/2-tech-spec.md` exists | **Update mode**: read existing spec, research code changes since last update, incrementally update changed sections |
-| `docs/features/<key>/2-tech-spec.md` absent | **Create mode**: generate new spec from template |
+| Canonical discovery finds exactly one spec | **Update mode**: read that file — at the path discovery returned, not at the literal `2-tech-spec.md` — research code changes since last update, incrementally update changed sections |
+| All three globs empty | **Create mode**: generate new spec from template at `docs/features/<key>/2-tech-spec.md` |
+| Glob 3 returns two or more | Gate: Need Human — ambiguous canonical spec, name the candidates |
 | Feature not resolved | Gate: Need Human |
 
 In **update mode**, focus on sections affected by recent code changes (use `git diff` to identify). Preserve unchanged sections.
@@ -63,6 +91,28 @@ sequenceDiagram
 6. Testing strategy
 7. Open questions
 
+## Write-Time Budget
+
+A spec is cheapest to keep short while it is being written. Enforcing length afterwards means either
+a split or a prune, and both cost a review round that writing to budget would have avoided.
+
+| Lines (`wc -l`) | At write time |
+|-----------------|---------------|
+| ≤ 300 | The target. Aim here |
+| 301–400 | Acceptable — trim before adding more |
+| > 400 | **State the cohesion exception in the document itself**, or prune / split before it is written. "I ran out of room" is not the exception |
+
+The exception is a sentence in the spec naming why these sections are one argument that does not
+read better apart. Unstated, a spec over 400 lines is over budget, and `@rules/docs-numbering.md`
+§ Size Limit takes it from there — prune first, then merge, then split.
+
+What to leave out: alternatives considered and rejected (one line each, not a section), history of how
+the design changed (that belongs in a record), and anything the code will state more precisely than
+prose can.
+
+In **update mode**, a section the code made obsolete is pruned, not annotated. Rewriting it in place
+keeps the spec current-authority; layering "previously..." notes turns it into a record it is not.
+
 ## Output
 
 Numbered tech spec document with sections: Overview, Requirements, Architecture, Implementation plan, Work breakdown, Testing strategy, Open questions.
@@ -73,6 +123,7 @@ Numbered tech spec document with sections: Overview, Requirements, Architecture,
 - Architecture diagrams use Mermaid
 - Risks have mitigation strategies
 - Work can be broken into trackable items
+- Within the write-time budget, or the cohesion exception is stated in the document
 
 ## References
 

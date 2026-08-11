@@ -115,3 +115,26 @@ test('docs-numbering Phase 3 references /architecture', () => {
     'Phase 3 row should NOT reference /deep-analyze'
   );
 });
+
+test('architecture states a deterministic rule for picking one tech spec from design_records', () => {
+  // `design_records` is an array and more than one entry can be `type: tech-spec` — a split spec
+  // contributes its main file and every sub-document. `docs/features/auto-loop-evolution/` is that
+  // case in this repository right now, so "the entry" without a rule leaves the skill with two
+  // candidate paths and no way to choose. The rule is checked in both files that act on it.
+  const skill = readFileSync(skillPath, 'utf8');
+  assert.match(skill, /`is_canonical: true`|is_canonical/,
+    'SKILL.md must say how a split spec is disambiguated');
+  assert.match(skill, /Need Human/,
+    'SKILL.md must name an exit for the case it cannot disambiguate');
+  assert.match(skill, /auto-loop-evolution/,
+    'SKILL.md must cite the live ambiguous case, so the rule is not read as hypothetical');
+
+  const prompt = readFileSync(codexPromptPath, 'utf8');
+  assert.ok(!/scan_error[^.]*pass the literal string/s.test(prompt),
+    'the prompt reference must not prescribe a substitute value for a scan_error run — SKILL.md '
+    + 'takes the Need Human exit there, so Track C is never reached');
+  assert.match(prompt, /DESIGN_RECORD_PATH/,
+    'the prompt must be handed the selected path rather than listing the directory itself');
+  assert.ok(!/ls docs\/features\/\$\{FEATURE_KEY\}\//.test(prompt),
+    'the prompt must not tell Codex to list the feature directory and pick a spec by name');
+});

@@ -107,10 +107,41 @@ test('ask SKILL.md has conversation context integration', () => {
 
 // --- Feature-first doc discovery ---
 
-test('ask SKILL.md docs intent uses canonical_docs before glob fallback', () => {
+test('ask SKILL.md docs intent resolves the feature before falling back to glob', () => {
   const content = readFileSync(SKILL, 'utf8');
-  assert.match(content, /canonical_docs/, 'should reference canonical_docs for feature-first lookup');
+  assert.match(content, /Resolve feature/i, 'should reference feature-first lookup');
   assert.match(content, /fallback.*Glob|Glob.*fallback/i, 'should mention glob as fallback only');
+});
+
+// The intent this replaced was "use canonical_docs" — one map for every doc question, which is
+// how a frozen tech spec came to answer "what does it do now". The interface is now four source
+// sets, so the assertion is that the skill routes BY QUESTION KIND rather than that it names a
+// field. See docs/features/doc-review-phasing/2-tech-spec.md § 3.2.
+test('ask SKILL.md routes a docs question to the source set that can answer it', () => {
+  const content = readFileSync(SKILL, 'utf8');
+  const lines = content.split('\n');
+
+  // Each question kind is asserted against the row it appears in, not against the file. Checking
+  // that all four names occur *somewhere* is what a vocabulary list satisfies: swap the
+  // current-behaviour and design rows and every such assertion stays green, which is exactly the
+  // regression this skill was migrated to prevent.
+  const ROUTES = [
+    ['現在的行為', 'current_authority', ['design_records', 'work_records', 'history_records']],
+    ['當初為什麼', 'design_records', ['current_authority', 'work_records', 'history_records']],
+    ['當初要求什麼', 'work_records', ['current_authority', 'design_records', 'history_records']],
+    ['時候做的', 'history_records', ['current_authority', 'design_records', 'work_records']],
+  ];
+  for (const [question, expected, forbidden] of ROUTES) {
+    const row = lines.find((l) => l.includes(question));
+    assert.ok(row, `docs intent should carry a row for the "${question}" question`);
+    assert.ok(row.includes(expected), `"${question}" should route to ${expected} — got: ${row}`);
+    for (const other of forbidden) {
+      assert.ok(!row.includes(other), `"${question}" must not route to ${other} — got: ${row}`);
+    }
+  }
+
+  assert.match(content, /predate the code|may predate/i,
+    'should require attribution when only a design record is available');
 });
 
 // --- Routing behavior ---

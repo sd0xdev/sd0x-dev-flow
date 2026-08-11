@@ -38,7 +38,7 @@ cache/
 | Item | Convention | Example |
 |------|------------|---------|
 | Skill directory | kebab-case | `code-explore/` |
-| Skill file | SKILL.md + references/ | `skills/codex-review-fast/SKILL.md` |
+| Skill file | SKILL.md + references/ | `skills/<name>/SKILL.md` |
 | Rule file | kebab-case.md | `auto-loop.md` |
 | Reference dir | `references/` (plural) | `skills/x/references/` |
 | Script file | kebab-case.js/sh | `verify-runner.js` |

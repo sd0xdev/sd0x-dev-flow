@@ -1,5 +1,9 @@
 # Tech Spec Template
 
+**Budget: ≤ 300 lines.** Roughly 30–40 lines per numbered section. Over 400 lines the document must
+state its cohesion exception — see `../SKILL.md` § Write-Time Budget. The sections below are slots,
+not quotas: a section with nothing to say is deleted, not filled.
+
 ```markdown
 # [Feature Name] Technical Spec
 

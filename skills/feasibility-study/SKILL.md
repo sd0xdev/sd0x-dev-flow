@@ -30,14 +30,61 @@ Evaluate technical feasibility, effort, risk, extensibility, and maintenance cos
 ## Workflow
 
 ```
-Decompose → Constraints → Code research → Solutions → Codex discussion → Decision → Report
+Resolve → Decompose → Constraints → Code research → Solutions → Codex discussion → Decision → Report
 ```
+
+### Phase 0: Resolve the feature context
+
+The sets Phase 1 reads have to come from somewhere, and this skill is invoked directly
+(`/feasibility-study <topic>`) as often as it is invoked from another skill — so it resolves them
+itself rather than assuming a caller supplied them:
+
+```bash
+# The shim over the wrapper. This skill grants `Bash(bash:*)` and no node permission, and the rule
+# is that a skill names the entrypoint it is permitted to run — which is also why the shared
+# algorithm reference is deliberately not linked from here: it teaches the node entrypoint, and a
+# file of commands this skill cannot execute has no business in its reachable graph.
+bash scripts/resolve-feature.sh [--feature <key>]
+```
+
+The reply is one JSON document. What this skill reads out of it: `scan_error` **first** — the gate
+below decides whether anything else in the payload means what it says — then `current_authority`
+(what the system does today) and the `design_records` entries — design records carry the *rationale*;
+it is the `type: requirements` subset of them that states what was **asked for**, which is why
+Phase 1 filters before it selects. Each entry is
+`{ file, type, namespace, confidence, is_canonical, role }`, `file` relative to `docs_path`. An empty or non-JSON reply is a failure too — `node` may be
+unavailable, which the shim cannot report as a payload. Treat it exactly as `scan_error !== false`
+below.
 
 ### Phase 1: Requirement Decomposition
 
 **Input source priority**:
-1. If `canonical_docs.requirements` is non-null → consume as authoritative requirement source, validate via 5-Why
+1. If a requirements doc resolves from `design_records` → consume as the authoritative statement of
+   what was **asked for**, validate via 5-Why. It is a design record, not a description of current
+   behaviour: for "what does the system do today", read code, `rules/` and `current_authority`
 2. Otherwise → extract requirements from user input via 5-Why analysis
+
+**`design_records` is an array**, so "a requirements doc" needs a rule rather than an assumption — a
+split or variant-backed phase contributes more than one. Filter to `type: requirements` first, then:
+
+| # | Candidates (`design_records` where `type: requirements`) | Result |
+|---|--------------------------------------------------------|--------|
+| 1 | none | Path 2 — extract from user input. A feature with no requirements doc is a normal state, not an exit |
+| 2 | exactly one | that one |
+| 3 | two or more, exactly one with `is_canonical: true` | that one |
+| 4 | two or more, and none or several canonical | **Gate: Need Human**, naming the candidates |
+
+Rows 1 and 4 are different answers: "there is none" is acted on, "there are two" must not be
+resolved by picking. The same order `/architecture` applies to its tech-spec candidates.
+
+> **`scan_error` gate.** Gate on **`scan_error !== false`**, not on `scan_error === true`. When it
+> is not exactly `false` the four source sets are **unknown, not empty** — the corpus could not be
+> enumerated (unreadable directory, broken taxonomy, no repository), *or* the resolver never ran
+> and a shell fallback supplied a payload with no such field at all. `{}` is the shape that made
+> the stricter test useless: it has no `scan_error`, so `=== true` is false and the gate passes a
+> payload that contains nothing. Do not proceed as though the feature has no authority documents —
+> report and take the ⚠️ Need Human exit. A `key` may still be present, so a non-null `key` is not
+> evidence the sets are complete.
 
 Use "5 Why" to uncover essence:
 1. Surface requirement (what user asks for)

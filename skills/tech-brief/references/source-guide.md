@@ -6,22 +6,49 @@ Multi-source collection strategy for `/tech-brief`. Three stages executed sequen
 
 Read feature docs from resolver output. All sources are optional.
 
-| Source | Discovery Method | Extract |
-|--------|-----------------|---------|
-| `2-tech-spec.md` | `canonical_docs.tech_spec` | Problem, Goals, Architecture, Design Decisions, Risks, Open Questions |
-| `3-architecture.md` | `canonical_docs.architecture` | Architecture diagram, AD-N decisions, Trade-offs |
-| `0-feasibility-study/` | `canonical_docs.feasibility` | Alternative comparison, Rejection reasons |
-| `4-implementation.md` | `doc_inventory` filter `type === 'implementation'` | Implementation notes, Lessons learned |
+| Source | Set | Discovery Method | Extract |
+|--------|-----|-----------------|---------|
+| `2-tech-spec.md` | `design_records` | filter the set by `type === 'tech-spec'` | Problem, Goals, Architecture, Design Decisions, Risks, Open Questions |
+| `3-architecture.md` | `design_records` | filter the set by `type === 'architecture'` | Architecture diagram, AD-N decisions, Trade-offs |
+| `0-feasibility-study/` | `design_records` | filter the set by `type === 'feasibility'` | Alternative comparison, Rejection reasons |
+| `4-implementation.md` | `current_authority` | the set directly — **no `doc_inventory` fallback** | Implementation notes, Lessons learned |
 
-**Note**: `canonical_docs` only provides 4 roles: `tech_spec`, `architecture`, `feasibility`, `requirements`. Implementation docs are discovered via `doc_inventory` array.
+**The set is the filter; the alias is not a selector.** The first three rows named
+`canonical_docs.<role>` here, which reads as "the alias and the set agree". They do not have to:
+`canonical_docs` picks from `doc_inventory` by *type*, ignoring the resolved role, so a tech spec
+that declares `Doc role: History record` stays non-null in the alias while leaving `design_records`
+(pinned at `test/scripts/doc-classifier.test.js:534`). Selecting through it would hand a document
+the corpus no longer calls design evidence to a brief that presents it as exactly that. And it is not a path selector either: it is chosen across the whole inventory by type and
+canonicality, so with a historical canonical `2-tech-spec.md` beside a design-record variant
+`2-tech-spec-v2.md` it names the *other* file. Each set entry already carries its own `file` — use
+that, and never rejoin through the alias.
+
+The fourth row has no alternative selector on purpose. Filtering `doc_inventory` by
+`type === 'implementation'` reads the *path*, not the resolved role: an implementation doc
+carrying `> **Current behavior authority**: No` resolves to `History record` and leaves
+`current_authority`, yet stays an implementation entry in the inventory. The filter would then
+feed a superseded record to the brief as current behaviour — the exact failure the split exists
+to prevent. No row has a `type` fallback: the set is the selector for all four, and the entry's own
+`file` is the path. The fourth is called out separately only because `type === 'implementation'`
+is the fallback someone would reach for, and it is the one that fails hardest.
+
+**What the split buys a brief**: the first three rows say what was *intended*; the fourth and the
+code say what *shipped*. Attribute accordingly — a design record's claim written up as delivered
+behaviour is how a brief misleads a reader who cannot check the code.
+
+**Note**: `canonical_docs` is the deprecated alias, retained while consumers migrate. It provides
+only 4 roles (`tech_spec`, `architecture`, `feasibility`, `requirements`) and is selected from
+`doc_inventory` — unchanged from before the split, so it answers "which file is the tech spec" and
+says nothing about whether that file is current. The source sets are the current interface.
 
 ### Feature Resolver Invocation
 
 ```bash
-node scripts/resolve-feature-cli.js [--feature <key>]
+node scripts/resolve-feature.js [--feature <key>]
 ```
 
-Parse JSON output for `canonical_docs` and `doc_inventory`. If resolver fails or returns null key, Gate: Need Human.
+Parse JSON output for the source sets (`current_authority`, `design_records`, `work_records`,
+`history_records`) and `doc_inventory`. If resolver fails or returns null key, Gate: Need Human.
 
 ## Stage 2: Code & Git Evidence
 

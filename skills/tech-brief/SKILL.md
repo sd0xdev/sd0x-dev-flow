@@ -65,8 +65,12 @@ sequenceDiagram
 ### Phase 1: Context Resolution
 
 1. Parse `$ARGUMENTS` for feature-key, path, or flags
-2. Resolve feature using `node scripts/resolve-feature-cli.js [--feature <key>]`
-3. Load `doc_inventory` and `canonical_docs` from resolver output
+2. Resolve feature using `node scripts/resolve-feature.js [--feature <key>]` — the wrapper, not the
+   CLI: it owns the failure payload. If `scan_error !== false` — including a
+   payload with no such field, which is what a shell `|| echo '{}'` fallback produces — the four
+   source sets are **unknown, not empty**. Stop and take the ⚠️ Need Human exit; a non-null `key`
+   is not evidence the sets are complete
+3. Load `doc_inventory` and the four source sets from resolver output
 4. Validate paths (see Path Security)
 
 #### Input Resolution Table
@@ -83,7 +87,7 @@ sequenceDiagram
 
 Three-stage collection. See `references/source-guide.md` for detailed strategy.
 
-**Stage 1 — Document Collection**: Read feature docs via `canonical_docs` (tech-spec, architecture, feasibility) and `doc_inventory` (implementation). All optional.
+**Stage 1 — Document Collection**: Read `design_records` (tech-spec, architecture, feasibility) for the *why* and `current_authority` for the *what it does now*. All optional — and a brief that presents a design record's claim as shipped behaviour is the failure mode to avoid; Stage 2's code evidence is what settles the difference.
 
 **Stage 2 — Code & Git Evidence**: `git log -20`, `git diff --stat`, read top 5 changed source files (100 lines each) for `file:line` references.
 
@@ -163,7 +167,7 @@ Preferred canonical name: `5-tech-brief.md`. If `5-` prefix is occupied, use nex
 
 - Output template: `references/output-template.md`
 - Source collection guide: `references/source-guide.md`
-- Feature context resolution: `@skills/tech-spec/references/feature-context-resolution.md`
+- Feature context resolution: `@skills/create-request/references/feature-context-resolution.md`
 
 ## Examples
 

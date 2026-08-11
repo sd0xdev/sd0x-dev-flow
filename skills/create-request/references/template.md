@@ -1,5 +1,9 @@
 # Create Request Template
 
+**Budget: ~100 lines, AC ≤ 8, Background ≤ 10 lines.** Progress cells are overwritten on each update,
+never appended to — a ticket that accumulates rounds is a review log. See `../SKILL.md`
+§ Write-Time Budget, and § Phase 4.5 for what happens once the ticket closes.
+
 ## Request Document Template
 
 > **`Status` must stay a bare token.** `parseRequestStatus()` returns the WHOLE trailing string and

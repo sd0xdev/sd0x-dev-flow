@@ -15,6 +15,7 @@ The template aligns with tech-spec §3.2.2 and is classified as `ancillary/brief
 > **Confidence**: high | medium | low
 > **Focus**: <user-provided keyword or "none">
 > **Depth**: brief | normal | deep
+> **Corpus scan**: complete | **unknown** (`feature_context.scan_error !== false`)
 > **Generated at**: <ISO 8601>
 ```
 
@@ -114,11 +115,18 @@ Emit a blind-spot bullet under §5 when any of these conditions match the scope:
 
 | Recap section | ScopeReport field |
 |---------------|-------------------|
-| Metadata header | `source`, `confidence`, `detected_at`, `base_ref`, `focus_hint` |
+| Metadata header | `source`, `confidence`, `detected_at`, `base_ref`, `focus_hint`, `feature_context.scan_error` |
 | §2 Changed Files table | `files[].path`, `files[].change_type`, `files[].lines_changed` |
 | §4 Drift trigger | `feature_context.has_tech_spec`, `feature_context.docs_path` |
 | §5 Blind Spots | `files[]` against heuristics above |
 | §7 Evidence | `base_ref`, git log on `files[].path` |
+
+**Why `scan_error` is recorded rather than only acted on.** Phase 1b takes the Need Human exit
+on `scan_error !== false`, so a recap generated *after* that gate was added never comes from an
+unreadable corpus. `/recap-ask` reads recaps this skill did not necessarily produce — an older
+one, or one written before the gate existed — and a gate with nothing to read is not a gate.
+Writing the observed state into the document is what lets the downstream check be evaluated at
+all, instead of silently passing on an absent field.
 
 ## Save Behavior
 

@@ -108,6 +108,13 @@ sequenceDiagram
    - The full `fallback_trace` array (why each heuristic failed)
    - Suggested manual command: `/recap-doc --scope <explicit-json>`
    - Exit before invoking Phase 2.
+3b. **`scan_error` gate**: `feature_context.scan_error !== false` ⇒ the source sets behind the
+   scope are **unknown, not empty** — report it and take the ⚠️ Need Human exit rather than
+   recapping a change whose feature corpus could not be enumerated. `detect-scope.js` projects
+   the field onto `feature_context` for exactly this check. Gate on `!== false`, not `=== true`: a payload from a shell fallback or an older producer
+   carries no such field at all, and a non-null `key` is not evidence the sets are complete —
+   `scan_error` rides alongside a resolved key.
+
 4. **Interactive hook (opt-in)**: when `--interactive` is set and scope resolved, call `AskUserQuestion` with the scope summary (`<N> files, source=<s>, confidence=<c>`) and the 4-option set `{繼續 (continue), 提問 (ask), 跳段 (skip), 結束 (end)}`. **ask** = prompt the user for a clarifying question about the detected scope, echo the answer, then re-prompt the 4-option set. **skip** = skip /recap-doc and jump to Phase 3 (requires the user to supply an existing recap path). **end** = stop cleanly without invoking sub-skills.
 
 ### Phase 2 — Recap Doc (T2 reuse)

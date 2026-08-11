@@ -32,7 +32,8 @@ Run these 4 commands in parallel to build session context:
 | # | Action | Tool |
 |---|--------|------|
 | 1 | Current branch | `Bash("git branch --show-current")` |
-| 2 | Feature detection | `Bash("node scripts/resolve-feature-cli.js")` — graceful: `{}` on failure |
+| 2 | Feature detection | `Bash("node scripts/resolve-feature.js")` — the wrapper, not the CLI: it owns the failure payload, so a resolver that runs and fails — nonzero exit, signal, truncated write, off-contract payload — still yields the full shape with `scan_error: true` rather than `{}` or a truncated document. A missing `node` yields no JSON at all; treat that like any other unusable payload |
+| 2b | `scan_error` gate | `scan_error !== false` ⇒ the source sets are **unknown, not empty** — report and take the ⚠️ Need Human exit rather than answering from an empty set. Gate on `!== false`, not `=== true`: a `{}` payload from a shell fallback has no such field, so a non-null `key` is not evidence the sets are complete |
 | 3 | Changed files | `Bash("git status --porcelain")` |
 | 4 | Recent commits | `Bash("git log --oneline -5")` |
 
@@ -61,7 +62,7 @@ Classify the question (LLM-inferred) into one or more intents:
 |--------|----------------|-----------------|
 | `code` | "function X 做什麼", file paths, module names | Grep → Read → trace 1 level |
 | `git` | "最近改了什麼", "誰改的", "when" | git log / diff / blame |
-| `docs` | "需求是什麼", "spec 寫了什麼" | Feature resolve → `canonical_docs` → fallback Glob |
+| `docs` | "需求是什麼", "spec 寫了什麼" | Feature resolve → source set by question kind → fallback Glob |
 | `rules` | "規則是什麼", "convention", "allowed" | Read rules/ files |
 | `skill` | "有沒有 skill", "怎麼用 /X" | Glob skills/ → Read SKILL.md |
 | `arch` | "系統架構", "整體設計" | CLAUDE.md + Explore agent |
@@ -81,7 +82,19 @@ Execute per-intent tool call sequences. Hard limits apply.
 
 **`git`**: `git log --oneline -20` → `git diff` (if recent changes) → `git blame` (if specific lines)
 
-**`docs`**: Resolve feature → use `canonical_docs` map (tech_spec, requirements, architecture) → fallback `Glob "docs/**/*.md"` (top 5) → Read (max 3)
+**`docs`**: Resolve feature → pick the source set the question actually asks for → fallback `Glob "docs/**/*.md"` (top 5) → Read (max 3)
+
+| The question is… | Read | Not |
+|------------------|------|-----|
+| "現在的行為是什麼" | code, `rules/`, `current_authority` | A tech spec — it records the design, not what shipped |
+| "當初為什麼這樣設計" | `design_records` | — |
+| "當初要求什麼 / 這張單結了嗎" | `work_records` | — |
+| "這個決定是什麼時候做的" | `history_records` | — |
+
+Answering a current-behaviour question from a design record is the specific failure this split
+exists to prevent: the spec is the older artifact, so it reads as authoritative and is wrong.
+When a design record is the only source available, say which document the answer came from and
+that it may predate the code.
 
 **`rules`**: Glob `rules/*.md` + `.claude/rules/*.md` → Grep keywords → Read + quote (max 3)
 

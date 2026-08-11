@@ -315,8 +315,16 @@ test('SKILL.md reuses the shared feature-context-resolution mechanism, not a dup
   const content = readFileSync(skillPath, 'utf8');
   assert.match(content, /feature-context-resolution\.md/,
     'SKILL.md must reference the shared feature-context-resolution mechanism');
-  assert.match(content, /resolve-feature-cli\.js/,
-    'SKILL.md must name the canonical CLI entrypoint, not re-derive resolution logic');
+  // The wrapper, not the CLI. `scripts/resolve-feature.js` owns the failure payload
+  // (doc-review-phasing r2): it exits 0 with `scan_error: true` where a direct CLI call can die
+  // mid-write. This skill briefly held an exemption because its `allowed-tools` could not reach
+  // `bash`; the resolution was a Node entrypoint runnable under the `Bash(node:*)` it already has,
+  // so there is one contract, no exemption, and no widened permission —
+  // `test/skills/scan-error-gate.test.js` checks that pairing across every caller.
+  assert.match(content, /node scripts\/resolve-feature\.js/,
+    'SKILL.md must name the wrapper entrypoint, not re-derive resolution logic');
+  assert.ok(!/\bnode\b.*resolve-feature-cli\.js/.test(content),
+    'SKILL.md must not invoke the CLI directly');
 });
 
 // ── doc-classifier integration (AC: semantic_pattern hit, not fallback) ─────

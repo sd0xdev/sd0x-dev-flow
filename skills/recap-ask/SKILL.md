@@ -72,6 +72,29 @@ sequenceDiagram
 2. Enforce path boundary (NFR-8) on `--context`: resolved real path **must** satisfy `startsWith(repo_root + "/")` **or** live under `<tmp>` (same allowlist as `/recap-doc` Path Security — users who moved the recap out of `sd0x-dev-flow-recap/` must still land within tmp). Reject `..` segments and external symlinks (use `fs.realpathSync` on the first existing ancestor).
 3. Read the recap file in full; this is the **primary context**. Extract the §7 Evidence file-index as the lazy-fetch allowlist.
 4. **Validate every Evidence entry before adding to the allowlist**: apply the same boundary check to each `<path>:<line>` in §7 — the canonical (realpath-resolved) target **must** satisfy `startsWith(repo_root + "/")` **or** lie inside `<tmp>` (i.e. repo-or-`<tmp>`, identical to step 2), with `..` segments and external symlinks rejected. Entries that fail validation are silently dropped from the allowlist (a recap cannot smuggle out-of-repo paths into Phase 3 reads).
+4b. **`scan_error` gate**: read the recap's `> **Corpus scan**:` metadata line (written by
+   `/recap-doc` from `feature_context.scan_error`). **Only the exact value `complete` proceeds.**
+   Every other reading takes the ⚠️ Need Human exit, and each one takes it on its own account:
+
+   | Marker | Reading | Consequence |
+   |--------|---------|-------------|
+   | `complete` | the recap records `scan_error === false` | proceed to Phase 2 |
+   | `unknown` | the recap records `scan_error !== false` — the source sets behind it are **unknown, not empty** | say so, ⚠️ Need Human exit |
+   | absent | the recap predates the field, so nothing was recorded either way | say so, ⚠️ Need Human exit |
+   | anything else | an unrecognised producer wrote it; the value means nothing here | say so, ⚠️ Need Human exit |
+
+   The absent row is the one that reads as pedantic and is not. Silence is the *default* state of
+   every recap written before the marker existed, so "warn and answer anyway" is not a lenient
+   reading of one edge case — it is the fail-open path for the whole back catalogue, and it is
+   precisely the misreading the marker was added one document upstream to close. An answer built on
+   an evidence index whose corpus completeness is unknown is the failure, whether the recap said
+   `unknown` or said nothing.
+
+   Gate on `!== false`, not `=== true`, and on `=== 'complete'` rather than "not `unknown`":
+   a payload from a shell fallback or an older producer carries no such field at all, and
+   a non-null `key` is not evidence the sets are complete — `scan_error` rides alongside a
+   resolved key.
+
 5. If the recap is older than 7 days, warn the user — recaps are ephemeral by default and the source code may have drifted. The 7-day threshold is a heuristic; callers may override in future versions.
 
 ### Phase 2 — Intent Classification

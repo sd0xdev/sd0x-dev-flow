@@ -36,9 +36,18 @@ test('runbook SKILL.md defines create/update/check modes', () => {
 
 test('runbook SKILL.md integrates feature resolver', () => {
   const content = readFileSync(skillPath, 'utf8');
+  // The wrapper, not the CLI. `resolve-feature.js` is what owns the `scan_error: true` failure
+  // payload (doc-review-phasing r2); a skill calling the CLI direct gets partial stdout or nothing
+  // on failure, with no field for the gate to read. `test/skills/scan-error-gate.test.js` enforces
+  // that rule across every role-aware surface — this assertion is the one for this skill, and it
+  // used to pin the opposite.
   assert.ok(
-    content.includes('resolve-feature-cli.js'),
-    'should reference feature resolver CLI'
+    content.includes('node scripts/resolve-feature.js'),
+    'should invoke the feature resolver through the wrapper'
+  );
+  assert.ok(
+    !content.includes('node scripts/resolve-feature-cli.js'),
+    'should not invoke the CLI directly'
   );
   assert.ok(
     content.includes('doc_inventory'),
@@ -99,13 +108,76 @@ test('runbook template includes provenance block', () => {
   );
 });
 
-test('discovery heuristics defines 4-priority scoped cascade', () => {
+test('discovery heuristics defines the 5-priority cascade in role order', () => {
+  // This pinned the four-priority version — `Canonical docs … High` as P2 — for one release after
+  // `SKILL.md` had already moved to the source sets, so the suite stayed green while the two
+  // instruction surfaces contradicted each other and `SKILL.md` still pointed here for per-section
+  // mapping. A runbook is executed against production, so sourcing a step from a design record at
+  // High confidence can describe a procedure that was never built. Rows are asserted by ORDER, not
+  // by mere presence: presence alone is what let the stale table pass.
   assert.ok(existsSync(discoveryPath), 'discovery-heuristics.md should exist');
   const content = readFileSync(discoveryPath, 'utf8');
-  assert.ok(content.includes('Related Files'), 'P1: should reference Related Files');
-  assert.ok(content.includes('Canonical docs'), 'P2: should reference Canonical docs');
-  assert.ok(content.includes('Feature-local'), 'P3: should reference Feature-local paths');
-  assert.ok(content.includes('Repo-wide'), 'P4: should reference Repo-wide grep');
+  const rows = content.split('\n').filter((l) => /^\|\s*[1-5]\s*\|/.test(l));
+  assert.equal(rows.length, 5, `expected a 5-row cascade, got ${rows.length}`);
+  const expected = [
+    [/Related Files/, /High/],
+    [/`current_authority`/, /High/],
+    [/`design_records`/, /Medium/],
+    [/Feature-local/, /Medium/],
+    [/Repo-wide/, /Low/],
+  ];
+  expected.forEach(([scope, confidence], i) => {
+    assert.match(rows[i], scope, `P${i + 1}: wrong scope: ${rows[i]}`);
+    assert.match(rows[i], confidence, `P${i + 1}: wrong confidence: ${rows[i]}`);
+  });
+  // The negative control the old version lacked: no cascade row may hand a canonical/design doc
+  // High confidence. Prose may still QUOTE the retired row — that is the history, not the rule.
+  for (const row of rows) {
+    const [, , scope, confidence] = row.split('|');
+    assert.ok(!(/[Cc]anonical/.test(scope) && /High/.test(confidence)),
+      `no cascade row may source from canonical docs at High confidence: ${row}`);
+  }
+  assert.ok(!/design_records`[^|]*\| High/.test(content),
+    'design records are intent, never High confidence');
+});
+
+test('a Related Files path that is a design record is demoted, not promoted by P1', () => {
+  // P1 is High confidence, and a request's Related Files table routinely names `2-tech-spec.md`.
+  // Without an explicit demotion the row this feature removed returns through the front door: a
+  // design record sourcing an operational step at High confidence. Both surfaces must say so —
+  // the skill body and the reference the skill points at for per-section mapping.
+  for (const rel of ['skills/runbook/SKILL.md', 'skills/runbook/references/discovery-heuristics.md']) {
+    const content = readFileSync(resolve(__dirname, '../..', rel), 'utf8');
+    assert.match(content, /P1 path is classified before it is used/,
+      `${rel}: must state that a P1 path is resolved before use`);
+    assert.match(content, /`design_records`[^.]*treated as \*\*P3\*\*/,
+      `${rel}: must demote a design-record path arriving via P1 to P3`);
+  }
+  // Prose alone is not the repair. The reference carries the *executable* algorithm the skill
+  // delegates per-section mapping to, and its step 1 read "Check P1 scope (Related Files) — if
+  // found, use with High confidence" with no classification — so the file stated the rule at the
+  // top and contradicted it in the procedure, and an assertion on the prose passed anyway.
+  const ref = readFileSync(
+    resolve(__dirname, '../..', 'skills/runbook/references/discovery-heuristics.md'), 'utf8');
+  const step1 = ref.split('\n').find((l) => /^\s*1\. Check P1 scope/.test(l));
+  assert.ok(step1, 'the execution pattern must still have a step 1');
+  assert.ok(!/use with High confidence/.test(step1),
+    `step 1 must not promote a P1 hit unconditionally: ${step1.trim()}`);
+  assert.match(step1, /RESOLVE THE PATH'S ROLE FIRST|classif/i,
+    `step 1 must classify before using: ${step1.trim()}`);
+  assert.match(ref, /in `design_records` → do not use it here/,
+    'step 1 must route a design-record path to P3 rather than using it');
+});
+
+test('discovery heuristics marks design-record sourcing unverified and gates on scan_error', () => {
+  // The per-section map is what `skills/runbook/SKILL.md:130` sends the agent to, so the role
+  // split has to hold *here*, not only in the skill body.
+  const content = readFileSync(discoveryPath, 'utf8');
+  assert.match(content, /unverified/, 'a design-record step must be marked unverified');
+  assert.match(content, /scan_error\s*!==\s*false/,
+    'the reference must carry the same gate the skill does');
+  assert.match(content, /node scripts\/resolve-feature\.js/,
+    'and must resolve through the wrapper');
 });
 
 test('discovery heuristics includes redaction rules', () => {

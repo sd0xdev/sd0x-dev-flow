@@ -163,7 +163,15 @@ If incomplete info, ask:
 
 **Auto-detection logic** (when no explicit path):
 
-1. Resolve feature context using 5-level cascade (`node scripts/resolve-feature-cli.js`)
+1. Resolve feature context using the 5-level cascade — `node scripts/resolve-feature.js`, the
+   wrapper that owns the failure payload; the CLI behind it is not the entrypoint
+1b. **`scan_error` gate** — `scan_error !== false` ⇒ the source sets are **unknown, not empty**.
+   Report it and take the ⚠️ Need Human exit. This is the step that matters most here: an
+   unreadable `requests/` directory returns the same empty set as a feature with no tickets, so
+   without the gate step 5 below reads it as "0 active requests" and creates a **duplicate**
+   ticket beside the one it could not see. Gate on `!== false`, not `=== true`: a `{}` payload
+   from a shell fallback carries no such field, so a non-null `key` is not evidence of
+   completeness
 2. Scan `docs/features/<key>/requests/*.md` for incomplete requests (Status not in `[Completed, Done, Superseded, Archived]` — the closed set is defined once in `scripts/lib/request-status.js`; keep this list identical to `CLOSED_REQUEST_STATUS`)
 3. If exactly 1 active request → auto-select
 4. If multiple active requests → AskUserQuestion with numbered list
@@ -245,6 +253,29 @@ Agent({
 | `Acceptance Criteria` | Check checkboxes based on implementation/test results |
 | `Progress.Note`       | Add latest commit message summary         |
 | `Note` (metadata)     | Commentary about the Status belongs here, **never appended to the `Status` line** — `Status` is compared by exact equality against a closed-status set, so any annotation reopens the request. See `references/template.md` |
+
+### Phase 4.5: Freeze — a request ticket is a record, not a living document
+
+A request ticket states what was asked for and what happened. That makes it a **record**: it is
+appended to while the work runs, and it is never rewritten afterwards to match what the code later
+became. Doc sync (`/update-docs`) does not touch it at all — see that skill's Step 1.5.
+
+| Status | What `--update` may change |
+|--------|----------------------------|
+| Pending / In Progress / Candidate Complete | Status, Progress table, AC checkboxes, Progress.Note — the fields above |
+| **Completed / Superseded / Archived** | **Nothing.** A closed ticket is frozen |
+
+The closed set is `CLOSED_REQUEST_STATUS` in `scripts/lib/request-status.js` — the same list Scan
+Mode filters on, and the only place it is defined.
+
+Reopening is a decision, not an update: when work resumes on a closed ticket, say so and create a
+new ticket that references it, rather than editing history so it reads as though it was never
+finished. The one exception is a factual correction to the record itself — a wrong path, a wrong
+date — which is a correction, not a re-sync, and is stated as such in the report.
+
+This is what stops the cost this skill's tickets kept paying: a frozen ticket is reviewed under the
+`record-diff` profile, whose whole point is that drift from today's code is not a finding
+(`skills/doc-review/SKILL.md` § Review Profiles).
 
 ### Update Mode: Interaction
 
@@ -372,6 +403,7 @@ For each updatable doc:
 2. **AC checkboxes**: Cross-reference git diff to determine which ACs are met. Only check ACs with clear implementation evidence.
 3. **Progress table**: Update phase statuses based on commits found.
 4. **Missing metadata**: Add blockquote metadata header if doc only has table format or no metadata.
+5. **Frozen docs**: A doc whose Status is in `CLOSED_REQUEST_STATUS` is skipped and reported as frozen — Phase 4.5 applies to batch mode identically. Scan Mode already filters these out, so a closed doc reaching Phase 4 means the status was misparsed; report that rather than editing it.
 
 ### Phase 5: Report Format
 
@@ -386,6 +418,26 @@ For each updatable doc:
 
 **Updated**: N / **Unchanged**: N / **Total scanned**: N
 ```
+
+## Write-Time Budget
+
+A ticket is a work unit, not a narrative. It stays readable only if it is written to a budget and
+updated by **overwriting** rather than appending.
+
+| Item | Budget |
+|------|--------|
+| Whole ticket | ~100 lines (`wc -l`). Past 150, the ticket is doing a tech spec's job — move the design out and link to it |
+| Acceptance Criteria | ≤ 8 (Phase 1.5 splits above that) |
+| Background | ≤ 10 lines — why this exists, not how it will be built |
+| `Progress` table | Cells are **overwritten**, never appended to |
+
+**Overwrite, do not accumulate.** Each update replaces the phase status and its note; it does not add
+a round. A ticket carrying "Round 1 … Round 7 …" is a review log wearing a ticket's name — that
+belongs in `review-log-<topic>.md`, and moving it there costs nothing because the ticket never needed
+it. This is where request tickets grow without anyone deciding they should.
+
+The budget is a write-time target, not a gate. A ticket already over it is trimmed at the next
+substantive edit — unless it is closed, in which case it is frozen (Phase 4.5) and left alone.
 
 ## File Naming
 

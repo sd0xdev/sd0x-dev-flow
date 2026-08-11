@@ -63,6 +63,18 @@ sequenceDiagram
 2. Validate ScopeReport v1 required fields: `version === 1`, `source`, `files[]`, `feature_context`, `fallback_trace`.
 3. If `source === null` or `files.length === 0` → exit non-zero with message directing user to rerun `scripts/detect-scope.js`.
 
+### Phase 1b — `scan_error` gate
+
+**`scan_error` gate.** `scan_error !== false` ⇒ the source sets are **unknown, not empty** —
+report it and take the ⚠️ Need Human exit rather than composing a recap from sources you could not enumerate. Gate on `!== false`, not
+`=== true`: a `{}` payload from a shell fallback carries no such field at all, and a non-null `key`
+is not evidence the sets are complete — `scan_error` rides alongside a resolved key.
+
+This skill reaches the source sets through `@skills/tech-brief/references/source-guide.md`,
+which it loads as its own Phase 2 strategy. Loading a reference is loading what it instructs:
+there is no reading of that link under which the sets are described but not consumed, so the
+gate is owed here exactly as it is in the skill that owns the file.
+
 ### Phase 2 — Evidence Collection (reuse tech-brief Stage 2)
 
 See `references/source-guide.md` for the full strategy. Summary:

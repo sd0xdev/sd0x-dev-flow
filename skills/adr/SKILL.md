@@ -32,23 +32,45 @@ Phase 5: Report           → path written, number assigned, links updated
 ### Phase 1: Resolve Feature
 
 Reuse the shared cascade — do not re-derive it here:
-`@skills/tech-spec/references/feature-context-resolution.md` (the canonical copy —
-`skills/create-request/references/`'s copy is a documented sync duplicate and has already drifted),
-canonical implementation `scripts/lib/feature-resolver.js`, CLI `node scripts/resolve-feature-cli.js
-[--feature <key>]`.
+`@skills/create-request/references/feature-context-resolution.md` — the single copy since
+doc-review-phasing r2 merged the two that had drifted apart; `/tech-spec` now keeps its own
+command-free native-cascade reference in its own bundle instead of a second copy of this one —
+canonical implementation `scripts/lib/feature-resolver.js`, invoked as
+`node scripts/resolve-feature.js [--feature <key>]`.
+
+**`scan_error` gate.** `scan_error !== false` ⇒ the source sets are **unknown, not empty** —
+report it and take the ⚠️ Need Human exit rather than recording a decision against a corpus you could not read — an ADR is a
+time-stamped claim about what was true, and one written from an unreadable corpus is wrong forever. Gate on `!== false`, not
+`=== true`: a `{}` payload from a shell fallback carries no such field at all, and a non-null `key`
+is not evidence the sets are complete — `scan_error` rides alongside a resolved key.
+
+**The wrapper, not the CLI.** `resolve-feature.js` is the single owner of the failure payload: it
+exits 0 and emits the full shape with `scan_error: true` however the CLI fails — nonzero exit,
+signal, partial write, or a payload that is not the agreed shape; it cannot cover `node` itself
+being missing, since nothing running under node can — where the CLI invoked
+directly can die mid-write and a `|| echo '{}'` fallback of your own emits a payload with no
+`scan_error` field at all. This skill briefly carried an exemption on the grounds that its
+`allowed-tools` could not reach `bash`. The fix was not to widen the tool list but to make the
+entrypoint reachable: `resolve-feature.js` runs under the `Bash(node:*)` this skill already grants,
+so there is one failure contract and no exemptions, at no cost in permissions. (`Bash(node:*)` is
+not universal either — `/codex-code-review` grants bash and no node, and keeps the shell shim. The
+rule is that a skill instructs the entrypoint *it* is permitted to run.) This skill reads `key`,
+`confidence` and `docs_path` only and consumes none of the four source sets, so the `scan_error`
+gate the research skills carry does not bind it — but a `{}` reply still means the invocation failed
+and is never an empty corpus.
 
 **The gate below checks the directory (and the confidence), not `key` alone.** For Levels 1–3
 (explicit `--feature` with a valid slug, branch `feat/<x>`, or a changed path under
 `docs/features/<key>/`), `resolveFeatureContext` returns a non-null `key` with
 `confidence: "high"` or `"medium"` even when `docs/features/<key>/` does not exist on disk — it
 only probes the directory to enrich the result, never to invalidate it
-(`scripts/lib/feature-resolver.js:57-93`). An explicit `--feature` value that fails the
+(`scripts/lib/feature-resolver.js` § `probe`). An explicit `--feature` value that fails the
 case-insensitive slug pattern (`/^[a-z0-9][a-z0-9._-]*$/i`, e.g. `--feature ../evil`) is rejected
-at line 59 before it ever reaches `key`. Level 3b (a changed path under `skills/<key>/`,
-line 85-93) only returns when `probe()` finds the directory; on a miss it falls through — to
+at `scripts/lib/feature-resolver.js:13` before it ever reaches `key`. Level 3b (a changed path
+under `skills/<key>/`, from line 140) only returns when `probe()` finds the directory; on a miss it falls through — to
 Level 4 if `docs/features/` has **exactly one** subdirectory (returns that directory's name as
 `key` anyway, `source: "single_dir"`, `confidence: "low"` — a guess, not a match on the actual
-change), otherwise to Level 5 (`key: null`). `resolve-feature-cli.js` prints the **full result
+change), otherwise to Level 5 (`key: null`). the resolver prints the **full result
 object** in the null case, e.g. `{"key":null,"source":"none",...}` — a bare `{}` means something
 else entirely (no git root, or the CLI itself threw). A typo'd `--feature` value is the likelier
 failure and does **not** produce a null key (Level 1 still returns it with `confidence: "high"`),
@@ -59,7 +81,7 @@ so gating on `key` alone silently creates a bogus feature directory instead of a
 | `key` resolved, `confidence` is `"high"` or `"medium"`, **and** `docs/features/<key>/` exists | Continue to Phase 2 |
 | `key` resolved but `docs/features/<key>/` does not exist (check with `node -e "process.exit(require('fs').existsSync(process.argv[1])?0:1)" "docs/features/<key>"` — this skill's `allowed-tools` has no general `Bash`, only `Bash(node:*)`) | **Gate: Need Human** — confirm this is really a new feature directory the user wants created; do not silently write into a typo'd path |
 | `confidence` is `"low"` (`source: "single_dir"`) | **Gate: Need Human** — this is a guess ("only one feature directory exists"), not a match on the actual change; confirm it's the right one before writing into it |
-| `key` is `null` (`resolve-feature-cli.js` prints the full object, e.g. `{"key":null,"source":"none",...}`) | **Gate: Need Human** — ask which feature this ADR belongs to; do not guess |
+| `key` is `null` (the resolver prints the full object, e.g. `{"key":null,"source":"none",...}`) | **Gate: Need Human** — ask which feature this ADR belongs to; do not guess |
 
 ### Phase 2: Compute the Number
 
