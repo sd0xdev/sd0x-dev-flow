@@ -73,10 +73,10 @@ separately-defined questions (round-1 finding 3):
 outside the repo directory in a per-repo local cache, and needs no `.gitignore` entry. (The
 pre-existing runtime artifacts — `.claude_review_state.json`, `.claude_nit_history.json`, the
 `.claude/cache/` precommit/XDG data — are explicitly **not** relocated by this ticket; that is the
-❓ Q5 follow-up. Documents like this spec follow the normal `docs/features/` flow.) Anchor Register
-#5–#7 untouched: gate *recording* changes, gate *obligations* do not — § 3.5 preserves today's
-obligation behaviour, including dual-mode aggregate enforcement (§ 3.4). Round/stall progress
-ledger is out of scope (it tracks convergence, not gate state).
+❓ Q5 follow-up. Documents like this spec follow the normal `docs/features/` flow.) Anchor
+Register #5–#7 untouched: gate *recording* changes, gate *obligations* do not — § 3.5 preserves
+today's obligation behaviour, including dual-mode aggregate enforcement (§ 3.4). Round/stall
+progress ledger is out of scope (it tracks convergence, not gate state).
 
 ## 2. Existing Code Analysis
 
@@ -165,7 +165,11 @@ plane_digest(plane):
   changes, or uninitialized or unreadable, has no OID that names its content and marks the digest
   `partial`. A merge conflict, an unreadable file, or any git command failure likewise marks the
   digest `partial` — a `partial` digest **never matches anything**, so the gate stays open rather
-  than silently passing.
+  than silently passing. **Implementation residual (WB1, round-2 finding, fail-closed by design)**:
+  a path containing *both* a newline byte and non-UTF-8 bytes has no git plumbing channel into a
+  filter-applying hash — `hash-object --stdin-paths` is newline-delimited with no `-z` variant
+  (git 2.54), and passing the path as argv re-encodes the bytes — so such a path marks its plane
+  `partial` (`unhashable-path`) instead of being hashed; the remedy is renaming the file.
 - **Plane classifier** (matches today's conservative rule): doc = `\.(md|mdx)$`; code = everything
   else. Comment-only and config edits stay code, unchanged.
 - **Containment is free**: inputs come from git, which only reports in-repo paths. The

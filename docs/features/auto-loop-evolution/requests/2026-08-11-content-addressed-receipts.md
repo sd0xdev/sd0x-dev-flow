@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-08-11
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [`../2-tech-spec/2-content-addressed-receipts.md`](../2-tech-spec/2-content-addressed-receipts.md) ← design decisions live there
 > **Note**: This is an **architecture-level change** to the hook state machine. The tech spec above settles the load-bearing decisions (digest form, storage location, migration phases); implementation follows its § 5 work breakdown.
@@ -69,9 +69,9 @@ The structural diagnosis: the state file is a cache of derived facts maintained 
 
 | Phase | Status | Note |
 |-------|--------|------|
-| Analysis | In Progress | Tech spec drafted 2026-08-11 (`../2-tech-spec/2-content-addressed-receipts.md`); open questions Q1–Q7 pending review |
-| Development | Pending | Follows spec § 5 work breakdown (WB1–WB6) |
-| Testing | Pending | Three incident classes are the seed regression suite (spec § 6) |
+| Analysis | Done | Tech spec reviewed to `✅ Mergeable` (round 15, 2026-08-11) |
+| Development | In Progress | **WB1–WB2 landed 2026-08-11**: `scripts/lib/tree-digest.js` (per-plane digest), `scripts/lib/receipt-log.js` (verdict log + lock + tombstones), runner producer in `scripts/precommit-runner.js`; install manifests updated (project-setup / codex-setup / precommit-fast / claude-health). Code review: 4 rounds at `thorough` (rounds 2–3 ⛔, round 4 `✅ Ready`, thread `019ff04c`), notable hardening from review: token-named staged-rename commit bound to lock identity, dir-fsync error propagation, tombstone-dir atomic acquisition with dev/ino pinning, fallback preflight probe, submodule `-uall` status. One documented fail-closed deviation added to spec § 3.2 (newline+non-UTF-8 paths → `partial`). WB2b, WB3–WB6 pending |
+| Testing | In Progress | WB1–WB2: 26+40 unit/integration tests incl. the 30KB / EPIPE / backgrounded stdout regressions; full suite 4291 pass / 0 fail. AC-trace 2026-08-11 (advisory): AC1 COVERED; AC2–4 partial (WB2 clauses evidenced, WB2b/WB4 clauses open); AC5–7 await WB3–WB5 — gate `⛔ Inadequate` for the whole ticket, honest for a WB1–WB2 increment; 0/1 exceptions used |
 | Acceptance | Pending | |
 
 ## References
