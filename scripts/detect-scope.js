@@ -26,6 +26,8 @@ const fs = require('fs');
 const path = require('path');
 
 const { runCapture, gitRepoRoot } = require('./lib/utils');
+const { isContextShape } = require('./lib/context-shape');
+const { SLUG_RE } = require('./lib/feature-resolver');
 
 const SCHEMA_VERSION = 1;
 const TIMEOUT_MS = 5_000;
@@ -274,25 +276,89 @@ async function lineStats(root, filePath, baseRef) {
   return { added, deleted, total: added + deleted };
 }
 
+/**
+ * Are the fields this function projects consistent with the payload they were derived from?
+ *
+ * `isContextShape` checks types and presence and stops there, so a payload can be structurally
+ * perfect and semantically impossible — `key: 'good'` with `docs_path: null`, or a key that
+ * traverses beside a path correctly derived from it. This function projects exactly those fields,
+ * so it is the one that has to notice. The relations are the resolver's own post-conditions, and
+ * `SLUG_RE` is imported from it rather than restated: a second copy of a traversal guard drifting
+ * from the first is the failure this whole function is about.
+ *
+ * Which payloads it refuses, what each one does downstream, and why scope is the projected subset:
+ * docs/features/doc-review-phasing/4-implementation.md
+ * § 1.6 "What the projection refuses".
+ */
+function projectionIsConsistent(p) {
+  const canonical = p.canonical_docs;
+  if ((p.key === null) !== (p.docs_path === null)) return false;
+  if (p.key !== null && !SLUG_RE.test(p.key)) return false;
+  if (p.key !== null && p.docs_path !== `docs/features/${p.key}`) return false;
+  if (p.has_tech_spec !== (canonical.tech_spec != null)) return false;
+  return p.has_requirements === (canonical.requirements != null);
+}
+
+/**
+ * The `feature_context` projection when the corpus was not enumerated. A constructor rather than a
+ * frozen literal because callers embed it in a report they then serialize, and one shared *shape*
+ * is the point: the non-repository early return in `main()` used to write its own literal without
+ * `scan_error`, so the one path that is unambiguously a failure to read anything projected the
+ * field-absent payload that `!== false` consumers have to treat as unknown anyway — correct by
+ * accident, and only until someone read it as "healthy". Every projection now comes from here.
+ */
+const UNKNOWN_FEATURE_CONTEXT = () => ({
+  key: null, docs_path: null, has_tech_spec: false, has_requirements: false, scan_error: true,
+});
+
+/**
+ * `feature_context` is a *projection* of the resolver payload, and `scan_error` is the one field a
+ * projection may not drop.
+ *
+ * Every early return below used to emit a context indistinguishable from a healthy scan of a
+ * repository with no feature — resolver missing, nonzero exit, empty stdout, unparseable JSON, all
+ * of them "key: null, no tech spec". A ScopeReport consumer downstream then reads that as a fact
+ * about the corpus rather than as a failure to read it, which is the same fail-open the source-set
+ * gate exists to close, arriving one boundary later. `scan_error` therefore rides along on every
+ * path, and it is `true` wherever the payload could not be obtained *or* did not carry the field
+ * itself: a payload with no `scan_error` is an old CLI or a shell fallback, and treating its
+ * silence as `false` is exactly the misreading `!== false` is spelled that way to prevent.
+ *
+ * The wrapper is preferred over the CLI for the reason the skills state: it owns the failure
+ * payload. The CLI remains a fallback because a consuming repository may have installed only it,
+ * and in that case this function is the one converting a failure into `scan_error: true`.
+ */
 async function resolveFeatureContext(root) {
+  const unknown = UNKNOWN_FEATURE_CONTEXT();
+  const wrapperPath = path.join(root, 'scripts', 'resolve-feature.js');
   const cliPath = path.join(root, 'scripts', 'resolve-feature-cli.js');
-  if (!fs.existsSync(cliPath)) {
-    return { key: null, docs_path: null, has_tech_spec: false, has_requirements: false };
-  }
-  const r = await runCapture('node', [cliPath], { cwd: root });
-  if (r.code !== 0 || !r.stdout.trim()) {
-    return { key: null, docs_path: null, has_tech_spec: false, has_requirements: false };
-  }
+  const entrypoint = fs.existsSync(wrapperPath) ? wrapperPath : cliPath;
+  if (!fs.existsSync(entrypoint)) return unknown;
+
+  const r = await runCapture('node', [entrypoint], { cwd: root });
+  if (r.code !== 0 || !r.stdout.trim()) return unknown;
   try {
     const parsed = JSON.parse(r.stdout);
+    // Parseable is not trustworthy, and `scan_error: false` is a *claim* the payload makes about
+    // itself. `{"scan_error":false}` parses, projects `false`, and says nothing about whether any
+    // document was enumerated — so the claim is honoured only from a payload that is the whole
+    // agreed shape, judged by the same `isContextShape` the wrapper uses on its child. One
+    // validator, so "what detect-scope trusts" cannot drift from "what the wrapper emits".
+    //
+    // Shape is necessary and not sufficient, though, and the difference is this projection's to
+    // enforce: `isContextShape` is deliberately relation-blind, so a full-shape payload may still
+    // be internally impossible. Everything this function projects is checked against the payload it
+    // was derived from as well — see `projectionIsConsistent`.
+    if (!isContextShape(parsed) || !projectionIsConsistent(parsed)) return unknown;
     return {
       key: parsed.key || null,
       docs_path: parsed.docs_path || null,
       has_tech_spec: Boolean(parsed.has_tech_spec),
       has_requirements: Boolean(parsed.has_requirements),
+      scan_error: parsed.scan_error !== false,
     };
   } catch {
-    return { key: null, docs_path: null, has_tech_spec: false, has_requirements: false };
+    return unknown;
   }
 }
 
@@ -333,7 +399,7 @@ async function main() {
       confidence: null,
       base_ref: null,
       files: [],
-      feature_context: { key: null, docs_path: null, has_tech_spec: false, has_requirements: false },
+      feature_context: UNKNOWN_FEATURE_CONTEXT(),
       focus_hint: focus,
       fallback_trace: [
         { layer: 'uncommitted', outcome: 'error', detail: 'not in a git repository' },

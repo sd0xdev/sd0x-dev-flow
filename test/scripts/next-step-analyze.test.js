@@ -49,6 +49,7 @@ function writeReviewState(dir, overrides = {}) {
 // Preloaded into the analyze child process by the determinism tests, so directory enumeration is
 // handed back reversed no matter what the host filesystem would have returned. See the helper.
 const READDIR_DESCENDING = resolve(__dirname, 'helpers/readdir-descending.js');
+const READDIR_EACCES = resolve(__dirname, 'helpers/readdir-eacces.js');
 
 // The audit file lives OUTSIDE the repo under test on purpose: an untracked file inside it dirties
 // the worktree, and `feature-complete` — the gate the backlog tests depend on — never fires on a
@@ -122,8 +123,14 @@ function assertIntercepted(auditPath, expected) {
   }
 }
 
-function runAnalyze(dir, extraArgs = [], { descendingReaddir = false, auditPath } = {}) {
+function runAnalyze(dir, extraArgs = [], { descendingReaddir = false, auditPath, eaccesPath } = {}) {
   const env = { ...process.env };
+  if (eaccesPath) {
+    // One directory made unreadable at the syscall, leaving the worktree and the diff untouched —
+    // see helpers/readdir-eacces.js for why `chmod` cannot serve this test.
+    env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require "${READDIR_EACCES}"`.trim();
+    env.READDIR_EACCES_PATH = eaccesPath;
+  }
   if (descendingReaddir) {
     env.NODE_OPTIONS = `${env.NODE_OPTIONS || ''} --require "${READDIR_DESCENDING}"`.trim();
     // When given, the preload logs every directory it intercepted IN THIS CHILD. That is the only
@@ -767,6 +774,59 @@ test('feature-complete — P3 when all gates pass + no sync issues', () => {
   const f = output.findings.find(f => f.id === 'feature-complete');
   assert.ok(f, 'feature-complete should fire when all gates pass and no sync issues');
   assert.equal(f.priority, 'P3');
+});
+
+// ---------------------------------------------------------------------------
+// Test 27b: an unreadable feature corpus withholds the completion claim
+// ---------------------------------------------------------------------------
+test('feature-complete — withheld when the feature corpus could not be enumerated', () => {
+  // The exact shape of the fail-open: the key still resolves (from the branch), but enumeration
+  // fails, so `has_tech_spec` / `has_requests` come back false — indistinguishable from a feature
+  // with no documents. Every doc and request heuristic is skipped, and their silence used to be
+  // read as "no sync work remains" and reported as "Ready for commit and /pr-review".
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/unreadable-test'], { cwd: dir, stdio: 'ignore' });
+  const featureDir = join(dir, 'docs', 'features', 'unreadable-test');
+  mkdirSync(join(featureDir, 'requests'), { recursive: true });
+  writeFileSync(join(featureDir, '2-tech-spec.md'), '# Spec');
+  writeFileSync(join(featureDir, 'requests', '2026-01-01-test.md'), '| Status | **Completed** |\n\n- [x] Done');
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add all'],
+    { cwd: dir, stdio: 'ignore' });
+  writeReviewState(dir, {
+    has_code_change: true,
+    code_review: { executed: true, passed: true, last_run: '' },
+    precommit: { executed: true, passed: true, last_run: '' },
+  });
+  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
+  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
+    { cwd: dir, stdio: 'ignore' });
+
+  // The control first — readable, and the completion claim fires. Without it, the assertions below
+  // would also pass on a build where `feature-complete` had simply stopped working.
+  const readable = runAnalyze(dir).output;
+  assert.ok(readable.findings.find((f) => f.id === 'feature-complete'),
+    'control: feature-complete must fire while the corpus is readable');
+  assert.ok(!readable.findings.find((f) => f.id === 'corpus-unreadable'));
+
+  const out = runAnalyze(dir, [], { eaccesPath: join('docs', 'features', 'unreadable-test') }).output;
+  // The scenario really is the one being claimed: same clean tree, same passing gates, and the
+  // *only* difference is that enumeration failed. Asserted rather than assumed, because the first
+  // version of this test used `chmod` and passed on a P0 about deleted files instead.
+  assert.equal(out.feature_context.scan_error, true, 'the injected failure must reach the resolver');
+  assert.equal(out.feature_context.key, 'unreadable-test', 'the key still resolves — that is the trap');
+  assert.equal(out.diff_summary.total, 0, 'the worktree must stay clean, or another gate blocks first');
+  // Same blockers in both runs, so nothing new pre-empts the claim under test. Asserted against the
+  // control rather than against an absolute "no P0", because whichever gates the fixture happens to
+  // trip must be identical on both sides — the difference has to be `scan_error` and nothing else.
+  const p0s = (r) => r.findings.filter((f) => f.priority === 'P0').map((f) => f.id).sort();
+  assert.deepEqual(p0s(out), p0s(readable), 'the injected run must trip no blocker the control does not');
+
+  const unreadable = out.findings.find((f) => f.id === 'corpus-unreadable');
+  assert.ok(unreadable, 'corpus-unreadable must be reported, not passed over in silence');
+  assert.equal(unreadable.priority, 'P1');
+  assert.ok(!out.findings.find((f) => f.id === 'feature-complete'),
+    'a feature whose documents could not be read must not be declared complete');
 });
 
 // ---------------------------------------------------------------------------

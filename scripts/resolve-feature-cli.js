@@ -1,8 +1,18 @@
 #!/usr/bin/env node
 'use strict';
 
-const { resolveFeatureContext } = require('./lib/feature-resolver');
+const { resolveFeatureContext, EMPTY_CONTEXT } = require('./lib/feature-resolver');
 const { runCapture, gitRepoRoot } = require('./lib/utils');
+
+/**
+ * What this CLI prints when it has nothing to report. It used to print `{}` — and this is the CLI
+ * the skills actually invoke, so `{}` is what they got on a machine outside a git repository or on
+ * any unexpected throw. `scan_error: true` because neither exit enumerated anything: the sets are
+ * unknown, not empty.
+ */
+function emptyPayload() {
+  return JSON.stringify({ ...EMPTY_CONTEXT(), scan_error: true });
+}
 
 function argVal(flag) {
   const i = process.argv.indexOf(flag);
@@ -12,7 +22,7 @@ function argVal(flag) {
 async function main() {
   const root = await gitRepoRoot();
   if (!root) {
-    console.log('{}');
+    console.log(emptyPayload());
     process.exit(0);
   }
 
@@ -30,6 +40,6 @@ async function main() {
 }
 
 main().catch(() => {
-  console.log('{}');
+  console.log(emptyPayload());
   process.exit(0);
 });

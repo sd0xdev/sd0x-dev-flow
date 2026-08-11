@@ -681,8 +681,27 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     } catch { /* no requests dir */ }
   }
 
+  // 15b. corpus-unreadable: the resolver resolved a key but could not enumerate the documents.
+  //
+  // This is the one finding that has to come *before* the completion claim rather than beside it.
+  // The failure payload keeps `key` and clears `has_tech_spec`, `has_requirements`, `has_requests`
+  // and the four source sets — the same shape a feature with no documents produces. Every doc and
+  // request heuristic above is therefore skipped, and their silence reads as "no doc work remains"
+  // when what actually happened is that nothing could be read. `scan_error` is the only field that
+  // separates the two, and gating on `!== false` rather than `=== true` is what makes an older
+  // payload with no such field count as unknown instead of healthy.
+  const corpusUnreadable = Boolean(featureCtx && featureCtx.key && featureCtx.scan_error !== false);
+  if (corpusUnreadable) {
+    findings.push({
+      id: 'corpus-unreadable',
+      priority: 'P1',
+      message: `Feature "${featureCtx.key}" resolved, but its documents could not be enumerated — doc and request state is unknown, not empty`,
+      suggestion: `Check permissions on ${featureCtx.docs_path || 'the feature directory'}; the doc/request findings below are absent because nothing could be read, not because nothing is pending`,
+    });
+  }
+
   // 16. feature-complete: all gates pass + no doc-sync or request-stale issues
-  if (featureCtx && featureCtx.key) {
+  if (featureCtx && featureCtx.key && !corpusUnreadable) {
     const allGatesPass = Object.values(gates).every(g => !g.required || g.passed);
     const hasBlockers = findings.some(f => f.id === 'doc-sync-needed' || f.id === 'request-stale' || f.id === 'ac-incomplete');
     if (allGatesPass && !hasBlockers && reviewState && gates.precommit.passed) {
