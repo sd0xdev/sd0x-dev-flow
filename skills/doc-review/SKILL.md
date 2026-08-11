@@ -30,34 +30,123 @@ agent: Explore
 ## Workflow: `/codex-review-doc`
 
 ```
-Determine target → Read content → Codex review (5 dimensions) → Rating table + Gate → Loop if Needs revision
+Target set → Deterministic checks → Resolve profiles + batches → Codex review per batch → Rating table + Gate → Loop
 ```
 
-### Step 1: Determine Target File
+**All changed `.md` in one change are one review plan.** The plan is the unit; it holds one or more
+physical batches, and within the budget it is exactly one batch and therefore one dispatch. Reviewing
+file-by-file is what this workflow replaced — it multiplied a three-file change into three whole-
+document reviews.
+
+### Step 1: Determine the Target Set
 
 | Condition | Action |
 |-----------|--------|
-| Path specified | Use that path directly |
-| No path | Auto-detect: git modified `.md` → staged `.md` → new `.md` |
-| Multiple files | List and ask user which to review |
+| Paths specified | Use them — all of them, as one plan |
+| No path | `git diff --name-only HEAD` and untracked, filtered to `.md` |
+| Nothing changed | Report it and stop; there is no document to review |
 
-### Step 2: Read File Content
+Never narrow a multi-file change to one file, and never ask the user to pick one. A file the plan
+drops is a file nothing reviewed.
 
-Read target file, save as `FILE_CONTENT`.
+### Step 2: Deterministic Checks First
 
-### Step 3: Codex Review
+```bash
+node scripts/check-doc-links.js --root "$(git rev-parse --show-toplevel)" <changed .md paths>
+```
 
-**First review**: `mcp__codex__codex` with doc review prompt. See `references/codex-prompt-doc.md`.
+Resolves the repo-local **file links** it can classify, prints the ones that do not resolve, and
+prints `unresolved` — how many link shapes it declined to classify. **Heading fragments are out of
+scope**: `[x](#frag)` is dropped uncounted the way an external URL is, and `[x](./a.md#frag)` is
+checked as a link to `a.md` alone. A dead `#fragment` is therefore not a finding this step
+establishes, and the reviewer is free to raise one.
+
+**Scan only the paths that exist in the working tree.** A deleted `.md` (the resolver reports it
+`deleted: true`) is **omitted from this scan** — passing it produces an `unreadable` failure that
+hands the reviewer a defect when the deletion *is* the change. Its review copy is
+`git show HEAD:<path>`, and the prompt says so per file.
+
+`node` is deliberately **not** in `allowed-tools`. `allowed-tools` is pre-approval, not a capability
+boundary — an omitted tool stays reachable through the normal permission flow, so Steps 2 and 3 ask
+for permission when they run. What the omission buys is that a `node` invocation this workflow never
+names cannot run silently under a review's grant.
+**Advisory input, not a gate**: it always exits 0, and its output is fed to the reviewer as
+*findings already established* so the LLM does not spend a pass rediscovering them. `markdownlint`
+does not resolve links, so nothing else answers this.
+
+**Pass both fields to the prompt, and never `failures` alone.** It is a scanner, not a CommonMark
+parser — this repository ships zero dependencies — so `failures: []` settles the link question only
+alongside `unresolved: 0`. With `unresolved > 0` that many link shapes went unchecked, and saying
+"already settled" over them is the one way this advisory input can cost a review rather than save
+one.
+
+### Step 3: Resolve Profiles and Batches
+
+```bash
+node scripts/resolve-review-profile.js --tier <effective tier> --files <a.md,b.md> --root "$(git rev-parse --show-toplevel)"
+```
+
+Emits a per-file profile with the reasons it is not shallower, plus the batch plan. Richer inputs —
+the `##` sections a shallow profile is confined to, and whether code landed with the change — go in
+via `--plan <file|->`, a JSON document of the same shape the resolver prints:
+
+```json
+{ "tier": "standard", "code_changed": false,
+  "files": [ { "path": "docs/features/x/2-tech-spec.md",
+               "profile": "living-sync", "sections": ["3. Design"] } ] }
+```
+
+Three things this step decides, and none of them is negotiable afterwards:
+
+- **The profile is resolved before the prompt is built.** A shallow prompt for a change that did not
+  earn one is never assembled, so there is no mismatch to detect afterwards and nothing to poison.
+- **Escalation is one-way and per file.** One file escalating raises that file's questions and the
+  batch's shared dimensions; it never withdraws another file's `record-diff` exemption.
+- **An over-budget plan splits loudly.** Say which batches were produced and why, then dispatch each.
+  Never claim one dispatch you did not make, and never drop a file to fit.
+
+### Step 4: Codex Review, One Dispatch Per Batch
+
+**First review**: `mcp__codex__codex` with the doc review prompt. See `references/codex-prompt-doc.md`.
 
 Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
-**Save the returned `threadId`.**
+**Save the returned `threadId`** — one per batch.
 
-**Loop review**: `mcp__codex__codex-reply` with re-review template. See `references/review-loop-doc.md`.
+**Loop review**: `mcp__codex__codex-reply` with the re-review template. See `references/review-loop-doc.md`.
 
-### Step 4: Consolidate Output
+Stop `cat`-ing whole existing files into the prompt. Codex has sandbox access; the prompt carries the
+file list, each file's profile, and what that profile says to read.
 
-Organize results into rating table + severity-grouped findings + gate.
+### Step 5: Consolidate Output
+
+Organize results into rating table + severity-grouped findings + gate. One gate for the plan: a batch
+that comes back `⛔ Needs revision` blocks the plan.
+
+**The conjunction is behaviour-layer, and the receipt cannot hold it.** `.claude_review_state.json`
+stores one `doc_review` verdict and each batch's parsed report overwrites it — last write wins,
+whatever an earlier batch said. So a passing batch dispatched after a blocked one banks a green
+receipt the plan has not earned. Hold the conjunction yourself: fix and re-dispatch every blocked
+batch (`references/review-loop-doc.md` § Loop Rules), and call the plan Mergeable only when the
+**latest** dispatch of every batch passed — never because the final dispatch happened to.
+
+## Review Profiles
+
+Resolved by `scripts/resolve-review-profile.js`, never chosen by hand at dispatch time.
+
+| Profile | Used when | Reviewer reads | Questions |
+|---------|-----------|----------------|-----------|
+| `full-design` | Design landing pre-implementation; unknown classification; security / data-integrity; any escalation | Whole changed document + linked design context | All five dimensions |
+| `implementation-sync` | Current-authority doc updated after code landed | Changed hunks + enclosing `##` sections + preamble + link definitions | Does any reviewed section contradict the implementation? Is any affected cross-reference dead? |
+| `living-sync` | Current-authority doc, doc-only edit | Changed sections | Accuracy and internal consistency |
+| `record-diff` | Design / work / history record | Changed hunks | Is the edit internally coherent and correctly marked as a record? **No code-alignment obligation** |
+| `executable` | Instruction surfaces (`skills/**`, `rules/**`) | Changed sections + the file's own contract | Does the instruction still execute? Any conflicting directive? |
+
+New (untracked) files are read whole under any profile — every line is new.
+
+The profile narrows what the reviewer **reads**, never **whether** review runs, and no resolver
+outcome auto-passes anything (Anchor Register #5, #6). Contract and escalation table:
+`docs/features/doc-review-phasing/2-tech-spec.md` § 3.3–3.4.
 
 ## Review Dimensions
 
@@ -109,16 +198,23 @@ What counts as 🔴 is pinned in `references/codex-prompt-doc.md § Severity Cal
 
 - Doc review prompt: `references/codex-prompt-doc.md`
 - Review loop: `references/review-loop-doc.md`
+- Profile resolver: `scripts/resolve-review-profile.js` — profiles, escalation, batch plan
+- Link checker: `scripts/check-doc-links.js` — advisory deterministic input. Reports `failures`
+  **and** `unresolved`: it is a scanner, not a CommonMark parser, and `failures: []` settles the
+  link question only when `unresolved` is 0
 - Standards: @rules/docs-writing.md
 
 ## Examples
 
 ```
-Input: /codex-review-doc docs/features/xxx/tech-spec.md
-Action: Read file → Codex doc prompt → Rating table + Findings + Gate
+Input: /codex-review-doc docs/features/xxx/2-tech-spec.md
+Action: Link check → resolve profile → Codex doc prompt scoped to the changed sections → Rating table + Findings + Gate
 
 Input: /codex-review-doc
-Action: Auto-detect changed .md → Codex doc prompt → Rating table + Gate
+Action: Collect every changed .md → link check → one plan, one batch, one dispatch → Rating table + Gate
+
+Input: /codex-review-doc (a 25-file feature folder)
+Action: Resolver splits the plan loudly into batches, each within budget → one dispatch per batch → one consolidated gate
 
 Input: Review this tech spec for me
 Action: /review-spec → Check completeness/feasibility/risks → Output Gate

@@ -49,19 +49,39 @@ applied to it removes information for no benefit — which is the failure this p
 prevent.
 
 **What this rule is actually against is bloat** — the tech spec or requirements doc that keeps
-absorbing sections until no one reads it end to end. The counter-move is **splitting sections out
-into the numbered subfolder**, not deleting content. 500 lines is the *signal* that a prose document
+absorbing sections until no one reads it end to end. 500 lines is the *signal* that a prose document
 has probably reached that point, not a mechanical trigger: **the model judges the individual file**.
 A 550-line spec whose sections are genuinely one argument may stand (state the call and the reason);
-a 350-line doc already sprawling across unrelated concerns is better split early. What is not a
-judgment call: letting a lifecycle doc grow unbounded because splitting is work, or compressing away
-information to duck under a number.
+a 350-line doc already sprawling across unrelated concerns is better addressed early. What is not a
+judgment call: letting a lifecycle doc grow unbounded because the fix is work, or compressing away
+live information to duck under a number.
+
+### Prune first, then merge, then split
+
+Three remedies, in this order. Splitting was once the only one named here, and it is the only one
+that leaves the total unchanged — a corpus can only grow under a rule whose sole answer to "too
+long" is "put it in more files".
+
+| Order | Remedy | Applies when | What it costs |
+|-------|--------|--------------|---------------|
+| 1 | **Prune** | The content is no longer true, describes a design that was never built, or is duplicated verbatim in a doc that owns it | Nothing — dead text is not information |
+| 2 | **Merge** | Two sections say the same thing from different angles, or a section belongs to a doc that already covers the topic | Nothing, if the surviving copy is the fuller one |
+| 3 | **Split** | What remains is all live, all unique, and still too long for one read | The reader gains a hop; the corpus gains a file |
+
+**Prune means removing text that is dead, not text that is inconvenient.** Live information is
+moved, never deleted: if it is true and stated nowhere else, it goes into the doc that owns it —
+that is remedy 2, not remedy 1. Say which remedy you applied and why, and if you pruned, say what
+made the text dead (superseded by which change, duplicated in which file).
+
+Records are exempt from all three. A request ticket, review log or ADR states a point in time; text
+in it going out of date is the record working, and pruning it destroys the only copy. See
+`skills/update-docs/SKILL.md` § Step 1.5.
 
 | Lines (prose docs under `docs/features/`) | Reading |
 |-------|--------|
 | ≤ 400 | Fine |
-| 401–500 | Consider splitting at the next substantive edit |
-| > 500 | Split is the default — the model may keep it whole by stating why this file reads better unsplit |
+| 401–500 | Prune the dead sections at the next substantive edit; split if what is left is still over |
+| > 500 | Act — prune, merge, or split, in that order. The model may keep it whole by stating why this file reads better unsplit |
 
 Measure with `wc -l`. Lines, not bytes — that is what the reader scrolls.
 

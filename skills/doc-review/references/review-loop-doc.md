@@ -2,17 +2,25 @@
 
 ## Re-review Prompt Template
 
-Used with `mcp__codex__codex-reply` when document is revised:
+Used with `mcp__codex__codex-reply` when the documents are revised. **One thread per batch** — the
+`threadId` belongs to the batch that produced the findings, so re-review goes back to that thread
+with that batch's files, never to a merged one.
 
 ```typescript
 mcp__codex__codex-reply({
-  threadId: '<from --continue parameter>',
-  prompt: `I have revised the document. Please re-review:
+  threadId: '<the threadId this batch returned>',
+  prompt: `I have revised the documents in this batch. Please re-review:
 
-## Document Path
-${FILE_PATH}
+## Batch
+| # | Path | Profile |
+|---|------|---------|
+${BATCH_MANIFEST}
 
-Please read the updated document yourself using \`cat ${FILE_PATH}\` and verify:
+Profiles are unchanged from the first round unless the table above says otherwise; a fix that
+touched a section outside a file's original scope raises that file's profile, and the table shows
+the raised one.
+
+Please read the updated files yourself — each to the extent its profile covers — and verify:
 1. Have previous 🔴 must-fix items been addressed?
 2. Did the revisions introduce new issues?
 3. Update Gate status
@@ -35,10 +43,15 @@ Begin your report with the literal line \`## Document Review\`, exactly as in th
 
 When review result is ⛔ Needs revision:
 
-1. Remember the `threadId`
-2. Revise the document
-3. Re-review using `--continue <threadId>`
-4. Repeat until ✅ Mergeable
+1. Remember the `threadId` — one per batch
+2. Revise the documents
+3. Re-review each batch that came back ⛔, using `--continue <that batch's threadId>`
+4. Repeat until every batch is ✅ Mergeable
+
+A batch that already passed is not re-dispatched unless the fixes touched one of its files. The
+plan's gate is the conjunction: one ⛔ batch blocks the plan. Hold it yourself — the receipt keeps
+only the most recent batch verdict (last write wins), so the plan is Mergeable only when the latest
+dispatch of **every** batch passed, never because the final dispatch happened to.
 
 ## Gate Sentinels (for Hook parsing)
 

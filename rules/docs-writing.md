@@ -5,7 +5,7 @@
 | Concise            | Use tables over paragraphs, diagrams over text      |
 | Information-rich   | Preserve key information; don't over-simplify       |
 | Research first     | Research existing implementations before pseudocode |
-| Bounded            | **Feature docs under `docs/features/` only**: past ~500 lines the default is splitting sections into a numbered subfolder — the model judges each file (a coherent long doc may stand, with the reason stated). The target is bloat in tech specs / requirements docs; the remedy is splitting, never deleting content. **Functional documents are exempt** — `skills/**`, `agents/`, `commands/`, `rules/`, templates and fixtures are instruction surfaces, not prose, and have no line budget. See @rules/docs-numbering.md § Size Limit |
+| Bounded            | **Feature docs under `docs/features/` only**: past ~500 lines act — the model judges each file (a coherent long doc may stand, with the reason stated). The target is bloat in tech specs / requirements docs, and the remedies are ordered: **prune what is dead, merge what is duplicated, split what remains**. Splitting alone can only grow the corpus. Live information is moved, never deleted; records are exempt. **Functional documents are exempt** — `skills/**`, `agents/`, `commands/`, `rules/`, templates and fixtures are instruction surfaces, not prose, and have no line budget. See @rules/docs-numbering.md § Size Limit |
 
 | Scenario           | Use                       | Avoid              |
 | ------------------ | ------------------------- | ---------------    |
