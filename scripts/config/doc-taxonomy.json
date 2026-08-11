@@ -120,5 +120,60 @@
     "lifecycle_prefix_fallback",
     "heading_signal",
     "fallback"
-  ]
+  ],
+  "review_budget": {
+    "_comment": "One logical doc-review plan holds one or more physical batches. Whichever limit is hit first opens the next batch; both boundaries are inclusive, so 12 files and exactly 200000 bytes stay in one batch and the 13th file or the 200001st byte starts another. Consumed by scripts/resolve-review-profile.js; contract in docs/features/doc-review-phasing/2-tech-spec.md section 4 Step 4.",
+    "_sizing": "The corpus median feature doc is 397 lines, so 12 median files are roughly 190 KB — the two limits bite at about the same place, which is why neither alone is the budget. A single file larger than max_bytes forms its own batch and is REPORTED as over-budget rather than skipped: there is nothing left to split, and dropping it would be the silent truncation the loud-split rule exists to prevent.",
+    "max_files": 12,
+    "max_bytes": 200000
+  },
+  "doc_roles": {
+    "_comment": "Artifact roles: does this document owe alignment with the current code? Consumed by scripts/lib/doc-metadata.js; contract in docs/features/doc-review-phasing/2-tech-spec.md section 3.1. This is the per-repo customization surface — a project whose docs are laid out differently edits path_defaults here rather than the code.",
+    "_matching": "path_defaults are ordered and first-match-wins, over a path split on '/' with empty segments dropped. scope=segment tests the pattern against EVERY segment including the basename, which is what lets one rule cover both 'review-log-x.md' and 'review-log-x/rounds-1-9.md'. scope=first_segment tests the first segment only, because 'skills' means something as a repo root directory and nothing as a folder inside a feature. A path matching no rule resolves to `fallback`.",
+    "_contract": "closed_set and fallback are RECORDED here, not configured: doc-metadata.js pins both (CONTRACT_ROLES) and ignores any other value. Editing them changes nothing, by design — a config that could set fallback to a non-authority role, or add a fifth role, would exempt documents wholesale, since owing code alignment is defined as BEING `Current authority`. path_defaults and metadata are the per-repo surface.",
+    "closed_set": ["Current authority", "Design record", "Work record", "History record"],
+    "fallback": "Current authority",
+    "path_defaults": [
+      {
+        "name": "work-records",
+        "role": "Work record",
+        "scope": "segment",
+        "pattern": "^requests$",
+        "note": "Includes requests/archived/** — archiving changes visibility, not what the document is"
+      },
+      {
+        "name": "history-records",
+        "role": "History record",
+        "scope": "segment",
+        "pattern": "^(review-log-|adr-)",
+        "note": "Ancillary naming convention from rules/docs-numbering.md; matches the split-folder form too"
+      },
+      {
+        "name": "design-records",
+        "role": "Design record",
+        "scope": "segment",
+        "pattern": "^[0-3]-(feasibility|requirements|tech-spec|architecture)",
+        "note": "Lifecycle phases 0-3. A split doc keeps its phase in the FOLDER name and restarts sub-file numbering at 1, so the segment scope is load-bearing"
+      },
+      {
+        "name": "implementation-record",
+        "role": "Current authority",
+        "scope": "segment",
+        "pattern": "^4-implementation",
+        "note": "The one lifecycle doc that describes what the system does now"
+      },
+      {
+        "name": "instruction-surface",
+        "role": "Current authority",
+        "scope": "first_segment",
+        "pattern": "^(skills|rules|agents|commands)$",
+        "note": "Loaded and executed, so current by construction"
+      }
+    ],
+    "metadata": {
+      "head_lines": 30,
+      "role_key": "Doc role",
+      "authority_key": "Current behavior authority"
+    }
+  }
 }
