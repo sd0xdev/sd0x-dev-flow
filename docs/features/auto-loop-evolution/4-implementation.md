@@ -151,7 +151,7 @@ Stop-guard **invalidates the affected gate in every case**. Whether that invalid
 
 **Transient allowlist**: `edit_lock_contention:code`, `edit_lock_contention:doc`, `lock_failure`. A sidecar containing *only* these does not force strict mode. Any other marker, or any mix, does. Empty or unreadable escalates (`_SIDECAR_LINES_SEEN == 0` → not-all-transient).
 
-The allowlist is **closed and default-deny** by design. It began as a denylist naming only `state_init_failed`, which meant every reason producers added later defaulted to the *lenient* branch — and they added three that are not races at all (`state_write_failed`, `verdict_write_failed:<gate>`, `aggregate_write_failed`), each describing a state whose recorded verdict is known wrong in the unsafe direction. A transient marker is one a lock *race* produced — the race already resolved in someone's favour, so the file's content is a real write, just possibly not ours — and escalating that to strict would silently override an explicit `warn` choice. Everything else, including an unrecognized marker from a newer producer, escalates: adding a reason must never silently weaken the gate.
+The allowlist is **closed and default-deny** by design. It began as a denylist naming only `state_init_failed`, which meant every reason producers added later defaulted to the *lenient* branch — and they added three that are not races at all (`state_write_failed`, `verdict_write_failed:<gate>` — retired as a producer in WB5b, still recognized here so an old marker cannot become lenient by outliving its writer, `aggregate_write_failed`), each describing a state whose recorded verdict is known wrong in the unsafe direction. A transient marker is one a lock *race* produced — the race already resolved in someone's favour, so the file's content is a real write, just possibly not ours — and escalating that to strict would silently override an explicit `warn` choice. Everything else, including an unrecognized marker from a newer producer, escalates: adding a reason must never silently weaken the gate.
 
 "Forces strict blocking regardless of `GUARD_MODE`" was once written here as an unconditional claim, and it is wrong in the first row: the transient allowlist exists precisely so a lock contention that resolves itself does not override a user's `warn` preference.
 
@@ -163,7 +163,7 @@ The two writing hooks invalidate different gates. An unkeyed marker let a *doc* 
 |-------|---------|-----------|
 | Edit — code | `edit_lock_contention:code`, `state_init_failed:code`, `state_write_failed:code` | A committed **code**-edit transaction (`post-edit-format.sh`), or `session-init.sh`'s clean-tree check |
 | Edit — doc | `edit_lock_contention:doc`, `state_init_failed:doc`, `state_write_failed:doc` | A committed **doc**-edit transaction, or the same session check |
-| Verdict | `verdict_write_failed:code_review` / `:doc_review` / `:precommit` | The next successful write of **that same gate**; also by the edit transaction that invalidates that gate (code branch → `code_review` + `precommit`; doc branch → `doc_review`) |
+| Verdict *(retired in WB5b — no longer produced)* | `verdict_write_failed:code_review` / `:doc_review` / `:precommit` | Historical: the next successful write of that same gate, or the edit transaction invalidating it. Both clearers went with the producer; a marker left on disk from before the retirement is still **recognized** by the reader above, fail-closed, and now clears only by the whole-file delete below |
 | Aggregate gate | `lock_failure`, `aggregate_write_failed` | A **committed** aggregate transition (`update_aggregate_gate`), **or** a committed edit transaction on either plane — both branches reset `aggregate_gate` to `executed=false`/`gate=null`, the same fail-closed value the lost transition would have left. A single-*review* write does **not** qualify: it never touches `aggregate_gate`, so erasing the marker there would drop a lost dual-gate transition |
 
 The "Cleared by" column describes markers in the **shared** file. A per-event marker carries the same reason string but the lifetime in §3.4.
@@ -200,7 +200,7 @@ The read also deliberately bypasses the writers' `_sidecar_read_all` helper. Tha
 
 `session-init.sh` removes the sidecar when a new session finds the working tree free of dirty reviewable files, at which point every marker — whatever plane wrote it — is by definition an orphan, because no dirty file remains for any of them to stand in for.
 
-Its `git status -uall` scan runs **inside** the lock, not before it; scanning first left a seconds-wide window in which a concurrent `verdict_write_failed:*` append was unlinked, retiring evidence of a lost blocking verdict whose gate still read `passed=true`. Lock unavailable → the sidecar is retained.
+Its `git status -uall` scan runs **inside** the lock, not before it; scanning first left a seconds-wide window in which a concurrent `verdict_write_failed:*` append (a live producer at the time; retired in WB5b) was unlinked, retiring evidence of a lost blocking verdict whose gate still read `passed=true`. Lock unavailable → the sidecar is retained.
 
 ---
 
@@ -210,16 +210,47 @@ Its `git status -uall` scan runs **inside** the lock, not before it; scanning fi
 
 | Role | Owner | What it does |
 |------|-------|--------------|
-| Producer | Review skills | Emit the sentinel in their output |
-| State writer | `post-tool-review-state.sh` (PostToolUse) | Parses tool output and records the verdict into the state file — where a sentinel becomes durable |
-| Primary enforcer | `stop-guard.sh` (Stop) | Reads the **state file**; it does not re-parse reviewer output when state exists |
-| Fallback parser | `stop-guard.sh`, transcript mode | Only when there is no readable state file: scans `tail -500` of the JSONL transcript and **pairs** each verdict with the invocation it is credited to |
+| Producer | Review skills (MCP) · `precommit-runner.js` | Emit the sentinel in their output; the runner additionally appends its own content-addressed receipt |
+| State writer | `post-tool-review-state.sh` (PostToolUse) | Parses tool output and records the verdict — the dispatch/settlement records for reviews, the state-file **mirror** (advisory since the WB5c flip) and the round ledger for precommit |
+| Primary enforcer | `stop-guard.sh` (Stop) | **Derives** the answer at check time: current per-plane tree digest vs the content-addressed verdict log (`scripts/lib/gate-derive.js`). It never re-parses reviewer output, and on a derivable tree no stored change flag decides obligation or validity. The flags are not *unread*: whenever the state file exists they are still type-validated by the corrupt-shape guard (a malformed one forces strict mode) and read before derivation, and they remain the last-resort mirror where derivation cannot answer at all |
+| Fallback parser | `stop-guard.sh`, transcript mode | Narrow legacy path only: no state file **and** the derivation could not answer (not a repository). Missing `jq` is *not* this path — that branch exits earlier, before any transcript scan. A derivable tree never reaches it |
+
+**The four `source=` tokens.** The fact line names which *path* produced the answer — a path, not a
+verdict, which is the distinction to hold on to: `source=digest` says the derivation ran, whether it
+found a closing receipt or found nothing and left the gate open. The vocabulary is closed:
+
+| Token | The path that answered |
+|-------|------------------------|
+| `source=digest` | The derivation ran against the content-addressed log. `mirror_planes=<planes>` rides along only for a **not-a-repo** tree, where the stored flags remain the sole obligation evidence — an `unverifiable` tree instead forces both gates open and invalidates every mirror receipt, so it never falls back |
+| `source=git_probe degraded=derive_unavailable` | The derivation could not run (the resolver was absent or failed) and the WB5c fallback probe answered from a direct `git status`, fail-closed on anything it could not read — including a `.git` ancestor git itself refuses |
+| `source=state_file` | The legacy mirror answered, which now happens only where derivation is impossible outright |
+| `source=transcript degraded=no_state_file` | The § 4.2 legacy path — no state file **and** the derivation did not answer |
+
+Absent from the table by design: **jq unavailable**. That branch exits before either the derivation
+or the transcript scan is reached (`stop-guard.sh`, the `command -v jq` guard), so it emits no
+`source=` at all. A degradation that is disclosed is never a wrong answer; an undisclosed one is the
+failure this vocabulary exists to prevent. The full derivation contract, including the authoritative-negative rule and tombstone
+veto, is in [`2-tech-spec/2-content-addressed-receipts.md`](./2-tech-spec/2-content-addressed-receipts.md)
+§ 3.5–§ 3.6.
+
+**What retired in WB5b, and why the rest of this section still stands.** Review recognition by
+command name (`/codex-review*`, `/review-spec` in a Bash line) and the Skill-output verdict parsing
+are gone — a slash command in text proves the text appears, not that a review ran. The precommit
+slash forms went with them, and with them the 30KB transcript-truncation sensitivity that came from
+parsing skill output. What survives is the **runner** recognition below (§ 4.6) and the MCP routing,
+because those are the two routes whose producer actually executes — and they survive in different
+capacities: MCP routing is how a review verdict is recognized at all, whereas for precommit the
+authoritative receipt is the runner's own append and the surviving anchored recognition owns only
+the advisory mirror and the ledger's convergence reset. Content-addressed receipts:
+[`2-tech-spec/2-content-addressed-receipts.md`](./2-tech-spec/2-content-addressed-receipts.md).
 
 ### 4.2 Transcript verdict/invocation pairing
 
 The fallback's two scans used to be position-blind — "does a verdict appear anywhere" and "does the command appear anywhere", never related in time. A transcript reading `/precommit-fast` → `## Overall: ✅ PASS` → `/precommit` therefore satisfied the gate for the *newer* invocation using the *older* run's verdict, and the `PRECOMMIT_REQUIRE_FULL` branch — which reads the variant off that same trailing invocation — then declared the full gate met. Two checks, both satisfied, zero evidence. The code and doc planes had the identical shape.
 
 A verdict now counts only when it appears **after** the last matching invocation; unpaired reads as absent, i.e. `(invoked, no verdict)`.
+
+This whole mechanism is now a **narrow legacy path**: it is reached only when there is no state file *and* the derivation did not answer — a tree that is not a repository, with no probe result either. Its use is disclosed on the fact line as `source=transcript degraded=no_state_file`, and the pairing rules below still govern it.
 
 The comparison is by **byte offset**, not line number: the transcript is JSONL, so one line packs a whole message and a report of the previous gate routinely shares a line with the announcement of the next command — line granularity therefore had to accept equality, and accepting equality is exactly what let the older run's verdict through. Both scans run on the **plan-sentinel-stripped** stream, because stripping deletes bytes and measuring one side on the raw transcript would read the two off different rulers, letting upstream plan-review output push a genuine verdict behind its own invocation.
 
@@ -254,7 +285,7 @@ Plan sentinels live in the `plan_review.*` state subtree and never touch `code_r
 
 ### 4.6 Precommit runner command binding
 
-The Bash-plane precommit verdict is recorded only when the **entire** command is a standalone `precommit-runner.js` invocation — optional `HOOK_*=val` env prefixes, then `node <trusted-root>/precommit-runner.js`, then plain option arguments, anchored `^...$` with no embedded newline. A raw-text regex can never prove the runner *executed*, only that its text appears; whole-command anchoring is what defeats fabrication, because the runner text cannot hide inside a quoted `printf`, a never-run `false && …` branch, or a trailing `…; printf '## Overall: PASS'` chain — in every such case the command is not solely the runner, the match fails, and no verdict is recorded (fail-closed: `/precommit` re-runs cleanly).
+Since WB5b this is the only precommit recognition that survives — the Skill route and the `/precommit` slash forms retired with it, and the 30KB transcript sensitivity went with them. Be precise about what it now produces: the **authoritative** receipt is the runner's own content-addressed append (`scripts/precommit-runner.js`, at the moment `overallPass` is computed), which owes nothing to stdout reaching this hook. What the recognition below still owns is the advisory mirror write and the round ledger's convergence reset. The Bash-plane precommit verdict is recorded only when the **entire** command is a standalone `precommit-runner.js` invocation — optional `HOOK_*=val` env prefixes, then `node <trusted-root>/precommit-runner.js`, then plain option arguments, anchored `^...$` with no embedded newline. A raw-text regex can never prove the runner *executed*, only that its text appears; whole-command anchoring is what defeats fabrication, because the runner text cannot hide inside a quoted `printf`, a never-run `false && …` branch, or a trailing `…; printf '## Overall: PASS'` chain — in every such case the command is not solely the runner, the match fails, and no verdict is recorded (fail-closed: `/precommit` re-runs cleanly).
 
 Four defenses, each closing a distinct bypass:
 

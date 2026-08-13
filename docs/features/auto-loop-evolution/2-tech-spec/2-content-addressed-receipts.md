@@ -3,50 +3,26 @@
 > **Doc class**: Tech-spec sub-document (numbered from 1 inside `2-tech-spec/`, no lifecycle
 > meaning — per `@rules/docs-numbering.md` § Size Limit split shape).
 > **Companion ticket**: [`../requests/2026-08-11-content-addressed-receipts.md`](../requests/2026-08-11-content-addressed-receipts.md)
-> **Status**: Draft, revised through doc-review rounds 1–14. Round 14: `bound → contested`
-> is pinned as a first-class reducer transition (both orders were always asserted; the
-> compaction-materialized acknowledgment lands on a born-bound survivor whose twin is gone
-> and must stand on its own), and the asymmetric-cutoff test reduces the actual compacted
-> record set. Round 13: a derived contest
-> survives compaction — before dropping any member of a read-time-derived contest,
-> compaction materializes the explicit `contested` acknowledgment for every surviving member
-> (write-ahead, fsync'd before the drop), so an asymmetric 48h cutoff can never revive the
-> survivor; the pinned transition list gains in-flight → ambiguous (with its `frontier_end`
-> payload); the activation-prefix re-hash cost is stated and amortized per lock hold; the
-> cross-time content proofs are named per record kind. Round 12: the activation
-> barrier gains **activation_prefix_digest** — like the frontier, a byte offset applied
-> across time is proven by content, so every use requires both the identity match and the
-> recomputed [0, activated_at) digest, else capture-time binding disables; the read-time
-> collision predicate is the **general reducer state, never a partial event list** —
-> nonterminal ∧ un-owned, so a terminal `ambiguous` D1 with its orphan disposed does not
-> contest the next dispatch; a `contested` event matching a read-time-derived contest is
-> accepted silently as acknowledgment (the one pinned post-terminal exception). Round 11: an
-> **activation barrier** (SessionStart via `hooks/session-init.sh`, or lazy at
-> first protocol contact) makes "this call's own entry" decidable — pre-barrier entries are
-> never capture-time bound and are quarantined wholesale; the single-in-flight rule became a
-> **read-time reducer invariant** so the twin crash prefix (two dispatch lines, no contested
-> events yet) folds contested without depending on its own acknowledgments; the dispatch
-> blocking duty names **`exit 2`** (the only blocking PreToolUse status — a generic nonzero
-> does not block); frontier application requires a recomputed **prefix_digest** match, not
-> file identity alone. Round 10: the per-session
-> visibility "world probe" is retired for a **per-dispatch decision** the dispatch record
-> itself carries — a capture-time bind rides the dispatch line as `bound_tooluse_id` (one
-> record, line-atomic), otherwise `frontier_start` (transcript file identity + size) opens a
-> claim window closed by `frontier_end` on the terminal event; accounting is brought current
-> before any bind, and an
-> unaccountable orphan poisons `ambiguous`; frontier records gain contiguity,
-> liveness-based retention and write-ahead ordering, with the exclusion set = dispositions ∪
-> frontier coverage; **fsync is durability, never atomicity** — the indivisible records are
-> single JSONL lines and every multi-line sequence is prefix-safe; tombstones have exactly
-> one shape, `{id, pairs:[{plane, digest},…]}`. Round 9: expiry-drop safety argued by
-> accounting, never clocks; the reducer's in-flight definition adds **un-owned** so a
-> task-owned dispatch coexists with a fresh foreground one. Rounds 1–8 history: content
-> addressing → correlation → transcript pairing → call-level dispatches + contested
-> concurrency + WB2b ecosystem-orchestrator correction → eager binding, event-sourced
-> lifecycle, crash-atomic settlements with per-plane recognition
-> (`post-tool-review-state.sh:3818–3903`, `:4022–4028`) → universal disposition; no-verdict
-> as attempt record (spends identity, never evidence); pinned reducer table. Decisions
+> **Status**: Draft, revised through doc-review rounds 1–14 — the round-by-round narrative moved
+> to [`../review-log-content-addressed-receipts.md`](../review-log-content-addressed-receipts.md)
+> (a record: it states what was decided when, and is never rewritten to mirror later code). Every
+> decision it records is stated in the body below; the log keeps the archaeology of how each was
+> reached. Decisions
 > marked ⚖️ are settled; ❓ are open.
+
+<!-- MD028: two separate blockquotes, not one with a gap -->
+
+> **On this file's length** (`@rules/docs-numbering.md` § Size Limit): 1,275 lines, well past the
+> 500-line signal. **Remedy 2 (merge)** was applied — 43 lines of round narration moved into the
+> review log that owns that record, which is a move of live information, not a prune — and the
+> remainder is deliberately kept whole for this pass on a coherence judgment: § 3.4's
+> dispatch-lifecycle algebra is one argument whose parts (reducer table, binding, frontier windows,
+> settlement, disposition accounting) only make sense against each other, and WB1–WB6 are all
+> landing against this file right now, so every cut line would be a link to repoint mid-loop. A
+> split is a permitted bounded adjustment (`@rules/auto-loop.md` § Cap Diagnostic Protocol names
+> "a single split") — this is a choice not to spend the loop's one adjustment on it, not a
+> prohibition. **The split is owed once the feature commits**, and § 3.4 with its testing catalogue
+> is the cut: they are the two sections that dominate.
 
 ## 1. Requirement Summary
 
@@ -55,7 +31,7 @@ classified, locked, and written into `.claude_review_state.json`; every verdict 
 of tool stdout. Every unobservable event is a silent desync. Evidence (2026-08-11, one session,
 all gates genuinely passed): a >30KB precommit output truncated by the harness lost its verdict; a
 hand-composed reply prompt without the provenance phrase lost five verdicts; a `.md` written
-*outside the repo* re-opened the doc gate (`post-edit-format.sh:1463`, extension-only match); a
+*outside the repo* re-opened the doc gate (`post-edit-format.sh`'s doc-plane branch, an extension-only match); a
 backgrounded precommit had no recovery path at all. The machinery answering for this —
 epochs, sidecars, background markers, lock-contention branches — is ~6,000 lines across three
 hooks and still leaks.
@@ -80,14 +56,14 @@ progress ledger is out of scope (it tracks convergence, not gate state).
 
 ## 2. Existing Code Analysis
 
-| Component | Today | Relevant fact |
+| Component | Before this change (pre-WB5 baseline — every row below is the state this spec replaces) | Relevant fact |
 |-----------|-------|---------------|
 | `.claude_review_state.json` (repo root, gitignored) | Mutable mirror: `has_code_change`, `has_doc_change`, per-gate `{executed,passed,last_run}`, epochs, `background_reviews`, sidecars | `post-tool-review-state.sh:64`, `stop-guard.sh:141` — a runtime artifact living in the repo root, held out of git only by ignore entries |
-| `hooks/post-edit-format.sh` | PostToolUse on Edit/Write: classifies plane by extension, locks, invalidates receipts, stamps edit epochs | `:1463` doc branch has no repo-containment check — the incident class this design deletes |
+| `hooks/post-edit-format.sh` | PostToolUse on Edit/Write: classifies plane by extension, locks, invalidates receipts, stamps edit epochs | its doc branch had no repo-containment check — the incident class this design deletes |
 | `hooks/post-tool-review-state.sh` | Parses Bash stdout (whole-command anchored) and MCP output (provenance phrase + anchored header + sentinel) into receipt mutations | Consumer-side stdout parsing is the truncation-fragile channel |
-| `hooks/stop-guard.sh` | Reads the mirror; corrupt-shape checks; sidecar fail-closed logic; transcript fallback; releases obligations when git proves the tree clean (`:519–526`); dual mode forces strict and lets `aggregate_gate` override the individual code verdict (`:691–721`); honours `PRECOMMIT_REQUIRE_FULL=1` by rejecting non-`full` modes (`:1125–1137`) | The obligation, aggregate and mode behaviours § 3.4–3.5 must preserve |
-| `scripts/precommit-runner.js` | Computes `overallPass` at `:297–301`, prints `## Overall:` at `:394`; persists `summary.json`/`summary.md` that no hook consumes as receipts | Producer already knows the verdict; it just doesn't record it anywhere a checker reads |
-| `.claude/cache/precommit/<slug>/<HEAD>/` | Existing per-repo slug **format** `basename--8hex`; the hash input is the remote URL with `repoRoot` fallback (`precommit-runner.js:107–110`) | § 3.3 reuses the visible format but defines its own hash input — stated there to avoid conflation |
+| `hooks/stop-guard.sh` | Reads the mirror; corrupt-shape checks; sidecar fail-closed logic; transcript fallback; releases obligations when git proves the tree clean; dual mode forces strict and lets `aggregate_gate` override the individual code verdict (`:691–721`); honours `PRECOMMIT_REQUIRE_FULL=1` by rejecting non-`full` modes (`:1125–1137`) | The obligation, aggregate and mode behaviours § 3.4–3.5 must preserve |
+| `scripts/precommit-runner.js` | Computed `overallPass` and printed `## Overall:`; persisted `summary.json`/`summary.md` that no hook consumed as receipts | Producer already knows the verdict; it just doesn't record it anywhere a checker reads |
+| `.claude/cache/precommit/<slug>/<HEAD>/` | Existing per-repo slug **format** `basename--8hex`; the hash input is the remote URL with `repoRoot` fallback (`precommit-runner.js`, the inline `repoKey` construction's hash input) | § 3.3 reuses the visible format but defines its own hash input — stated there to avoid conflation |
 
 ## 3. Technical Solution
 
@@ -173,7 +149,7 @@ plane_digest(plane):
 - **Plane classifier** (matches today's conservative rule): doc = `\.(md|mdx)$`; code = everything
   else. Comment-only and config edits stay code, unchanged.
 - **Containment is free**: inputs come from git, which only reports in-repo paths. The
-  `post-edit-format.sh:1463` incident class cannot exist.
+  extension-only-match incident class cannot exist.
 - **Gitignored files are excluded** — consistent with today's git-status-derived review target
   sets; runtime artifacts never perturb the digests (doubly so from outside the repo dir, § 3.3).
 - **Cost** (round-1 🟡): the honest bound is one full-index enumeration + sort per derivation, plus
@@ -193,17 +169,20 @@ plane_digest(plane):
 ```
 
 The log is **mixed-kind** — `dispatch`, `dispatch_event`, `tooluse_disposition`, `frontier`,
-`activation`, `settlement`, `verdict` (runner rows), and (in the fallback file) `tombstone`
-records share the
+`activation`, `settlement`, `seq_hwm`, `verdict` (runner rows), and (in the fallback file)
+`tombstone` records share the
 schema's envelope, and every rule below is kind-aware: selection and supersession read
 **verdict-bearing records only** (runner rows and settlement `plane_results` projections —
-§ 3.4); dispatch records, their events, dispositions, frontier and activation records live
-under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
+§ 3.4); dispatch records, their events, dispositions, frontier, activation and `seq_hwm`
+records live under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
+`seq_hwm` is the per-session sequence high-water mark —
+`{"v":1,"kind":"seq_hwm","session_id":…,"seq":…,"time":…}` — folded as highest-per-session;
+its write-ahead ordering and retention are in the compaction rules below.
 
 - **Location** `${XDG_CACHE_HOME:-$HOME/.cache}/sd0x-dev-flow/receipts/<repo-slug>/verdicts.jsonl`.
   `<repo-slug>` reuses the precommit cache's visible **format** (`basename--8hex`) but ⚖️ defines
   its own hash input: the repo root's `realpath`. (The existing runner slug hashes the remote URL
-  with `repoRoot` fallback — `precommit-runner.js:107–110`; keying receipts by remote would merge
+  with `repoRoot` fallback — `precommit-runner.js`, the inline `repoKey` construction; keying receipts by remote would merge
   two checkouts of one remote, which is exactly wrong for working-tree digests.) Only an
   **absolute** `XDG_CACHE_HOME` is honoured — the XDG spec requires it, and a relative value
   (e.g. `.claude/cache`) would resolve back inside the repo; relative or empty falls back to
@@ -221,7 +200,7 @@ under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
   for the **same** digest supersedes: pass-then-fail on identical content means the newer run's
   verdict governs. The § 1 invariant is worded to exactly this.
 - **Append discipline** (round-1 🟡): appends and compaction both take the repo's existing
-  **portable `mkdir` ownership-aware lock** protocol (`post-tool-review-state.sh:230` — stock
+  **portable `mkdir` ownership-aware lock** protocol (`post-tool-review-state.sh`'s `_lock()`/`_own_lock()` — stock
   macOS ships no `flock`, and this design adds no native-lock dependency; the lock dir sits
   beside the file it guards). `O_APPEND` alone is not an atomicity guarantee for regular files,
   and an uncoordinated SessionStart compaction could replace the file under a concurrent
@@ -243,9 +222,16 @@ under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
   rewrites go through a temp file in the same directory: write, fsync the file, atomic rename
   over the log, fsync the directory — a crash leaves either the old file or the new one,
   whole. Only explicitly diagnostic records (superseded verdict history)
-  accept the OS flush window, where a loss costs archaeology, nothing else. Compaction is **kind-aware** — one newest-per-pair rule cannot
-  govern a mixed log: **verdicts** keep the newest per `(plane, digest)` ("newest" = append order under
-  the lock, never wall-clock time — `post-tool-review-state.sh:2783` documents why wall clocks
+  accept the OS flush window, where a loss costs archaeology, nothing else. **Implementation status (WB6)**: the dispatch side of the rules below ships; the verdict side
+  does not. `dispatch-log.js` compaction drops selected dispatch/event records, covered
+  dispositions and superseded `seq_hwm` records, and applies the 48h bound-terminal rule —
+  settlements, frontiers and activations are **retained**, not aged out. `receipt-log.js`
+  exposes no compactor at all: no verdict-history trim, no `N=200` diagnostic cap, no
+  per-plane LRU, no resolved-tombstone pruning. Read every clause below that names those as
+  the intended end state — owed work, not current behaviour. Compaction is **kind-aware** —
+  one newest-per-pair rule cannot govern a mixed log: **verdicts** keep the newest per `(plane, digest)` ("newest" = append order under
+  the lock, never wall-clock time — `post-tool-review-state.sh`'s stale-lock TTL note (a backwards
+   wall-clock adjustment breaks a `date +%s` comparison) documents why wall clocks
   cannot order events); **dispatch** records and their lifecycle events are kept while
   in-window — identity is bound by id (§ 3.4), so retention is governed by the 48h window,
   never by positional counting — retired by `expired` events and dropped only past the window,
@@ -264,8 +250,19 @@ under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
   resolutions. The N=200
   cap budgets **diagnostic history only** (superseded verdicts beyond the newest); when
   load-bearing records alone exceed it, the file grows — the cap yields, correctness does not.
-  Each load-bearing kind is bounded or deliberately not (round-6/7): dispatches, their events
-  and dispositions age out at 48h; **frontier and activation records are exempt from the 48h rule** — their
+  Each load-bearing kind is bounded or deliberately not (round-6/7): the 48h age-out applies
+  to **bound terminal** dispatches (with their events) and to dispositions of **cleared**
+  keys, and only under § 3.4's guards — drops are scoped to the compacting session and the
+  current transcript file, and an unscannable transcript drops nothing (fail-closed). Two
+  standing exceptions, stated once in § 3.4's hazard-ledger contract and binding here:
+  **never-bound terminal dispatches are retained permanently** (capture-hazard evidence —
+  one JSONL line forever), and **dispositions of an un-cleared key are never folded into a
+  frontier** until its `debt_cleared` lands. Before any dispatch record is dropped, a
+  `seq_hwm` record is **written ahead** — the allocator's floor lands durably BEFORE the
+  base records it stands in for disappear, superseded lower floors for the same session
+  collapse into the highest at rewrite, and the surviving record is retained rather than
+  aged: it is what keeps `dispatch_id = (session_id, seq)` never-reused after the dispatch
+  bases are gone; **frontier and activation records are exempt from the 48h rule** — their
   retention is liveness-based (§ 3.4: kept while any file with their transcript_file_id
   remains scannable, dropped only once none exists), because they are precisely what makes
   dropping the aged dispositions safe and the capture-time bind decidable; newest-per-pair verdicts keep the **most recently touched
@@ -288,21 +285,22 @@ under § 3.4's lifecycle; tombstones under § 4's resolution protocol.
   output-parsing dependence in two steps (runner append now; Bash + Skill parsing retire once
   WB2b's ecosystem orchestration lands — § 3.4), and the output-parsing path that remains
   end-state — MCP review recognition (§ 3.4) — is a guarded receipt producer whose recognition
-  rules (provenance phrase + anchored header + sentinel) are unchanged; only producer code paths
-  append.
+  rules are unchanged; only producer code paths append. Those rules are not one shape: doc review
+  requires the anchored header, while code review is additionally recognized from a JSON-fenced
+  machine gate carrying no `Merge Gate` heading (`dispatch-log.js`'s `outputIsCodeReview`).
 
 ### 3.4 Producers
 
 | Producer | Integration | Replaces |
 |----------|-------------|----------|
-| `precommit-runner.js` | At `overallPass` computation (`:297–301`): compute code-plane digest, append record. Stdout untouched. WB2b extends it into the multi-ecosystem orchestrator (below) | The whole-command anchored Bash regex, the 30KB fragility, the backgrounding hole; after WB2b, also the Skill-route verdict parsing (`post-tool-review-state.sh:3818–3903`) |
+| `precommit-runner.js` | At `overallPass` computation: compute code-plane digest, append record. Stdout untouched. WB2b extends it into the multi-ecosystem orchestrator (below) | The whole-command anchored Bash regex **as the authoritative precommit receipt** — the anchoring itself stays live for the advisory mirror and the ledger's convergence reset (§ 3.6) — plus the 30KB fragility, the backgrounding hole; after WB2b, also the Skill-route verdict parsing |
 | MCP review path | **Digest at dispatch, verdict bound to it** — see below | Receipt mutation + `background_reviews` markers (dispatch-record replaces them, same purpose, simpler shape) |
-| `aggregate_gate` (`emit-review-gate.sh`) | ⚖️ **Unchanged in this ticket** (round-1 finding 1): dual mode keeps its current mirror path wholesale — `stop-guard.sh:691–721` still forces strict and lets the aggregate verdict override the individual code result. Folding it into the log is deferred with plan-review (❓ Q1), and until then stop-guard's dual-mode branch reads what it reads today | Nothing yet |
+| `aggregate_gate` (`emit-review-gate.sh`) | ⚖️ **Unchanged in this ticket** (round-1 finding 1): dual mode keeps its current mirror path wholesale — stop-guard's `=== Dual mode: prefer aggregate_gate + force strict blocking ===` branch still forces strict and lets the aggregate verdict override the individual code result. Folding it into the log is deferred with plan-review (❓ Q1), and until then stop-guard's dual-mode branch reads what it reads today | Nothing yet |
 
 **Dispatch-time digest binding** (round-1 finding 2; correlation state machine hardened rounds
 2–3). A review verdict must be bound to the content state it was dispatched against — never to
 whatever tree exists when the result arrives. The hook payload carries no `tool_use_id`
-(`post-tool-review-state.sh:2791`), and `sha256(TOOL_INPUT)` proves **request equivalence, never
+(the identifier appears nowhere in `post-tool-review-state.sh`), and `sha256(TOOL_INPUT)` proves **request equivalence, never
 dispatch identity** — the receipt-integrity record already establishes exactly this
 (`../requests/2026-08-08-receipt-integrity-issues-9-10-11.md:417`). So the correlation state is
 richer than a key: dispatch records are **session-scoped instances**, and completions are
@@ -310,7 +308,9 @@ richer than a key: dispatch records are **session-scoped instances**, and comple
 
 ```
 dispatch record   {kind:"dispatch", dispatch_id, key, planes:{<plane>:<digest>,…}, session_id,
-                   seq, time, transcript_file_id, frontier_start, bound_tooluse_id?}
+                   seq, time, transcript_file_id, frontier_start, frontier_digest,
+                   bound_tooluse_id?, bound_start_offset?, bound_end_offset?,
+                   bound_range_digest?}
                   — transcript_file_id + frontier_start: the transcript's file identity and
                   byte size, captured under the receipt lock at PreToolUse — every dispatch
                   records its claim window's causal start. File identity = device + inode +
@@ -318,21 +318,46 @@ dispatch record   {kind:"dispatch", dispatch_id, key, planes:{<plane>:<digest>,�
                   unlikely, never impossible (round-11: inode reuse plus an identical first
                   line can still collide), so identity is a fast path only; every
                   cross-time application carries its own content proof — the frontier's
-                  `prefix_digest` (§ rescan safety below) and the activation barrier's
-                  `activation_prefix_digest` (§ visibility below), one per offset-bearing
-                  record kind. bound_tooluse_id: present iff the call's own entry was
+                  `prefix_digest` (§ rescan safety below), the activation barrier's
+                  `activation_prefix_digest` (§ visibility below), and the dispatch
+                  record's own `frontier_digest` = sha256 of the transcript prefix
+                  [0, frontier_start) at dispatch time (code-review round 10): payments
+                  prove the PAYING range, but the owed WINDOW needs its own epoch anchor —
+                  without one, a truncate-in-place rebuild that preserves the fast-path
+                  identity leaves the window a floating numeric range, and a NEW epoch's
+                  genuinely verified entry inside it would pay an OLD epoch's debt. A
+                  window whose anchor is null, absent, or fails to recompute accepts no
+                  observation and never clears — permanently unpayable, fail-closed;
+                  legacy anchor-less records degrade their key rather than guess. bound_tooluse_id: present iff the call's own entry was
                   already visible at capture (§ visibility below) — the bind then rides the
                   dispatch line itself: one record, crash-atomic by line-atomicity, no
-                  separate `bound` event to lose.
+                  separate `bound` event to lose. Every bind — capture-time on this
+                  record, eager via the `bound` event (which carries the same three
+                  fields as start_offset / end_offset / range_digest) — records the
+                  bound entry's offsets and parse-time digest (round 17): settlement
+                  re-verifies those bytes against the current transcript before
+                  consuming the identity, so a rebuild that replaces the entry while
+                  the id lives on can never settle the dispatch that bound the
+                  originals; absent proof fields (legacy or crafted) refuse
+                  settlement, fail-closed, and expiry retires the record.
                   — **immutable and call-level, one per tool call** (round-6: one review
-                  request may open both planes at once — post-tool-review-state.sh:3585–3588 —
+                  request may open both planes at once — post-tool-review-state.sh's plane-namespace split —
                   so per-plane records would break 1:1 transcript alignment; the planes map
                   carries each plane's dispatch digest). dispatch_id = (session_id, seq),
-                  stable and never reused.
-                  key = sha256(canonical TOOL_INPUT) — canonical means UTF-8, recursively
-                  sorted keys, no insignificant whitespace (jq -cS): hooks receive tool_input
-                  re-serialized, never raw payload bytes (post-tool-review-state.sh:430), so
-                  the encoding is pinned by spec, not by whichever jq printed it
+                  stable and never reused — the allocation floor survives compaction via
+                  the `seq_hwm` record (§ 3.3 retention).
+                  key = sha256(canonical TOOL_INPUT) — the normative canonicalization is
+                  `canonicalJson` in `scripts/lib/dispatch-log.js`: recursively sorted
+                  object keys, no insignificant whitespace, UTF-8 bytes, scalars serialized
+                  by ECMAScript `JSON.stringify`. That last clause makes it deliberately
+                  NOT byte-equivalent to `jq -cS` — the two disagree on numbers (`-0`
+                  prints as `0` and `1e20` as a full decimal under JSON.stringify, where jq
+                  emits `-0` and `1E+20`) — so producers must never compute the key by
+                  shelling out to jq: every in-repo producer goes through the shared
+                  `requestKey`/`canonicalJson` functions, and hooks receive tool_input
+                  re-serialized, never raw payload bytes (the hook's jq
+                   payload extraction),
+                  so the encoding is pinned by the shared implementation
 
 lifecycle events  the log is append-only, so a dispatch's state is **never edited in place**
                   (round-7 — the earlier mutable-looking `status`/`consumed_by` fields are
@@ -341,7 +366,9 @@ lifecycle events  the log is append-only, so a dispatch's state is **never edite
                   event ∈ contested | owned (carries task_id) | bound (carries tooluse_id) |
                   ambiguous (round-9/10 — the orphan poison: an unaccountable same-key entry
                   below the capture point; terminal, never binds, completions refused) |
-                  expired. A terminal event on a never-bound dispatch carries
+                  expired | debt_cleared (code-review rounds 4–5 — the hazard ledger's
+                  durable balance record, schema and rules in the **hazard ledger** row
+                  below). A terminal event on a never-bound dispatch carries
                   **frontier_end** — the transcript size at its own append — closing that
                   dispatch's claim window so no later entry is ever attributed to it
                   (round-10). Plus the settlement record below as the consuming terminal. A
@@ -388,14 +415,19 @@ lifecycle events  the log is append-only, so a dispatch's state is **never edite
                   contesting — this is the § 3.4 background-coexistence contract, stated
                   here so the collision predicate and the prose cannot diverge). A
                   duplicate event is idempotent iff payload-identical; conflicting
-                  duplicates (two `bound` with different tooluse_ids, two `owned` with
-                  different task_ids) fail closed — the dispatch reduces to contested and is
+                  duplicates (two `bound` differing in tooluse_id OR in any bound-entry
+                  proof field — start_offset, end_offset, range_digest, since a proof
+                  swap under a real bind is a second byte claim (round 18) — and two
+                  `owned` with different task_ids) fail closed — the dispatch reduces to contested and is
                   reported. An event after a terminal (settlement, expired, contested,
                   ambiguous) is
-                  refused at read time and reported — with ONE pinned exception (round-12):
+                  refused at read time and reported — with TWO pinned exceptions: (round-12)
                   a `contested` event that matches a read-time-derived contest is accepted
-                  silently as its durable acknowledgment, never reported as a violation;
-                  every other post-terminal event still refuses. An event whose dispatch_id
+                  silently as its durable acknowledgment, never reported as a violation; and
+                  (code-review round 5) `debt_cleared` is accepted on a TERMINAL NEVER-BOUND
+                  dispatch — that is the only shape that owes a debt — and refused loudly on
+                  a bound or live one (honouring it there would forge a balance no ledger
+                  computed); every other post-terminal event still refuses. An event whose dispatch_id
                   has no base
                   record is ignored and reported; an unknown event kind poisons its dispatch
                   fail-closed. contested wins in BOTH orders — bound-then-contested and
@@ -472,8 +504,11 @@ the same sweep on later hook events):
                       claim window — [its frontier_start, its frontier_end) — quarantining
                       the unclaimed candidate inside it, if any. A pending same-key dispatch
                       means contested (single in-flight rule); accounting that cannot be
-                      brought current under the lock appends nothing and poisons the new
-                      dispatch `ambiguous` — fail-closed, never a guess
+                      brought current under the lock (an unreadable transcript) still lands
+                      the dispatch record — the exit-2 duty means a call must never run
+                      unrecorded — poisoned `ambiguous` by a durable event in the same
+                      batch: fail-closed, never a guess (an event-sourced reducer cannot
+                      "append nothing" about a call it must refuse to pair later)
                     · entry visible at capture: after the precondition, a same-key
                       undisposed entry in **[activated_at, frontier_start)** that no
                       window claims can only be this call's own — every dispatch-less
@@ -485,6 +520,91 @@ the same sweep on later hook events):
                       newest same-key undisposed entry is **reserved** while a live window
                       could claim it: quarantine never touches it until its claiming
                       dispatch reaches a terminal state
+                    · a tooluse identity in conflict is **never bound, owned, or
+                      settled — by any consumer** (rounds 14–15): binding attributes
+                      "this call's own entry" by identity and settlement pairs results
+                      by that same identity, so with one id on two entries a PASS
+                      returned for one request could settle the other's dispatch and
+                      mint a receipt for the wrong review. ANY second occurrence in
+                      the scan conflicts — two same-line copies share offsets AND
+                      digest yet are still two distinct calls, so no field comparison
+                      may equate duplicates (round 15). The conflict set is computed
+                      over the whole scan (not per key — the same-key view of a
+                      cross-key reuse looks like an innocent singleton), unioned with
+                      the durable identity facts below, and enforced at every
+                      consumer: capture binding, eager binding, and 2b closure
+                      matching quarantine the candidates and poison `ambiguous`;
+                      settlement refuses the completion and leaves the dispatch bound
+                      for expiry to retire (binding proved a singleton at BIND time —
+                      a transcript that has since grown a twin makes results.get(id)
+                      attribute an arbitrary one of two calls); background ownership
+                      re-checks the full current scan at grant time and refuses a
+                      conflicted bound identity or an unreadable transcript.
+                      Settlement layers three defenses over the scan conflict set
+                      (rounds 16–17), because bound suppression hides a reused entry
+                      from pending and an incremental scan can hide the original:
+                      (1) positional — for a born-bound (capture) dispatch, whose own
+                      entry ends at or below frontier_start, ANY scan entry bearing
+                      the bound identity past frontier_start is positionally
+                      impossible as the own entry and refuses the settlement (null
+                      frontier_start: any occurrence refuses, fail-closed); (2)
+                      content — the bound entry's recorded bytes must re-verify (the
+                      bind-time proof above), which is what actually holds under a
+                      truncate-in-place rebuild: "the eager-bound own entry is in
+                      scan while unsettled" is an append-only argument, and this
+                      protocol's threat model is not append-only; (3) result-side
+                      causal boundary — the consumed result must have landed after
+                      BOTH the dispatch boundary and the bound entry, so a stray or
+                      pre-dispatch result bearing the id (results are recorded for
+                      every tool_result, protocol or not) can never be consumed.
+                      Conflict accounting itself counts EVERY tool_use in the scan,
+                      protocol or not (round 17): the result namespace is shared
+                      with every tool, so a non-review call's id collision poisons
+                      attribution identically — and the positional born-bound test
+                      spans the same universe (idMaxEnd over all tool_use blocks,
+                      round 18), not just protocol entries. An incremental scan
+                      cannot see a non-protocol tool_use behind the cursor and
+                      nothing durable summarizes those, so an eager bind is
+                      additionally gated on a **full-prefix identity census**
+                      (round 18): the candidate's id must occur exactly once in the
+                      WHOLE file — computed lazily, at most one full scan per
+                      sweep; an unreadable census defers the decision. That cache
+                      serves BIND decisions only. Settlement evidence is
+                      **consumption-fresh** (rounds 19–20): every settlement of a
+                      bound identity, foreground and owned/task alike, derives ALL
+                      its evidence — the identity census (full-file count still
+                      exactly one), the bound entry's byte proof, and the consumed
+                      result/task itself — from ONE full-transcript snapshot taken
+                      at step 4, in a single buffered read, never from the
+                      bind-time cache: a below-frontier rewrite can mint a
+                      duplicate the incremental scan never sees while the bound
+                      bytes and file identity both verify, and a rewrite landing
+                      MID-SWEEP (after the bind census, before settlement) must
+                      fail exactly the same way. The snapshot self-certifies with
+                      a prefix digest that is re-checked against the live file
+                      immediately before the settlement batch commits — a
+                      transcript that changed in that window drops the whole
+                      batch (state and spent ledger revert; a later sweep retries),
+                      while append-only growth past the snapshot keeps it valid.
+                      The residual instant between that check and the append is
+                      the irreducible race every content check carries: the
+                      transcript is not under the receipt lock. Ownership is an
+                      alternate settlement door and passes the same content proof:
+                      the grant re-verifies the bound bytes (an unverifiable entry
+                      or unreadable transcript refuses ownership), and the owned
+                      dispatch's task settlement re-verifies them again at
+                      consumption — a rebuild between grant and report severs the
+                      attribution the grant stood on.
+                      Durable identity facts (knownTooluseIds): a pending entry
+                      whose id the ledger already attributed — a disposition or
+                      bound record in suppression scope, or an id in an applicable
+                      frontier's validated `tooluse_ids` — is necessarily a reuse
+                      (the occurrence that earned the fact is suppressed by that
+                      very fact) and joins the conflict set; the frontier list is
+                      the load-bearing source, because compaction deletes the
+                      dispositions it folds and an incremental scan starts above
+                      the original occurrence — in every case one wasted review,
+                      never a mis-attributed receipt
                     · entry not visible at capture: the dispatch records only
                       `frontier_start`; binding claims the FIRST same-key entry at offset
                       ≥ frontier_start via a later `bound` event — exactly one is expected
@@ -509,6 +629,125 @@ the same sweep on later hook events):
                       was fsync'd but whose session crashed before any sweep — dies with
                       its session: a dead session's transcript is never scanned again,
                       and its pending dispatches retire by expiry
+  hazard ledger     (code-review rounds 3–5) capture-time binding and sweep-time eager
+                    binding share one premise — every prior same-key claim window is
+                    accounted — and it is checked, per (session, key), before EITHER may
+                    bind. Each TERMINAL NEVER-BOUND dispatch owes exactly ONE unobserved
+                    entry. A payment is a same-key disposition whose entry lies INSIDE an
+                    owed window by the SAME membership predicate binding uses — same
+                    transcript_file_id, start_offset ≥ frontier_start,
+                    end_offset ≤ frontier_end; end-offset overlap alone is NOT membership
+                    (a torn line that started before the boundary, or an offset aliased
+                    across a transcript rebuild, must not deactivate the ledger against
+                    the very straggler it exists for). Payments are counted as
+                    OBSERVATIONS, deduped by (transcript_file_id, tooluse_id) — a
+                    recovered prefix legally duplicates a disposition (§3.3): an EXACT
+                    duplicate is the same observation, never a second payment, while
+                    copies that CONFLICT on offsets prove nothing at all (round 8: an
+                    observation whose two copies disagree must not let the favorable
+                    copy participate) — and ONE observation pays ONE window (maximum
+                    bipartite matching between observations and owed windows, round 7):
+                    aggregate counting would let two entries inside one window cover a
+                    sibling window that observed nothing. An observation is admitted
+                    only as a REAL, CONTENT-PROVED byte range (round 9): finite integer
+                    offsets with 0 ≤ start < end, and — for a durable disposition — the
+                    current transcript file plus a recomputing range_digest; a stale
+                    offset pair surviving a truncate-in-place rebuild must not mint
+                    debt_cleared against an entry that was never observed, so a
+                    proof-less record suppresses but never pays. The proof is SYMMETRIC
+                    (round 10): the owed WINDOW must verify its own epoch anchor — the
+                    dispatch record's frontier_digest recomputing over the current
+                    prefix [0, frontier_start) — before it accepts any observation or
+                    clears any debt; a payment proving only its own range would
+                    otherwise let a new epoch's verified entry pay an old epoch's debt
+                    across a rebuild the fast-path identity survived. Normalization
+                    runs FIRST and verification once per unique survivor (round 10):
+                    observations are deduped — with range_digest part of the conflict
+                    test, digest-divergent copies prove nothing — and each surviving
+                    (file, start, end, digest) identity is digest-checked at most once
+                    per lock-held operation via a memo, so duplicate records cannot
+                    amplify I/O into a re-hash per copy. An OPEN or EMPTY window (frontier_end ≤ frontier_start —
+                    instant expiry) is unpayable and degrades the key permanently — no
+                    observation can match it, so no matching ever completes while it
+                    owes (the sound cost of an instant expiry); an invalid same-key
+                    frontier for the current file is independent hazard evidence. While the hazard is active:
+                    candidates are quarantined, the dispatch poisons `ambiguous`, nothing
+                    binds — over-quarantine, never re-admit.
+                    Contested pairs recover through THREE pinned mechanisms:
+                    · **all-or-none window closure** (sweep step 2b): a key's open
+                      contested windows close only when the landed same-key observations
+                      — pending scan entries plus already-disposed entries via their
+                      offset-carrying dispositions — can supply one entry per window,
+                      decided by the SAME observation normalization and maximum
+                      bipartite matching the hazard ledger uses, against each window's
+                      prospective close point (round 8: a rank-count Hall shortcut is
+                      only valid for nested same-file intervals, and a divergent
+                      observation graph let 2b close windows the hazard check then
+                      refused to consider paid). The ephemeral side is the PENDING
+                      set, never the raw scan (round 12): an entry suppressed by a
+                      foreign-key disposition — suppression is tooluse-scoped, payment
+                      is key-scoped — can never receive a same-key payment, and
+                      admitting it would close windows the balance check could never
+                      clear: closed-and-unpaid forever. And the pending set is
+                      globally normalized by identity BEFORE per-key matching
+                      (round 13): per-key graphs are independent but disposal is
+                      global by tooluse_id, so an identity reused under two keys
+                      would be paid once by the first key processed and skipped by
+                      the second's pre-ack loop while it still closed — a pending
+                      identity whose copies disagree on key, offsets, or digest is
+                      conflicted and admitted to NO key. A pending SCAN entry is ephemeral, so
+                      it is admitted only with its payment secured (rounds 10–11): it
+                      observes with its PARSE-TIME digest — every scan entry's
+                      range_digest is computed from the exact buffered bytes the entry
+                      was parsed from, never a later re-read of the live path, which
+                      could hash a rewrite's replacement bytes under the parsed
+                      metadata — and the decision re-verifies that digest against the
+                      CURRENT bytes (a rewrite between parse and decision refuses the
+                      observation, the window holds open). Every disposition writer
+                      commits that same parse-time digest, so the durable copy proves
+                      exactly the bytes the matching accepted. And because one lock
+                      hold persists any PREFIX (§3.3), the paying dispositions PRECEDE
+                      the closing acknowledgements in append order (round 11): an
+                      ack-only prefix would close windows whose payments never landed
+                      and a rewrite before the retry could strand them
+                      closed-and-unpaid forever, while a disposition-only prefix is
+                      retry-safe — the windows simply stay open and the next sweep
+                      re-decides. Otherwise ALL stay open and the next
+                      sweep retries — a window sealed before its own entry landed could
+                      never be paid, and one ordinary race (sweep firing between the two
+                      entries) would otherwise poison the key forever
+                    · **durable balance** — `debt_cleared`: when a key's owed windows are
+                      fully paid (and no invalid same-key frontier stands), the sweep
+                      appends {kind:"dispatch_event", dispatch_id, event:"debt_cleared",
+                      time} for EACH owing dispatch. The emitting sweep runs its balance
+                      check after its accounting loops, so payments landing in that same
+                      sweep clear in the same stage-and-commit batch as their paying
+                      dispositions; payments already durable from an EARLIER capture or
+                      sweep (a crash, or a capture-path quarantine no sweep followed)
+                      clear at the next sweep that observes the balance — safe either
+                      way, because the retention rule below keeps every paying
+                      disposition durable until its clearance lands. The reducer honours
+                      the event only on a terminal never-bound record; cleared records
+                      stop owing. Without it the balance lives only in the paying
+                      dispositions and compaction folding them into a frontier would
+                      re-arm the hazard on a recovered key
+                    · **compaction retention**: never-bound terminal dispatch records are
+                      retained permanently (hazard evidence — one JSONL line forever), and
+                      the dispositions of an UN-CLEARED key are never folded into a
+                      frontier — they are the ledger's observation and payment evidence,
+                      and folding them would deadlock a half-landed pair (its first entry
+                      becomes unobservable below every later scanStart) or re-arm a paid
+                      debt. After `debt_cleared` lands, the next compaction folds them
+                      normally. **Honest cost**: a debt that is PERMANENTLY unpayable —
+                      an open or empty window — never clears, so that key's dispositions
+                      are retained forever, and every same-key retry adds one ambiguous
+                      dispatch plus its quarantine records: the log grows per retry on a
+                      degraded key, loudly, for as long as the caller keeps retrying.
+                      The hazard is scoped to (session, key), so the operational
+                      degradation dies with the session — a new session binds the same
+                      request content normally — but the storage lines persist; there is
+                      deliberately NO administrative unpoison mechanism, because any such
+                      mechanism is a forged balance
   disposition (universal — round-8/9: EVERY entry ends with a durable disposition; a
                     candidate set that only remembers successes re-admits its failures after
                     a cursor loss)
@@ -516,7 +755,25 @@ the same sweep on later hook events):
                     tooluse_id — from that record on the pair is identified BY ID, never by
                     position; a CONTESTED dispatch → a quarantine record
                     {kind:"tooluse_disposition", session_id, key, tooluse_id,
-                    reason:"contested"} — terminal, its completion refused by name
+                    reason:"contested", transcript_file_id, start_offset, end_offset,
+                    range_digest}
+                    (code-review round 4: every disposition writer records the entry's file
+                    identity and BOTH offsets — the hazard ledger below matches payments by
+                    the same window-membership predicate binding uses for entries, and an
+                    offset-less or cross-file record proves nothing; round 9: it also
+                    records range_digest = sha256 of the entry's bytes
+                    [start_offset, end_offset), because transcript_file_id is only
+                    dev + inode + first-line hash and a truncate-in-place rebuild can keep
+                    it while the bytes change — a disposition enters a payment or closure
+                    matching graph only when it names the current file AND its digest
+                    recomputes over the current bytes; a proof-less or unverifiable record
+                    still suppresses, it never pays and never closes a window; round 11:
+                    the digest a writer records is the entry's PARSE-TIME digest, computed
+                    from the same buffered bytes the entry's metadata was parsed from —
+                    a digest re-read from the live path at write time could hash a
+                    concurrent rewrite's replacement bytes under the parsed identity,
+                    since the receipt lock serializes log writers, not transcript writes)
+                    — terminal, its completion refused by name
                     (assignment within a contested set is arbitrary and harmless — every
                     member refuses identically); an entry that no live claim window can
                     claim and no reservation protects (a pre-migration call, an orphan
@@ -527,11 +784,38 @@ the same sweep on later hook events):
   rescan safety     candidate isolation lives in the disposition records, never in the
                     cursor: a full rescan reconstructs exactly the same excluded set by
                     reading them back — the exclusion set is the **union** of live
-                    disposition records and frontier coverage. Compaction folds aged
+                    disposition records and frontier coverage. Suppression scope (round
+                    8): a file-bearing disposition or bound record excludes an entry
+                    only under (session, file) BOTH matching — the same scope a frontier
+                    applies under, so compaction folding a disposition into a frontier
+                    preserves the exclusion's reach instead of narrowing it after the
+                    fact; a legacy file-less record suppresses globally, fail-closed. A
+                    predecessor session's entries cannot reach a bind regardless — the
+                    activation barrier quarantines below activated_at and frontier-only
+                    binding claims nothing below frontier_start — so the session scoping
+                    cannot double-settle. Compaction folds aged
                     dispositions into one monotonically-advancing **frontier record** per
                     (session, key) — {kind:"frontier", session_id, key, transcript_file_id,
-                    upto_end:<offset>, prefix_digest}: "every same-key entry whose end
-                    offset is ≤ upto_end in THIS transcript file is terminally disposed".
+                    upto_end:<offset>, prefix_digest, tooluse_ids}: "every same-key entry
+                    whose end offset is ≤ upto_end in THIS transcript file is terminally
+                    disposed". tooluse_ids lists the folded identities (round 15): the
+                    deleted dispositions were the only durable record that these ids were
+                    ever attributed, and knownTooluseIds reads the list to refuse a
+                    post-compaction reuse of a folded id. The field is consumed only
+                    through a validator (round 16): malformed presence — a bare string,
+                    a non-array, non-string or empty elements — is treated as ABSENT,
+                    never iterated into false conflicts and never trusted as an identity
+                    summary. All-or-nothing (round 17): one malformed element voids the
+                    WHOLE field — filtering out the bad members would let a mixed array
+                    count as deletion-licensing coverage that a conforming reader of
+                    this spec derives nothing from. Deleting a disposition is licensed by identity coverage,
+                    not positional equality: the compaction duplicate test requires a
+                    same-coordinates frontier's VALIDATED tooluse_ids to cover every id
+                    being folded, so a legacy or malformed twin never suppresses the
+                    upgraded append (two same-coordinate frontiers are redundant and
+                    consistent, never a gap). A legacy frontier without the field
+                    contributes no ids to knownTooluseIds; scan-conflict detection
+                    still covers every co-visible pair regardless.
                     prefix_digest = sha256 of the transcript bytes [0, upto_end), computed
                     when the frontier is written (compaction holds the lock and reads the
                     transcript; round-11 — file identity alone cannot rule out a rebuilt
@@ -555,7 +839,7 @@ the same sweep on later hook events):
                     gap.
                     Transcript wall-clock timestamps are never used for any pairing or
                     expiry decision (no clock is shared with the log, and per
-                    post-tool-review-state.sh:2783 wall clocks cannot order events anyway):
+                    the stale-lock TTL note wall clocks cannot order events anyway):
                     all ages are measured on log-side records stamped by the writing hook
                     and ordered by seq; a malformed or future time fails closed to "expired
                     for pairing, retained for exclusion"; the 48h boundary is exclusive —
@@ -563,7 +847,9 @@ the same sweep on later hook events):
   completion identity = the transcript tool-use id, domain-prefixed ("tooluse:<id>"), or
                         "task:<task_id>" for a background task's report
   settle            a completion whose id matches a bound (or task-owned), un-contested,
-                    un-expired dispatch with an un-spent identity → append ONE settlement
+                    un-expired dispatch with an un-spent identity **not in the conflict
+                    set** (rounds 14–15 above; a conflicted bound identity is refused and
+                    the dispatch left for expiry) → append ONE settlement
                     record: {kind:"settlement", dispatch_id, completion_id,
                     plane_results:{<plane>: {verdict, digest:<dispatch digest>} |
                     "no-verdict", …}} — a single independently-valid JSONL line (round-7:
@@ -576,7 +862,7 @@ the same sweep on later hook events):
   plane recognition a plane's entry carries a verdict ONLY when that plane's own request-side
                     and output-side recognition both succeed — the per-namespace rules are
                     unchanged, including the refusal of an output claiming both namespaces
-                    (post-tool-review-state.sh:4022–4028 today): a dual-namespace output
+                    (the MCP sentinel routing): a dual-namespace output
                     settles EVERY plane as "no-verdict" (identity spent, loud); a dual-plane
                     dispatch whose output is recognized as exactly one namespace settles that
                     plane's verdict and the other plane as "no-verdict". Nothing is ever
@@ -597,7 +883,11 @@ the same sweep on later hook events):
                                             recognition says nothing about the content,
                                             and a reviewer who found problems emits a
                                             FAIL, which does supersede
-  transcript unreadable, or a bind/settle precondition fails
+  transcript unreadable at DISPATCH time  → the dispatch record still lands (the exit-2 duty:
+                                            never an unrecorded call), poisoned `ambiguous`
+                                            by a durable event in the same batch — loudly,
+                                            fail-closed
+  transcript unreadable at SWEEP time, or a bind/settle precondition fails
                                           → append NOTHING, loudly — fail-closed
   an expired dispatch that WAS bound is refused BY NAME (its tooluse_id names it); one that
   never got bound leaves its entry to the disposition rules — quarantined "unaccounted" once
@@ -648,8 +938,11 @@ expiry            dispatch records never match across sessions; a dispatch older
                   name when bound, by disposition exclusion when not. Within the retention
                   window, retirement is an `expired` EVENT, never a deletion. The drop
                   condition is **age, never liveness** (round-6 — "session is dead" is
-                  undecidable from the log): a dispatch and its events may be dropped
-                  outright only past the 48h window, and **what makes the drop safe is
+                  undecidable from the log): a **bound** dispatch and its events may be dropped
+                  outright only past the 48h window — a **never-bound** one is hazard
+                  evidence and is kept whatever its age (`dispatch-log.js`, the
+                  `!D.boundTooluseId` skip in compaction), matching § 3.3's bound-terminal
+                  scoping — and **what makes the drop safe is
                   accounting, not any clock** (round-9 — the earlier age-symmetry argument
                   assumed a transcript/log clock that does not exist and is fully retired):
                   the frontier record outlives the drop, so every entry the dropped records
@@ -672,7 +965,8 @@ remedy — materializing the digest's entry list into an immutable snapshot the 
 is ❓ Q6, priced separately, not silently claimed.
 
 **Backgrounded MCP calls emit no PostToolUse completion event** — the real report arrives as a
-task notification (`post-tool-review-state.sh:2741`) — so a dispatch record alone creates no
+task notification (`post-tool-review-state.sh`'s backgrounded-review advisory: "its report
+arrives as a task notification, which fires no hook") — so a dispatch record alone creates no
 result event. The `background_reviews` machinery is therefore replaced, not deleted: the
 transcript-recovery producer above is the load-bearing replacement, and its **ownership marking**
 is what lets a foreground twin of the same request coexist with a backgrounded one without either
@@ -681,7 +975,7 @@ is retired by expiry and the gate stays open — fail-closed.
 
 **Producer coverage: every path that closes the precommit gate today keeps a producer**
 (round-6 correction — the round-5 draft claimed the Skill-level ecosystem fallback mints no
-receipt today; that is **factually wrong**: `post-tool-review-state.sh:3818–3903` recognizes a
+receipt today; that is **factually wrong**: `post-tool-review-state.sh`'s then-live Skill-route branch recognized a
 `TOOL_NAME=Skill` route as a precommit verdict source — when the runner reported
 `NO CHECKS RUN` and the precommit Skill ran the ecosystem checks itself
 (`skills/precommit/SKILL.md:40–60` — pytest/cargo/go/…), the Skill's final `## Overall:` line
@@ -712,7 +1006,7 @@ Two questions per plane, in order (round-1 finding 3 — obligation is defined, 
 ```
 dirty(plane)    = plane-filtered entries of git status --porcelain=v1 -z --untracked-files=all
 owed(plane)     = dirty(plane) ≠ ∅          # clean checkout owes nothing — preserves
-                                            # stop-guard.sh:519–526's clean-tree release
+                                            # stop-guard's clean-tree reconciliation release
 V(plane)        = newest verdict-bearing record for (plane, plane_digest(plane))
                   # a runner verdict row, or a settlement's plane_results[plane] verdict
                   # projection (§ 3.4); "no-verdict" entries, dispatch/event and tombstone
@@ -723,7 +1017,7 @@ gate(plane)     = ¬owed(plane) ∨ closed(plane)
 
 mode_ok: non-precommit planes → true
          precommit → mode ∈ {full, fast} ∧ (PRECOMMIT_REQUIRE_FULL=1 → mode == "full")
-                                            # preserves stop-guard.sh:1125–1137 (finding 5)
+                                            # preserves the REQUIRE_FULL re-check (finding 5)
 ```
 
 Worked behaviours, pinned by tests: a fresh clean checkout owes nothing; a doc-only change owes
@@ -740,7 +1034,7 @@ restart changes nothing — there is no session state to lose.
   individual-receipt reads.
 - `[AUTO_LOOP_STATE]` fact blocks keep their shape; `receipts=` fields are now derived, with
   `source=digest` appended for observability.
-- The corrupt-shape validation (`stop-guard.sh:475`) **narrows, not retires** (round-2 finding):
+- The corrupt-shape validation (stop-guard's `_tv(t)` field-type jq guard) **narrows, not retires** (round-2 finding):
   the per-plane receipt shape checks go with the receipts, but the validator keeps guarding
   exactly what § 3.6's Stays column keeps in the mirror — `review_mode`, `aggregate_gate`
   (`.executed`/`.gate`, including the malformed-scalar cases its comments document), and
@@ -748,14 +1042,55 @@ restart changes nothing — there is no session state to lose.
   fallback for per-plane gate state retire. (Transcript fallback for *other* duties, and the
   § 3.4 recovery producer's transcript read, are untouched.)
 
+#### 3.5.1 Check-time hardenings (WB4 review arc, rounds 1–9)
+
+- **Tree-state classification** — the derivation classifies the tree before trusting any read:
+  `ok` (derive normally) · `not-a-repo` (positive evidence only: git's own "not a git repository"
+  message AND `lstat(.git)` = ENOENT — a broken symlink, EACCES, or anything else that exists is
+  not absence) · `unverifiable` (a status read failed or warned-and-omitted, or `.git` is
+  unreadable). `unverifiable` forces BOTH obligations on **and invalidates every mirror receipt** —
+  forcing obligations alone would let a stale mirror PASS satisfy them (round-2 finding). A split
+  degradation keeps the obligation derivable when only the index is lost: a failed `status` read is
+  `git-failed` (owed underivable, both planes partial), while a failed `ls-files` with a healthy
+  status still derives the dirty set exactly (`index-unavailable` — digest null, treeState `ok`).
+- **Environment fence** — every git spawn on the digest/derivation path strips the whole `GIT_*`
+  namespace; repository resolution comes exclusively from explicit `-C` arguments (`repoRoot` for
+  superproject reads, the resolved gitlink checkout for nested reads), so an inherited `GIT_DIR` /
+  `GIT_INDEX_FILE` cannot redirect what the derivation reads.
+- **Gitlinks are obligation-bearing, not merely partial** (round-4 P0) — `partial` only stops the
+  DIGEST from closing a gate; `owed` comes from the dirty set, and `submodule.<name>.ignore=all`
+  suppresses the porcelain record. The gitlink pass therefore dirties its plane for every
+  unresolved gitlink — the one provable exception is an empty or absent checkout (the ordinary
+  uninitialized clone hides nothing and must not carry a permanent obligation) — and for every
+  resolved checkout whose HEAD differs from the index OID. The nested status read carries the same
+  warn-and-omit detection as the top-level reader (literal + catch-all, consistency-tested).
+- **Dual-read window — opened in WB4, CLOSED in WB5c.** While it was open the digest path was
+  preferred and infrastructure absence (no log, unreadable log, no verdict for the current digest,
+  partial digest) fell back to the mirror. It no longer does: on a tree the derivation can classify,
+  a plane the digest path cannot close reads **open**, and the mirror stands in for nothing. What
+  survives from the window is the authoritative-NEGATIVE rule (a current-digest fail, a mode
+  rejection, or a § 4 tombstone veto forces the gate open and never falls back) and the mirror as a
+  **last-resort** answer only where derivation is impossible outright. The fact line names which
+  path answered, one token vocabulary for all four outcomes: `source=digest` (with
+  `mirror_planes=<planes>` only where the tree is **not a repository** — an `unverifiable` tree
+  forces both gates open and invalidates every mirror receipt, so it never falls back),
+  `source=git_probe degraded=derive_unavailable`, `source=state_file`, and
+  `source=transcript degraded=no_state_file`. Where derivation answers but the tree cannot be
+  read, the WB5c fallback probe fails closed — every gate owed, every receipt refused — and a
+  `.git` ancestor that git itself cannot read is treated as a tree, not as absence.
+- **The stop-time sweep's stderr capture** never lands in the tree under review: every candidate
+  temp dir — the `/tmp` fallback included — must resolve (`pwd -P`) and prove containment outside
+  the repo root before use; no surviving candidate → capture is skipped and the CLI's diagnostics
+  stream to the hook's stderr unredirected.
+
 ### 3.6 What is deleted, what stays
 
 | Retired (gate-state path) | Stays |
 |---------------------------|-------|
-| `has_code_change` / `has_doc_change` flags **as stored state** — obligation is derived from the dirty set at check time (§ 3.5) + all edit-time invalidation in `post-edit-format.sh` (its formatting duties remain). **Every stored-flag consumer migrates with them** (round-2 finding): `user-prompt-review-guard.sh:208–225`, `post-skill-auto-loop.sh:210–211` and `post-compact-auto-loop.sh:300–301` read the flags to decide prompting/`[AUTO_LOOP_STATE]`/post-compact re-injection, and `session-init.sh:587` initializes them — a missing field read as `false` would silently report "no change". The compat fields keep being written until WB5 migrates each consumer to the derived reads | Round counting, `[LOOP_PROGRESS]`, stall streaks, `[NIT_DEFERRED]` history — the progress ledger keeps its current home and writers (relocation is ❓ Q5, not this pass) |
+| `has_code_change` / `has_doc_change` flags **as stored state** — obligation is derived from the dirty set at check time (§ 3.5) + all edit-time invalidation in `post-edit-format.sh` (its formatting duties remain). **Every stored-flag consumer migrates with them** — the four hooks (round-2 finding), plus `/remind`, whose detection heuristics read the same fields and were repointed at the advisory resolver in WB6: `user-prompt-review-guard.sh`, `post-skill-auto-loop.sh` and `post-compact-auto-loop.sh` read the flags to decide prompting/`[AUTO_LOOP_STATE]`/post-compact re-injection, and `session-init.sh` initialized them — a missing field read as `false` would silently report "no change". The compat fields kept being written through WB5a–WB5b while each consumer was migrated, and WB5c closed the window: the three advisory consumers read derived state through one shared resolver, and `session-init.sh` — the fourth — deletes the flags instead of initializing them. **Retirement is scoped to the gate path on a derivable tree**: the fields survive as inputs to the last-resort mirror, which stop-guard still consults on exactly one tree state — **`not-a-repo`** — and that read is disclosed on the fact line rather than silent. An `unverifiable` tree is not a second case: it forces both gates open and invalidates every mirror receipt. Independently of the mirror, the flags are still type-validated by the corrupt-shape guard whenever a state file exists, so a malformed one still forces strict mode | Round counting, `[LOOP_PROGRESS]`, stall streaks, `[NIT_DEFERRED]` history — the progress ledger keeps its current home and writers (relocation is ❓ Q5, not this pass) |
 | Edit epochs; `background_reviews` markers — **replaced by** the dispatch records **plus the narrowed transcript-recovery producer** of § 3.4 (backgrounded MCP calls emit no PostToolUse completion event, so recovery is a load-bearing piece of the replacement, not deleted choreography) | `aggregate_gate` mirror + stop-guard dual-mode branch (§ 3.4 — deferred with plan-review, ❓ Q1); the § 3.5 residual-state validator that guards them |
 | `verdict_write_failed` sidecars, lock-contention degraded branches for receipts | Plan-review state (out of scope this pass) |
-| Whole-command Bash anchoring for precommit; 30KB sensitivity; the Skill-route verdict parsing (`post-tool-review-state.sh:3818–3903`) — both **only after WB2b** absorbs the ecosystem fallbacks (§ 3.4) | MCP output recognition (as verdict trigger only) · `[AUTO_LOOP_STATE]` emission (now derived) |
+| The Skill-route verdict parsing and the `/precommit` **slash forms**, with the 30KB output sensitivity that came with parsing skill text — retired once WB2b absorbed the ecosystem fallbacks (§ 3.4). Whole-command Bash anchoring of the runner itself **stays** (below): what changed is that it no longer produces the authoritative receipt | MCP output recognition (as verdict trigger only) · `[AUTO_LOOP_STATE]` emission (now derived) · **runner-invocation anchoring** — the runner appends the authoritative content-addressed receipt itself, and the anchored recognition survives for the advisory mirror and the round ledger's convergence reset |
 
 Estimated reduction: the three hooks' gate-state machinery (~thousands of lines) collapses to one
 digest library (~200 lines), the dispatch/verdict append sites, and one derivation block.
@@ -766,7 +1101,7 @@ digest library (~200 lines), the dispatch/verdict append sites, and one derivati
 |------|------------|
 | Digest cost on very large repos / huge untracked files | One index pass per derivation, digests computed once per stop invocation (§ 3.2); huge files: optional size cap with loud skip ⇒ `partial` digest ⇒ never matches ⇒ fail-closed |
 | Concurrent appends / compaction races | The portable `mkdir` ownership-aware lock (§ 3.3) held by appenders **and** compaction; single-line appends |
-| **Producer append failure with an older same-digest pass readable** (round-1 finding 7) | Two-tier write with **explicit resolution, never clock comparison** (round-3: wall clocks cannot order events across files — `post-tool-review-state.sh:2783` is why the hooks already use monotonic sequence). On primary append failure the producer writes a **tombstone** — **one schema, everywhere**: `{kind:"tombstone", id, pairs:[{plane, digest},…], time}` (round-10: a scalar single-plane form no longer exists — the runner's single-plane failure is the one-element `pairs` case of the same shape, so no reader can ever meet two versions; a record whose `pairs` is missing or malformed is treated as **unresolved for every pair**, fail-closed). `id` is a **cryptographically random UUID** (`crypto.randomUUID()` in Node, `uuidgen` in shell; no shared allocator, no session input — the runner has neither), and resolution matches per pair by the **full `(plane, digest, id)` tuple**, so even a colliding id cannot resolve another pair's tombstone — to the **separate fallback path** `${TMPDIR:-/tmp}/sd0x-dev-flow/<repo-slug>.tombstones.jsonl` (a distinct location, *not* necessarily an independent filesystem failure domain — `$TMPDIR` can share a volume with the cache home), admitted under the same containment rules as the primary cache: absolute resolved path outside the repo root, directory created `0700` with ownership checked, symlinks refused. Both files use the same per-file `mkdir` lock, and **no path ever holds both locks at once**: each file operation completes (acquire → read/write → release) before the other file is touched — a tombstone appended after a PASS's fallback read simply stays unresolved, which over-blocks and can never deadlock or fail open. **An unresolved tombstone unconditionally blocks its `(plane, digest)`**: stop-guard accepts a PASS only when every tombstone for that pair is resolved. A later primary PASS resolves tombstones by recording their ids in its `resolves` **array** — every matching id it read, written only after actually reading the fallback file; a producer that cannot read the fallback writes no `resolves`, and a fallback file that exists but is unreadable or malformed counts as **unresolved tombstones present** for every pair, so the failure mode is **over-blocking, never fail-open**. Compaction prunes only resolved tombstones (§ 3.3). `$TMPDIR` volatility (tombstone lost to reboot) is part of the residual below. If **both** writes fail, the producer exits loudly, and the residual — an older same-digest pass closing a gate whose newer run failed — is documented and accepted: same class as today's sidecar-write-failure hole, not a regression. What **is** guaranteed fail-closed is check-time unavailability: no readable log ⇒ owed gates open (the ticket AC scopes its claim to exactly this). Producers additionally verify writability at start and refuse to run the gate silently degraded — a mitigation, not a guarantee, since permissions can change mid-run. **Multi-plane settlement append failure (round-9)**: a failed settlement tombstones as **one crash-atomic line** of that same schema — a single id, a single append (line-atomic, per § 3.3: the indivisible records are single lines), so a crash cannot leave one plane blocked while its sibling fails open; `pairs` carries **only the verdict-bearing plane projections** — a `"no-verdict"` projection acquires **no** tombstone, because an attempt record is not evidence and must not veto an older same-digest PASS (§ 3.4 round-8 algebra). Blocking and resolution stay per-pair: each `(plane, digest)` in `pairs` blocks independently, and a later PASS resolves by the full `(plane, digest, id)` tuple — the batch is shorthand for its pairs, never a new unit of veto |
+| **Producer append failure with an older same-digest pass readable** (round-1 finding 7) | Two-tier write with **explicit resolution, never clock comparison** (round-3: wall clocks cannot order events across files — the hooks' own stale-lock TTL note is why they already use monotonic sequence). On primary append failure the producer writes a **tombstone** — **one schema, everywhere**: `{kind:"tombstone", id, pairs:[{plane, digest},…], time}` (round-10: a scalar single-plane form no longer exists — the runner's single-plane failure is the one-element `pairs` case of the same shape, so no reader can ever meet two versions; a record whose `pairs` is missing or malformed is treated as **unresolved for every pair**, fail-closed). `id` is a **cryptographically random UUID** (`crypto.randomUUID()` in Node, `uuidgen` in shell; no shared allocator, no session input — the runner has neither), and resolution matches per pair by the **full `(plane, digest, id)` tuple**, so even a colliding id cannot resolve another pair's tombstone — to the **separate fallback path** `${TMPDIR:-/tmp}/sd0x-dev-flow/<repo-slug>.tombstones.jsonl` (a distinct location, *not* necessarily an independent filesystem failure domain — `$TMPDIR` can share a volume with the cache home), admitted under the same containment rules as the primary cache: absolute resolved path outside the repo root, directory created `0700` with ownership checked, symlinks refused. Both files use the same per-file `mkdir` lock, and **no path ever holds both locks at once**: each file operation completes (acquire → read/write → release) before the other file is touched — a tombstone appended after a PASS's fallback read simply stays unresolved, which over-blocks and can never deadlock or fail open. **An unresolved tombstone unconditionally blocks its `(plane, digest)`**: stop-guard accepts a PASS only when every tombstone for that pair is resolved. A later primary PASS resolves tombstones by recording their ids in its `resolves` **array** — every matching id it read, written only after actually reading the fallback file; a producer that cannot read the fallback writes no `resolves`, and a fallback file that exists but is unreadable or malformed counts as **unresolved tombstones present** for every pair, so the failure mode is **over-blocking, never fail-open**. Compaction prunes only resolved tombstones (§ 3.3). `$TMPDIR` volatility (tombstone lost to reboot) is part of the residual below. If **both** writes fail, the producer prints a `❌ receipt append AND tombstone write failed` diagnostic on stdout — it does **not** fail the run: the `## Overall:` verdict stays derived from the validation steps, so the loud part is the diagnostic, not the exit status. The residual — an older same-digest pass closing a gate whose newer run failed — is documented and accepted: same class as today's sidecar-write-failure hole, not a regression. What **is** guaranteed fail-closed is check-time unavailability: no readable log ⇒ owed gates open (the ticket AC scopes its claim to exactly this). Producers additionally verify writability at start and refuse to run the gate silently degraded — a mitigation, not a guarantee, since permissions can change mid-run. **Multi-plane settlement append failure (round-9)**: a failed settlement tombstones as **one crash-atomic line** of that same schema — a single id, a single append (line-atomic, per § 3.3: the indivisible records are single lines), so a crash cannot leave one plane blocked while its sibling fails open; `pairs` carries **only the verdict-bearing plane projections** — a `"no-verdict"` projection acquires **no** tombstone, because an attempt record is not evidence and must not veto an older same-digest PASS (§ 3.4 round-8 algebra). Blocking and resolution stay per-pair: each `(plane, digest)` in `pairs` blocks independently, and a later PASS resolves by the full `(plane, digest, id)` tuple — the batch is shorthand for its pairs, never a new unit of veto |
 | A commit between verdict and check | By design survives (content digest, § 3.2) — a feature, pinned by a dedicated test |
 | Renames / symlinks / gitlinks / conflicts / mode changes | Explicit recipe rows in § 3.2, each fail-closed or content-correct; pinned by tests (incl. nested-untracked and unstaged-chmod) |
 | Two sessions, same repo | Log is per-checkout (`realpath` slug) and digest-keyed; a concurrent edit that leaves the endpoints unequal is caught by endpoint revalidation (§ 3.4); the exact endpoint-ABA flap is the documented ❓ Q6 residual, not claimed closed |
@@ -908,10 +1243,12 @@ Full-suite green throughout the dual-read window.
    this ticket (§ 3.4); folding them into the log is the follow-up. Confirm the follow-up's
    ordering relative to Q5.
 2. **Compaction budgets**: per-kind bounds are settled in § 3.3 — diagnostic history N=200,
-   verdict pairs LRU-50 per plane, dispatches (with their events) by 48h age, frontier and
-   activation records
-   by transcript-file liveness (§ 3.4); unresolved
-   tombstones are deliberately unbounded (§ 3.3 — fail-closed over capped). Raise the bounded
+   verdict pairs LRU-50 per plane, **bound terminal** dispatches (with their events) and
+   cleared-key dispositions by 48h age under § 3.4's guards, frontier and activation records
+   by transcript-file liveness (§ 3.4). Deliberately unbounded, fail-closed over capped:
+   unresolved tombstones (§ 3.3), never-bound terminal dispatches (permanent hazard
+   evidence), un-cleared-key dispositions (until `debt_cleared`), and the retained
+   highest-per-session `seq_hwm` floor. Raise the bounded
    ones if archaeology or long-lived branch flip-flops prove useful.
 3. **Worktrees**: the `realpath` slug gives each worktree its own log — conservative and correct
    (different checkouts, different trees); confirm during WB4.
@@ -931,7 +1268,7 @@ Full-suite green throughout the dual-read window.
    "shared Q6" does not silently mean "reviewer-only fix". Price both after v1 field data shows
    whether the residual ever bites.
 7. **Non-Node ecosystems — resolved in scope as WB2b** (round-6): the Skill-route fallback IS a
-   receipt producer today (`post-tool-review-state.sh:3818–3903`), so parity requires the runner
+   receipt producer at the time of writing (retired in WB5b), so parity requires the runner
    to absorb the ecosystem checks before output parsing retires (§ 3.4). The remaining open
    question is only the supported-ecosystem list: WB2b ships the table
    `skills/precommit/SKILL.md:40–60` encodes; confirm during WB2b whether any ecosystem beyond
