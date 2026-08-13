@@ -8,7 +8,7 @@
 
 **모델이 경로를 선택하게 하고, "완료"는 검증 가능하게 유지합니다.**
 
-v4는 테스트로 고정된 닫힌 anchor 집합 안에서 Claude에게 재량을 부여합니다. hook은 compaction 이후에도 gate receipt를 보존하고, Codex는 독립적으로 리뷰합니다.
+v4는 테스트로 고정된 닫힌 anchor 집합 안에서 Claude에게 재량을 부여합니다. hook은 compaction 이후에도 유지되는 digest 기반 reminder이고, Codex는 독립적으로 리뷰합니다.
 
 Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기타 호환 에이전트에는 skills-only 배포를 제공합니다.
 
@@ -29,7 +29,7 @@ Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기�
 /project-setup
 ```
 
-하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치하며, 전체 플러그인에는 15개 Rules + 8개 Hooks가 포함됩니다. `--lite`를 사용하면 CLAUDE.md만 설정합니다 (Rules/Hooks 스킵).
+하나의 명령어로 프레임워크, 패키지 매니저, 데이터베이스, 엔트리포인트, 스크립트를 자동 감지합니다. Rules와 Hooks의 서브셋을 설치하며, 전체 플러그인에는 15개 Rules + 6개 Hooks가 포함됩니다. `--lite`를 사용하면 CLAUDE.md만 설정합니다 (Rules/Hooks 스킵).
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — skills만
@@ -55,7 +55,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 
 | 차원 | v3 (choreography) | v4 (contracts) |
 |------|-------------------|----------------|
-| Hook의 역할 | 다음에 실행할 명령어를 내보냄 | `[AUTO_LOOP_STATE]` 사실을 발행 — 변경 클래스, gate receipt, 라운드/상한, tier |
+| Hook의 역할 | 다음에 실행할 명령어를 내보냄 | Reminder + `[AUTO_LOOP_STATE]` 사실을 출력 — 변경 클래스, plane별 verdict 상태 |
 | 완료 | 스크립트된 단계 시퀀스 ("수정 → 즉시 재리뷰") | 종결 완료 불변식(terminal completion invariant): 변경 클래스가 요구하는 모든 gate가 마지막 편집 이후 통과했어야 함 |
 | 규칙의 강제력 | 균일 — 모든 규칙이 의무로 읽힘 | 3개 tier: **Anchor** (절대 이탈 불가), **Default** (신호를 명시하고 이탈 가능), **Guidance** (권고) |
 | 리뷰 깊이 | 기본적으로 최대 | 위험도에 비례하는 tier (`fast` / `standard` / `thorough`); 보안과 데이터 무결성은 항상 상향 |
@@ -66,7 +66,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 소유자 | 소유 범위 |
 |--------|-----------|
 | **모델** | 배치, 타이밍, 리뷰 깊이 상향, Default tier 이탈 (명시한 뒤 계속 작업) |
-| **Harness** | Gate 신선도, compaction을 넘어서는 receipt, strict 모드 차단, 닫힌 anchor 집합 |
+| **Harness** | Digest 기반 reminder 상태, git 레벨 가드 (commit-msg, pre-push), 닫힌 anchor 집합 |
 | **사람** | 되돌릴 수 없는 승인 (push, commit, merge)과 열거된 exit 지점 |
 
 모델은 경로를 소유합니다. Harness는 증거와 양보할 수 없는 경계를 소유합니다. 사람은 되돌릴 수 없는 권한을 보유합니다.
@@ -79,14 +79,14 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 
 | # | Harness 하위 문제 | sd0x-dev-flow 구현 | 코드 근거 |
 |---|-------------------|---------------------|-----------|
-| 1 | **Tool loop 제어** | 종결 완료 불변식 — 변경 클래스가 요구하는 모든 gate는 마지막 편집 이후 통과해야 하며, 언제 어떻게 실행할지는 모델이 선택 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel 기반 state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` gate sentinel을 각각의 지속 가능한 상태 plane으로 파싱; 옵트인 듀얼 리뷰는 기계용 `REVIEW_GATE=` 마커로 추가 집계 | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (sentinel parser) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (듀얼 리뷰 `REVIEW_GATE=` producer) |
-| 3 | **Context 압축 후 복구** | SessionStart(compact) 이후 `[AUTO_LOOP_RESUME]` stdout 재주입 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
-| 4 | **Lifecycle interceptor** | 5가지 hook event type을 8개 스크립트로 디스패치: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8개 스크립트) + [`.claude/settings.json`](.claude/settings.json) |
+| 1 | **Tool loop 제어** | 종결 완료 불변식 — 변경 클래스가 요구하는 모든 gate는 마지막 편집 이후 통과해야 하며, 언제 어떻게 실행할지는 모델이 선택 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`scripts/review-state.js`](scripts/review-state.js) |
+| 2 | **Digest 기반 reminder 상태** | Verdict는 모델이 기록하고(`node scripts/review-state.js note <plane> <pass\|fail>`) tree digest에 바인딩됩니다 — 편집하면 digest가 바뀌므로 해당 plane의 reminder가 다시 열립니다; gate sentinel(`✅ Ready` / `## Overall: ✅ PASS`)은 동작 레이어 신호로 유지 | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
+| 3 | **Context 압축 후 복구** | SessionStart(compact) 이후 git baseline(브랜치 + 미커밋 파일)과 미완료 gate reminder를 재주입 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
+| 4 | **Lifecycle interceptor** | 5가지 hook event type을 6개 스크립트로 디스패치 — 4개의 권고형 reminder hook, 1개의 자동 포매터, 1개의 차단형 보안 가드(SessionStart는 추가로 `scripts/namespace-hint.sh`를 실행): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6개 스크립트) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 98개 skill 중 89개가 `allowed-tools`를 선언 |
-| 6 | **Defense-in-depth 안전장치** | 5개 레이어: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed 마커 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth 안전장치** | Git 레벨 가드는 그대로 강제됩니다 (commit-msg-guard, `/dev/tty`를 통한 pre-push-gate); 편집 시점의 pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드이며 워크플로 강제가 아님 — `jq`가 필요하며, jq가 없으면 가드가 작동하지 않음), Stop hook은 reminder를 출력합니다 — 되돌릴 수 없는 동작을 막는 레이어는 강제력을 유지하고, 리뷰 레이어는 의도적으로 권고형이 되었습니다 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator 분리** | Codex가 Claude의 결과물을 리뷰하며 저장소를 직접 조사 — 결론을 건네받아 승인만 하는 일은 없음 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **점진적 진행 추적** | 증거 기반 정체 감지: `[LOOP_STALL]`은 finding을 하나도 닫지 못한 리뷰 라운드가 3회 연속되면 발화하여 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거합니다. Tier별 라운드 예산 (기본 6 / 15 / 30, 3–50으로 오버라이드 가능) 은 폭주 방지용 백스톱으로 물러나며, 첫 상한 도달 시에도 같은 진단을 수행하고, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
+| 8 | **점진적 진행 추적** | 증거 기반 정체 규율: finding을 하나도 닫지 못한 리뷰 라운드가 3회 연속되면 — 모델이 리뷰 리포트로부터 직접 셉니다 — 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거합니다. Tier별 라운드 예산 (기본 6 / 15 / 30, 3–50으로 오버라이드 가능) 은 폭주 방지용 백스톱으로 물러나며, 첫 상한 도달 시에도 같은 진단을 수행하고, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop 안전 게이트** | 모든 `/push-ci` push 전 `AskUserQuestion` 승인; 보호 브랜치 push에는 `/dev/tty` pre-push 확인이 최종 credential (non-fast-forward 감지 포함) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **자기 개선 루프** | 지적 → lesson 기록 → 3회 이상 재발 시 rule로 승격 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,16 +108,11 @@ flowchart LR
 
 모든 것은 하나의 규칙을 중심으로 돌아갑니다 — **종결 완료 불변식(terminal completion invariant)**: 어떤 변경에 대한 작업은, 해당 변경 클래스가 요구하는 모든 gate가 *그 클래스의 마지막 편집 이후* 통과했을 때에만 완료로 선언될 수 있습니다. 코드 편집은 독립적인 Codex 리뷰 후 `/precommit`을 요구하고, `.md` 문서는 `/codex-review-doc`을 요구합니다. 언제 실행할지, 편집을 어떻게 배치할지, 얼마나 깊이 리뷰할지는 모델의 판단입니다 — 불변식은 choreography가 아니라 최종 상태를 제약합니다.
 
-Hooks는 **명령이 아니라 사실**을 보고합니다: `[AUTO_LOOP_STATE]` 블록(변경 클래스, gate receipt, 라운드/상한, tier)을 내보내고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 정체 신호(또는 백스톱으로서의 라운드 상한 도달)가 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 촉발하고, 그 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 어느 trigger로 발화했든 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
+Hooks는 **명령이 아니라 사실**을 보고합니다: reminder와 `[AUTO_LOOP_STATE]` 사실 라인(변경 클래스, plane별 verdict 상태)을 출력하고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 정체 — 아무것도 닫지 못한 리뷰 라운드 3회 연속, 모델이 직접 셉니다 — 또는 백스톱으로서의 라운드 상한 도달이 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 촉발하고, 그 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 어느 trigger로 발화했든 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
 
-강제(enforcement)에는 두 가지 모드가 있습니다:
+강제(enforcement) 모드는 없습니다 (hook-lightweighting, 2026-08-13): 모든 리뷰 레이어 hook은 exit 0으로 끝나는 reminder입니다. Verdict는 모델이 기록할 때 존재하며(`node scripts/review-state.js note <plane> <pass|fail>`, digest 바인딩 — 편집하면 해당 plane이 다시 열립니다), reminder를 정직하게 잠재우는 방법은 gate를 실행하고 결과를 기록하는 것입니다. 리뷰 레이어 밖의 가드는 여전히 유효합니다: pre-edit-guard는 민감 경로 편집을 여전히 차단하고(`jq`가 있을 때 — 없으면 가드가 작동하지 않음), git 레벨 가드(commit-msg-guard, pre-push-gate)는 그대로 강제됩니다.
 
-| 모드 | stop 시점에 gate가 열려 있으면 | 강제 주체 |
-|------|-------------------------------|-----------|
-| `warn` (플러그인 런타임 폴백) | 경고를 내보냄; gate를 닫는 것은 여전히 모델의 의무 | 동작 레이어 |
-| `strict` (`/project-setup`으로 설치 시 기본값) | Gate가 통과할 때까지 stop이 차단됨 — fail-closed | Hook |
-
-두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 기본값은 비활성입니다. 모드와 의존성에 대한 자세한 내용은 [docs/hooks.md](docs/hooks.md)를 참조하세요.
+두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 기본값은 비활성입니다. Hook과 의존성에 대한 자세한 내용은 [docs/hooks.md](docs/hooks.md)를 참조하세요.
 
 <details>
 <summary>상세: 리뷰 루프 시퀀스 다이어그램</summary>
@@ -130,10 +125,10 @@ sequenceDiagram
     participant H as Hooks
 
     D->>C: Edit code
-    H->>H: Track file change
+    H->>H: Reminder state re-opens (digest changed)
     C->>X: Codex review (sandbox, researches repo itself)
     X-->>C: Findings + gate sentinel
-    H->>H: Parse sentinel into code_review.passed
+    C->>C: note the verdict (review-state.js)
     C->>C: Gate on the tier's blocking severity
 
     alt Blocking findings
@@ -145,7 +140,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: Strict mode: incomplete gate → blocked
+    Note over H: Stop: owed gates re-reminded — never blocked
 ```
 
 </details>
@@ -162,15 +157,15 @@ sequenceDiagram
 
 설정된 tier는 상한선이 아니라 기준선(baseline)입니다 — 변경이 그럴 만하면 모델이 상향하고, 보안이나 데이터 무결성 변경은 무엇이 설정되어 있든 항상 `thorough`로 리뷰됩니다.
 
-**80점이면 합격입니다.** tier의 blocking 기준 아래 findings는 기록되고(`[NIT_DEFERRED]` — TTL과 함께 저장되어 다음 세션에서 다시 제기되지 않습니다) 루프는 곧바로 `/precommit`으로 진행합니다. 추가 수정 패스도, 추가 리뷰 라운드도 없습니다. 이 항목들은 다음에 `/codex-review-branch`로 깊이 리뷰할 때 다시 다뤄집니다.
+**80점이면 합격입니다.** tier의 blocking 기준 아래 findings는 기록되고(`[NIT_DEFERRED]` — 리뷰 리포트 안의 보고 규약일 뿐, 아무것도 이를 저장하지 않습니다) 루프는 곧바로 `/precommit`으로 진행합니다. 추가 수정 패스도, 추가 리뷰 라운드도 없습니다. 이 항목들은 다음에 `/codex-review-branch`로 깊이 리뷰할 때 다시 다뤄집니다.
 
-위의 라운드 상한은 의도적으로 느슨합니다. **상한은 수렴 중인 루프와 헛도는 루프를 구별하지 못하기** 때문입니다 — 둘 다 같은 숫자에서 멈춥니다. 구별해 주는 것은 증거 기반의 정체 신호입니다: `[LOOP_STALL]`은 아무 finding도 닫지 못한 리뷰 라운드가 3회 연속되면 발생하며, 보통 상한 도달보다 훨씬 이르고, 아래의 진단을 실제로 촉발하는 것도 이쪽입니다. 상한은 폭주 방지용 백스톱으로 남습니다.
+위의 라운드 상한은 의도적으로 느슨합니다. **상한은 수렴 중인 루프와 헛도는 루프를 구별하지 못하기** 때문입니다 — 둘 다 같은 숫자에서 멈춥니다. 구별해 주는 것은 증거입니다: 아무 finding도 닫지 못한 리뷰 라운드가 3회 연속되면 — 모델이 리뷰 리포트로부터 직접 세며, 보통 상한 도달보다 훨씬 이릅니다 — 아래의 진단이 촉발됩니다. 상한은 폭주 방지용 백스톱으로 남습니다.
 
 위의 라운드 상한은 tier 기본값입니다 — 프로젝트의 `## Max Rounds` 오버라이드(3–50)가 우선합니다. 상한 도달은 자동 인계가 아니라 진단 시점입니다: 모델이 정체를 분류하고(아키텍처, 문서 과다 길이, 주의 분산, 미검증 주장, tier 불일치, 요구사항 모호성), 한 번의 제한된 조정을 한 뒤 재개합니다. 어느 trigger로 발화했든 human exit는 그대로 구속력이 있습니다: 보안/데이터 무결성 변경은 진단을 건너뛰고 곧바로 사람에게 가고, 아키텍처 수준이나 요구사항 모호성으로 분류된 정체는 사람에게 exit하며, 진단 이후 같은 변경이 두 번째로 상한에 도달하면 항상 사람에게 갑니다. (아키텍처 수준 변경, 기능 제거, 사용자의 중단 요청은 상한과 무관하게 언제든 사람에게 exit합니다.)
 
 두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 **플래그를 넘기지 않으면 비활성**입니다 — 토큰과 실제 소요 시간이 두 배가 되므로 릴리스나 보안 리뷰에는 값어치를 하지만 일상적인 수정에는 그렇지 않습니다. `--dual`에서는 findings에 심각도 정규화, 중복 제거(파일 + 이슈 키, ±5줄 허용), 소스 귀속이 적용됩니다.
 
-Gate: `✅ Ready` 또는 `⛔ Blocked` — strict 모드에서, 미완료 gate = blocked.
+Gate: `✅ Ready` 또는 `⛔ Blocked` — 모델이 따라 행동하는 동작 레이어 신호이며, verdict는 reminder 상태에 기록됩니다.
 
 ## 사용 시나리오
 
@@ -183,12 +178,12 @@ Gate: `✅ Ready` 또는 `⛔ Blocked` — strict 모드에서, 미완료 gate =
 
 ## 워크플로 트랙
 
-| 워크플로 | 명령어 | Gate | Receipts |
-|----------|--------|------|----------|
-| 기능 개발 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 추적 (strict 모드에서 차단) |
-| 버그 수정 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook 추적 (strict 모드에서 차단) |
-| Auto-Loop | 코드 편집 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 추적 (strict 모드에서 차단) |
-| 문서 리뷰 | `.md` 편집 → `/codex-review-doc` | ✅/⛔ | Hook 추적 (strict 모드에서 차단) |
+| 워크플로 | 명령어 | Gate | 상태 |
+|----------|--------|------|------|
+| 기능 개발 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Digest 기반 reminder (verdict 기록) |
+| 버그 수정 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Digest 기반 reminder (verdict 기록) |
+| Auto-Loop | 코드 편집 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Digest 기반 reminder (verdict 기록) |
+| 문서 리뷰 | `.md` 편집 → `/codex-review-doc` | ✅/⛔ | Digest 기반 reminder (verdict 기록) |
 | 기획 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | 온보딩 | `/project-setup` → `/repo-intake` | — | — |
 
@@ -261,9 +256,9 @@ flowchart TD
 |----------|------|------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 22 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |
+| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 최소한의 Context 사용량
@@ -431,7 +426,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 
 ## 규칙 & Hook
 
-15개 규칙 + 8개 Hook. 규칙은 tier화된 계약입니다: `discretion.md`가 플러그인이 관리하는 12개 규칙 파일의 모든 지시를 Anchor / Default / Guidance 중 정확히 하나로 해석하고, 사용자 소유의 오버라이드 파일 2개는 상위 규칙 아래에서 Anchor 우선으로 해석됩니다. Hook은 사실 발행자이자 가드레일입니다: gate receipt를 기록하고 compaction 이후 상태를 재주입하며, stop-guard는 strict 모드에서 리뷰 미완료 상태의 stop을 차단하고, pre-edit-guard는 어떤 모드에서든 민감 경로 편집을 거부합니다.
+15개 규칙 + 6개 Hook. 규칙은 tier화된 계약입니다: `discretion.md`가 플러그인이 관리하는 12개 규칙 파일의 모든 지시를 Anchor / Default / Guidance 중 정확히 하나로 해석하고, 사용자 소유의 오버라이드 파일 2개는 상위 규칙 아래에서 Anchor 우선으로 해석됩니다. Hook 구성은 4개의 권고형 reminder hook에 자동 포매터 1개와 차단형 보안 가드 1개를 더한 것입니다. reminder 역할은 hook마다 다릅니다: Stop과 post-compact hook은 digest 기반 상태(`review-state.js`)로부터 미완료 gate reminder를 렌더링하고, prompt hook은 `[AUTO_LOOP_STATE]` 사실 라인을, post-skill hook은 고정된 gate 순서 라인을 출력하며, post-compact hook은 추가로 git baseline을 재주입합니다. 리뷰 레이어는 아무것도 차단하지 않습니다 — pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드, `jq` 필요 — 없으면 작동하지 않음), 강제 gate는 git 레벨에 있습니다 (commit-msg-guard, pre-push-gate).
 
 > **커스터마이징**: `auto-loop-project.md`를 편집하여 프로젝트별 auto-loop 동작을 오버라이드할 수 있습니다. 플러그인 업데이트와 충돌하지 않습니다 — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 참조.
 
@@ -477,7 +472,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 | **Skills** | 온디맨드로 로드되는 capability — 동사 역할 (`/feature-dev`, `/codex-review-fast`, …) |
 | **Model** | 경로: 배치, 타이밍, 리뷰 깊이 상향, Default tier 이탈 |
 | **Rules** | 매 세션 로드되는 tier화된 계약 (Anchor / Default / Guidance) |
-| **Hooks + state** | `[AUTO_LOOP_STATE]` 사실, 지속 가능한 gate receipt, compaction을 넘어서는 복구 |
+| **Hooks + state** | Reminder + `[AUTO_LOOP_STATE]` 사실, digest 기반 verdict 기록, compaction을 넘어서는 복구 |
 | **Codex** | 독립 리뷰 — 저장소를 직접 조사하며, 결론을 건네받지 않음 |
 | **Scripts + agents** | 결정론적 검사 (precommit, guard)와 격리된 서브에이전트 |
 

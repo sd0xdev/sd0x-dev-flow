@@ -8,7 +8,7 @@
 
 **モデルに経路を選ばせる。「完了」は検証可能なままに。**
 
-v4 は、テストで固定された閉じた Anchor セットの内側で Claude に裁量を与えます。フックが compaction をまたいでゲートの受領記録（receipts）を保持し、Codex が独立してレビューします。
+v4 は、テストで固定された閉じた Anchor セットの内側で Claude に裁量を与えます。フックは compaction をまたいで生き残る digest 束縛のリマインダーであり、Codex が独立してレビューします。
 
 Claude Code ではフルコントロールプレーン。Codex CLI やその他の互換エージェントにはスキルのみを配布します。
 
@@ -29,7 +29,7 @@ Claude Code ではフルコントロールプレーン。Codex CLI やその他�
 /project-setup
 ```
 
-1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには 15 ルール + 8 フックが含まれます。`--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
+1つのコマンドでフレームワーク、パッケージマネージャー、データベース、エントリポイント、スクリプトを自動検出します。ルールとフックのサブセットをインストールします。完全なプラグインには 15 ルール + 6 フックが含まれます。`--lite` で CLAUDE.md のみ設定（ルール/フックをスキップ）。
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — スキルのみ
@@ -55,7 +55,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 
 | 次元 | v3（choreography） | v4（contracts） |
 |------|-------------------|----------------|
-| Hook の役割 | 次に実行するコマンドを発行 | `[AUTO_LOOP_STATE]` のファクトを公開 — 変更クラス、ゲート receipts、ラウンド/上限、tier |
+| Hook の役割 | 次に実行するコマンドを発行 | リマインダー + `[AUTO_LOOP_STATE]` のファクトを出力 — 変更クラス、プレーンごとの verdict 状態 |
 | 完了 | 台本化されたステップ列（「修正 → 直ちに再レビュー」） | Terminal completion invariant：変更クラスが要求するすべてのゲートが、最後の編集の後にパスしている |
 | ルールの拘束力 | 一律 — すべてのルールが必須として読める | 3 つの tier：**Anchor**（逸脱不可）、**Default**（シグナルを明示して逸脱可）、**Guidance**（助言） |
 | レビュー深度 | デフォルトで最大 | リスクに応じた tier（`fast` / `standard` / `thorough`）。セキュリティとデータ整合性は常にエスカレーション |
@@ -66,7 +66,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 所有者 | 所有するもの |
 |-------|------|
 | **モデル** | バッチ処理、タイミング、レビュー深度のエスカレーション、Default tier の逸脱（明示してから作業を続行） |
-| **Harness** | ゲートの鮮度、compaction をまたぐ receipts、strict モードでのブロック、閉じた Anchor セット |
+| **Harness** | digest に束縛されたリマインダー状態、git レベルのガード（commit-msg、pre-push）、閉じた Anchor セット |
 | **人間** | 不可逆な承認（push、commit、merge）と列挙された exit ポイント |
 
 モデルは経路を所有します。harness は証拠と交渉不可能な境界を所有します。人間は不可逆の権限を保持します。
@@ -79,14 +79,14 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 
 | # | Harness のサブ問題 | sd0x-dev-flow の実装 | コード証拠 |
 |---|---------------------|------------------------------|---------------|
-| 1 | **Tool loop control** | Terminal completion invariant — 変更クラスが要求するすべてのゲートが最後の編集の後にパスしていなければならない。いつ・どのように実行するかはモデルが選ぶ | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` のゲート sentinel をそれぞれの永続状態プレーンへパース。オプトインのデュアルレビューでは、機械向けの `REVIEW_GATE=` マーカーによる集約を追加で行う | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (sentinel parser) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (dual-review `REVIEW_GATE=` producer) |
-| 3 | **Context recovery across compaction** | SessionStart(compact) 後に `[AUTO_LOOP_RESUME]` を stdout へ注入 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
-| 4 | **Lifecycle interceptors** | 5 種類の hook event を 8 本のスクリプトへディスパッチ: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
+| 1 | **Tool loop control** | Terminal completion invariant — 変更クラスが要求するすべてのゲートが最後の編集の後にパスしていなければならない。いつ・どのように実行するかはモデルが選ぶ | [`rules/auto-loop.md`](rules/auto-loop.md) + [`scripts/review-state.js`](scripts/review-state.js) |
+| 2 | **Digest-bound reminder state** | verdict はモデルが note し（`node scripts/review-state.js note <plane> <pass\|fail>`）、ツリーの digest に束縛される — 編集すると digest が変わるため、そのプレーンのリマインダーが再オープンする。ゲート sentinel（`✅ Ready` / `## Overall: ✅ PASS`）は動作レイヤーのシグナルのまま | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
+| 3 | **Context recovery across compaction** | SessionStart(compact) 後に git ベースライン（ブランチ + 未コミットファイル）と未完了ゲートのリマインダーを再注入 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
+| 4 | **Lifecycle interceptors** | 5 種類の hook event を 6 本のスクリプトへディスパッチ — 4 本の advisory リマインダーフック、1 本の自動フォーマッタ、1 本のブロックするセキュリティガード（SessionStart は追加で `scripts/namespace-hint.sh` を実行）: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 98 個の公開 skill のうち 89 個が `allowed-tools` を宣言 |
-| 6 | **Defense-in-depth safety** | 5 層構成: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | git レベルのガードはハードなまま（commit-msg-guard、`/dev/tty` 経由の pre-push-gate）。編集時の pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガードであり、ワークフロー強制ではない — `jq` が必要で、jq が無いとガードは作動しない）、Stop hook はリマインドする — 不可逆な操作をゲートする層は牙を残し、レビュー層は設計として advisory になった | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex が Claude の書いたコードをレビュー。リポジトリを自力で調査し、結論を渡されて追認することはない | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | 証拠にもとづくストール検知：`[LOOP_STALL]` は finding を 1 つも閉じないレビューラウンドが 3 回続くと発火し、構造化されたストール分類と 1 回の限定的な調整を起動します。Tier ごとのラウンド予算（デフォルト 6 / 15 / 30、3〜50 でオーバーライド可）は暴走用のバックストップに退き、初回の上限到達でも同じ診断を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
+| 8 | **Incremental progress tracking** | 証拠にもとづくストール規律：finding を 1 つも閉じないレビューラウンドが 3 回続くと — モデルがレビューレポートから数えます — 構造化されたストール分類と 1 回の限定的な調整を起動します。Tier ごとのラウンド予算（デフォルト 6 / 15 / 30、3〜50 でオーバーライド可）は暴走用のバックストップに退き、初回の上限到達でも同じ診断を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop safety gates** | すべての `/push-ci` push の前に `AskUserQuestion` で承認。保護ブランチへの push では `/dev/tty` による pre-push 確認が最終的な資格情報（加えて non-fast-forward 検出） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 是正 → lesson として記録 → 3 回以上の再発で rule に昇格 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,16 +108,11 @@ flowchart LR
 
 すべては 1 つのルール — **terminal completion invariant** — を中心に回ります：ある変更の作業は、その変更クラスが要求するすべてのゲートが*そのクラスの最後の編集の後に*パスして初めて完了と宣言できます。コード編集には独立した Codex レビューとその後の `/precommit` が、`.md` ドキュメントには `/codex-review-doc` が必要です。いつ実行するか、編集をどうバッチするか、どれだけ深くレビューするかはモデルの判断です — invariant が制約するのは最終状態であって、手順の振り付けではありません。
 
-フックは**命令ではなくファクト**を報告します：`[AUTO_LOOP_STATE]` ブロック（変更クラス、ゲート receipts、ラウンド/上限、tier）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ストール信号 — あるいはバックストップとしてのラウンド上限到達 — により、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します。どの trigger で発火しても human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
+フックは**命令ではなくファクト**を報告します：リマインダーと `[AUTO_LOOP_STATE]` のファクト行（変更クラス、プレーンごとの verdict 状態）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ストール — finding を 1 つも閉じないレビューラウンドが 3 回続くこと。モデルが数えます — あるいはバックストップとしてのラウンド上限到達により、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します。どの trigger で発火しても human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
 
-強制には 2 つのモードがあります：
+強制モードは存在しません（hook-lightweighting、2026-08-13）：レビュー層のフックはすべて exit 0 で終了するリマインダーです。verdict はモデルが note した時点で存在し（`node scripts/review-state.js note <plane> <pass|fail>`、digest に束縛 — 編集するとそのプレーンが再オープン）、リマインダーを黙らせる正直な方法は、ゲートを実行して結果を note することです。レビュー層の外のガードは効力を保ちます：pre-edit-guard は機密パスへの編集を引き続きブロックし（`jq` がある場合。無いとガードは作動しない）、git レベルのガード（commit-msg-guard、pre-push-gate）はハードなままです。
 
-| モード | 停止時にゲートが未完了の場合 | 強制する層 |
-|------|-------------------|-------------|
-| `warn`（プラグインランタイムのフォールバック） | 警告を出力。ゲートを閉じる義務はモデル側に残る | 動作レイヤー |
-| `strict`（`/project-setup` でインストールした場合のデフォルト） | ゲートがパスするまで停止をブロック — fail-closed | Hook |
-
-2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。モードと依存関係の詳細は [docs/hooks.md](docs/hooks.md) を参照してください。
+2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。フックと依存関係の詳細は [docs/hooks.md](docs/hooks.md) を参照してください。
 
 <details>
 <summary>詳細：レビューループ シーケンス図</summary>
@@ -130,10 +125,10 @@ sequenceDiagram
     participant H as Hooks
 
     D->>C: Edit code
-    H->>H: Track file change
+    H->>H: Reminder state re-opens (digest changed)
     C->>X: Codex review (sandbox, researches repo itself)
     X-->>C: Findings + gate sentinel
-    H->>H: Parse sentinel into code_review.passed
+    C->>C: note the verdict (review-state.js)
     C->>C: Gate on the tier's blocking severity
 
     alt Blocking findings
@@ -145,7 +140,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: Strict mode: incomplete gate → blocked
+    Note over H: Stop: owed gates re-reminded — never blocked
 ```
 
 </details>
@@ -162,15 +157,15 @@ sequenceDiagram
 
 設定された tier は天井ではなくベースラインです — 変更がそれを正当化するなら、モデルはエスカレーションします。セキュリティまたはデータ整合性の変更は、何が設定されていようと常に `thorough` でレビューされます。
 
-**80 点で合格です。** tier の blocking 閾値を下回る findings は記録され（`[NIT_DEFERRED]`。TTL 付きで永続化されるため、次のセッションで蒸し返されません）、ループはそのまま `/precommit` へ進みます — 追加の修正パスも、追加のレビューラウンドもありません。これらは次に `/codex-review-branch` で深くレビューする際に拾われます。
+**80 点で合格です。** tier の blocking 閾値を下回る findings は記録され（`[NIT_DEFERRED]` — レビューレポート上の報告規約であり、何も永続化しません）、ループはそのまま `/precommit` へ進みます — 追加の修正パスも、追加のレビューラウンドもありません。これらは次に `/codex-review-branch` で深くレビューする際に拾われます。
 
-上のラウンド上限は意図的に緩く設定されています。**上限は収束しているループと空転しているループを区別できない**からです — どちらも同じ数字で止まります。区別できるのは証拠にもとづくストール信号です：`[LOOP_STALL]` は finding を 1 つも閉じられないレビューラウンドが 3 回続いた時点で発火し、通常は上限到達よりはるかに早く、下記の診断を実際に起動するのはこちらです。上限は暴走用のバックストップとして残されています。
+上のラウンド上限は意図的に緩く設定されています。**上限は収束しているループと空転しているループを区別できない**からです — どちらも同じ数字で止まります。区別できるのは証拠です：finding を 1 つも閉じられないレビューラウンドが 3 回続くこと — モデルがレビューレポートから数え、通常は上限到達よりはるかに早く現れます — が下記の診断を起動します。上限は暴走用のバックストップとして残されています。
 
 上のラウンド上限は tier のデフォルトです — プロジェクトの `## Max Rounds` オーバーライド（3〜50）が優先されます。上限到達は診断ポイントであって、自動的なハンドオフではありません：モデルがストールを分類し（アーキテクチャ、ドキュメントが長すぎる、注意の拡散、未検証の主張、tier の不一致、要件の曖昧さ）、1 回の限定的な調整を行って再開します。どの trigger で発火しても human exit は拘束力を持ち続けます：セキュリティ/データ整合性の変更は診断をスキップして直接人間へ、アーキテクチャレベルまたは要件の曖昧さと分類されたストールは人間への exit となり、同じ変更が診断後に 2 度目の上限へ達した場合は常に人間へ向かいます。（アーキテクチャレベルの変更、機能の削除、ユーザーによる停止要求は、上限とは無関係にいつでも人間への exit になります。）
 
 2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、**フラグを渡さない限り無効**です — トークンと実時間のコストが倍になるため、リリースやセキュリティレビューには見合っても、通常の修正には見合いません。`--dual` 使用時、findings は重要度正規化、重複排除（ファイル + issue キー、±5 行許容）、ソース帰属が行われます。
 
-ゲート：`✅ Ready` または `⛔ Blocked` — strict モードでは、未完了ゲート = ブロック。
+ゲート：`✅ Ready` または `⛔ Blocked` — モデルが行動の根拠にする動作レイヤーのシグナルであり、verdict はリマインダー状態へ note されます。
 
 ## 使用に適したケース
 
@@ -183,12 +178,12 @@ sequenceDiagram
 
 ## ワークフロートラック
 
-| ワークフロー | コマンド | ゲート | 受領記録（Receipts） |
+| ワークフロー | コマンド | ゲート | 状態 |
 |-------------|----------|------|-------------|
-| 機能開発 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
-| バグ修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
-| Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
-| ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | Hook が追跡（strict モードではブロック） |
+| 機能開発 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | digest 束縛のリマインダー（note された verdict） |
+| バグ修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | digest 束縛のリマインダー（note された verdict） |
+| Auto-Loop | コード編集 → `/codex-review-fast` → `/precommit` | ✅/⛔ | digest 束縛のリマインダー（note された verdict） |
+| ドキュメントレビュー | `.md` 編集 → `/codex-review-doc` | ✅/⛔ | digest 束縛のリマインダー（note された verdict） |
 | プランニング | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | オンボーディング | `/project-setup` → `/repo-intake` | — | — |
 
@@ -261,9 +256,9 @@ flowchart TD
 |----------|-----|-----|
 | スキル | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | エージェント | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| フック | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| フック | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | ルール | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| スクリプト | 22 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |
+| スクリプト | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小の Context 使用量
@@ -431,7 +426,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 
 ## ルール & フック
 
-15 ルール + 8 フック。ルールは tier 付きの契約です：`discretion.md` が、プラグイン管理の 12 のルールファイル内のすべての指示を Anchor / Default / Guidance のいずれかちょうど 1 つに解決し、ユーザー所有の 2 つのオーバーライドファイルは親ルールの下で Anchor-first に解決されます。フックはファクトの発行者でありガードレールです：ゲートの receipts を記録し、compaction 後に状態を再注入します。stop-guard は strict モードでレビュー未完了の停止をブロックし、pre-edit-guard はどのモードでも機密パスへの編集を拒否します。
+15 ルール + 6 フック。ルールは tier 付きの契約です：`discretion.md` が、プラグイン管理の 12 のルールファイル内のすべての指示を Anchor / Default / Guidance のいずれかちょうど 1 つに解決し、ユーザー所有の 2 つのオーバーライドファイルは親ルールの下で Anchor-first に解決されます。フック構成は 4 本の advisory リマインダーフックに、自動フォーマッタ 1 本とブロックするセキュリティガード 1 本を加えたものです。リマインダーの役割はフックごとに異なります：Stop と post-compact フックは digest 束縛の状態（`review-state.js`）から未完了ゲートのリマインダーを描画し、prompt フックは `[AUTO_LOOP_STATE]` の事実行を、post-skill フックは固定のゲート順序行を出力し、post-compact フックはさらに git ベースラインを再注入します。レビュー層は何もブロックしません — pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガード、`jq` 必須 — 無いと作動しない）、ハードなゲートは git レベル（commit-msg-guard、pre-push-gate）にあります。
 
 > **カスタマイズ**：`auto-loop-project.md` を編集してプロジェクトの auto-loop 動作をオーバーライドできます。プラグイン更新と競合しません — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 参照。
 
@@ -477,7 +472,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 | **スキル** | オンデマンドで読み込まれる能力 — 動詞（`/feature-dev`、`/codex-review-fast`、…） |
 | **モデル** | 経路：バッチ処理、タイミング、レビュー深度のエスカレーション、Default tier の逸脱 |
 | **ルール** | 毎セッション読み込まれる tier 付きの契約（Anchor / Default / Guidance） |
-| **フック + 状態** | `[AUTO_LOOP_STATE]` のファクト、永続的なゲート receipts、compaction をまたぐ復帰 |
+| **フック + 状態** | リマインダー + `[AUTO_LOOP_STATE]` のファクト、digest に束縛された verdict の note、compaction をまたぐ復帰 |
 | **Codex** | 独立レビュー — リポジトリを自力で調査し、結論を渡されることはない |
 | **スクリプト + エージェント** | 決定論的チェック（precommit、ガード）と隔離されたサブエージェント |
 

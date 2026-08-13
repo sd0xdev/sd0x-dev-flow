@@ -8,7 +8,7 @@
 
 **讓模型自己選路，讓「完成」可被驗證。**
 
-v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量權；hooks 在 compaction 之後仍保留 gate 憑證，Codex 則獨立進行 review。
+v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量權；hooks 是綁定 digest、跨 compaction 仍然有效的提醒，Codex 則獨立進行 review。
 
 在 Claude Code 上提供完整 control plane；對 Codex CLI 與其他相容 agent 則以 skills-only 形式發佈。
 
@@ -29,7 +29,7 @@ v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量�
 /project-setup
 ```
 
-一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 15 條 rules + 8 個 hooks。使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
+一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 15 條 rules + 6 個 hooks。使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — 僅 skills
@@ -55,7 +55,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 
 | 面向 | v3（choreography） | v4（contracts） |
 |------|-------------------|----------------|
-| Hook 角色 | 直接發出下一個要執行的指令 | 發布 `[AUTO_LOOP_STATE]` 事實——change class、gate 憑證、round/cap、tier |
+| Hook 角色 | 直接發出下一個要執行的指令 | 印出提醒 + `[AUTO_LOOP_STATE]` 事實——change class、各 plane 的 verdict 狀態 |
 | 完成定義 | 腳本化的步驟序列（「修正 → 立即重新 review」） | Terminal completion invariant：change class 所需的每個 gate 都在最後一次編輯之後通過 |
 | 規則強度 | 一律相同——每條規則讀起來都是強制 | 三個層級：**Anchor**（絕不偏離）、**Default**（陳述訊號後可偏離）、**Guidance**（建議性） |
 | Review 深度 | 預設就是最深 | 依風險分級的 tier（`fast` / `standard` / `thorough`）；安全性與資料完整性一律升級 |
@@ -66,7 +66,7 @@ npx skills add sd0xdev/sd0x-dev-flow
 | 擁有者 | 擁有的範圍 |
 |--------|-----------|
 | **模型** | 批次、時機、review 深度升級、Default 層級的偏離（陳述後繼續工作） |
-| **Harness** | Gate 新鮮度、跨 compaction 的憑證、strict 模式阻擋、封閉的 anchor 集合 |
+| **Harness** | 綁定 digest 的提醒狀態、git 層級的護欄（commit-msg、pre-push）、封閉的 anchor 集合 |
 | **人類** | 不可逆的核准（push、commit、merge）與列舉的出口點 |
 
 模型擁有路徑。Harness 擁有證據與不可協商的邊界。人類保留不可逆的權力。
@@ -79,14 +79,14 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 
 | # | Harness 子問題 | sd0x-dev-flow 實作 | 程式碼佐證 |
 |---|---------------|-------------------|-----------|
-| 1 | **Tool loop control** | Terminal completion invariant——change class 所需的每個 gate 都必須在最後一次編輯之後通過；何時、如何執行由模型決定 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` 等 gate sentinel 被解析進各自的持久化 state plane；opt-in 的雙 review 另外透過機器可讀的 `REVIEW_GATE=` 標記彙總 | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh)（sentinel parser）+ [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh)（雙 review 的 `REVIEW_GATE=` producer） |
-| 3 | **Context recovery across compaction** | SessionStart(compact) 後透過 `[AUTO_LOOP_RESUME]` stdout 注入復原狀態 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
-| 4 | **Lifecycle interceptors** | 5 種 hook 事件分派到 8 支腳本:PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/)(8 支腳本)+ [`.claude/settings.json`](.claude/settings.json) |
+| 1 | **Tool loop control** | Terminal completion invariant——change class 所需的每個 gate 都必須在最後一次編輯之後通過；何時、如何執行由模型決定 | [`rules/auto-loop.md`](rules/auto-loop.md) + [`scripts/review-state.js`](scripts/review-state.js) |
+| 2 | **Digest-bound reminder state** | Verdict 由模型記錄（`node scripts/review-state.js note <plane> <pass\|fail>`）並綁定 tree digest——一次編輯就會因 digest 改變而重新打開該 plane 的提醒；gate sentinel（`✅ Ready` / `## Overall: ✅ PASS`）仍是行為層的訊號 | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md)（§ Gate Sentinels、§ Enforcement） |
+| 3 | **Context recovery across compaction** | SessionStart(compact) 後重新注入 git baseline（分支 + 未提交檔案）與欠著的 gate 提醒 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
+| 4 | **Lifecycle interceptors** | 5 種 hook 事件分派到 6 支腳本——4 支建議性提醒 hook、1 支自動格式化、1 支會阻擋的安全護欄（SessionStart 另外執行 `scripts/namespace-hint.sh`）:PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/)(6 支腳本)+ [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 98 個公開 skill 中有 89 個宣告 `allowed-tools` |
-| 6 | **Defense-in-depth safety** | 5 層防線:pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | Git 層級的護欄維持硬性（commit-msg-guard、走 `/dev/tty` 的 pre-push-gate）；編輯期的 pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，非工作流強制——需要 `jq`，缺 jq 時護欄不會啟動）；Stop hook 只做提醒——把關不可逆動作的層保留了強制力，review 層則刻意改為建議性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 審查 Claude 寫的東西,自行研究 repo——絕不餵結論要它確認 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Review Dispatch) |
-| 8 | **Incremental progress tracking** | 證據驅動的卡關偵測：`[LOOP_STALL]` 在連續三輪 review 都沒關掉任何 finding 後發出，觸發結構化的停滯分類與一次有界調整。每個 tier 的輪次預算（預設 6 / 15 / 30，可覆寫為 3–50）退居 runaway backstop，第一次觸頂跑同一套診斷，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Stall Detection + § Cap Diagnostic Protocol） |
+| 8 | **Incremental progress tracking** | 證據驅動的卡關紀律：連續三輪 review 都沒關掉任何 finding——由模型從 review 報告中自行計數——就觸發結構化的停滯分類與一次有界調整。每個 tier 的輪次預算（預設 6 / 15 / 30，可覆寫為 3–50）退居 runaway backstop，第一次觸頂跑同一套診斷，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Stall Detection + § Cap Diagnostic Protocol） |
 | 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 前都需 `AskUserQuestion` 核准；`/dev/tty` pre-push 確認是保護分支 push 的最終憑證（外加 non-fast-forward 偵測） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 被糾正 → 記錄 lesson → 重複 3 次以上後提升為 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,16 +108,11 @@ flowchart LR
 
 一切繞著一條規則運轉——**terminal completion invariant**：唯有當某項改動的 change class 所需的每個 gate，都在*該 class 的最後一次編輯之後*通過，這項改動才能被宣告完成。程式碼編輯需要一次獨立的 Codex review，接著 `/precommit`；`.md` 文件需要 `/codex-review-doc`。何時執行、如何批次編輯、review 要多深，都是模型的決定——invariant 約束的是終點狀態，不是編排過程。
 
-Hooks 回報的是**事實，不是命令**：它們發出 `[AUTO_LOOP_STATE]` 區塊（change class、gate 憑證、round/cap、tier），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。卡關訊號——或作為最後防線的輪次上限觸頂——會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續，而不是自動交接；無論由哪一個 trigger 發動，人類出口都仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
+Hooks 回報的是**事實，不是命令**：它們印出提醒與一行 `[AUTO_LOOP_STATE]` 事實（change class、各 plane 的 verdict 狀態），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。卡關——連續三輪 review 都沒關掉任何 finding，由模型自行計數——或作為最後防線的輪次上限觸頂，會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續，而不是自動交接；無論由哪一個 trigger 發動，人類出口都仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
 
-強制執行有兩種模式：
+沒有強制執行模式（hook-lightweighting，2026-08-13）：每個 review 層 hook 都是以 exit 0 結束的提醒。Verdict 只在模型記錄它時才存在（`node scripts/review-state.js note <plane> <pass|fail>`，綁定 digest——一次編輯就會重新打開該 plane），而讓提醒安靜下來的誠實做法，是真的跑完 gate 並記下結果。review 層以外的護欄仍然保有牙齒：pre-edit-guard 仍會阻擋敏感路徑編輯（需要 `jq`，缺 jq 時護欄不會啟動），而 git 層級的護欄（commit-msg-guard、pre-push-gate）維持硬性。
 
-| 模式 | 停止時 gate 未完成 | 執行者 |
-|------|-------------------|--------|
-| `warn`（plugin 執行期的 fallback） | 發出警告；關閉 gate 仍是模型的義務 | 行為層 |
-| `strict`（透過 `/project-setup` 安裝時的預設） | 在 gate 通過前阻止停止——fail-closed | Hook |
-
-第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。模式與相依細節詳見 [docs/hooks.md](docs/hooks.md)。
+第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。Hook 與相依細節詳見 [docs/hooks.md](docs/hooks.md)。
 
 <details>
 <summary>詳細：Review Loop 時序圖</summary>
@@ -130,10 +125,10 @@ sequenceDiagram
     participant H as Hooks
 
     D->>C: Edit code
-    H->>H: Track file change
+    H->>H: Reminder state re-opens (digest changed)
     C->>X: Codex review (sandbox, researches repo itself)
     X-->>C: Findings + gate sentinel
-    H->>H: Parse sentinel into code_review.passed
+    C->>C: note the verdict (review-state.js)
     C->>C: Gate on the tier's blocking severity
 
     alt Blocking findings
@@ -145,7 +140,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: Strict mode: incomplete gate → blocked
+    Note over H: Stop: owed gates re-reminded — never blocked
 ```
 
 </details>
@@ -162,15 +157,15 @@ sequenceDiagram
 
 設定的 tier 是底線，不是天花板——當改動的性質需要時，模型會往上升級；而安全性或資料完整性改動無論設定為何，一律以 `thorough` 進行 review。
 
-**80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`，帶 TTL 持久化，下次 session 不會重複被提），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
+**80 分就是及格。** 低於該 tier blocking 門檻的 findings 會被記錄（`[NIT_DEFERRED]`——review 報告中的一種書寫慣例，沒有任何東西會把它持久化），loop 直接進 `/precommit`——不多一次修正、不多一輪 review。這些項目會在 `/codex-review-branch` 做深度審查時被撿回來。
 
-上表的輪次上限刻意放寬，因為**上限分不出收斂中的迴圈與空轉的迴圈**——兩者都停在同一個數字。分得出來的是證據驅動的卡關訊號：`[LOOP_STALL]` 在連續三輪 review 都沒有關掉任何 finding 之後發出，通常比觸頂早了許多輪，下面那套診斷實際上是由它觸發的。上限退居 runaway backstop。
+上表的輪次上限刻意放寬，因為**上限分不出收斂中的迴圈與空轉的迴圈**——兩者都停在同一個數字。分得出來的是證據：連續三輪 review 都沒有關掉任何 finding——由模型從 review 報告中自行計數，通常比觸頂早了許多輪——就會觸發下面那套診斷。上限退居 runaway backstop。
 
 上表的輪次上限是各 tier 的預設值——專案的 `## Max Rounds` 覆寫（3–50）優先。觸頂是一個診斷點，不是自動交接：模型會分類停滯原因（架構、文件太長、注意力發散、未驗證的宣稱、tier 不匹配、需求歧義），做一次有界調整後繼續。無論由哪一個 trigger 發動，人類出口都仍然具約束力：安全性／資料完整性改動跳過診斷直接交給人類；被分類為架構層級或需求歧義的停滯會退出交給人類；同一改動在診斷後第二次觸頂也一律交給人類。（架構層級變更、功能移除、或使用者要求停止，在任何時點都會退出交給人類——無論是否觸頂。）
 
 第二位 reviewer 走 `/codex-review-branch --dual`，**不加旗標就不啟用**——它讓每輪的 token 與時間成本翻倍，值得花在 release 或安全審查上，不值得花在日常修正。啟用 `--dual` 時，findings 會做嚴重度正規化、去重（file + issue key，±5 行容差）與來源標記。
 
-Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blocked。
+Gate：`✅ Ready` 或 `⛔ Blocked` — 由模型據以行動的行為層訊號；verdict 會被記入提醒狀態。
 
 ## 適用場景
 
@@ -183,12 +178,12 @@ Gate：`✅ Ready` 或 `⛔ Blocked` — strict 模式下，未完成 gate = blo
 
 ## Workflow Tracks
 
-| Workflow | 指令 | Gate | 憑證 |
+| Workflow | 指令 | Gate | 狀態 |
 |----------|------|------|------|
-| 功能開發 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
-| Bug 修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
-| Auto-Loop | Code 編輯 → `/codex-review-fast` → `/precommit` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
-| 文件 Review | `.md` 編輯 → `/codex-review-doc` | ✅/⛔ | Hook 追蹤（strict 模式下阻擋） |
+| 功能開發 | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | 綁定 digest 的提醒（記錄 verdict） |
+| Bug 修正 | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | 綁定 digest 的提醒（記錄 verdict） |
+| Auto-Loop | Code 編輯 → `/codex-review-fast` → `/precommit` | ✅/⛔ | 綁定 digest 的提醒（記錄 verdict） |
+| 文件 Review | `.md` 編輯 → `/codex-review-doc` | ✅/⛔ | 綁定 digest 的提醒（記錄 verdict） |
 | 規劃 | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | 上手流程 | `/project-setup` → `/repo-intake` | — | — |
 
@@ -261,9 +256,9 @@ flowchart TD
 |------|------|------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 22 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |
+| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小的 Context 佔用
@@ -431,7 +426,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## Rules & Hooks
 
-15 條 rules + 8 個 hooks。Rules 是分層的契約：`discretion.md` 把 12 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hooks 是事實發布者與護欄：它們記錄 gate 憑證並在 compaction 後重新注入狀態；stop-guard 在 strict 模式下阻擋 review 未完成的停止，pre-edit-guard 則在任何模式下拒絕敏感路徑的編輯。
+15 條 rules + 6 個 hooks。Rules 是分層的契約：`discretion.md` 把 12 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hook 組成是 4 支建議性提醒 hook，加上 1 支自動格式化與 1 支會阻擋的安全護欄。提醒角色各不相同：Stop 與 post-compact hook 依據綁定 digest 的狀態（`review-state.js`）印出欠著的 gate 提醒，prompt hook 印出 `[AUTO_LOOP_STATE]` 事實行，post-skill hook 印出固定的閘門順序行，post-compact hook 另外重新注入 git baseline；review 層永不阻擋——pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，需要 `jq`，缺 jq 時不會啟動），硬性關卡則位於 git 層級（commit-msg-guard、pre-push-gate）。
 
 > **客製化**：編輯 `auto-loop-project.md` 可覆寫專案的 auto-loop 行為。Plugin 更新不會衝突 — 詳見 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 
@@ -477,7 +472,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 | **Skills** | 按需載入的能力——動詞（`/feature-dev`、`/codex-review-fast`、…） |
 | **Model** | 路徑：批次、時機、review 深度升級、Default 層級的偏離 |
 | **Rules** | 每個 session 都載入的分層契約（Anchor / Default / Guidance） |
-| **Hooks + state** | `[AUTO_LOOP_STATE]` 事實、持久化的 gate 憑證、跨 compaction 的復原 |
+| **Hooks + state** | 提醒 + `[AUTO_LOOP_STATE]` 事實、綁定 digest 的 verdict 記錄、跨 compaction 的復原 |
 | **Codex** | 獨立 review——自行研究 repo，絕不被餵結論 |
 | **Scripts + agents** | 確定性的檢查（precommit、guards）與隔離的 subagent |
 

@@ -8,7 +8,7 @@
 
 **Deja que el modelo elija el camino. Mantén el «hecho» verificable.**
 
-v4 da a Claude discreción dentro de un conjunto cerrado de anchors fijado por tests; los hooks preservan los gate receipts a través de la compactación, y Codex revisa de forma independiente.
+v4 da a Claude discreción dentro de un conjunto cerrado de anchors fijado por tests; los hooks son recordatorios ligados al digest (digest-bound) que sobreviven la compactación, y Codex revisa de forma independiente.
 
 Control plane completo en Claude Code. Distribución solo de skills para Codex CLI y otros agentes compatibles.
 
@@ -29,7 +29,7 @@ Control plane completo en Claude Code. Distribución solo de skills para Codex C
 /project-setup
 ```
 
-Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 15 rules + 8 hooks. Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
+Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 15 rules + 6 hooks. Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — solo skills
@@ -55,7 +55,7 @@ Los modelos frontier pueden planificar, agrupar y recuperarse a partir de estado
 
 | Dimensión | v3 (coreografía) | v4 (contratos) |
 |-----------|------------------|----------------|
-| Rol del hook | Emitir el siguiente comando a ejecutar | Publicar hechos `[AUTO_LOOP_STATE]` — clase de cambio, gate receipts, ronda/tope, tier |
+| Rol del hook | Emitir el siguiente comando a ejecutar | Imprimir recordatorios + hechos `[AUTO_LOOP_STATE]` — clase de cambio, estado de veredicto por plano |
 | Terminación | Secuencia de pasos guionizada («fix → re-review inmediato») | Invariante de terminación (terminal completion invariant): todo gate que la clase de cambio requiere ha pasado después de la última edición |
 | Fuerza de las reglas | Uniforme — cada regla se lee como obligatoria | Tres tiers: **Anchor** (nunca), **Default** (desviarse declarando una señal), **Guidance** (consultivo) |
 | Profundidad de review | Máxima por defecto | Tiers escalados por riesgo (`fast` / `standard` / `thorough`); seguridad e integridad de datos siempre escalan |
@@ -66,7 +66,7 @@ El núcleo no negociable vive en un **Anchor Register cerrado** (`rules/discreti
 | Propietario | Posee |
 |-------------|-------|
 | **Modelo** | Agrupación, timing, escalado de la profundidad de review, desviaciones de tier Default (declaradas, y luego seguir trabajando) |
-| **Harness** | Frescura de los gates, receipts a través de la compactación, bloqueo en modo strict, el conjunto cerrado de anchors |
+| **Harness** | Estado de recordatorio ligado al digest, guards a nivel de git (commit-msg, pre-push), el conjunto cerrado de anchors |
 | **Humano** | Aprobaciones irreversibles (push, commit, merge) y los puntos de salida enumerados |
 
 El modelo posee el camino. El harness posee la evidencia y los límites no negociables. El humano conserva la autoridad irreversible.
@@ -79,14 +79,14 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 
 | # | Subproblema de harness | Implementación en sd0x-dev-flow | Evidencia de código |
 |---|------------------------|--------------------------------|---------------------|
-| 1 | **Tool loop control** | Invariante de terminación (terminal completion invariant) — todo gate que una clase de cambio requiere debe pasar después de la última edición; el modelo elige cuándo y cómo ejecutarlos | [`rules/auto-loop.md`](rules/auto-loop.md) + [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) |
-| 2 | **Sentinel-driven state machine** | Sentinels de gate `✅ Ready` / `⛔ Blocked` / `## Overall: ✅ PASS` parseados a sus respectivos planos de estado persistentes; el dual review opt-in agrega además vía un marcador `REVIEW_GATE=` orientado a máquina | [`hooks/post-tool-review-state.sh`](hooks/post-tool-review-state.sh) (parser de sentinels) + [`scripts/emit-review-gate.sh`](scripts/emit-review-gate.sh) (productor del `REVIEW_GATE=` de dual review) |
-| 3 | **Context recovery across compaction** | Inyección por stdout de `[AUTO_LOOP_RESUME]` tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
-| 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 8 scripts: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (8 scripts) + [`.claude/settings.json`](.claude/settings.json) |
+| 1 | **Tool loop control** | Invariante de terminación (terminal completion invariant) — todo gate que una clase de cambio requiere debe pasar después de la última edición; el modelo elige cuándo y cómo ejecutarlos | [`rules/auto-loop.md`](rules/auto-loop.md) + [`scripts/review-state.js`](scripts/review-state.js) |
+| 2 | **Digest-bound reminder state** | Los veredictos los anota el modelo (`node scripts/review-state.js note <plane> <pass\|fail>`) y quedan ligados al digest del árbol — una edición reabre el recordatorio de su plano porque el digest cambió; los sentinels de gate (`✅ Ready` / `## Overall: ✅ PASS`) siguen siendo señales de la capa de comportamiento | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
+| 3 | **Context recovery across compaction** | Línea base de git (rama + archivos sin commit) y recordatorios de gates pendientes re-inyectados tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
+| 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 6 scripts — cuatro hooks de recordatorio consultivos, un auto-formateador y un guard de seguridad bloqueante (SessionStart ejecuta además `scripts/namespace-hint.sh`): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 89 de 98 skills públicas declaran `allowed-tools` |
-| 6 | **Defense-in-depth safety** | 5 capas: pre-edit-guard → commit-msg-guard → pre-push-gate → stop-guard → sidecar fail-closed marker | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | Los guards a nivel de git siguen siendo duros (commit-msg-guard, pre-push-gate sobre `/dev/tty`); pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad, no enforcement de workflow — requiere `jq`; sin jq, el guard no se activa); el Stop hook recuerda — las capas que custodian acciones irreversibles conservaron sus dientes, la capa de review se volvió consultiva por diseño | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
-| 8 | **Incremental progress tracking** | Detección de estancamiento basada en evidencia: `[LOOP_STALL]` se emite tras tres rondas de revisión que no cierran ningún hallazgo y dispara una clasificación estructurada del estancamiento más un ajuste acotado. El presupuesto de rondas por tier (por defecto 6 / 15 / 30, sobrescribible 3–50) queda como red de seguridad ante un bucle desbocado y ejecuta el mismo diagnóstico en su primer hit, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
+| 8 | **Incremental progress tracking** | Disciplina de estancamiento basada en evidencia: tres rondas de revisión que no cierran ningún hallazgo — contadas por el modelo a partir de los reportes de review — disparan una clasificación estructurada más un ajuste acotado. El presupuesto de rondas por tier (por defecto 6 / 15 / 30, sobrescribible 3–50) queda como red de seguridad ante un bucle desbocado y ejecuta el mismo diagnóstico en su primer hit, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
 | 9 | **Human-in-the-loop safety gates** | Aprobación por `AskUserQuestion` antes de cada push de `/push-ci`; la confirmación pre-push por `/dev/tty` es la credencial terminal para pushes a ramas protegidas (más detección de non-fast-forward) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Corrección → registrar lesson → promover a regla tras 3+ recurrencias | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
@@ -108,16 +108,11 @@ flowchart LR
 
 Todo orbita alrededor de una sola regla — el **terminal completion invariant** (invariante de terminación): el trabajo sobre un cambio solo puede declararse completo cuando todo gate que su clase de cambio requiere ha pasado *después de la última edición en esa clase*. Las ediciones de código requieren un review independiente de Codex y luego `/precommit`; los docs `.md` requieren `/codex-review-doc`. Cuándo ejecutarlos, cómo agrupar las ediciones y con qué profundidad revisar son decisiones del modelo — el invariante restringe el estado final, no la coreografía.
 
-Los hooks reportan **hechos, no órdenes**: emiten bloques `[AUTO_LOOP_STATE]` (clase de cambio, gate receipts, ronda/tope, tier) y el modelo es dueño de la decisión. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de esa línea se registran y el bucle continúa en lugar de abrir otra ronda. Una señal de estancamiento — o, como red de seguridad, alcanzar el tope de rondas — dispara un autodiagnóstico estructurado (¿problema de arquitectura? ¿doc demasiado largo? ¿difusión de atención?) y un ajuste acotado antes de que el bucle se reanude, en lugar de un traspaso automático; las salidas humanas siguen vigentes sea cual sea el disparador (los cambios de seguridad e integridad de datos se saltan el diagnóstico por completo; un estancamiento diagnosticado como de nivel de arquitectura o como ambigüedad de requisitos va al humano).
+Los hooks reportan **hechos, no órdenes**: imprimen recordatorios y una línea de hechos `[AUTO_LOOP_STATE]` (clase de cambio, estado de veredicto por plano) y el modelo es dueño de la decisión. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de esa línea se registran y el bucle continúa en lugar de abrir otra ronda. Un estancamiento — tres rondas de revisión que no cierran nada, contadas por el modelo — o, como red de seguridad, alcanzar el tope de rondas dispara un autodiagnóstico estructurado (¿problema de arquitectura? ¿doc demasiado largo? ¿difusión de atención?) y un ajuste acotado antes de que el bucle se reanude, en lugar de un traspaso automático; las salidas humanas siguen vigentes sea cual sea el disparador (los cambios de seguridad e integridad de datos se saltan el diagnóstico por completo; un estancamiento diagnosticado como de nivel de arquitectura o como ambigüedad de requisitos va al humano).
 
-La aplicación (enforcement) tiene dos modos:
+No hay modo de enforcement (hook-lightweighting, 2026-08-13): todo hook de la capa de review es un recordatorio que sale con 0. Un veredicto existe cuando el modelo lo anota (`node scripts/review-state.js note <plane> <pass|fail>`, ligado al digest — una edición reabre su plano), y la manera honesta de silenciar un recordatorio es ejecutar el gate y anotar el resultado. Los guards fuera de la capa de review conservan su fuerza: pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (con `jq` disponible; sin jq, el guard no se activa), y los guards a nivel de git (commit-msg-guard, pre-push-gate) siguen siendo duros.
 
-| Modo | Gate abierto al detenerse | Aplicado por |
-|------|---------------------------|--------------|
-| `warn` (fallback del runtime del plugin) | Se emite una advertencia; cerrar el gate sigue siendo obligación del modelo | Capa de comportamiento |
-| `strict` (por defecto al instalar vía `/project-setup`) | El stop se bloquea hasta que el gate pase — fail-closed | Hook |
-
-Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado por defecto. Ver [docs/hooks.md](docs/hooks.md) para detalles de modos y dependencias.
+Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado por defecto. Ver [docs/hooks.md](docs/hooks.md) para detalles de hooks y dependencias.
 
 <details>
 <summary>Detalle: Diagrama de secuencia del bucle de review</summary>
@@ -130,10 +125,10 @@ sequenceDiagram
     participant H as Hooks
 
     D->>C: Edit code
-    H->>H: Track file change
+    H->>H: Reminder state re-opens (digest changed)
     C->>X: Codex review (sandbox, researches repo itself)
     X-->>C: Findings + gate sentinel
-    H->>H: Parse sentinel into code_review.passed
+    C->>C: note the verdict (review-state.js)
     C->>C: Gate on the tier's blocking severity
 
     alt Blocking findings
@@ -145,7 +140,7 @@ sequenceDiagram
     C->>C: /precommit (auto)
     C-->>D: ✅ All gates passed
 
-    Note over H: Strict mode: incomplete gate → blocked
+    Note over H: Stop: owed gates re-reminded — never blocked
 ```
 
 </details>
@@ -162,15 +157,15 @@ Un solo reviewer — Codex — por defecto en todas partes. El **tier** decide c
 
 El tier configurado es una línea base, no un techo — el modelo escala cuando el cambio lo amerita, y los cambios de seguridad o de integridad de datos siempre se revisan en `thorough` sea cual sea la configuración.
 
-**80 es nota de aprobado.** Los hallazgos por debajo del umbral de bloqueo del tier se registran (`[NIT_DEFERRED]`, persistido con TTL para que no se vuelvan a plantear en la siguiente sesión) y el bucle avanza a `/precommit` — sin pasada extra de correcciones ni ronda extra de review. `/codex-review-branch` los retoma cuando el cambio se revise en profundidad.
+**80 es nota de aprobado.** Los hallazgos por debajo del umbral de bloqueo del tier se registran (`[NIT_DEFERRED]` — una convención de reporte en el informe de review; nada lo persiste) y el bucle avanza a `/precommit` — sin pasada extra de correcciones ni ronda extra de review. `/codex-review-branch` los retoma cuando el cambio se revise en profundidad.
 
-Los topes de rondas de arriba son deliberadamente holgados, porque **un tope no distingue un bucle que converge de uno que da vueltas**: detiene a ambos en el mismo número. Lo que sí los distingue es una señal de estancamiento basada en evidencia: `[LOOP_STALL]` se emite tras tres rondas de revisión consecutivas que no cierran ningún hallazgo, normalmente muchas rondas antes del tope, y es lo que dispara el diagnóstico de abajo. El tope queda como red de seguridad ante un bucle desbocado.
+Los topes de rondas de arriba son deliberadamente holgados, porque **un tope no distingue un bucle que converge de uno que da vueltas**: detiene a ambos en el mismo número. Lo que sí los distingue es la evidencia: tres rondas de revisión consecutivas que no cierran ningún hallazgo — contadas por el modelo a partir de los reportes de review, normalmente muchas rondas antes del tope — disparan el diagnóstico de abajo. El tope queda como red de seguridad ante un bucle desbocado.
 
 Los topes de rondas de arriba son los valores por defecto del tier — un override de proyecto `## Max Rounds` (3–50) tiene precedencia. Alcanzar el tope es un punto de diagnóstico, no un traspaso automático: el modelo clasifica el estancamiento (arquitectura, doc demasiado largo, difusión de atención, afirmaciones no verificadas, tier desajustado, ambigüedad de requisitos), hace un ajuste acotado y se reanuda. Las salidas humanas siguen siendo vinculantes sea cual sea el disparador: los cambios de seguridad/integridad de datos se saltan el diagnóstico y van directo al humano, un estancamiento clasificado como de nivel de arquitectura o como ambigüedad de requisitos sale al humano, y el mismo cambio alcanzando el tope una segunda vez tras su diagnóstico siempre lo hace. (Los cambios a nivel de arquitectura, la eliminación de funcionalidades o una petición del usuario de detenerse salen al humano en cualquier momento — con tope o sin él.)
 
 Un segundo reviewer está disponible vía `/codex-review-branch --dual` y está **desactivado salvo que se pase el flag** — duplica el coste en tokens y en tiempo de cada ronda, algo que vale la pena en un release o una revisión de seguridad, no en una corrección corriente. Bajo `--dual`, los hallazgos se normalizan por severidad, se deduplican (archivo + clave de issue, tolerancia ±5 líneas) y se atribuyen por fuente.
 
-Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloqueado.
+Gate: `✅ Ready` o `⛔ Blocked` — señales de la capa de comportamiento sobre las que actúa el modelo; el veredicto se anota en el estado de recordatorio.
 
 ## Cuándo usar
 
@@ -183,12 +178,12 @@ Gate: `✅ Ready` o `⛔ Blocked` — en modo strict, gate incompleto = bloquead
 
 ## Tracks de workflow
 
-| Workflow | Comandos | Gate | Receipts |
-|----------|----------|------|----------|
-| Funcionalidad | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
-| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
-| Auto-Loop | Edición de código → `/codex-review-fast` → `/precommit` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
-| Doc Review | Edición `.md` → `/codex-review-doc` | ✅/⛔ | Rastreado por hook (bloquea en modo strict) |
+| Workflow | Comandos | Gate | Estado |
+|----------|----------|------|--------|
+| Funcionalidad | `/feature-dev` → `/verify` → `/codex-review-fast` → `/precommit` | ✅/⛔ | Recordatorio ligado al digest (veredictos anotados) |
+| Bug Fix | `/issue-analyze` → `/bug-fix` → `/verify` → `/precommit` | ✅/⛔ | Recordatorio ligado al digest (veredictos anotados) |
+| Auto-Loop | Edición de código → `/codex-review-fast` → `/precommit` | ✅/⛔ | Recordatorio ligado al digest (veredictos anotados) |
+| Doc Review | Edición `.md` → `/codex-review-doc` | ✅/⛔ | Recordatorio ligado al digest (veredictos anotados) |
 | Planificación | `/codex-brainstorm` → `/feasibility-study` → `/tech-spec` | — | — |
 | Onboarding | `/project-setup` → `/repo-intake` | — | — |
 
@@ -261,9 +256,9 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 |-----------|----------|----------|
 | Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
-| Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
+| Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 22 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |
+| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Mínimo consumo de context
@@ -431,7 +426,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 ## Reglas & Hooks
 
-15 reglas + 8 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 12 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. Los hooks son publicadores de hechos y guardrails: registran los gate receipts y re-inyectan el estado tras la compactación; stop-guard bloquea en modo strict los stops con review incompleto, mientras que pre-edit-guard rechaza ediciones de rutas sensibles en cualquier modo.
+15 reglas + 6 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 12 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. El conjunto de hooks consta de cuatro hooks de recordatorio consultivos más un auto-formateador y un guard de seguridad bloqueante. Los roles de recordatorio difieren por hook: los hooks de Stop y post-compact renderizan recordatorios de gates pendientes a partir del estado ligado al digest (`review-state.js`), el hook de prompt imprime la línea de hechos `[AUTO_LOOP_STATE]`, el hook post-skill imprime una línea estática con el orden de gates, y el hook post-compact además re-inyecta la línea base de git tras la compactación; la capa de review nunca bloquea — pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad; requiere `jq` y sin jq no se activa), y los gates duros viven a nivel de git (commit-msg-guard, pre-push-gate).
 
 > **Personalización**: Edita `auto-loop-project.md` para sobrescribir el comportamiento de auto-loop por proyecto. Las actualizaciones del plugin no conflictuarán — ver [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
@@ -477,7 +472,7 @@ Seis capas, cada una dueña de una responsabilidad:
 | **Skills** | Capacidades cargadas bajo demanda — los verbos (`/feature-dev`, `/codex-review-fast`, …) |
 | **Modelo** | La ruta: agrupación, timing, escalado de la profundidad de review, desviaciones de tier Default |
 | **Rules** | Contratos por tiers (Anchor / Default / Guidance) cargados en cada sesión |
-| **Hooks + estado** | Hechos `[AUTO_LOOP_STATE]`, gate receipts persistentes, recuperación a través de la compactación |
+| **Hooks + estado** | Recordatorios + hechos `[AUTO_LOOP_STATE]`, notas de veredicto ligadas al digest, recuperación a través de la compactación |
 | **Codex** | Review independiente — investiga el repositorio por su cuenta, nunca recibe una conclusión |
 | **Scripts + agents** | Checks deterministas (precommit, guards) y subagentes aislados |
 
