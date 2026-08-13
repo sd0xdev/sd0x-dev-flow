@@ -356,15 +356,18 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 ### 6.5.2 Copy Scripts
 
 1. `mkdir -p ${REPO_ROOT}/.claude/scripts/lib`
-2. Copy 5 scripts:
+2. Copy 8 scripts:
 
 | Script | Purpose | Dependencies |
 |--------|---------|--------------|
 | `precommit-runner.js` | Precommit runner for `/precommit`, `/precommit-fast` | `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` |
 | `verify-runner.js` | Verify runner for `/verify` | `lib/utils.js` |
+| `dispatch-cli.js` | Dispatch-log CLI for the locally installed `post-tool-review-state.sh` / `stop-guard.sh` (review dispatch + pairing sweep) | `lib/dispatch-log.js`, `lib/tree-digest.js` |
 | `lib/utils.js` | Shared utilities | None |
 | `lib/tree-digest.js` | Per-plane content digests (content-addressed receipts) | None |
 | `lib/receipt-log.js` | Receipt log append/read for the runner's verdict records | None |
+| `lib/dispatch-log.js` | Dispatch-log reducer/sweep library behind `dispatch-cli.js` | `lib/receipt-log.js`, `lib/tree-digest.js` |
+| `lib/gate-derive.js` | Check-time gate derivation for the locally installed `stop-guard.sh` and the advisory hooks. Without it `stop-guard.sh` probes git directly and discloses `source=git_probe degraded=derive_unavailable` (mirror only where no repository exists); the advisory hooks fall back to mirror receipts and disclose `source=state_file` | `lib/tree-digest.js`, `lib/receipt-log.js` |
 
 1. Conflict strategy: same as Phase 5.2.
 
@@ -395,9 +398,12 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 |--------|--------|
 | precommit-runner.js | Installed/Skipped/Conflict |
 | verify-runner.js | Installed/Skipped/Conflict |
+| dispatch-cli.js | Installed/Skipped/Conflict |
 | lib/utils.js | Installed/Skipped/Conflict |
 | lib/tree-digest.js | Installed/Skipped/Conflict |
 | lib/receipt-log.js | Installed/Skipped/Conflict |
+| lib/dispatch-log.js | Installed/Skipped/Conflict |
+| lib/gate-derive.js | Installed/Skipped/Conflict |
 
 **Installed**: N / **Skipped**: M / **Conflicts**: K
 ```
@@ -549,7 +555,7 @@ Summarize all phases and perform closed-loop check:
 - [ ] `.claude/rules/` contains 15 `.md` files (13 managed + 2 override templates) (unless `--no-rules` or `--lite`)
 - [ ] `.claude/hooks/` contains 5 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
-- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, `lib/utils.js`, `lib/tree-digest.js`, and `lib/receipt-log.js` (unless `--lite` or `--detect-only`)
+- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, `dispatch-cli.js`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js`, `lib/dispatch-log.js`, and `lib/gate-derive.js` (unless `--lite` or `--detect-only`)
 - [ ] `.claude/CLAUDE.md` contains `@rules/auto-loop.md` reference (unless `--lite`)
 - [ ] `env.STOP_GUARD_MODE` is set in target settings file (unless `--detect-only` or `--lite`)
 - [ ] `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set in target settings file when 1M model detected (unless `--detect-only` or `--lite`)

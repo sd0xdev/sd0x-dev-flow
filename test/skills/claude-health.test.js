@@ -76,8 +76,9 @@ const CANONICAL_SYNC_CHECKS =
   '`self-improvement.md`, `context-management.md` | | Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` | ' +
   '`pre-edit-guard.sh`, `post-edit-format.sh`, `post-tool-review-state.sh`, `stop-guard.sh`, ' +
   '`post-compact-auto-loop.sh` | | Scripts | `.claude/scripts/` | `scripts/` | ' +
-  '`precommit-runner.js`, `verify-runner.js`, `dep-audit.sh`, `commit-msg-guard.sh`, ' +
-  '`pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` | #### S2.5: ' +
+  '`precommit-runner.js`, `verify-runner.js`, `dispatch-cli.js`, `dep-audit.sh`, `commit-msg-guard.sh`, ' +
+  '`pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js`, ' +
+  '`lib/dispatch-log.js`, `lib/gate-derive.js` | #### S2.5: ' +
   'Override Safeguard Checks 6 checks for project ' +
   'override files (e.g., `auto-loop-project.md`): | # | Check | Severity | Detection | ' +
   'Recommendation | |---|-------|----------|-----------|----------------| | 1 | Override drift | P2 ' +

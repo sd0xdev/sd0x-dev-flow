@@ -35,10 +35,10 @@ Use Glob to check if `.claude/scripts/precommit-runner.js` exists in the project
 
 - **Found** → run: `node .claude/scripts/precommit-runner.js --mode fast --tail 60`
   - If runner emits `## Overall: ✅ PASS`, use its output and skip to the Output section.
-  - If runner emits `## Overall: ⚠️ NO CHECKS RUN` (no matching `package.json` scripts), do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection to run the project's real checks.
+  - If runner emits `## Overall: ⚠️ NO CHECKS RUN`, do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection to run the project's real checks. The marker means **no project validation executed and no policy step failed** (validation steps all skipped or `unavailable`; a policy step that FAILS is `❌ FAIL`, never this marker) — whether the repo declares no runnable checks or the required tools were unavailable to the runner (which orchestrates the ecosystem table below itself: manifest detection + first-class steps). Since WB5b the runner's own append is the **only** receipt source: the legacy Skill/Bash slash-form parsing retired with WB2b's ecosystem folding, so a Step 2 fallback run mints no receipt and the gate stays open until the runner itself executes.
   - If runner **fails** (`## Overall: ❌ FAIL`), treat as a real precommit failure (do not silently fallback).
 - **NOT found** → **Auto-install attempt**:
-  1. **Node.js gate**: Use Glob to check if `package.json` exists. If no `package.json` → skip, fall through to Step 2.
+  1. **Manifest gate**: Use Glob to check if any known manifest exists (`package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`, `build.gradle`, `build.gradle.kts`, `pom.xml`, `Gemfile`). None → skip, fall through to Step 2. (The runner orchestrates every ecosystem in the Step 2 table, so a non-Node manifest justifies the install just as well.)
   2. **Locate plugin scripts**: 3-level Glob fallback (short-circuit on first match):
      - `Glob: ~/.claude/plugins/**/sd0x-dev-flow/scripts/precommit-runner.js`
      - `Glob: ${REPO_ROOT}/node_modules/sd0x-dev-flow/scripts/precommit-runner.js`
@@ -56,9 +56,11 @@ Detect the project ecosystem to run steps manually.
 | `pyproject.toml` | Python | `ruff check --fix .` | `pytest tests/unit/` |
 | `Cargo.toml` | Rust | `cargo clippy --fix` | `cargo test` |
 | `go.mod` | Go | `golangci-lint run --fix` | `go test ./...` |
-| `build.gradle` | Java | `./gradlew spotlessApply` | `./gradlew test` |
+| `build.gradle` / `build.gradle.kts` | Java | `./gradlew spotlessApply` | `./gradlew test` |
 | `pom.xml` | Java (Maven) | `mvn spotless:apply` | `mvn test` |
 | `Gemfile` | Ruby | `bundle exec rubocop -a` | `bundle exec rspec` |
+
+> **How the runner executes this table**: same semantics as `skills/precommit/SKILL.md` § Ecosystem detection — a missing required tool is `unavailable` and blocks ✅ PASS; repo-declared capabilities (spotless / rubocop / rspec) skip only on **definitive tool-native absence evidence** (lockfile membership, the tool's own not-found diagnostic); an ambiguous or timed-out probe is `unavailable`, never a skip.
 
 After lint:fix completes, run `git diff --name-only` to capture auto-fixed files.
 
@@ -71,14 +73,14 @@ After lint:fix completes, run `git diff --name-only` to capture auto-fixed files
 
 | Step | Status | Notes |
 |------|--------|-------|
-| lint:fix | ✅/❌/⏭️ | skipped if no script |
-| test | ✅/❌/⏭️ | skipped if no script |
+| lint:fix | ✅/❌/⏭️/⛔ | ⏭️ = repo opted out (skip); ⛔ = required tool unavailable (blocks PASS) |
+| test | ✅/❌/⏭️/⛔ | same legend |
 
 ## Changed Files (after lint:fix)
 
 - <files or "(none)">
 
-## Overall: ✅ PASS / ❌ FAIL
+## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN (no project validation executed AND no policy step failed; fall through to Step 2, needs human if nothing runnable exists)
 
 ## Checklist
 

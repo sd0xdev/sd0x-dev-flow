@@ -22,13 +22,22 @@ test('precommit/SKILL.md contains auto-install logic', () => {
   );
 });
 
-test('both precommit skills include Node.js gate and 3-level fallback', () => {
+test('both precommit skills include the manifest gate and 3-level fallback', () => {
   for (const [name, content] of [['precommit-fast', precommitFast], ['precommit', precommitFull]]) {
     assert.ok(
       content.includes('package.json'),
-      `${name}/SKILL.md should reference package.json gate`
+      `${name}/SKILL.md should reference package.json in the manifest gate`
     );
   }
+  // WB2b: the gate admits every ecosystem the runner orchestrates, not Node alone.
+  assert.ok(
+    precommitFast.includes('Manifest gate'),
+    'precommit-fast auto-install should gate on any known manifest (WB2b), not package.json alone'
+  );
+  assert.ok(
+    precommitFast.includes('pyproject.toml') && precommitFast.includes('Cargo.toml'),
+    'the manifest gate should enumerate non-Node manifests'
+  );
   // 3-level fallback details are in precommit-fast; precommit references it
   assert.ok(
     precommitFast.includes('sd0x-dev-flow/scripts/precommit-runner.js'),
@@ -66,27 +75,61 @@ test('project-setup SKILL.md contains Phase 6.5', () => {
   );
 });
 
-test('project-setup Phase 6.5 installs 5 scripts', () => {
-  assert.ok(
-    skillMd.includes('precommit-runner.js'),
-    'SKILL.md should reference precommit-runner.js'
+// The full eight-file contract — pinned against the Phase 6.5 REGIONS, not the
+// whole document, so removing a file from the actual copy table cannot stay
+// green off an incidental mention elsewhere (WB5a round-2 P2). The three
+// regions each carry the whole set: copy table, report table, and checklist.
+const PHASE_65_SCRIPTS = [
+  'precommit-runner.js',
+  'verify-runner.js',
+  'dispatch-cli.js',
+  'lib/utils.js',
+  'lib/tree-digest.js',
+  'lib/receipt-log.js',
+  'lib/dispatch-log.js',
+  'lib/gate-derive.js',
+];
+
+test('project-setup Phase 6.5 installs all 8 scripts (copy table, report, checklist)', () => {
+  const phase65Start = skillMd.indexOf('## Phase 6.5');
+  const phase7Start = skillMd.indexOf('## Phase 7');
+  assert.ok(phase65Start !== -1 && phase7Start > phase65Start, 'Phase 6.5 and Phase 7 sections must exist in order');
+  const phase65 = skillMd.slice(phase65Start, phase7Start);
+
+  const copyStart = phase65.indexOf('### 6.5.2');
+  const copyEnd = phase65.indexOf('### 6.5.3');
+  assert.ok(copyStart !== -1 && copyEnd > copyStart, '6.5.2 copy section must exist');
+  const copyTable = phase65.slice(copyStart, copyEnd);
+  assert.ok(copyTable.includes('Copy 8 scripts'), '6.5.2 must state the 8-script count');
+
+  // The copy table's FIRST column, as an exact set — `includes()` over the whole
+  // section is satisfiable from another row's dependency cell, so a deleted copy
+  // row could stay green off the name surviving elsewhere (round-3 P2). Exact-set
+  // comparison also rejects duplicate and extra rows.
+  const copyRowScripts = copyTable
+    .split('\n')
+    .filter((l) => l.startsWith('|'))
+    .map((l) => l.split('|')[1].trim())
+    .filter((cell) => /^`[^`]+`$/.test(cell))
+    .map((cell) => cell.slice(1, -1));
+  assert.deepEqual(
+    [...copyRowScripts].sort(),
+    [...PHASE_65_SCRIPTS].sort(),
+    '6.5.2 copy table first column must be exactly the 8-script set'
   );
-  assert.ok(
-    skillMd.includes('verify-runner.js'),
-    'SKILL.md should reference verify-runner.js'
-  );
-  assert.ok(
-    skillMd.includes('lib/utils.js'),
-    'SKILL.md should reference lib/utils.js'
-  );
-  assert.ok(
-    skillMd.includes('lib/tree-digest.js'),
-    'SKILL.md should reference lib/tree-digest.js (receipt producer dependency)'
-  );
-  assert.ok(
-    skillMd.includes('lib/receipt-log.js'),
-    'SKILL.md should reference lib/receipt-log.js (receipt producer dependency)'
-  );
+
+  const reportStart = phase65.indexOf('### 6.5.4');
+  assert.ok(reportStart !== -1, '6.5.4 report section must exist');
+  const reportTable = phase65.slice(reportStart);
+
+  const checklist = skillMd.slice(phase7Start);
+  const checklistLine = checklist.split('\n').find((l) => l.includes('`.claude/scripts/` contains'));
+  assert.ok(checklistLine, 'Phase 7 checklist must carry the scripts line');
+
+  for (const script of PHASE_65_SCRIPTS) {
+    assert.ok(reportTable.includes(`| ${script} |`), `6.5.4 report table must list ${script}`);
+    assert.ok(checklistLine.includes(`\`${script}\``), `Phase 7 checklist must list ${script}`);
+  }
 });
 
 test('precommit-fast auto-install copies both receipt libs alongside the runner', () => {
@@ -110,6 +153,11 @@ test('claude-health managed inventory lists both receipt libs', () => {
   assert.ok(
     scriptsRow.includes('lib/tree-digest.js') && scriptsRow.includes('lib/receipt-log.js'),
     'Scripts inventory row should list lib/tree-digest.js and lib/receipt-log.js'
+  );
+  assert.ok(
+    scriptsRow.includes('dispatch-cli.js') && scriptsRow.includes('lib/dispatch-log.js')
+      && scriptsRow.includes('lib/gate-derive.js'),
+    'Scripts inventory row should list the dispatch/derivation set the local hooks read (WB5a)'
   );
 });
 
