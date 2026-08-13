@@ -11,7 +11,7 @@
       "hash": "d4cd2cf9552a0da0ac813654dedb70da8a4ce3a7"
     },
     "post-tool-review-state.sh": {
-      "hash": "cb24e8fb1a2b0a863e3e5ff6eb8128742e06adab"
+      "deleted": true
     },
     "stop-guard.sh": {
       "hash": "d0b6ae1af13a5cdb9cbc2ca5ae5058d541e8e823"
@@ -26,7 +26,7 @@
       "hash": "9b7601764b77fdaff820f298a4462bd73212c2f2"
     },
     "session-init.sh": {
-      "hash": "c73d76edfeeeb1af1370b033d8b0c7e52fef5869"
+      "deleted": true
     }
   },
   "rules": {
@@ -81,7 +81,7 @@
       "hash": "1c4c6f730e7d1ddd5bca046cff76b5016c773a5a"
     },
     "emit-review-gate.sh": {
-      "hash": "210d86bd186f39b179f0ea2a2c7a6f9d0e7c8aa7"
+      "deleted": true
     },
     "migration-audit.sh": {
       "hash": "8745bf2bf3d3d2b9fffb74bb32855bb200ab0021"
@@ -120,7 +120,7 @@
       "hash": "cfff2c8c2eb1b3de960009c4bcf2342771618bd7"
     },
     "lib/session-scope-resolver.js": {
-      "hash": "b1c0ec300ed0dd7d05c49ced918ab4835a0d82b1"
+      "deleted": true
     },
     "lib/utils.js": {
       "hash": "36eb760a128d461278eb19953e9d40af8769ffb0"
