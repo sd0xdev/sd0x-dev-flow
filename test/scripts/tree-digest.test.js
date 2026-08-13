@@ -372,6 +372,13 @@ describe('computeTreeState — submodules (gitlink three-state rule)', () => {
     commitAll(host, 'host seed');
     sh(host, 'git', ['-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', sub, 'vendor/sub']);
     commitAll(host, 'add submodule');
+    // The submodule checkout is a fresh clone — it inherits nothing from sub's
+    // local config, and CLEAN_GIT_ENV points HOME at a gitconfig-less tmpdir.
+    // Commits inside vendor/sub then depend on git's OS ident guess, which works
+    // on macOS (GECOS populated) and fatals on CI runners (empty ident name).
+    const subCheckout = path.join(host, 'vendor/sub');
+    sh(subCheckout, 'git', ['config', 'user.name', 'Digest Tester']);
+    sh(subCheckout, 'git', ['config', 'user.email', 'digest-tester@example.invalid']);
     return { host, sub };
   }
 
