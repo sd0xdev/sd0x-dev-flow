@@ -83,7 +83,9 @@ sd0x-dev-flow 的 SKILL.md 格式與 Agent Skills 標準（Vercel `skills` CLI�
 
 ### 3.1 Architecture: Tiered Guarantee Model
 
-> **Note**: Tier A 的 stop-guard 預設為 warn 模式（記錄但允許停止），設定 `STOP_GUARD_MODE=strict` 可啟用 blocking 模式。Tier C 的 git hooks 保證 commit 格式（AI trailer 偵測）、protected branch 確認、以及 non-fast-forward push 阻擋（可透過 `ALLOW_FORCE_WITH_LEASE=1` 豁免 `--force-with-lease` 工作流），review/precommit 品質結果需透過 CI server-side gate 或 pre-commit hook 強制。
+> **Note（撰寫當時）**: Tier A 的 stop-guard 預設為 warn 模式（記錄但允許停止），設定 `STOP_GUARD_MODE=strict` 可啟用 blocking 模式。Tier C 的 git hooks 保證 commit 格式（AI trailer 偵測）、protected branch 確認、以及 non-fast-forward push 阻擋（可透過 `ALLOW_FORCE_WITH_LEASE=1` 豁免 `--force-with-lease` 工作流），review/precommit 品質結果需透過 CI server-side gate 或 pre-commit hook 強制。
+>
+> **Update（2026-08-13, hook-lightweighting）**: stop-guard 已改為純提醒（列出欠著的 gate、恆 exit 0），無 blocking 模式（`STOP_GUARD_MODE` 已廢止），`post-tool-review-state.sh` 已刪除。下方架構圖為撰寫當時的快照——Tier A 標示的「Conditional Full Enforcement」與 warn/strict 分支已不存在，現行契約見 `docs/features/hook-lightweighting/2-tech-spec.md`。本節其餘內容保留為記錄。
 
 ```mermaid
 graph TD

@@ -1,5 +1,11 @@
 # Tech Spec: Content-Addressed Review Receipts
 
+> **Lifecycle outcome: Retired（2026-08-13, hook-lightweighting）** — receipt ledger、dispatch
+> 配對與 gate 推導已刪除；`tree-digest` 與「digest 綁定 verdict」的核心想法由提醒層
+> （`scripts/review-state.js`）繼承。本文以下保留撰寫當時內容不動——下方的
+> `Status: Draft` 是當時的 authoring 狀態，非現行生命週期狀態。現行契約：
+> `docs/features/hook-lightweighting/2-tech-spec.md`。
+>
 > **Doc class**: Tech-spec sub-document (numbered from 1 inside `2-tech-spec/`, no lifecycle
 > meaning — per `@rules/docs-numbering.md` § Size Limit split shape).
 > **Companion ticket**: [`../requests/2026-08-11-content-addressed-receipts.md`](../requests/2026-08-11-content-addressed-receipts.md)

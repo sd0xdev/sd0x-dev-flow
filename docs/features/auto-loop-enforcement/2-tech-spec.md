@@ -1,5 +1,9 @@
 # Auto-Loop Strict Enforcement Technical Spec
 
+> **Status: Retired（2026-08-13, hook-lightweighting）** — strict enforcement（`STOP_GUARD_MODE`、
+> exit 2 阻擋、fail-closed sidecar）已整體退役，hook 層改為純提醒。本文保留作歷史脈絡；
+> 現行契約：`docs/features/hook-lightweighting/2-tech-spec.md`。
+>
 > **Request**: [2026-03-20-auto-loop-strict-enforcement](./requests/2026-03-20-auto-loop-strict-enforcement.md)
 
 ## 1. Requirement Summary

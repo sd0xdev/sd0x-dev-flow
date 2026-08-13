@@ -1,5 +1,10 @@
 # Auto-Loop Hook Internals — Implementation Notes
 
+> **Status: Historical（2026-08-13, hook-lightweighting）** — 本文描述的強制層機器（dispatch
+> 配對、receipt ledger、gate 推導、strict/dual Stop、`.claude_review_state.json`）已整體退役，
+> 由 out-of-repo 提醒狀態（`scripts/review-state.js`）取代。全文保留作 forensic record，
+> 不再描述任何活著的 hook。現行契約：`docs/features/hook-lightweighting/2-tech-spec.md`。
+
 Forensic record of *why* the auto-loop hooks have the shape they do. Every paragraph here was paid for by a real defect.
 
 **This document is deliberately not loaded into session context.** It moved out of `rules/auto-loop.md`, which is imported via `@` on every session: 71% of that rule was material like this — lock protocols, symlink archaeology, byte-offset pairing — that a model cannot act on but must nonetheless carry. The rule keeps the behavioural contract; this file keeps the reasoning.

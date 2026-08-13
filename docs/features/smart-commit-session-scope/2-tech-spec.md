@@ -1,5 +1,12 @@
 # Smart Commit Session-Aware Scope — Technical Spec
 
+> **Status: Retired（2026-08-13，hook-lightweighting）** — 本機制隨強制層一併退役：
+> `session_commit_scope` 的宿主 `.claude_review_state.json` 與寫入者 `session-init.sh`／
+> `post-edit-format.sh` 的追蹤路徑已刪除，`scripts/lib/session-scope-resolver.js` 隨之移除。
+> `/smart-commit` 的 commit 分組回到唯一來源 live `git status`（其既有路徑）。本文以下內容
+> 描述的是已退役的設計，保留作歷史脈絡；勿依此實作。
+> 決策與範圍：`docs/features/hook-lightweighting/2-tech-spec.md` § 3.3、§ 3.4。
+
 ## 1. Requirement Summary
 
 - **Problem**: `/smart-commit` 目前用 `git status --short` 收集**所有**未提交變更，不區分「本次 session 修改的」和「session 開始前就存在的」。當使用者在 Claude session 外手動改了檔案、或是跨 session 累積了未提交的實驗性修改，smart-commit 會全部混在一起提交，違反使用者預期。

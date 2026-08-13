@@ -900,3 +900,9 @@ Re-dispatch on the existing thread (`codex-reply`), diff reproduced by Codex its
 - `rules/auto-loop.md` § Enforcement — the fail-closed sidecar #9 rendered unreachable
 - `rules/discretion.md` § Anchor Register #3 — why #9 was reviewed at `thorough`
 - `docs/features/auto-loop-evolution/4-implementation.md` — hook mechanics
+
+## Outcome — Superseded（2026-08-13, hook-lightweighting）
+
+本 request 修補的 receipt 完整性缺口（#9–#11）所在的整套 receipt／dispatch 配對機制已退役，
+相關 hook 與程式庫刪除；`test/hooks/background-verdict-recovery.test.js` 等配套測試隨主體移除。
+歷史修補內容保留如上，僅供考古。決策：`docs/features/hook-lightweighting/2-tech-spec.md`。

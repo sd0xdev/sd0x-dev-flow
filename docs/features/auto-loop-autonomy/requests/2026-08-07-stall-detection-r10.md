@@ -122,3 +122,12 @@ signal=使用者於本次對話明示「Codex 額度不足，這個對話先用 
 - 規則契約：`rules/auto-loop.md` § Stall Detection、§ Cap Diagnostic Protocol
 - Reflexion: Language Agents with Verbal Reinforcement Learning — arXiv:2303.11366（Ω=1–3 episodic buffer；重複行為門檻 3）
 - ReflexGrad — arXiv:2511.14584（progress-gated 雙歷程路由：僅在戰術修正停滯時才動用昂貴的策略性推理）。它支撐的是「診斷由**證據**觸發、而非由輪數觸發」這個決定：cap 是輪數閘門，`[LOOP_STALL]` 是進度閘門，而把診斷掛在後者上正是這篇的結論
+
+## Outcome — Retired（2026-08-13, hook-lightweighting）
+
+R10 的 hook 端停滯偵測（`[LOOP_STALL]` 發射器、`[STALL_MEMORY]` 持久化、`[STRATEGIC_RESET]`
+checkpoint 旗標）隨 round-counting hook 一併退役。三輪無進展即診斷的行為層準則、六類診斷分類與
+anti-loop budget 保留於 `rules/auto-loop.md` § Stall Detection／§ Cap Diagnostic Protocol，
+改由模型自行從 review 報告記帳；`test/rules/stall-detection.test.js` 隨發射器刪除，行為層斷言
+re-pin 於 `test/rules/auto-loop-behaviour.test.js`。
+決策：`docs/features/hook-lightweighting/2-tech-spec.md` § 3.5。

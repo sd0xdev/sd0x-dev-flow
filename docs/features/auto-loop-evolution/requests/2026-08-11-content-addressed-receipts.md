@@ -202,3 +202,12 @@ pins forged prose against a genuine review header in both directions, and
 
 Closure rests on the behaviour-layer record: code `✅ Ready` (thread `019ff41f`, round 36) with no
 code edit since, and the doc plane re-reviewed after every edit including this note.
+
+## Outcome — Retired（2026-08-13, hook-lightweighting）
+
+本 request 交付的 content-addressed receipt 機制（`tree-digest` 除外）已由使用者決策整體退役：
+receipt ledger（`receipt-log.js`）、dispatch 配對（`dispatch-log.js`/`dispatch-cli.js`）、
+gate 推導（`gate-derive.js`）、strict/dual Stop 行為與 `.claude_review_state.json` mirror 全數刪除，
+由 out-of-repo 單槽提醒狀態（`scripts/review-state.js`、`~/.cache/sd0x-dev-flow/`）取代。
+`scripts/lib/tree-digest.js` 是唯一存續元件 — digest 綁定 verdict 的核心想法由提醒層繼承。
+決策與新契約：`docs/features/hook-lightweighting/2-tech-spec.md`。

@@ -1,5 +1,10 @@
 # Auto-Loop Autonomy — Implementation Notes
 
+> **Status: Historical（2026-08-13, hook-lightweighting）** — 本文描述的 hook 端記帳（progress
+> ledger、stall 發射器、checkpoint 旗標）已退役；行為層準則（診斷分類、anti-loop budget、
+> 三輪停滯門檻）存續於 `rules/auto-loop.md`，改由模型自行記帳。全文保留作考古記錄。
+> 現行契約：`docs/features/hook-lightweighting/2-tech-spec.md`。
+
 Archaeology for decisions the hooks reference by pointer. Requests R1–R10 live in `./requests/`;
 the consolidated spec is `./2-tech-spec.md`.
 

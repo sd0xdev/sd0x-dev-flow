@@ -45,9 +45,9 @@
 | Stakeholder | Role | Key Concern |
 |-------------|------|-------------|
 | Plugin 使用者（開發者） | User | 少記 workflow，下「意圖」即可；計畫可預覽、可信任 |
-| Plugin 維護者（本 repo 作者） | Developer | 編排核心可維護；不破壞既有 safety gate（現況預設 `STOP_GUARD_MODE=warn` 為 advisory，strict 為 opt-in fail-closed——見 §7 Constraints） |
+| Plugin 維護者（本 repo 作者） | Developer | 編排核心可維護；不破壞既有 safety gate（撰寫當時預設 `STOP_GUARD_MODE=warn`、strict 為 opt-in；hook-lightweighting 2026-08-13 起 hook 層為純提醒，硬性關卡在 git 層——見 §7 Constraints） |
 | 既有 98 個 skill | Dependent | 被編排的對象——編排器需理解其用途/前後置/I-O 契約（`docs/skill-catalog.yml` 已編目 96 筆，其中部分有 `use_when`） |
-| auto-loop / hook 狀態機 | Operator / Dependent | 既有反應式編排器（`hooks/stop-guard.sh`、`post-tool-review-state.sh`、`.claude_review_state.json` `review_phase`）；新編排器須相容，避免雙頭衝突 |
+| auto-loop / hook 狀態機 | Operator / Dependent | 撰寫當時的反應式編排器（`hooks/stop-guard.sh`、`post-tool-review-state.sh`、`.claude_review_state.json` `review_phase`）；hook-lightweighting（2026-08-13）已刪除 `post-tool-review-state.sh` 與該 state file、stop-guard 改為純提醒，現行狀態面為 `scripts/review-state.js` 單槽提醒狀態——新編排器改與其相容即可，雙頭衝突的風險面已縮小 |
 | Claude 主 agent | Operator | 規劃與執行的承載者；編排狀態不應污染主上下文 |
 | Codex（MCP 驗證者） | Dependent | 驗證步驟須遵守獨立研究規則（`rules/codex-invocation.md`） |
 
