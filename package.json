@@ -1,6 +1,6 @@
 {
   "name": "sd0x-dev-flow",
-  "version": "4.2.0",
+  "version": "4.2.1",
   "description": "Harness engineering for Claude Code — reminder-layer review hooks, behaviour-layer gates, and fail-closed safety where it counts.",
   "license": "MIT",
   "scripts": {
