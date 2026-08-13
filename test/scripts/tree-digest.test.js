@@ -415,6 +415,10 @@ describe('computeTreeState — submodules (gitlink three-state rule)', () => {
     assert.ok(
       s.partialReasons.some(x => x.reason === 'submodule-uninitialized-or-unreadable')
     );
+    // Negative control for the R4-1 dirtying rule: an EMPTY checkout provably
+    // hides nothing, so the ordinary uninitialized clone must not carry a
+    // permanent obligation (owed stays derivable as false on a clean tree).
+    assert.ok(!s.planes.code.dirty.includes('vendor/sub'));
   });
 
   test('submodule-local status.showUntrackedFiles=no cannot hide an untracked file inside', () => {
@@ -442,5 +446,78 @@ describe('computeTreeState — submodules (gitlink three-state rule)', () => {
     const after = computeTreeState(host);
     assert.equal(after.planes.code.partial, false);
     assert.notEqual(after.planes.code.digest, base.planes.code.digest);
+    // R4-1 companion: the divergence is also an OBLIGATION — a checkout
+    // resolved at an OID other than the index's is a real change, and with
+    // porcelain suppressed this dirtying is the only source owed can have.
+    assert.ok(after.planes.code.dirty.includes('vendor/sub'));
+  });
+
+  test('ignore=all + dirty inside → the gitlink dirties its plane (owed derivable, R4-1)', () => {
+    const { host } = makeSubmoduleRepo();
+    sh(host, 'git', ['config', 'submodule.vendor/sub.ignore', 'all']);
+    write(host, 'vendor/sub/untracked.js', 'never added\n');
+    // Porcelain reports nothing; the nested status is the only read that sees
+    // the change, so the gitlink pass must feed the dirty set itself — partial
+    // alone only blocks digest closure, it does not create the obligation.
+    const s = computeTreeState(host);
+    assert.equal(s.planes.code.partial, true);
+    assert.equal(s.planes.code.digest, null);
+    assert.ok(s.partialReasons.some(x => x.reason === 'submodule-dirty-inside'));
+    assert.ok(s.planes.code.dirty.includes('vendor/sub'));
+  });
+
+  test('unreadable submodule directory → dirty (cannot prove emptiness, fail-closed)', t => {
+    if (process.getuid && process.getuid() === 0) {
+      t.skip('root reads through permission bits');
+      return;
+    }
+    const { host } = makeSubmoduleRepo();
+    sh(host, 'git', ['config', 'submodule.vendor/sub.ignore', 'all']);
+    const subPath = path.join(host, 'vendor/sub');
+    fs.chmodSync(subPath, 0o000);
+    let s;
+    try {
+      s = computeTreeState(host);
+    } finally {
+      fs.chmodSync(subPath, 0o755);
+    }
+    assert.equal(s.planes.code.partial, true);
+    assert.ok(
+      s.partialReasons.some(x => x.reason === 'submodule-uninitialized-or-unreadable')
+    );
+    // Unlike the empty deinit'd checkout, EACCES proves nothing about content:
+    // the plane must be owed.
+    assert.ok(s.planes.code.dirty.includes('vendor/sub'));
+  });
+
+  test('warn-and-omit INSIDE a submodule degrades the gitlink — never reads as clean (R3-2)', t => {
+    if (process.getuid && process.getuid() === 0) {
+      t.skip('root reads through permission bits');
+      return;
+    }
+    const { host } = makeSubmoduleRepo();
+    // ignore=all suppresses the superproject's porcelain record, so the
+    // gitlink pass's own nested status is the ONLY read that can see inside.
+    sh(host, 'git', ['config', 'submodule.vendor/sub.ignore', 'all']);
+    const locked = path.join(host, 'vendor/sub', 'locked');
+    fs.mkdirSync(locked);
+    fs.writeFileSync(path.join(locked, 'hidden.js'), '1\n');
+    fs.chmodSync(locked, 0o000);
+    // The nested status exits 0 and merely WARNS it omitted the directory; a
+    // discarded warning would return the old HEAD OID and certify a tree with
+    // a hiding place inside it.
+    let s;
+    try {
+      s = computeTreeState(host);
+    } finally {
+      fs.chmodSync(locked, 0o755);
+    }
+    assert.equal(s.planes.code.partial, true);
+    assert.equal(s.planes.code.digest, null);
+    assert.ok(s.partialReasons.some(x => x.reason === 'submodule-unreadable'));
+    // R4-1: detection alone is not enough — with porcelain suppressed, this
+    // dirtying is the only thing standing between the hidden content and a
+    // derived owed=false.
+    assert.ok(s.planes.code.dirty.includes('vendor/sub'));
   });
 });

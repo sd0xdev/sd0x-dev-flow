@@ -306,54 +306,60 @@ function writeFullSync(fd, buf) {
   }
 }
 
-// Append records as single JSONL lines under the file lock. The complete new
-// content (current bytes minus any torn tail, plus the new lines) is staged to
-// a TOKEN-NAMED file INSIDE the owned lockdir — `staged-<token>`, O_EXCL — and
-// committed by rename. Two structural bindings to lock identity: a TTL
-// takeover renames the lockdir (staged file included) away, so a displaced
-// holder's commit rename fails ENOENT; and the token in the filename means a
-// displaced holder that stages into a REPLACEMENT lockdir writes its own file,
-// never truncating the new holder's staged bytes. Durability, never multi-line
-// atomicity (§3.3). opts.onBeforeStage / opts.onBeforeCommit are test seams.
-function appendRecords(file, records, opts) {
+// The inner body of appendRecords, callable while ALREADY holding the file's
+// lock — dispatch-log's read→fold→append transactions need multiple appends
+// inside one lock hold, and re-acquiring here would deadlock against the
+// caller's own lockdir. Contract unchanged: complete new content (current
+// bytes minus any torn tail, plus the new lines) staged to a TOKEN-NAMED file
+// INSIDE the owned lockdir — `staged-<token>` — and committed by rename.
+// O_EXCL is deliberately NOT set: one lock hold may commit several times
+// (write-ahead sequences), and each commit's rename removes the previous
+// staged file, so re-creating the token-named path is the expected case, not
+// a collision — the token in the name is what keeps other holders out.
+function stageAndCommit(file, handle, records, opts) {
   const lines = records.map(r => JSON.stringify(r) + '\n');
-  return withFileLock(
-    file,
-    handle => {
-      ensureOwned(handle); // early failure; the token-named staged file is the structural guard
-      // Read current bytes through an O_NOFOLLOW fd — a symlinked log is
-      // refused here, before anything is staged or renamed over it.
-      let current = Buffer.alloc(0);
-      const fd = openLogFd(file);
-      try {
-        const size = fs.fstatSync(fd).size;
-        if (size > 0) current = readFullSync(fd, size);
-      } finally {
-        fs.closeSync(fd);
-      }
-      const lastNl = current.lastIndexOf(0x0a);
-      const keep = lastNl === -1 ? 0 : lastNl + 1; // drop a torn tail
-      const next = Buffer.concat([current.subarray(0, keep), Buffer.from(lines.join(''), 'utf8')]);
-      if (opts && typeof opts.onBeforeStage === 'function') opts.onBeforeStage(handle);
-      const staged = path.join(handle.lockdir, `staged-${handle.token}`);
-      const sfd = fs.openSync(
-        staged,
-        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
-        0o600
-      );
-      try {
-        writeFullSync(sfd, next);
-        fs.fsyncSync(sfd);
-      } finally {
-        fs.closeSync(sfd);
-      }
-      if (opts && typeof opts.onBeforeCommit === 'function') opts.onBeforeCommit(handle);
-      ensureOwned(handle);
-      fs.renameSync(staged, file);
-      fsyncDirOf(file);
-    },
-    opts
+  ensureOwned(handle); // early failure; the token-named staged file is the structural guard
+  // Read current bytes through an O_NOFOLLOW fd — a symlinked log is
+  // refused here, before anything is staged or renamed over it.
+  let current = Buffer.alloc(0);
+  const fd = openLogFd(file);
+  try {
+    const size = fs.fstatSync(fd).size;
+    if (size > 0) current = readFullSync(fd, size);
+  } finally {
+    fs.closeSync(fd);
+  }
+  const lastNl = current.lastIndexOf(0x0a);
+  const keep = lastNl === -1 ? 0 : lastNl + 1; // drop a torn tail
+  const next = Buffer.concat([current.subarray(0, keep), Buffer.from(lines.join(''), 'utf8')]);
+  if (opts && typeof opts.onBeforeStage === 'function') opts.onBeforeStage(handle);
+  const staged = path.join(handle.lockdir, `staged-${handle.token}`);
+  const sfd = fs.openSync(
+    staged,
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW,
+    0o600
   );
+  try {
+    writeFullSync(sfd, next);
+    fs.fsyncSync(sfd);
+  } finally {
+    fs.closeSync(sfd);
+  }
+  if (opts && typeof opts.onBeforeCommit === 'function') opts.onBeforeCommit(handle);
+  ensureOwned(handle);
+  fs.renameSync(staged, file);
+  fsyncDirOf(file);
+}
+
+// Append records as single JSONL lines under the file lock. Two structural
+// bindings to lock identity: a TTL takeover renames the lockdir (staged file
+// included) away, so a displaced holder's commit rename fails ENOENT; and the
+// token in the filename means a displaced holder that stages into a
+// REPLACEMENT lockdir writes its own file, never truncating the new holder's
+// staged bytes. Durability, never multi-line atomicity (§3.3).
+// opts.onBeforeStage / opts.onBeforeCommit are test seams.
+function appendRecords(file, records, opts) {
+  return withFileLock(file, handle => stageAndCommit(file, handle, records, opts), opts);
 }
 
 // Read the log without a lock: ignore an unterminated final line (torn tail) and
@@ -381,7 +387,10 @@ function readRecords(file) {
       malformed++;
     }
   }
-  return { records, malformed, torn: lastNl !== -1 && lastNl + 1 < text.length };
+  // torn covers BOTH shapes of an unterminated tail: bytes after the last
+  // newline, and a file that is nothing but one unterminated line (lastNl
+  // === -1, where `lastNl + 1 < text.length` still holds via -1 + 1 = 0).
+  return { records, malformed, torn: text.length > 0 && lastNl + 1 < text.length };
 }
 
 // Selection (§3.3): the newest verdict-bearing record for (plane, digest) —
@@ -457,8 +466,13 @@ function readTombstones(repoRoot) {
     }
     tombstones.push(rec);
   }
-  if (r.malformed > 0) damaged = true;
-  return { ok: !damaged, reason: damaged ? 'malformed tombstone records' : undefined, records: tombstones };
+  // A torn tail on the PRIMARY log is a crash-in-append the next writer
+  // truncates — recoverable by design. Here it is a tombstone this read could
+  // not see, and §4 says unreadable-or-malformed fallback data is unresolved
+  // for EVERY pair: the discarded line may be exactly the tombstone that
+  // blocks the pair an older PASS would otherwise close. Over-block.
+  if (r.malformed > 0 || r.torn) damaged = true;
+  return { ok: !damaged, reason: damaged ? 'malformed or torn tombstone records' : undefined, records: tombstones };
 }
 
 // Ids a PASS for (plane, digest) may record in its `resolves` array — matched by
@@ -504,6 +518,8 @@ module.exports = {
   releaseLock,
   ensureOwned,
   withFileLock,
+  stageAndCommit,
+  fsyncDirOf,
   appendRecords,
   readRecords,
   selectVerdict,

@@ -138,6 +138,64 @@ describe('receipt-log — location resolution and containment', () => {
       else process.env.TMPDIR = old;
     }
   });
+
+  test('an out-of-repo XDG_CACHE_HOME symlink resolving inside the repo is refused', () => {
+    // Containment is by RESOLVED path: a lexically-outside cache dir whose
+    // symlink target sits inside the repo would plant the log in the tree a
+    // digest measures. A mutation swapping realpath containment for a lexical
+    // prefix check stays green on the plain in-repo fixture above — this is
+    // the negative that catches it.
+    const repo = makeRepo();
+    const target = path.join(fs.realpathSync(repo), 'secret-cache');
+    fs.mkdirSync(target);
+    const link = path.join(tmpDir('cache-link-'), 'cache');
+    fs.symlinkSync(target, link);
+    const old = process.env.XDG_CACHE_HOME;
+    process.env.XDG_CACHE_HOME = link;
+    try {
+      assert.throws(() => receiptLog.resolveReceiptPaths(repo), /inside the repo root/);
+      assert.deepEqual(fs.readdirSync(target), []); // refused BEFORE creating anything
+    } finally {
+      if (old === undefined) delete process.env.XDG_CACHE_HOME;
+      else process.env.XDG_CACHE_HOME = old;
+    }
+  });
+
+  test('an out-of-repo TMPDIR symlink resolving inside the repo is refused for the fallback', () => {
+    // The tombstone fallback obeys the same resolved-path containment as the
+    // primary cache — same mutation-visibility argument as the test above.
+    const repo = makeRepo();
+    const target = path.join(fs.realpathSync(repo), 'secret-tmp');
+    fs.mkdirSync(target);
+    const link = path.join(tmpDir('tmp-link-'), 'tmp');
+    fs.symlinkSync(target, link);
+    const old = process.env.TMPDIR;
+    process.env.TMPDIR = link;
+    try {
+      assert.throws(() => receiptLog.resolveTombstonePaths(repo), /inside the repo root/);
+      assert.deepEqual(fs.readdirSync(target), []);
+    } finally {
+      if (old === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = old;
+    }
+  });
+
+  test('relative TMPDIR is ignored — the tombstone fallback resolves under /tmp', () => {
+    // A relative TMPDIR could resolve back inside the repo from a repo cwd;
+    // the resolver must fall back to /tmp rather than honour it.
+    const repo = makeRepo();
+    const old = process.env.TMPDIR;
+    process.env.TMPDIR = '.claude/tmp';
+    try {
+      const { file } = receiptLog.resolveTombstonePaths(repo);
+      const realTmp = fs.realpathSync('/tmp');
+      assert.ok(file.startsWith(realTmp + path.sep), `expected ${file} under ${realTmp}`);
+      assert.equal(path.basename(path.dirname(file)), 'sd0x-dev-flow');
+    } finally {
+      if (old === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = old;
+    }
+  });
 });
 
 describe('receipt-log — append discipline and torn tails', () => {

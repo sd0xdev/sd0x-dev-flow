@@ -5,7 +5,7 @@
 // content-addressed receipt design. Recipe, fail-closed rules, and cost bound:
 // docs/features/auto-loop-evolution/2-tech-spec/2-content-addressed-receipts.md §3.2, §3.5.
 
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -38,10 +38,25 @@ function argvPath(p) {
   return Buffer.from(decoded, 'utf8').equals(raw) ? decoded : null;
 }
 
+// Repository resolution must come from `-C repoRoot` ALONE (R2-2): an
+// inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) would silently
+// point every read at a different repository — or make a real checkout fail
+// with "not a git repository: <bogus path>", which the gate-derive classifier
+// must never mistake for the benign outside-a-repo case. Strip the whole
+// GIT_* namespace, same posture as the smart-commit env fence.
+function cleanGitEnv(extra) {
+  const env = { ...process.env, ...extra };
+  for (const k of Object.keys(env)) {
+    if (k.startsWith('GIT_')) delete env[k];
+  }
+  return env;
+}
+
 function git(repoRoot, args, input) {
   return execFileSync('git', ['-C', repoRoot, ...args], {
     input,
     maxBuffer: 1024 * 1024 * 512,
+    env: cleanGitEnv(),
   });
 }
 
@@ -66,14 +81,36 @@ function readIndex(repoRoot) {
 }
 
 // `git status --porcelain=v1 -z --untracked-files=all` → [{x, y, path, origPath?}]
+//
+// stderr is captured, not inherited: `git status` exits 0 even when it could
+// not open an unreadable directory — it only WARNS and OMITS that subtree. An
+// omitted subtree hides both its dirty files (obligation reads clean) and its
+// untracked overlay entries (the digest certifies a tree it never saw), so a
+// warning here makes the whole tree state unverifiable — throw, which
+// computeTreeState reports as git-failed (both planes partial, fail-closed).
+// LC_ALL=C pins the warning to git's untranslated English form the regex
+// matches; porcelain -z paths are raw bytes, untouched by locale.
 function readStatus(repoRoot) {
-  const out = git(repoRoot, [
-    'status',
-    '--porcelain=v1',
-    '-z',
-    '--untracked-files=all',
-    '--no-renames',
-  ]).toString('latin1');
+  const r = spawnSync(
+    'git',
+    ['-C', repoRoot, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'],
+    { maxBuffer: 1024 * 1024 * 512, env: cleanGitEnv({ LC_ALL: 'C' }) }
+  );
+  if (r.error) throw r.error;
+  if (r.status !== 0) {
+    throw new Error(`git status exited ${r.status}: ${String(r.stderr || '').slice(0, 200)}`);
+  }
+  const errText = String(r.stderr || '');
+  // Literal verbs + the catch-all stem, same parity contract as the six hook
+  // sites and run-verify.js (test/hooks/git-omission-detector-consistency.test.js):
+  // the stem catches a git version that rewords the verb but keeps the
+  // "warning: ... open directory" shape.
+  if (/(could not|cannot|unable to) open directory|warning:[^']*open directory/i.test(errText)) {
+    throw new Error(
+      `git status omitted an unreadable directory — tree state unverifiable: ${errText.slice(0, 200)}`
+    );
+  }
+  const out = r.stdout.toString('latin1');
   const records = [];
   const fields = out.split('\0');
   for (let i = 0; i < fields.length; i++) {
@@ -190,6 +227,18 @@ function overlayPath(repoRoot, entries, p, opts, pendingRegularHashes) {
   return null;
 }
 
+// Obligation refinement for unresolved gitlinks (R4-1): a checkout with no
+// entries at all — or no directory — provably hides nothing, so it must not
+// dirty its plane; the ordinary uninitialized clone would otherwise carry a
+// permanent obligation. Any failure to prove emptiness counts as content.
+function gitlinkContentless(abs) {
+  try {
+    return fs.readdirSync(abs).length === 0;
+  } catch (e) {
+    return Boolean(e) && e.code === 'ENOENT';
+  }
+}
+
 // Gitlinks are content-sensitive, never index-frozen (§3.2): a clean checkout
 // contributes its current HEAD (== the index OID when checked out there); one
 // that is dirty inside, uninitialized, or unreadable has no OID that names its
@@ -198,8 +247,9 @@ function overlayPath(repoRoot, entries, p, opts, pendingRegularHashes) {
 // `submodule.<name>.ignore=all` suppresses even a moved one.
 function resolveGitlink(repoRoot, p) {
   const argv = argvPath(p);
-  if (argv === null) return { reason: 'submodule-path-not-representable' };
+  if (argv === null) return { reason: 'submodule-path-not-representable', contentless: false };
   const abs = path.join(repoRoot, argv);
+  const fail = reason => ({ reason, contentless: gitlinkContentless(abs) });
   // An uninitialized submodule is an empty directory: `git -C` inside it walks
   // UP and discovers the superproject, so a bare rev-parse would silently
   // answer with the HOST's HEAD. The checkout counts only if the discovered
@@ -207,39 +257,46 @@ function resolveGitlink(repoRoot, p) {
   try {
     const top = execFileSync('git', ['-C', abs, 'rev-parse', '--show-toplevel'], {
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: cleanGitEnv(),
     })
       .toString('utf8')
       .trim();
     if (fs.realpathSync(top) !== fs.realpathSync(abs)) {
-      return { reason: 'submodule-uninitialized-or-unreadable' };
+      return fail('submodule-uninitialized-or-unreadable');
     }
   } catch {
-    return { reason: 'submodule-uninitialized-or-unreadable' };
+    return fail('submodule-uninitialized-or-unreadable');
   }
   let head;
   try {
     head = execFileSync('git', ['-C', abs, 'rev-parse', 'HEAD'], {
       stdio: ['ignore', 'pipe', 'ignore'],
+      env: cleanGitEnv(),
     })
       .toString('latin1')
       .trim();
   } catch {
-    return { reason: 'submodule-uninitialized-or-unreadable' };
+    return fail('submodule-uninitialized-or-unreadable');
   }
   // -uall on the CLI overrides a submodule-local status.showUntrackedFiles=no,
   // which would otherwise hide untracked files and let a dirty checkout read as
   // clean. -z output is raw records with no padding; any byte means dirty.
-  let dirty;
-  try {
-    dirty = execFileSync(
-      'git',
-      ['-C', abs, 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
-      { stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-  } catch {
-    return { reason: 'submodule-unreadable' };
+  // This nested status is a tree read in its own right, so it carries the same
+  // warn-and-omit detection as readStatus (R3-2): git exits 0 while WARNING it
+  // omitted an unreadable directory, and a discarded warning here would report
+  // a hiding-place-inside-a-submodule as clean. Same literal + catch-all pair,
+  // LC_ALL=C pinned.
+  const dirtyRead = spawnSync(
+    'git',
+    ['-C', abs, 'status', '--porcelain=v1', '-z', '--untracked-files=all'],
+    { maxBuffer: 1024 * 1024 * 512, env: cleanGitEnv({ LC_ALL: 'C' }) }
+  );
+  if (dirtyRead.error || dirtyRead.status !== 0) return fail('submodule-unreadable');
+  const dirtyErr = String(dirtyRead.stderr || '');
+  if (/(could not|cannot|unable to) open directory|warning:[^']*open directory/i.test(dirtyErr)) {
+    return fail('submodule-unreadable');
   }
-  if (dirty.length > 0) return { reason: 'submodule-dirty-inside' };
+  if (dirtyRead.stdout.length > 0) return fail('submodule-dirty-inside');
   return { oid: head };
 }
 
@@ -262,17 +319,42 @@ function computeTreeState(repoRoot, opts = {}) {
   const partialReasons = [];
   const markPartial = (plane, p, reason) => partialReasons.push({ plane, path: p, reason });
 
-  let index, status;
+  // The two git reads serve different derivations and degrade separately
+  // (§3.5): the OBLIGATION is the dirty set, read from `git status`; the
+  // digest additionally needs the index. A failed/omitting status read leaves
+  // nothing derivable — `git-failed`, both planes, owed underivable. A failed
+  // index read with a healthy status still derives the obligation exactly;
+  // only the digest path is lost (both planes partial, digest null).
+  let status;
   try {
-    index = readIndex(repoRoot);
     status = readStatus(repoRoot);
   } catch (e) {
-    // A git failure leaves no plane derivable — both partial.
     const reason = `git-failed: ${String(e && e.message).slice(0, 200)}`;
     return {
       planes: {
         code: { digest: null, partial: true, dirty: [], entryCount: 0 },
         doc: { digest: null, partial: true, dirty: [], entryCount: 0 },
+      },
+      partialReasons: [
+        { plane: 'code', path: null, reason },
+        { plane: 'doc', path: null, reason },
+      ],
+    };
+  }
+  let index;
+  try {
+    index = readIndex(repoRoot);
+  } catch (e) {
+    const reason = `index-unavailable: ${String(e && e.message).slice(0, 200)}`;
+    const dirty = { code: new Set(), doc: new Set() };
+    for (const rec of status) {
+      dirty[planeOf(rec.path)].add(rec.path);
+      if (rec.origPath) dirty[planeOf(rec.origPath)].add(rec.origPath);
+    }
+    return {
+      planes: {
+        code: { digest: null, partial: true, dirty: [...dirty.code].sort(), entryCount: 0 },
+        doc: { digest: null, partial: true, dirty: [...dirty.doc].sort(), entryCount: 0 },
       },
       partialReasons: [
         { plane: 'code', path: null, reason },
@@ -330,7 +412,17 @@ function computeTreeState(repoRoot, opts = {}) {
     if (r.reason) {
       entries.delete(p);
       markPartial(planeOf(p), p, r.reason);
+      // Obligation (R4-1): partial only keeps the DIGEST from closing a gate;
+      // owed derives from the dirty set, and ignore=all suppresses this path
+      // from porcelain — leaving it out would derive owed=false over content
+      // nobody read. A provably contentless checkout is the one exception.
+      if (!r.contentless) dirty[planeOf(p)].add(p);
     } else {
+      // A checkout resolved at an OID other than the index's is a real change
+      // even when ignore=all hides its porcelain record — same class, same
+      // obligation (the untracked-embedded-repo candidates enter with a null
+      // index OID and are already status-dirtied as `??`).
+      if (entry.oid && entry.oid !== r.oid) dirty[planeOf(p)].add(p);
       entry.oid = r.oid;
     }
   }
