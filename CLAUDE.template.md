@@ -4,7 +4,7 @@
 
 Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask -- the human exits are the enumerated ones in @rules/auto-loop.md, and that file is the closed list, not this sentence.
 
-## Required Checks (Stop Hook enforced)
+## Required Checks (Stop Hook reminded)
 
 This table constrains the **end state**, not your choreography. How you batch edits, how deep you review, and when you run each gate are yours to choose; what is fixed is that every gate a change class requires has passed *after the last edit in that class*.
 
@@ -15,16 +15,7 @@ This table constrains the **end state**, not your choreography. How you batch ed
 
 Comment-only edits get no free pass: comments can carry compiler/lint/build directives, so edits to code files are conservatively classified as code even when only comments changed.
 
-> **What the Stop Hook actually enforces**: that *a* precommit gate ran and passed — not *which* variant. `/precommit-fast` skips the build/typecheck step yet satisfies the gate by default. Two settings are needed to make the full variant above actually binding, and each alone is insufficient:
->
-> | Setting | Without it |
-> |---------|-----------|
-> | `PRECOMMIT_REQUIRE_FULL=1` | a passing `mode: fast` (or an unrecorded mode) satisfies the gate |
-> | `STOP_GUARD_MODE=strict` | the default `warn` mode prints the missing step to stderr and **still exits 0** |
->
-> With both set, the flag is honoured in both of stop-guard's modes: from `precommit.mode` when `.claude_review_state.json` exists, and from the invoked command name (`/precommit` vs `/precommit-fast`) when it falls back to reading the transcript.
->
-> Even with both, the flag gates the **command variant**, not the stages that ran: `/precommit` resolves lint / build / test from whatever your manifest actually defines, so a repo with no build script records `full` with no build behind it. The gate proves which command was invoked; it cannot prove which stages existed to run. `/precommit` prints the resolved stages — read them rather than assuming.
+> **What the Stop Hook actually does** (hook-lightweighting, 2026-08-13): it is a **reminder, not a gate** — it prints which gates the reminder state still shows as owed and always exits 0. Verdicts are recorded via `node scripts/review-state.js note <plane> <pass|fail>` (installed projects: `.claude/scripts/review-state.js`), bound to the tree digest, so an edit re-opens its plane's reminder. What binds is the behaviour layer — the terminal completion invariant in @rules/auto-loop.md. One caveat carried over from the enforcement era still holds: a recorded precommit pass proves the command ran, not which stages existed to run — `/precommit` resolves lint / build / test from whatever your manifest actually defines, and it prints the resolved stages; read them rather than assuming.
 
 Before PR: `/pr-review`
 

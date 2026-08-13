@@ -21,15 +21,17 @@ to be restated.
 <!-- fast — P0 blocks; cap 6. standard — P0/P1 block; cap 15 (default).
      thorough — P0/P1/P2 block; cap 30. Security/data-integrity is thorough regardless
      (Anchor — discretion.md Register #3; no tier setting or override removes it).
-     Blank/unrecognized = standard; hooks report `tier=` but never enforce. Uncomment a bare tier name: -->
+     Blank/unrecognized = standard; the tier is read behaviourally from this heading — hooks
+     neither report nor enforce it. Uncomment a bare tier name: -->
 
 <!-- standard -->
 
 ## Max Rounds
 
-<!-- One switch, BOTH caps: overrides the tier cap AND the hook-persisted max_rounds. Range 3-50,
-     bare integer, no trailing comment. Unset: the model follows the tier while the hooks persist 30.
-     Seeding vs mid-session reconciliation: docs/features/auto-loop-evolution/4-implementation.md §6. -->
+<!-- Overrides the tier cap (auto-loop.md § Tiers). Range 3-50, bare integer, no trailing
+     comment. Unset: the tier table governs. The bookkeeping is model-side since
+     hook-lightweighting; the reminder slot's `rounds` count (review-state.js) is the one
+     mechanical input. -->
 
 <!-- 5 -->
 
@@ -41,26 +43,23 @@ to be restated.
 
 ## Plan Review Max Rounds
 
-<!-- Cap for the plan-review loop. Default 5, range 3-50, bare integer. Parsed on plan_review state init. -->
+<!-- Cap for the plan-review loop. Default 5, range 3-50, bare integer. Read by /plan-review at
+     loop start; rounds are counted in conversation (no state file since hook-lightweighting). -->
 
 <!-- 5 -->
 
 ## Git Memory
 
-<!-- "enabled" injects git context after compaction (pattern-filtered, 40-line cap — not a secret scanner). -->
+<!-- Post-compact git context (branch + uncommitted files) is printed by default since
+     hook-lightweighting; this heading is kept for compatibility and no hook reads it. -->
 
 <!-- ## Git Memory: enabled -->
 
 ## Think Harder
 
-<!-- "enabled" turns on the AUXILIARY injection channel for the Cap Diagnostic Protocol
-     (auto-loop.md § Cap Diagnostic Protocol): after a compaction, when
-     current_round >= the checkpoint round, the post-compact hook injects the diagnostic
-     taxonomy in full. It is auxiliary because the PRIMARY checkpoint needs no switch — the
-     round-counting hook emits `[STRATEGIC_RESET]` the round the threshold is first crossed
-     (AUTO_LOOP_CHECKPOINT_ROUNDS, default 10). Both channels share `strategic_reset_fired`,
-     so whichever fires first silences the other: one diagnosis per change, cleared when
-     precommit passes and again at SessionStart. The protocol itself is behaviour-layer and fires at the cap regardless
-     of either. -->
+<!-- "enabled" asks the model to re-run the Cap Diagnostic checklist in full
+     (auto-loop.md § Cap Diagnostic Protocol) after a compaction when the change's round
+     count is at or past the round-10 checkpoint. Behaviour-layer only since
+     hook-lightweighting — the model reads this heading; no hook injects anything. -->
 
 <!-- ## Think Harder: enabled -->

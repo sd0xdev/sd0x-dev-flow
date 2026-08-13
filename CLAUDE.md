@@ -4,7 +4,7 @@
 
 Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask — the human exits are the enumerated ones in @rules/auto-loop.md, and that file is the closed list, not this sentence.
 
-## Required Checks (Stop Hook enforced)
+## Required Checks (Stop Hook reminded)
 
 This table constrains the **end state**, not your choreography. How you batch edits, how deep you review, and when you run each gate are yours to choose; what is fixed is that every gate a change class requires has passed *after the last edit in that class*.
 
@@ -15,7 +15,7 @@ This table constrains the **end state**, not your choreography. How you batch ed
 
 Comment-only edits get no free pass: comments can carry compiler/lint/build directives (`scripts/lib/utils.js:142` proves it), so edits to code files are conservatively classified as code even when only comments changed. Before PR: `/pr-review`.
 
-> The Stop Hook enforces that *a* precommit gate ran and passed — not which variant. Making the full `/precommit` binding needs **both** `PRECOMMIT_REQUIRE_FULL=1` and `STOP_GUARD_MODE=strict`; even then the flag gates the command variant, not the stages that ran. Details: `docs/features/precommit-tiering/2-tech-spec.md` §6.
+> The Stop Hook is a **reminder, not a gate** (hook-lightweighting, 2026-08-13): it prints which gates the reminder state still shows as owed and always exits 0. What binds is the behaviour layer — the terminal completion invariant in @rules/auto-loop.md — with verdicts recorded via `node scripts/review-state.js note`, digest-bound so an edit re-opens its plane. Details: `docs/features/hook-lightweighting/2-tech-spec.md` §3.
 
 ## Auto-Loop
 
