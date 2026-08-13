@@ -6,9 +6,10 @@
 // to itself, the plugin copy deferred to the local one, and the hook never ran at all — the exact
 // inverse of the double-fire the block exists to prevent, and silent.
 //
-// That made every downstream guarantee fail open: `auto-loop.md` § Enforcement's fail-closed
-// sidecar is never written by a hook that does not execute, and `STOP_GUARD_MODE=strict` does not
-// help because stop-guard defers too. Per Anchor Register #3 this is a data-integrity defect.
+// At the time (pre-lightweighting) that made every downstream guarantee fail open — the then
+// fail-closed sidecar was never written by a hook that did not execute, and strict mode did not
+// help because stop-guard deferred too. The enforcement layer has since retired, but the defect
+// class survives it: a reminder hook that defers to itself is a silent zero-fire all the same.
 //
 // `pre-edit-guard.sh` is the behavioural probe throughout: it has the cleanest observable of the
 // seven — a blocked `.env` edit exits 2 and prints, a deferral exits 0 in silence — so "did the
@@ -32,7 +33,6 @@ const { spawnSync } = require('node:child_process');
 const hooksDir = resolve(__dirname, '../../hooks');
 const PROBE = 'pre-edit-guard.sh';
 const ARBITRATED_HOOKS = [
-  'post-tool-review-state.sh',
   'post-compact-auto-loop.sh',
   'user-prompt-review-guard.sh',
   'stop-guard.sh',

@@ -83,77 +83,24 @@ for (const { event, script } of [
   });
 }
 
-// --- resume dispatch-log compaction (WB3 round-4 P2) -------------------------
+// --- reminder-layer shape (hook-lightweighting §3.2) -------------------------
 //
-// CLAUDE_PLUGIN_ROOT may be unavailable on resume (the matcher tests above
-// document why). The compaction entry therefore must (a) resolve the CLI
-// without it — installed copy or self-hosted scripts/ under $PWD — and
-// (b) never skip silently: every unreachable-CLI mode says so on stderr.
-// String-matching the command would pin spelling, not behaviour, so these
-// EXECUTE it the way the harness would.
+// The registry carries reminder hooks only: no shell-wrapped inline commands,
+// and no entry may reference the deleted enforcement machinery.
 
-const { spawnSync } = require('node:child_process');
-const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = require('node:fs');
-const { join } = require('node:path');
-const { tmpdir } = require('node:os');
-
-function resumeCommand() {
-  const entry = hooksConfig.hooks.SessionStart.find((e) => e.matcher === 'resume');
-  assert.ok(entry, 'should have a SessionStart resume entry');
-  return entry.hooks[0].command;
-}
-
-function runResume(cwd, input) {
-  const env = { ...process.env };
-  delete env.CLAUDE_PLUGIN_ROOT;
-  delete env.CLAUDE_PROJECT_DIR;
-  env.XDG_CACHE_HOME = mkdtempSync(join(tmpdir(), 'sd0x-resume-cache-'));
-  const result = spawnSync('bash', ['-c', resumeCommand()], { cwd, encoding: 'utf8', env, input });
-  rmSync(env.XDG_CACHE_HOME, { recursive: true, force: true });
-  return result;
-}
-
-test('resume compaction without plugin root and without any CLI copy skips LOUDLY, not silently', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'sd0x-resume-empty-'));
-  const result = runResume(dir, '{}');
-  rmSync(dir, { recursive: true, force: true });
-  assert.equal(result.status, 0, 'SessionStart advisory — never blocks');
-  assert.match(result.stderr, /resume compaction skipped/, 'a silent skip is the symptom-masking round 4 flagged');
-  assert.match(result.stderr, /install-scripts/, 'the warning must name the repair');
-});
-
-test('resume compaction without plugin root still reaches the CLI via $PWD fallback and runs', () => {
-  const repoRoot = resolve(__dirname, '../..');
-  const tDir = mkdtempSync(join(tmpdir(), 'sd0x-resume-run-'));
-  try {
-    const t = join(tDir, 'transcript.jsonl');
-    writeFileSync(t, JSON.stringify({ type: 'summary' }) + '\n');
-    const payload = JSON.stringify({ session_id: 'sess-resume-reg', transcript_path: t });
-    const result = runResume(repoRoot, payload);
-    assert.equal(result.status, 0, result.stderr);
-    assert.doesNotMatch(result.stderr, /resume compaction skipped/);
-    assert.match(result.stdout, /"ok":true/, 'compaction must actually run from the $PWD copy');
-  } finally {
-    rmSync(tDir, { recursive: true, force: true });
+test('no registered command references the deleted enforcement machinery', () => {
+  const flat = JSON.stringify(hooksConfig);
+  for (const token of ['post-tool-review-state', 'session-init', 'dispatch-cli', 'dispatch-log']) {
+    assert.equal(flat.includes(token), false, `hooks.json must not reference ${token}`);
   }
 });
 
-test('the bare scripts/ fallback refuses an UNRELATED project — same-named CLI without the plugin manifest never executes', () => {
-  // The provenance gate round 5 asked for: a consuming project can contain
-  // any scripts/dispatch-cli.js it likes; existence is not evidence of a
-  // self-hosted checkout, and the resume hook must not hand it to node.
-  const dir = mkdtempSync(join(tmpdir(), 'sd0x-resume-evil-'));
-  try {
-    mkdirSync(join(dir, 'scripts'));
-    writeFileSync(
-      join(dir, 'scripts', 'dispatch-cli.js'),
-      'process.stderr.write("PWNED\\n"); process.exit(1);\n'
-    );
-    const result = runResume(dir, '{}');
-    assert.equal(result.status, 0, 'SessionStart advisory — never blocks');
-    assert.doesNotMatch(result.stderr, /PWNED/, 'an unverified project script must never execute');
-    assert.match(result.stderr, /resume compaction skipped/, 'the refusal is loud, not silent');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+test('every registered command is a direct script invocation, not an inline shell wrapper', () => {
+  for (const entries of Object.values(hooksConfig.hooks)) {
+    for (const entry of entries) {
+      for (const h of entry.hooks) {
+        assert.doesNotMatch(h.command, /^bash -c /, `inline wrapper survived: ${h.command}`);
+      }
+    }
   }
 });

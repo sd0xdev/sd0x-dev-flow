@@ -18,24 +18,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-compact-auto-loop.sh"
           }
         ]
-      },
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-init.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'CLI=\"\"; if [ -n \"${CLAUDE_PLUGIN_ROOT:-}\" ] && [ -f \"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-cli.js\" ]; then CLI=\"${CLAUDE_PLUGIN_ROOT}/scripts/dispatch-cli.js\"; elif [ -f \"$PWD/.claude/scripts/dispatch-cli.js\" ]; then CLI=\"$PWD/.claude/scripts/dispatch-cli.js\"; elif [ -f \"$PWD/scripts/dispatch-cli.js\" ] && [ -f \"$PWD/.claude-plugin/plugin.json\" ] && grep -q \"\\\"name\\\"[[:space:]]*:[[:space:]]*\\\"sd0x-dev-flow\\\"\" \"$PWD/.claude-plugin/plugin.json\" 2>/dev/null; then CLI=\"$PWD/scripts/dispatch-cli.js\"; fi; if [ -z \"$CLI\" ]; then echo \"[Dispatch Log] resume compaction skipped: dispatch-cli.js not found (plugin root unset on resume and no installed copy) — run /install-scripts\" >&2; elif ! command -v node >/dev/null 2>&1; then echo \"[Dispatch Log] resume compaction skipped: node unavailable\" >&2; else node \"$CLI\" compact || echo \"[Dispatch Log] resume compaction failed (advisory)\" >&2; fi'"
-          }
-        ]
       }
     ],
     "PreToolUse": [
@@ -47,15 +29,6 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/pre-edit-guard.sh"
           }
         ]
-      },
-      {
-        "matcher": "mcp__codex__codex|mcp__codex__codex-reply",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-review-state.sh"
-          }
-        ]
       }
     ],
     "PostToolUse": [
@@ -65,15 +38,6 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-edit-format.sh"
-          }
-        ]
-      },
-      {
-        "matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply|Skill|TaskOutput",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/post-tool-review-state.sh"
           }
         ]
       },

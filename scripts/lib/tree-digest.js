@@ -41,9 +41,9 @@ function argvPath(p) {
 // Repository resolution must come from `-C repoRoot` ALONE (R2-2): an
 // inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE (etc.) would silently
 // point every read at a different repository — or make a real checkout fail
-// with "not a git repository: <bogus path>", which the gate-derive classifier
-// must never mistake for the benign outside-a-repo case. Strip the whole
-// GIT_* namespace, same posture as the smart-commit env fence.
+// with "not a git repository: <bogus path>", which a caller must never
+// mistake for the benign outside-a-repo case. Strip the whole GIT_*
+// namespace, same posture as the smart-commit env fence.
 function cleanGitEnv(extra) {
   const env = { ...process.env, ...extra };
   for (const k of Object.keys(env)) {
