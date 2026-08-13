@@ -28,7 +28,7 @@ See `@skills/codex-code-review/SKILL.md`
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `--dual` | off | Adds a second reviewer in parallel (see parent skill Step 3). Emits `emit-review-gate.sh PENDING`, sets `review_mode=dual`, and **forces stop-guard into `strict` until the state file is rebuilt or the field is changed by hand** — SessionStart does not reset `review_mode` and no supported `dual → single` downgrade exists, so this outlives the session that asked for it. A second opinion that can block. Use for releases, security-sensitive changes, and public API surfaces. |
+| `--dual` | off | Adds a second reviewer in parallel (see parent skill Step 3). The merge happens in conversation — no state write, no mode field, and the next invocation starts single again unless the flag is passed again. A second opinion that can block this review's gate. Use for releases, security-sensitive changes, and public API surfaces. |
 
 `--dual` is the only code-review entry point where two reviewers run. `/codex-review-fast` and `/codex-review-doc` are single-reviewer by design and offer no such flag: the cost of the second opinion is only worth paying where the change warrants it, and this is that variant. `/plan-review --dual` is the plan-mode counterpart — same opt-in shape, same default of off, a different loop.
 

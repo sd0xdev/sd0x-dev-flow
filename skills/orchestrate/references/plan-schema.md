@@ -41,5 +41,5 @@ Planner agent 輸出的計畫必須符合本 schema；`scripts/validate-plan.js`
 | G2 | `required_gates` 至少含 `doc-review`（v1 報告 Write 必為 doc mutation） |
 | O1 | 每步 `why` 非空 |
 | B1 | `steps.length ≤ max_plan_steps`；單一 `parallel_group` 的 fanout 數 ≤ `max_workers`；`converge.max_rounds ≤ max_waves`（非數值亦拒） |
-| S1 | 序列化後不得含 hook-parsed sentinel 字串（gate / precommit Overall / doc-review / plan-review 的 Markdown 標頭行，以及 Ready、Mergeable、All-Pass、Plan Ready、Blocked、Plan Blocked、Needs revision、Must fix 等 gate 記號）——以名稱描述 gate，勿照抄記號原文（本表本身亦遵守此規則，故不列出帶記號前綴的字面值） |
+| S1 | 序列化後不得含 gate sentinel 字串（gate / precommit Overall / doc-review / plan-review 的 Markdown 標頭行，以及 Ready、Mergeable、All-Pass、Plan Ready、Blocked、Plan Blocked、Needs revision、Must fix 等 gate 記號；這些是行為層信號，計畫文字複誦會偽造 verdict）——以名稱描述 gate，勿照抄記號原文（本表本身亦遵守此規則，故不列出帶記號前綴的字面值） |
 | SCHEMA | 結構完整性：`intent`/`done_definition` 非空、`steps` 為陣列、`kind` 已知、step `id` 必填且唯一、`depends_on` 為陣列、引用存在的 id、且整體構成 DAG（無循環依賴，拓樸可排序） |

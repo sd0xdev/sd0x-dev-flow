@@ -35,9 +35,10 @@ Begin your report with the literal line \`## Document Review\`, exactly as in th
 });
 ```
 
-> Both prompts carry the phrase `Document Review` by construction, which is what the state hook's
-> request-side provenance check reads. Mirrors the code plane, where `Merge Gate` appears in both
-> the initial template and this loop's "Update Merge Gate status" line.
+> Both prompts carry the phrase `Document Review` by construction — the header is what tells a
+> document review apart from a code or security review in the report and the conversation
+> (behaviour-layer since hook-lightweighting; nothing parses it). Mirrors the code plane, where
+> `Merge Gate` appears in both the initial template and this loop's "Update Merge Gate status" line.
 
 ## Loop Rules
 
@@ -49,15 +50,18 @@ When review result is ⛔ Needs revision:
 4. Repeat until every batch is ✅ Mergeable
 
 A batch that already passed is not re-dispatched unless the fixes touched one of its files. The
-plan's gate is the conjunction: one ⛔ batch blocks the plan. Hold it yourself — the receipt keeps
-only the most recent batch verdict (last write wins), so the plan is Mergeable only when the latest
-dispatch of **every** batch passed, never because the final dispatch happened to.
+plan's gate is the conjunction: one ⛔ batch blocks the plan. Hold it yourself — the reminder state
+holds one `doc_review` slot and a later note overwrites it (last write wins), so the plan is
+Mergeable only when the latest dispatch of **every** batch passed, never because the final dispatch
+happened to; self-note the plan's verdict once, after the conjunction is decided
+(`../SKILL.md` § Step 5).
 
-## Gate Sentinels (for Hook parsing)
+## Gate Sentinels (behaviour-layer, emit verbatim)
 
 - `✅ Mergeable` / `## Gate: ✅` — Passed
 - `⛔ Needs revision` / `## Gate: ⛔` — Failed
 
-Both markers are read **BLOCKED-first**: output carrying both records a failure. `✅ All Pass` is
-NOT a doc sentinel — it is behavior-layer prose (`rules/auto-loop.md`), and the hook no longer
-accepts it.
+Nothing parses these anymore (hook-lightweighting) — they are the fixed shapes the model and
+reviewers read in reports, and the shape staying fixed is what keeps a verdict unambiguous. Read
+them **BLOCKED-first**: output carrying both records a failure. `✅ All Pass` is NOT a doc
+sentinel — it is behaviour-layer prose for "every gate passed" (`rules/auto-loop.md`).

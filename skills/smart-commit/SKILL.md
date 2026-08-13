@@ -367,7 +367,7 @@ Check precommit status by change type — structural `.md` under `skills/` has t
 **Default: advisory, not a gate.** `/smart-commit` can be invoked before review has ever run — the
 terminal completion invariant (`rules/auto-loop.md`) constrains the moment a *change* is declared
 complete, not the moment this skill is called — so on the common path, where auto-loop already ran
-review and precommit and recorded the receipt, re-halting on the same evidence is friction, not
+review and precommit and noted the verdict, re-halting on the same evidence is friction, not
 added safety.
 
 | Status | Default action | `--strict-preflight` action |
@@ -394,12 +394,12 @@ session. Stale results from earlier in the session do not count — freshness de
 above applies, not whether that row warns or halts.
 
 **Policy note**: see "Default: advisory, not a gate" above for the rationale — this only relaxes
-this skill's own *extra* pass over already-recorded receipts; `@rules/auto-loop.md`'s gates are
+this skill's own *extra* pass over verdicts already noted; `@rules/auto-loop.md`'s gates are
 unaffected, and `/precommit`/`/codex-review-doc` are not exempted for anyone still passing through
-them. Worth stating plainly: in this repo's shipped configuration `hooks/stop-guard.sh` defaults to
-`warn`, not `strict` — so Step 2's own Halt was, in practice, the only *blocking* barrier between an
-unreviewed edit and a commit. `--strict-preflight` is how to restore that barrier, not a stylistic
-preference.
+them. Worth stating plainly: the Stop hook is a **reminder, never a block**
+(hook-lightweighting § 3.2 — it emits markdown and exits 0), so Step 2's own Halt is the only
+*blocking* barrier this side of the git hooks between an unreviewed edit and a commit.
+`--strict-preflight` is how to raise that barrier, not a stylistic preference.
 
 **Fast vs full**: `/precommit-fast` runs `test:fast`; CI runs `test:ci`. Deletions (skills, scripts) can leave orphaned test files that only fail in CI, so when only `/precommit-fast` ran, output: `⚠️ Only fast tests ran. If you deleted files, consider /precommit (full suite) to catch orphaned imports before commit.`
 
@@ -496,23 +496,14 @@ lists one line per file. Triggers, measurements and the trade-off: `P15`, `P17`,
 `test/scripts/smart-commit-inspect.test.js` and
 [4-implementation.md § 9](../../docs/features/smart-commit-hardening/4-implementation.md).
 
-**Session-aware filtering** (default, disable with `--all`):
-
-After collecting changes and applying exclusion/scope rules above, filter by session commit scope:
-
-1. Read `.claude_review_state.json` field `session_commit_scope`
-2. Validate `session_commit_scope.session_id` matches the state file's root `session_id` (internal consistency — the root value is kept current by the session-init hook, so a mismatch means the scope is stale from an earlier session)
-3. If `--all` flag passed, or scope is unavailable/invalid → skip filtering (legacy behavior)
-4. Otherwise, classify remaining files:
-
-| Condition | Result | Display |
-|-----------|--------|---------|
-| Already staged (passed safety checks) | **Include** | Normal |
-| Unstaged/untracked + in `touched_files` + NOT in `baseline_dirty_files` | **Include** | Normal |
-| Unstaged/untracked + in `touched_files` + in `baseline_dirty_files` | **Include** | ⚠️ Warning badge |
-| Unstaged/untracked + NOT in `touched_files` | **Exclude** | Show in "Excluded" section |
-
-If all unstaged files are excluded and nothing is staged → report "No session changes to commit. Use `--all` to include pre-existing changes." and stop.
+**Selection is live git status, whole tree.** Every uncommitted change `collect` reported — minus
+the exclusion rules and any `--scope` filter above — is a candidate for grouping. There is no
+session-scoped filter: the hook-maintained `session_commit_scope` store retired with the state
+machine that wrote it (hook-lightweighting § 3.4), and nothing now records which files this
+session touched. What replaces it is not a narrower selection but a visible one: the Commit Plan
+in Step 4 lists every file it is about to group, and the user confirming that plan is the
+selection decision. A file the user does not want committed is removed at the plan, or fenced out
+up front with `--scope`.
 
 ### Step 4: Group (High Cohesion)
 
@@ -551,7 +542,7 @@ the same actionable gate+command list Step 2 warns with, and whether `--strict-p
 ```
 ## Commit Plan
 
-**Selection mode**: session-aware (default)
+**Selection**: all uncommitted changes (live git status)
 **Author**: Jane Doe <jane@company.com> (local config)
 **Signing**: enabled (GPG, key: ABCD1234)
 **AI guard**: active (commit-msg hook installed)
@@ -566,15 +557,12 @@ the same actionable gate+command list Step 2 warns with, and whether `--strict-p
 | 2 | test | 2     | Add RPC client unit tests |
 | 3 | docs | 4     | Update performance audit docs |
 
-### Excluded — pre-existing uncommitted (not touched this session)
-| File | Status | Reason |
-|------|--------|--------|
-| src/legacy.ts | M | Not touched in this session |
-| config/dev.json | M | Not touched in this session |
+### Excluded — sensitive files (never committed by this skill)
+| File | Reason |
+|------|--------|
+| .env.local | Matches exclusion rules (Step 3) |
 
-⚠️ `src/config.ts` was already dirty before this session and was edited during this session. Pre-existing changes will be included.
-
-> To include all uncommitted changes: rerun with `--all`
+> To narrow the commit to one area: rerun with `--scope <path>`
 
 Adjust grouping?
 ```
@@ -740,7 +728,7 @@ INSPECT="$REPO_ROOT/.claude/scripts/smart-commit-inspect.sh"
 ```
 
 - Still has unhandled changes (committable files in included set) → return to Step 4
-- Only excluded files remain (sensitive files, or session-excluded pre-existing files) → stop with warning summary listing excluded files
+- Only excluded files remain (sensitive files) → stop with warning summary listing excluded files
 - All clear → output summary table
 
 After each commit, run **post-commit AI trailer detection** (hard stop on leak):
@@ -792,7 +780,7 @@ trailer is added; with it, exactly one is: `Co-Authored-By: Claude <noreply@anth
 - **No secrets**: Sensitive files must be warned about, never included
 - **No unauthorized execution**: Without `--execute` flag, **never** directly execute git add/commit
 - **No silent execution**: In `--execute` mode, must use `AskUserQuestion` for approval before executing commits
-- **No silent inclusion of pre-existing changes**: Without `--all`, do not silently include unstaged files that were not touched in this session
+- **No file the plan never showed**: Selection is the whole live git status, so the Commit Plan is the only filter — every file a commit will touch appears in the confirmed plan, and a file added after confirmation re-opens the plan
 
 ## Bundled References
 

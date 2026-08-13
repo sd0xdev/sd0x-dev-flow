@@ -49,8 +49,6 @@ The changed files and diff stats are listed above. You **must** read the actual 
 4. Understand module dependencies of changes: \`grep -r "import.*<module name>" . -l --include="*.ts" --include="*.js" | head -10\`
 5. Check for missing tests: compare changed files with test files
 
-${DEFERRED_CONTEXT ? DEFERRED_CONTEXT : ''}
-
 ### Verification Focus
 - What is the main purpose of this branch?
 - Are changes complete (including tests, docs)?

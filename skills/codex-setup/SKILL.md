@@ -70,7 +70,6 @@ Copy these scripts to the host project:
 | `scripts/verify-runner.js` | `.sd0x/scripts/verify-runner.js` |
 | `scripts/lib/utils.js` | `.sd0x/scripts/lib/utils.js` |
 | `scripts/lib/tree-digest.js` | `.sd0x/scripts/lib/tree-digest.js` |
-| `scripts/lib/receipt-log.js` | `.sd0x/scripts/lib/receipt-log.js` |
 
 Ensure target directories exist (`mkdir -p`).
 
@@ -91,8 +90,7 @@ Write `.sd0x/install-state.json` to repo root:
     "precommit-runner.js": "<sha1>",
     "verify-runner.js": "<sha1>",
     "lib/utils.js": "<sha1>",
-    "lib/tree-digest.js": "<sha1>",
-    "lib/receipt-log.js": "<sha1>"
+    "lib/tree-digest.js": "<sha1>"
   },
   "generated_at": "<ISO8601>"
 }

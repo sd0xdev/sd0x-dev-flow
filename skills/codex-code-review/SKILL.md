@@ -1,7 +1,7 @@
 ---
 name: codex-code-review
 description: "Code review using Codex MCP. Use when: PR review, code audit, second opinion on changes. Not for: doc review (use doc-review), security audit (use security-review). Output: severity-grouped findings + merge gate."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Read, Grep, Glob, Task
+allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Bash(node:*), Read, Grep, Glob, Task
 ---
 
 # Codex Code Review
@@ -35,19 +35,17 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yar
 Collect changes → [Pre-checks if Full] → Codex Review → Gate → Loop if Blocked
 ```
 
-Dual dispatch adds the aggregate plane, and is opt-in:
+Dual dispatch adds a second reviewer, and is opt-in:
 
 ```
---dual:  Step 0 (PENDING) → … → Codex + Task in parallel → Aggregate → Emit Gate → Loop if Blocked
+--dual:  … → Codex + Task in parallel → Merge findings in conversation → Gate → Loop if Blocked
 ```
 
 ### Step 0: Reviewer Mode
 
-**Default: Codex alone.** Do not run `scripts/emit-review-gate.sh`, and do not launch a secondary reviewer. This invocation emits **no transition** to dual, so on a state file that has never seen `--dual`, `review_mode` holds its initialized `"single"`, the aggregate plane stays dormant, and `code_review.passed` governs the gate through the ordinary path — the same fail-closed path every other verdict uses.
+**Default: Codex alone.** Do not launch a secondary reviewer. One reviewer, one verdict, noted in Step 4.5 — there is no mode field, no aggregate plane and no state machine behind this choice: which reviewers ran is a fact of the conversation, not of a store (hook-lightweighting § 3.3).
 
-Emitting no transition is not the same as returning to single. A `review_mode=dual` left by an earlier session survives (see `--dual` below), and where one is set, stop-guard judges by the aggregate plane no matter which variant you ran: a passing `code_review.passed` will not discharge the gate, and the Stop hook will keep naming the aggregate obligation. The field is not the only trigger — an `aggregate_write_failed` or `lock_failure` sidecar marker routes the same way, and a marker says nothing about what `review_mode` currently reads (the two are written on independent paths — see `references/review-common.md` § Aggregate-Plane Writes). Before concluding a single review is the whole gate, check both `review_mode` and whether Stop is naming an aggregate obligation; Stop's own output is the authority.
-
-**`--dual` (Branch variant only):** execute `bash scripts/emit-review-gate.sh PENDING`. This sets `review_mode=dual` and `aggregate_gate.executed=false`, which is fail-closed: if the process dies before Step 4.5, stop-guard blocks. It also forces stop-guard into `strict` until the state file is rebuilt or `review_mode` is changed by hand — SessionStart preserves the field and there is no supported `dual → single` downgrade, so the strict policy outlives the session that asked for it. Strict blocking *during* the review you asked for is the point, and the reason `--dual` is not the default; its persistence into later sessions is a **known defect**, not a feature to rely on — tracked in [R1](../../docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md), whose lifecycle fix is deliberately out of that ticket's scope.
+**`--dual` (Branch variant only):** adds a second reviewer **in parallel**, and the merge is yours to perform in conversation (Step 4). A second opinion for releases, security-sensitive changes and public API surfaces — nothing persists it, nothing blocks on it, and the next invocation starts single again unless the flag is passed again.
 
 | Variant | `--dual` accepted? |
 |---------|--------------------|
@@ -71,7 +69,7 @@ Codex independently reads full diffs and file contents via `git diff HEAD -- <fi
 
 ### Step 1.1: Resolve the tier (required before dispatch)
 
-The gate is tier-derived, and the **reviewer** has to be told which severities block — otherwise it emits `✅ Ready` / `⛔ Blocked` against its own assumption and the hook persists that verdict. Resolve the tier first, then bind `TIER` and `BLOCKING` into the prompt:
+The gate is tier-derived, and the **reviewer** has to be told which severities block — otherwise it emits `✅ Ready` / `⛔ Blocked` against its own assumption, and that is the verdict you note in Step 4.5. Resolve the tier first, then bind `TIER` and `BLOCKING` into the prompt:
 
 | Tier | `BLOCKING` | Source |
 |------|-----------|--------|
@@ -100,39 +98,6 @@ If `has_requests=true` AND `confidence` in (high, medium):
 6. Build `SPEC_CHECKLIST` variable, set `REQUEST_DOC_PATH`
 
 Graceful degradation: resolve-feature fails / no requests / no AC section / parse error → `SPEC_CHECKLIST = null` (skip silently).
-
-### Step 1.6: Deferred Finding Context
-
-> **Prerequisite**: Requires R4 (Nit History Persistence) hook-side write path. Until R4 is deployed, `.claude_nit_history.json` will not exist and this step is a no-op (graceful degradation).
-
-Read `.claude_nit_history.json` (if exists):
-1. Filter `.deferred[]` entries where `last_seen + ttl_days` > now
-2. **Sanitize each entry** before injection (mandatory):
-   - `canonical_issue` <= 120 chars (truncate)
-   - Strip markdown control chars (`**`, backticks, `#`, `>`, `|`)
-   - No raw code snippets; only file:line references
-   - No secrets/tokens/passwords/API keys (per `rules/security.md`)
-   - Reject entries with shell metacharacters (`;`, `&`, `|`, backtick, `$(`)
-3. Format as `<deferred_context>` XML block (max 10 entries)
-4. Store in `DEFERRED_CONTEXT` variable
-
-Inject into all prompt variants after research instructions, before Review Dimensions:
-
-```
-${DEFERRED_CONTEXT ? DEFERRED_CONTEXT : ''}
-```
-
-Format:
-
-```xml
-<deferred_context>
-Previously deferred (do not re-report without new evidence):
-- [Nit] src/service.ts | naming convention (deferred 2x)
-- [P2] src/utils.ts | error handling pattern (deferred 1x)
-</deferred_context>
-```
-
-Graceful degradation: file missing / invalid JSON / no entries / sanitization failure → `DEFERRED_CONTEXT = null` (skip silently).
 
 ### Step 2: Pre-checks (Full variant only)
 
@@ -246,17 +211,27 @@ Output format includes source tag:
 - [P1] file:line issue → fix [source: codex]
 ```
 
-### Step 4.5: Emit Review Gate
+### Step 4.5: Output the gate and note the verdict
 
-**`--dual` only** — execute `bash scripts/emit-review-gate.sh READY` or `... BLOCKED`, which updates `aggregate_gate.executed=true` and `aggregate_gate.gate`. On a default dispatch this step is **skipped**: it would stamp the aggregate plane with a verdict no aggregation produced. On the normal path these two values leave `review_mode` alone; if the outer lock fails they do not — see `references/review-common.md` § Aggregate-Plane Writes.
-
-Skipping is right for the *dispatch* and can still leave the *gate* shut. Where `review_mode` already reads `dual` (Step 0) — or where a failed aggregate transition left a marker while the field still reads `single` — stop-guard governs on the aggregate plane, so a `✅ Ready` from this skill will not reopen it. Stop names `/codex-review-branch --dual` as the outstanding obligation. That is the real remaining work, and it is what this skill's single-reviewer path deliberately does not do.
-
-Separately, Stop may add **`Do NOT auto-retry`**. That means a per-event sidecar marker is present, and those are retired by no command at all — not review, not precommit, not an edit — regardless of what the marker says or which gate it invalidates. It becomes *eligible* for clearing when a later SessionStart finds no dirty code or doc file; lock contention or a failed scan can hold it for another session beyond that. Take the line at face value: finish or abandon the work, but do not re-run the named step expecting the gate to open.
-
-Either way, output the standard gate sentinel:
+Output the standard gate sentinel:
 - `✅ Ready` — if READY (nothing at or above the tier's blocking severity)
 - `⛔ Blocked` — if BLOCKED
+
+Then **self-note the verdict** — this is the declared-provenance record the reminder hooks read
+(hook-lightweighting § 3.2), and it is behaviour-layer: an attestation the conversation can audit,
+not a gate anything blocks on. Installed copy first:
+
+```bash
+CHECKER=".claude/scripts/review-state.js"; [ -f "$CHECKER" ] || CHECKER="scripts/review-state.js"
+node "$CHECKER" note code_review pass   # on ✅ Ready
+node "$CHECKER" note code_review fail   # on ⛔ Blocked — increments the rounds count
+```
+
+Note after **every** round's verdict, not only the terminal one: a `fail` note is what keeps the
+`rounds` fact honest across the fix → re-review loop, and a `pass` note resets it. The note binds
+to the current tree digest, so any later edit re-opens the plane by construction — there is no
+verdict to clear. A failed or unavailable note never fails the review: the checks are the job, the
+note is a courtesy for the reminders, and the missing-note cost is one redundant reminder line.
 
 ## Shared Definitions
 
@@ -265,7 +240,7 @@ See `references/review-common.md` for:
 - Review dimensions
 - Merge gate definitions
 - Re-review prompt template
-- Gate sentinels (hook + behavior-layer)
+- Gate sentinels (behaviour-layer prose contracts)
 - Dual Reviewer Aggregation (severity mapping, deduplication, degradation matrix, source attribution)
 
 ## Review Loop
@@ -275,9 +250,9 @@ See `references/review-common.md` for:
 Blocked → fix the blocking findings → `/codex-review-fast --continue <threadId>` → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
-Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: `[LOOP_STALL]` (`@rules/auto-loop.md § Stall Detection`) normally fires first, on rounds that close nothing. Same issue recurring at the cap → report blocker, request intervention.
+Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
 
-This loop converges on the **review result**, not on the Stop gate. Reaching Ready ends it even if Stop still objects — an aggregate obligation or a `Do NOT auto-retry` line (Step 4.5) is not a finding, and no further round addresses it.
+This loop converges on the **review result**. Reaching Ready ends it — a stale reminder line from a hook is not a finding, and no further round addresses it; the Step 4.5 note is what retires the reminder.
 
 ### Loop Behavior
 
@@ -327,7 +302,7 @@ Input: /codex-review-branch origin/develop
 Action: branch diff + history → Codex → Rating table + Findings + Gate
 
 Input: /codex-review-branch origin/develop --dual
-Action: emit PENDING → branch diff + history → Codex + Task parallel → aggregate → emit gate → Rating table + Findings + Gate
+Action: branch diff + history → Codex + Task parallel → merge findings → Rating table + Findings + Gate → note verdict
 
 Input: /codex-review-fast (Codex unavailable)
 Action: ⛔ Blocked + ⚠️ Need Human — the single reviewer is the whole gate, so there is nothing to degrade to

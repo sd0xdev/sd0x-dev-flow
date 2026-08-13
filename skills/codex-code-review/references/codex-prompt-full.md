@@ -49,8 +49,6 @@ The changed files and diff stats are listed above. You **must** read the actual 
 4. Search existing tests: \`ls test/unit/\` or \`grep -r "describe" test/ -l | head -5\`
 5. Read related tests for expected behavior: \`cat <test path> | head -100\`
 
-${DEFERRED_CONTEXT ? DEFERRED_CONTEXT : ''}
-
 ### Verification Focus
 - Do changes follow existing code style?
 - Do changes have corresponding tests?

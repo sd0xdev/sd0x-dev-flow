@@ -44,8 +44,6 @@ The changed files and diff stats are listed above. You **must** read the actual 
 - Read related files: \`cat <file-path> | head -100\`
 - Understand class definitions: \`grep -rA 20 "class ClassName" . --include="*.ts" --include="*.js"\`
 
-${DEFERRED_CONTEXT ? DEFERRED_CONTEXT : ''}
-
 ## Review Dimensions
 
 | Dimension      | Checklist |

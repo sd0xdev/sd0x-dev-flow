@@ -72,7 +72,6 @@ Missing → **P1**. If exists, read content and compare required items:
 | `.tmp*` | Temp files |
 | `*.tmp` | Temp files (suffix variant) |
 | `*.zip` | Backup archives |
-| `.claude_review_state.json` | Review state tracking |
 
 Missing any → **P2**
 
@@ -176,8 +175,8 @@ plugin_hash    = git hash-object --no-filters <plugin-path>  # source of truth
 | Category | Local Path | Plugin Source | Files |
 |----------|-----------|--------------|-------|
 | Rules | `.claude/rules/*.md` | `rules/*.md` | `auto-loop.md`, `codex-invocation.md`, `fix-all-issues.md`, `framework.md`, `testing.md`, `security.md`, `git-workflow.md`, `logging.md`, `docs-writing.md`, `docs-numbering.md`, `self-improvement.md`, `context-management.md` |
-| Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` | `pre-edit-guard.sh`, `post-edit-format.sh`, `post-tool-review-state.sh`, `stop-guard.sh`, `post-compact-auto-loop.sh` |
-| Scripts | `.claude/scripts/` | `scripts/` | `precommit-runner.js`, `verify-runner.js`, `dispatch-cli.js`, `dep-audit.sh`, `commit-msg-guard.sh`, `pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js`, `lib/dispatch-log.js`, `lib/gate-derive.js` |
+| Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` | `pre-edit-guard.sh`, `post-edit-format.sh`, `post-skill-auto-loop.sh`, `post-compact-auto-loop.sh`, `stop-guard.sh`, `user-prompt-review-guard.sh` |
+| Scripts | `.claude/scripts/` | `scripts/` | `precommit-runner.js`, `verify-runner.js`, `review-state.js`, `dep-audit.sh`, `commit-msg-guard.sh`, `pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js` |
 
 #### S2.5: Override Safeguard Checks
 
@@ -186,7 +185,7 @@ plugin_hash    = git hash-object --no-filters <plugin-path>  # source of truth
 | # | Check | Severity | Detection | Recommendation |
 |---|-------|----------|-----------|----------------|
 | 1 | Override drift | P2 | `based_on` hash comment in project file vs the hash of **the base file that comment names** (derived, never hard-coded — both `auto-loop-project.md` and `testing-project.md` ship) — **only when the override file has active content**; a scaffold with every section still commented out has no overrides to review, so drift is not reported | "Base `<rule>` updated since override authored; review your overrides" |
-| 2 | Policy contradiction | P1 | An overridden section omits a required check command that the **same section** of the base rule contains | "Override conflicts with stop-guard enforcement" |
+| 2 | Policy contradiction | P1 | An overridden section omits a required check command that the **same section** of the base rule contains | "Override drops a required check command its base section carries" |
 | 3 | Missing reference or base | P1 | For **each** shipped override file (`auto-loop-project.md`, `testing-project.md`): `.claude/CLAUDE.md` has `@rules/<file>` but the file is missing, OR the file exists but is not referenced, OR the file exists but the base rule its `Based on:` comment names is missing from `.claude/rules/` | `/install-rules` to recreate the missing file or base, or add the reference |
 | 4 | Wrong-layer edit | P2 | Base `auto-loop.md` has `LOCAL_MODIFIED`, `CONFLICT`, or `LEGACY` state while project override exists | "Move customization to auto-loop-project.md" |
 | 5 | Duplicate heading | P2 | Override file has multiple active `## <heading>` with same text | "Keep one, remove duplicates. Last occurrence takes effect." |
@@ -203,7 +202,7 @@ Check **both** `settings.json` and `settings.local.json` (precedence: `settings.
 | # | Check | Method | Criteria |
 |---|-------|--------|----------|
 | S3.1 | Legacy hook paths | Grep both settings files for bare `.claude/hooks/` without `$CLAUDE_PROJECT_DIR` | Found → P2 |
-| S3.2 | `STOP_GUARD_MODE` present | Read `env.STOP_GUARD_MODE` from either settings file (also check legacy `hooks_config.stop_guard_mode`) | Missing from both → P2 (info). Legacy `hooks_config` found → P2 (migration recommended). Install-time default: `strict`; runtime fallback: `warn` |
+| S3.2 | Retired guard-mode setting | Read `env.STOP_GUARD_MODE` (and legacy `hooks_config.stop_guard_mode`) from either settings file | Found in either → P2 (retired: the Stop hook is reminder-only since hook-lightweighting — the setting is dead config, recommend removing it). Absent → ✅ |
 | S3.3 | Hook entry integrity | Each installed hook script has matching entry in either settings file | Missing from both → P1 |
 | S3.4 | Orphan hook entries | Either settings file references script that doesn't exist on disk | Orphan → P2 |
 
@@ -279,7 +278,7 @@ Applied to both: settings.json and settings.local.json
 | Check | Status | Detail |
 |-------|--------|--------|
 | Hook paths | ✅/⛔ | Modern / Legacy found |
-| Guard mode | ✅/⛔ | strict / Missing |
+| Retired guard mode | ✅/⚠️ | absent / STOP_GUARD_MODE found (dead config) |
 | Entry integrity | ✅/⛔ | All matched / N missing |
 | Orphan entries | ✅/⛔ | None / N orphans |
 

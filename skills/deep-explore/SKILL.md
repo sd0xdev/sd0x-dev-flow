@@ -260,7 +260,7 @@ Action: Phase 0 → Wave 1 (hooks, skills/review, rules/auto-loop) → Wave 2 (s
 Input: /deep-explore --areas "hooks, skills/codex-code-review, rules" "Review system architecture"
 Action: Phase 0 (user shards) → Wave 1 (3 agents) → Wave 2 (hotspots) → Report
 
-Input: /deep-explore --quick "How does emit-review-gate work?"
+Input: /deep-explore --quick "How does review-state.js work?"
 Action: Redirect to /code-explore (small scope)
 
 Input: /deep-explore --agents 2 --waves 2 "Plugin install flow"

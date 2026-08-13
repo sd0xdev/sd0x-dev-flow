@@ -29,7 +29,7 @@ No new debate topic is built. Phase A re-runs on the (possibly-updated) target f
 
 The skill is stateless with respect to continuation: no state file is written by `/necessity-audit` itself. The Codex thread is the only persistence mechanism, and it lives inside the MCP service. Users find the `threadId` in the previous run's `### Debate` block and supply it on the next invocation.
 
-> **Why not a local cache?** Writing a local state file would create a second source of truth and conflict with `2-tech-spec.md §3.3.3` ("Write: None directly"). Doc-review hooks already write `.claude_review_state.json`; this skill does not add a sibling state file.
+> **Why not a local cache?** Writing a local state file would create a second source of truth and conflict with `2-tech-spec.md §3.3.3` ("Write: None directly"). The doc-review verdict already has its home — the reminder state the model notes via `review-state.js` (hook-lightweighting § 3.2) — and this skill's audit verdict is not a doc-review verdict, so it adds no sibling state.
 
 ## Termination
 

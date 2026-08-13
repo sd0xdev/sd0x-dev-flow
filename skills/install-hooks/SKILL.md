@@ -1,7 +1,7 @@
 ---
 name: install-hooks
 description: "Install plugin hooks into project .claude/ for persistent use without plugin loaded"
-allowed-tools: Read, Grep, Glob, Write, AskUserQuestion, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(jq:*)
+allowed-tools: Read, Grep, Glob, Write, AskUserQuestion, Bash(mkdir:*), Bash(diff:*), Bash(git:*), Bash(ls:*), Bash(chmod:*), Bash(jq:*), Bash(node:*)
 ---
 
 # Install Hooks
@@ -19,6 +19,7 @@ allowed-tools: Read, Grep, Glob, Write, AskUserQuestion, Bash(mkdir:*), Bash(dif
 ## Workflow
 
 ```
+Phase 0: Resolve mode; obsolete-set migration (first for non-list invocations; --dry-run forwarded)
 Phase 1: Locate plugin hooks dir
 Phase 2: Enumerate hook scripts
 Phase 3: Determine install set (--all, specific names, or interactive)
@@ -28,6 +29,29 @@ Phase 4c: Update manifest
 Phase 4.5: Backfill CLAUDE.md references
 Phase 5: Output report
 ```
+
+### Phase 0: Obsolete-Set Migration
+
+**Resolve the invocation mode first** — Phase 0 mutates settings and deletes files, so the
+non-mutating modes must never reach it live: with `--list`, skip Phase 0 entirely (listing is
+read-only); with `--dry-run`, forward the flag so the migration also only reports:
+
+```bash
+# --list        → skip this phase
+# --dry-run     → append --dry-run to the command below
+node "${CLAUDE_PLUGIN_ROOT}/scripts/migrate-hook-lightweighting.js" --repo "$(git rev-parse --show-toplevel)"
+```
+
+Otherwise run the shared migration **before any copy or merge** — it is what removes the retired
+enforcement-layer files and their registrations (hook-lightweighting § 3.6), and running it first
+is what prevents the dangerous half-state (scripts-new + hooks-old).
+
+Ordering inside the script is fixed: it deregisters settings entries first and deletes files only
+after the settings writes succeed; a failed settings write aborts (exit 1) before any deletion.
+On exit 1, **stop the install and surface the report** — installing on top of a repo whose
+deregistration failed reproduces the half-state the migration exists to prevent. Modified obsolete
+files are kept on disk (registration disabled) and named in the report; include those lines in
+Phase 5's output.
 
 ### Arguments
 
@@ -42,7 +66,6 @@ $ARGUMENTS
 | `--dry-run` | Show what would be installed, no changes |
 | `--force` | Overwrite existing hooks with different content |
 | `--local` | Write to settings.local.json instead of settings.json |
-| `--guard-mode warn\|strict` | Set stop-guard mode during install |
 | `hook-names...` | Specific hooks to install |
 
 ### Two-Layer Install
@@ -53,33 +76,14 @@ $ARGUMENTS
 | Definitions | `settings.json` hooks entries | Event → script path mapping |
 
 **Script dependencies**: a locally installed hook resolves its helper scripts beside its own copy
-(`.claude/scripts/…`), never from the plugin — and the two dependency families fail differently:
-
-- **Derivation** — `lib/gate-derive.js`, read by `stop-guard.sh` and the auto-loop advisory hooks
-  (`user-prompt-review-guard.sh`, `post-skill-auto-loop.sh`, `post-compact-auto-loop.sh`). Missing
-  → the two families degrade **differently**, and only one of them reaches the mirror. Inside a
-  repository `stop-guard.sh` runs its own direct `git status` probe and discloses
-  `source=git_probe degraded=derive_unavailable`; it reads the mirror only where no derivation is
-  possible at all (not a repository). The three advisory hooks do fall back to the mirror
-  (`source=state_file`) — they are advisory, so a stale answer warns rather than decides.
-- **Dispatch** — `dispatch-cli.js` and `lib/dispatch-log.js`, read by
-  `post-tool-review-state.sh`, `stop-guard.sh` and `session-init.sh`. Missing →
-  `post-tool-review-state.sh` **blocks review dispatches with `exit 2`** (an unrecorded review
-  would be an orphan no sweep can account for — fail-closed, not a fallback), `stop-guard.sh`'s
-  pairing sweep cannot run, and `session-init.sh` skips capture-time activation
-  and dispatch-log compaction — lazy activation inside `appendDispatch()` is what would take
-  over, but not while the dependency is missing: the `exit 2` above blocks every dispatch
-  before it can reach that path, so lazy activation resumes only once the library is back —
-  advisory, session start is never blocked; silently when `dispatch-cli.js` itself is absent,
-  with stderr diagnostics when the CLI exists but fails to load a dependency.
-  When only these two are missing, gate derivation is unaffected — the two paths are independent.
-- **Shared** — `lib/tree-digest.js` and `lib/receipt-log.js` are required by **both** families
-  (`gate-derive.js` and `dispatch-log.js` require both; `dispatch-cli.js` requires `tree-digest.js`
-  directly and the rest via `dispatch-log.js`), so a missing shared library triggers both failure
-  modes at once: mirror fallback *and* blocked review dispatches.
-
-After installing hooks, run `/install-scripts --all` (or `/project-setup`, whose Phase 6.5 ships
-the same set) so both paths actually run.
+(`.claude/scripts/…`), never from the plugin. The whole dependency surface is one checker —
+`scripts/review-state.js` (which requires `scripts/lib/tree-digest.js`) — read by `stop-guard.sh`,
+`user-prompt-review-guard.sh` and `post-compact-auto-loop.sh` (`post-skill-auto-loop.sh` is
+deliberately zero-read: it prints one static gate-order line and consumes nothing). Missing →
+every hook still runs and still reminds: it reports change-class facts from live git and **claims no
+verdict** (nothing blocks — the hooks are reminders, hook-lightweighting § 3.2). Installing the
+checker via `/install-scripts --all` (or `/project-setup`) is what upgrades the reminders from
+"changed, verdict unknown" to "changed, reviewed at this tree".
 
 ### Conflict Handling
 

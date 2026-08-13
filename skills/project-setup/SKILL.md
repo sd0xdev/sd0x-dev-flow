@@ -52,21 +52,21 @@ Phase 5: Install Rules + Backfill CLAUDE.md (unless --no-rules or --lite)
 Phase 6: Install Hooks (unless --no-hooks or --lite)
     │
     ├─ Locate plugin hooks dir (3-level fallback)
-    ├─ mkdir -p .claude/hooks/ → copy 5 hooks + chmod +x
+    ├─ mkdir -p .claude/hooks/ → copy 6 hooks + chmod +x
     ├─ Merge hook definitions into .claude/settings.json
     └─ Output hooks install report
     │
 Phase 6.5: Install Scripts (unless --lite or --detect-only)
     │
     ├─ Locate plugin scripts dir (3-level fallback)
-    ├─ mkdir -p .claude/scripts/lib → copy 3 scripts
+    ├─ mkdir -p .claude/scripts/lib → copy 5 scripts
     ├─ Update manifest .sd0x/install-state.json
     └─ Output scripts install report
     │
 Phase 6.7: Configure Environment Variables (unless --detect-only or --lite)
     │
     ├─ Detect model context size (1M → recommend auto-compact window)
-    ├─ Build env var catalog (STOP_GUARD_MODE + model-aware vars)
+    ├─ Build env var catalog (model-aware vars; flag retired STOP_GUARD_MODE for removal)
     ├─ Present recommendations, wait for user confirmation
     ├─ Merge into .claude/settings.json env object
     └─ Output env config report
@@ -88,7 +88,6 @@ Phase 7: Final Verification Report
 | `--no-rules` | Execute | Execute | Skip rules | Execute | Report |
 | `--no-hooks` | Execute | Execute | Skip hooks | Execute | Report |
 | `--env-only` | Skip | Skip | Skip | Execute | Env report only (skill-level directive) |
-| `--guard-mode warn` | Execute | Execute | Execute | Execute (STOP_GUARD_MODE=warn) | Report |
 
 ## Phase 1: Detect Project Environment
 
@@ -180,7 +179,7 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
 
    | Rule | Purpose |
    |------|---------|
-   | `auto-loop.md` | Auto review loop enforcement |
+   | `auto-loop.md` | Auto review loop (behaviour-layer contract; hooks remind, nothing blocks) |
    | `codex-invocation.md` | Codex independent research requirement |
    | `discretion.md` | Instruction tiers: Anchor / Default / Guidance |
    | `fix-all-issues.md` | Zero tolerance for unfixed issues |
@@ -261,12 +260,12 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
 4. **Not found** → **hard error for this phase** (do not silently skip). Output explicit failure with remediation steps:
 
    ```
-   ⛔ Hook source not found. Auto-loop enforcement layer cannot be installed.
+   ⛔ Hook source not found. The reminder-layer hooks cannot be installed.
 
    Remediation (choose one):
    1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
    2. Copy hooks manually from a machine that has the plugin installed
-   3. Re-run with --no-hooks to skip (enforcement layer will be missing)
+   3. Re-run with --no-hooks to skip (reminder hooks will be missing)
    ```
 
    Then skip Phase 6 and continue to Phase 7. Phase 7 will report this as `⚠️ Partial`.
@@ -274,15 +273,16 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
 ### 6.2 Copy Hook Scripts
 
 1. `mkdir -p ${REPO_ROOT}/.claude/hooks/`
-2. Copy 5 hooks (exclude `namespace-hint.sh` — plugin-only):
+2. Copy 6 hooks (exclude `namespace-hint.sh` — plugin-only):
 
    | Hook | Event | Matcher | Purpose |
    |------|-------|---------|---------|
-   | `pre-edit-guard.sh` | PreToolUse | Edit\|Write | Block editing .env/.git |
-   | `post-edit-format.sh` | PostToolUse | Edit\|Write | Auto-format + track changes |
-   | `post-tool-review-state.sh` | PostToolUse | Bash\|mcp__codex__codex\|mcp__codex__codex-reply | Parse review results |
-   | `stop-guard.sh` | Stop | — | Check review + precommit completed |
-   | `post-compact-auto-loop.sh` | SessionStart | compact | Re-inject auto-loop rules after compaction |
+   | `pre-edit-guard.sh` | PreToolUse | Edit\|Write\|NotebookEdit | Block editing .env/.git |
+   | `post-edit-format.sh` | PostToolUse | Edit\|Write\|NotebookEdit | Auto-format reminder |
+   | `post-skill-auto-loop.sh` | PostToolUse | Skill | Post-review reminder (next gate) |
+   | `stop-guard.sh` | Stop | — | Reminder: open gates at stop (markdown, exit 0) |
+   | `user-prompt-review-guard.sh` | UserPromptSubmit | — | Per-prompt `[AUTO_LOOP_STATE]` fact line |
+   | `post-compact-auto-loop.sh` | SessionStart | compact | Re-inject auto-loop reminders after compaction |
 
 3. `chmod +x` each installed script.
 4. Conflict strategy: same as Phase 5.2.
@@ -297,14 +297,17 @@ Hook definition mapping (uses `$CLAUDE_PROJECT_DIR` for portability):
 {
   "hooks": {
     "PreToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-edit-guard.sh"}]}
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/pre-edit-guard.sh"}]}
     ],
     "PostToolUse": [
-      {"matcher": "Edit|Write", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-format.sh"}]},
-      {"matcher": "Bash|mcp__codex__codex|mcp__codex__codex-reply", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-tool-review-state.sh"}]}
+      {"matcher": "Edit|Write|NotebookEdit", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-edit-format.sh"}]},
+      {"matcher": "Skill", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-skill-auto-loop.sh"}]}
     ],
     "Stop": [
       {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-guard.sh"}]}
+    ],
+    "UserPromptSubmit": [
+      {"matcher": "", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/user-prompt-review-guard.sh"}]}
     ],
     "SessionStart": [
       {"matcher": "compact", "hooks": [{"type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/post-compact-auto-loop.sh"}]}
@@ -313,7 +316,7 @@ Hook definition mapping (uses `$CLAUDE_PROJECT_DIR` for portability):
 }
 ```
 
-> **Note**: Environment variables (including `STOP_GUARD_MODE`) are now configured in **Phase 6.7** (independent of hook installation). Phase 6.3 only handles hook definition merging.
+> **Note**: Environment variables are configured in **Phase 6.7** (independent of hook installation). Phase 6.3 only handles hook definition merging.
 
 Merge strategy:
 - Read existing settings file (create `{}` if not exists)
@@ -356,18 +359,15 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 ### 6.5.2 Copy Scripts
 
 1. `mkdir -p ${REPO_ROOT}/.claude/scripts/lib`
-2. Copy 8 scripts:
+2. Copy 5 scripts:
 
 | Script | Purpose | Dependencies |
 |--------|---------|--------------|
-| `precommit-runner.js` | Precommit runner for `/precommit`, `/precommit-fast` | `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js` |
+| `precommit-runner.js` | Precommit runner for `/precommit`, `/precommit-fast`; notes its own pass/fail via `review-state.js` | `lib/utils.js`, `review-state.js` |
 | `verify-runner.js` | Verify runner for `/verify` | `lib/utils.js` |
-| `dispatch-cli.js` | Dispatch-log CLI for the locally installed `post-tool-review-state.sh` / `stop-guard.sh` (review dispatch + pairing sweep) | `lib/dispatch-log.js`, `lib/tree-digest.js` |
+| `review-state.js` | Reminder-state checker/noter (single slot per plane under `~/.cache/sd0x-dev-flow/`) read by the locally installed hooks and by `/remind`, `/next-step`, `/pre-pr-audit` | `lib/tree-digest.js` |
 | `lib/utils.js` | Shared utilities | None |
-| `lib/tree-digest.js` | Per-plane content digests (content-addressed receipts) | None |
-| `lib/receipt-log.js` | Receipt log append/read for the runner's verdict records | None |
-| `lib/dispatch-log.js` | Dispatch-log reducer/sweep library behind `dispatch-cli.js` | `lib/receipt-log.js`, `lib/tree-digest.js` |
-| `lib/gate-derive.js` | Check-time gate derivation for the locally installed `stop-guard.sh` and the advisory hooks. Without it `stop-guard.sh` probes git directly and discloses `source=git_probe degraded=derive_unavailable` (mirror only where no repository exists); the advisory hooks fall back to mirror receipts and disclose `source=state_file` | `lib/tree-digest.js`, `lib/receipt-log.js` |
+| `lib/tree-digest.js` | Per-plane content digests (binds a noted verdict to the tree that earned it) | None |
 
 1. Conflict strategy: same as Phase 5.2.
 
@@ -398,12 +398,9 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 |--------|--------|
 | precommit-runner.js | Installed/Skipped/Conflict |
 | verify-runner.js | Installed/Skipped/Conflict |
-| dispatch-cli.js | Installed/Skipped/Conflict |
+| review-state.js | Installed/Skipped/Conflict |
 | lib/utils.js | Installed/Skipped/Conflict |
 | lib/tree-digest.js | Installed/Skipped/Conflict |
-| lib/receipt-log.js | Installed/Skipped/Conflict |
-| lib/dispatch-log.js | Installed/Skipped/Conflict |
-| lib/gate-derive.js | Installed/Skipped/Conflict |
 
 **Installed**: N / **Skipped**: M / **Conflicts**: K
 ```
@@ -419,7 +416,6 @@ Same 3-level fallback as Phase 5.1, but search for `scripts/precommit-runner.js`
 
 | Variable | Default | Condition | Description |
 |----------|---------|-----------|-------------|
-| `STOP_GUARD_MODE` | `strict` | Always (override: `--guard-mode warn`) | Stop-guard enforcement mode |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `320000` | 1M context model detected | Auto-compact window size (tokens) — delays compaction to preserve more context |
 
 #### Legacy Recommendations (auto-upgrade prompt)
@@ -429,6 +425,7 @@ When an existing setting matches a previously recommended value (not the current
 | Variable | Legacy value(s) | Current recommended | Retired on |
 |----------|-----------------|---------------------|------------|
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | `456000` | `320000` | 2026-04-17 |
+| `STOP_GUARD_MODE` | `strict`, `warn` (any value) | **Remove** — the Stop hook is reminder-only since hook-lightweighting; the setting is dead config | 2026-08-13 |
 
 ### 6.7.2 Large Context Model Detection
 
@@ -453,7 +450,6 @@ Determine whether `CLAUDE_CODE_AUTO_COMPACT_WINDOW` should be recommended:
 
    | Variable | Current (effective) | Source | Recommended | Action |
    |----------|---------------------|--------|-------------|--------|
-   | STOP_GUARD_MODE | warn | settings.json | strict | Update |
    | CLAUDE_CODE_AUTO_COMPACT_WINDOW | (not set) | — | 320000 | Add (1M model) |
 
    Example B — upgrade path (variable already set to a legacy value):
@@ -478,12 +474,9 @@ Determine whether `CLAUDE_CODE_AUTO_COMPACT_WINDOW` should be recommended:
 - Preserve all non-`env` keys in settings (hooks, etc.)
 - Write updated settings back
 
-> **Note**: Runtime mode resolution for `STOP_GUARD_MODE` follows: env var > `settings.local.json` > `settings.json` > default `warn`. See `hooks/stop-guard.sh` for canonical precedence.
-
 ### 6.7.5 Interaction with Phase 6.3 and `/install-hooks`
 
 - Phase 6.3 (within `/project-setup`) defers env writes to Phase 6.7
-- `/install-hooks` (standalone command) retains its own `env.STOP_GUARD_MODE` write — it operates independently
 - When both run in the same session, Phase 6.7 runs after Phase 6 and writes to the same target file
 - `--no-hooks` skips Phase 6 but Phase 6.7 still runs → env vars are always configured
 
@@ -496,7 +489,6 @@ Determine whether `CLAUDE_CODE_AUTO_COMPACT_WINDOW` should be recommended:
 
 | Variable | Value | Effective Source | Status |
 |----------|-------|-----------------|--------|
-| STOP_GUARD_MODE | strict | settings.json | ✅ Updated |
 | CLAUDE_CODE_AUTO_COMPACT_WINDOW | 320000 | settings.json | ✅ Added (1M model) — or ✅ Upgraded (456000 → 320000, legacy retired 2026-04-17) when upgrading |
 
 **Model**: Opus 4.6 (1M context) → auto-compact window recommended
@@ -514,9 +506,8 @@ Summarize all phases and perform closed-loop check:
 | CLAUDE.md behavior text | `Required Checks` section exists | ✅ |
 | `@rules/` references | `@rules/auto-loop.md` in `.claude/CLAUDE.md` | ✅ |
 | Rule files | `.claude/rules/auto-loop.md` exists | ✅ |
-| Hook enforcement | `stop-guard` in `.claude/settings.json` | ✅ |
+| Hook reminders | `stop-guard` in `.claude/settings.json` | ✅ |
 | Script runners | `.claude/scripts/precommit-runner.js` exists | ✅ (unless `--lite` or `--detect-only`) |
-| Guard mode | `env.STOP_GUARD_MODE` = `strict` in target settings file | ✅ (unless `--guard-mode warn`) |
 | Auto-compact window | `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` in target settings file | ✅ (1M model only) |
 
 ### Output
@@ -529,14 +520,13 @@ Summarize all phases and perform closed-loop check:
 | Detection | ✅ Framework: X, PM: Y, DB: Z |
 | CLAUDE.md | ✅ Configured (0 remaining placeholders) |
 | Rules | ✅ 13/13 managed rules + 2 override templates |
-| Hooks | ✅ 5/5 installed + settings merged |
-| Scripts | ✅ 3/3 runner scripts installed |
-| Env Config | ✅ STOP_GUARD_MODE=strict, AUTO_COMPACT_WINDOW=320000 (1M) |
+| Hooks | ✅ 6/6 installed + settings merged |
+| Scripts | ✅ 5/5 scripts installed |
+| Env Config | ✅ AUTO_COMPACT_WINDOW=320000 (1M) |
 
 ### Closed-Loop Status
-✅ Auto-loop engine fully configured (strict mode)
-(or ⚠️ Auto-loop engine configured (warn mode — stop-guard will not block))
-(or ⚠️ Partial — missing: hooks (enforcement layer inactive))
+✅ Auto-loop reminder loop fully configured
+(or ⚠️ Partial — missing: hooks (reminder layer inactive))
 (or ⚠️ Partial — missing: rules)
 (or ⚠️ Partial — missing: scripts (runner not installed))
 (or ℹ️ Auto-compact window not set — standard context model detected)
@@ -553,11 +543,10 @@ Summarize all phases and perform closed-loop check:
 - [ ] User confirmed detection results before writing
 - [ ] No remaining auto-detected `{UPPER_CASE}` placeholders in `.claude/CLAUDE.md` after setup (manual placeholders like `{TICKET_PATTERN}` are acceptable)
 - [ ] `.claude/rules/` contains 15 `.md` files (13 managed + 2 override templates) (unless `--no-rules` or `--lite`)
-- [ ] `.claude/hooks/` contains 5 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
+- [ ] `.claude/hooks/` contains 6 `.sh` files with execute permission (unless `--no-hooks` or `--lite`)
 - [ ] `.claude/settings.json` contains hook definitions (unless `--no-hooks` or `--lite`)
-- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, `dispatch-cli.js`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js`, `lib/dispatch-log.js`, and `lib/gate-derive.js` (unless `--lite` or `--detect-only`)
+- [ ] `.claude/scripts/` contains `precommit-runner.js`, `verify-runner.js`, `review-state.js`, `lib/utils.js`, and `lib/tree-digest.js` (unless `--lite` or `--detect-only`)
 - [ ] `.claude/CLAUDE.md` contains `@rules/auto-loop.md` reference (unless `--lite`)
-- [ ] `env.STOP_GUARD_MODE` is set in target settings file (unless `--detect-only` or `--lite`)
 - [ ] `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW` is set in target settings file when 1M model detected (unless `--detect-only` or `--lite`)
 
 ## References

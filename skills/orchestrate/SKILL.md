@@ -6,7 +6,7 @@ allowed-tools: Bash(node:*), Bash(git status:*), Bash(git diff:*), Bash(git log:
 
 # Orchestrate Skill（v1 report-only）
 
-宣告式意圖 → planner agent 推導隨 repo 狀態變動的 workflow 計畫 → 預覽人核 → read-only fanout → pre/post 無變更驗證 → 報告走既有 doc review loop。Control plane（`.claude_workflows/`）與 hook 獨佔的 safety plane（`.claude_review_state.json`）完全分離：**orchestrator 對 safety plane 只讀，永不寫**。
+宣告式意圖 → planner agent 推導隨 repo 狀態變動的 workflow 計畫 → 預覽人核 → read-only fanout → pre/post 無變更驗證 → 報告走既有 doc review loop。Control plane（`.claude_workflows/`）是 orchestrator 唯一的狀態面；review 提醒狀態自 hook-lightweighting § 3.2 起存於 repo 外（`~/.cache/sd0x-dev-flow/`），orchestrator 不讀不寫。
 
 ## Trigger
 
@@ -88,7 +88,7 @@ Fanout 候選一律比對 `references/admission-allowlist.json`（v1 僅 `Explor
 | 規則 | 內容 |
 |------|------|
 | 路徑 | `.claude_workflows/<run-id>.json`（gitignored；`run-id` = `<UTC yyyymmdd-HHMMSS>-<intent-slug>`） |
-| 寫入工具 | 主 session `Write`（`.json` 不觸發 change flag——control plane 對 safety plane 惰性） |
+| 寫入工具 | 主 session `Write`（gitignored 路徑，不進 review 平面） |
 | Redaction | 寫入磁碟前過 `scripts/security-redact.js` 完整 contract：`scanHighConfidence` truthy → **abort fail-closed**（不寫檔、run 標 `needs_human`、提示改寫意圖）；medium → mask 後寫入 |
 | FIFO | 保留最近 10 個 run，超過刪最舊。**兩者一起算、一起刪**：`<run-id>.json`（run-state）與同名的 `<run-id>/` 目錄（封包 + plan + baseline）。只清 `.json` 會讓 `plan-context.json`（~81 KB／run）無限累積在 gitignored 目錄裡；封包已含完整 catalog 與 repo signals，過期後留著只是垃圾與洩漏面。**執行方式**（規範路徑，非能力邊界：本 skill 未預先核可 `Bash(rm:*)`，但預先核可的 `Bash(node:*)` 同樣涵蓋 `node -e 'fs.rmSync(…)'`，沒有機制強制刪除走這支腳本；containment 只在走這條路時成立）：<br>`node "${CLAUDE_PLUGIN_ROOT}/skills/orchestrate/scripts/prune-runs.js"`（先跑 `--dry-run` 看清單）。**路徑必須是 plugin root 絕對路徑**，與本 skill 呼叫 `plan-context.js`／`validate-plan.js` 的形式一致：skill 執行時的 cwd 是**目標 repo**，不是 plugin 目錄，所以 repo 相對路徑只在本 repo 內開發時碰巧可用，部署到任何其他專案都是 `MODULE_NOT_FOUND`——retention 於是從未執行，而 `.claude_workflows/` 以每 run ~81 KB 持續累積，正好是這支腳本要擋的洩漏。腳本自行從目錄讀取 run-id、拒絕非 `.claude_workflows` 的 root 與 symlink、認不得的檔名一律保留並回報 |
 | 封包提前刪除（建議） | `validate-plan.js` 通過、plan 進入執行後，`<run-id>/plan-context.json` 已無用途——可立即刪除，只留 `<run-id>/plan.json` 供事後稽核。digest 已在驗證當下比對完畢，事後保留封包不會增加任何保證 |
@@ -96,7 +96,7 @@ Fanout 候選一律比對 `references/admission-allowlist.json`（v1 僅 `Explor
 
 ### 輸出隔離契約
 
-`/orchestrate` 自身輸出**禁止**出現 hook-parsed gate sentinels（gate 標頭行、bare Ready / Mergeable / Blocked / All-Pass 記號）——run 總結使用 `## Orchestrate Run Summary` + `[ORCHESTRATE_RUN] run_id=… status=…` 結構行（純行為層標記，無 hook 解析）。報告寫入後的 doc gate sentinel 由 `/codex-review-doc` 自己輸出（合法路徑）。
+`/orchestrate` 自身輸出**禁止**出現 gate sentinels（gate 標頭行、bare Ready / Mergeable / Blocked / All-Pass 記號）——這些是行為層信號，模型與 reviewer 讀對話時會把它們當成 gate verdict，orchestrate 的總結不得偽造一個沒有 gate 產出的 verdict。run 總結使用 `## Orchestrate Run Summary` + `[ORCHESTRATE_RUN] run_id=… status=…` 結構行。報告寫入後的 doc gate sentinel 由 `/codex-review-doc` 自己輸出（合法路徑）。
 
 ## Verification Checklist
 
@@ -107,7 +107,7 @@ Fanout 候選一律比對 `references/admission-allowlist.json`（v1 僅 `Explor
 - [ ] `validate-plan.js` 帶入 `--context-sha256`（值取自 `plan-context.js --out` 摘要的 `sha256`）；**未帶 digest 一律 exit 1，`--context -`（stdin）也不例外**——綁定的是 digest 走過 worker 碰不到的通道，不是 bytes 從哪個 fd 進來
 - [ ] 執行前經 AskUserQuestion 人核
 - [ ] run 終態正確：drift → `failed`；doc gate 未過 → `needs_human`；Mergeable → `done`
-- [ ] 無任何 git 狀態變更操作（add / commit / push / stash / tag / config / checkout / reset 等——`allowed-tools` 僅開放唯讀 git 指令，mutation 由 `run-verify.js` compare 兜底）；safety plane 零寫入
+- [ ] 無任何 git 狀態變更操作（add / commit / push / stash / tag / config / checkout / reset 等——`allowed-tools` 僅開放唯讀 git 指令，mutation 由 `run-verify.js` compare 兜底）
 
 ## Bundled References
 

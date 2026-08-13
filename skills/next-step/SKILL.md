@@ -52,7 +52,7 @@ If the script fails or is unavailable, fall back to manual signal collection:
 | 1 | Git branch | `git branch --show-current` |
 | 2 | Git status | `git status -sb` |
 | 3 | Changed files | `git diff --name-only HEAD` + `git status --porcelain` (for untracked) |
-| 4 | Review state | `.claude_review_state.json` |
+| 4 | Gate state | `node scripts/review-state.js check --format=fact`（installed copy first: `.claude/scripts/review-state.js`；checker 不在 → 不主張任何 verdict） |
 
 Then use the Progression Tables below.
 

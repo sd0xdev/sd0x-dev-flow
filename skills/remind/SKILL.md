@@ -48,7 +48,7 @@ means two invocations.
 
 | Mode | Trigger | Behavior |
 |------|---------|----------|
-| **Smart detect** | `/remind` (no args) | Resolver, else fenced git → detect violations → auto-load relevant rules |
+| **Smart detect** | `/remind` (no args) | Checker, else fenced git → detect violations → auto-load relevant rules |
 | **Specific rule** | `/remind auto-loop` | Read `rules/auto-loop.md` → summarize + check violations |
 | **Nuclear** | `/remind --all` | Read CLAUDE.md + ALL rules → full compliance report |
 
@@ -64,12 +64,30 @@ When invoked without arguments, run detection heuristics then **dynamically load
 # pinning the tree answered about. A named-variable list leaves
 # `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG*` and friends able to redirect or blind
 # the read — and a blinded read looks exactly like a clean repository.
-_remind_git() ( for v in ${!GIT_*}; do unset "$v"; done; git -C "$PWD" "$@" )
+#
+# Enumeration goes through `env`, NOT through `${!GIT_*}`. That expansion is a bash
+# extension: zsh answers `bad substitution` and the whole fence returns nothing, so
+# every read below fails at once — `TREE` captures the error text through its `2>&1`
+# and a provably clean tree reports dirty, `BRANCH` empties and detection 4 can never
+# fire. Measured under zsh 5.9, the shell the session pastes this block into. `env`
+# costs a fork and is read the same way by bash, zsh and sh. `sed` anchors at `^GIT_`,
+# so a value carrying an embedded newline can only ever synthesize another GIT_* name
+# — never `PATH` — and unsetting a surplus GIT_* name is on the safe side of a fence
+# whose whole purpose is unsetting them.
+#
+# The loop is not decoration, and neither is its shape. `unset $vars` would be wrong
+# twice over: zsh does not word-split an unquoted `$var`, so several names would arrive
+# as one, and on a GIT_*-free environment `unset` would be called with no operands at
+# all — which bash accepts silently and zsh rejects with `unset: not enough arguments`,
+# straight into `TREE` through its `2>&1`. Iterating a command substitution (which both
+# shells DO split) runs zero times on the empty case and passes one quoted name at a
+# time otherwise.
+_remind_git() ( for v in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$v"; done; git -C "$PWD" "$@" )
 
 # Anchor every path at the repository root. /remind is invoked from wherever the
-# session happens to be, and a cwd-relative state file or library path turns an
-# answerable run in `packages/app/` into a degraded one that reports both planes
-# owed and no state file — over a root that holds valid receipts.
+# session happens to be, and a cwd-relative checker path turns an answerable run
+# in `packages/app/` into a degraded one that reports both planes owed — over a
+# root whose checker would have answered.
 ROOT=$(_remind_git rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 [ -n "$ROOT" ] || ROOT="$PWD"
 
@@ -77,7 +95,7 @@ ROOT=$(_remind_git rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 # is anything in it uncommitted. Two probes can disagree — a concurrent editor, a
 # build writing into the tree, a wrapper answering differently the second time — and
 # a step that classifies from one probe while reporting `DIRTY` from another accepts
-# mirror verdicts over a tree that moved between the two reads (reproduced with a git
+# stale verdicts over a tree that moved between the two reads (reproduced with a git
 # shim, round 17). stderr is folded in and a failed probe is not an empty one: a
 # warning (an omitted directory, an unreadable submodule) or a nonzero exit means the
 # tree is unverifiable, and unverifiable is owed. `--ignore-submodules=none` because
@@ -91,41 +109,30 @@ else
 fi
 unset TREE
 
-# State file. Its EXISTENCE is detection 5's input and its PATH is what the resolver
-# is handed; its contents are never read here. A mirror verdict records that a gate
-# passed, never which tree passed it, and no cheap local check can supply that
-# binding: a clean `git status` says only that nothing is uncommitted right now, so
-# a PASS recorded on commit A survives a checkout to an equally clean commit B
-# (round 18). Deriving the binding is `gate-derive.js`'s whole job — without it the
-# three verdicts stay `false` and the reminder over-reminds, which costs a redundant
-# review dispatch instead of hiding an owed gate.
-STATE_FILE="$ROOT/.claude_review_state.json"
-STATE_FILE_EXISTS=$(test -f "$STATE_FILE" && echo "true" || echo "false")
-
-# Change flags come from the SAME advisory resolver the auto-loop hooks use
-# (lib/gate-derive.js --advisory), never from the state file: since WB5c
-# `session-init.sh` DELETES `has_code_change`/`has_doc_change`, so reading them
-# directly reports "no change" on a dirty tree. Installed copy first — the
-# installer puts the libraries under `.claude/scripts/lib/`, not beside it.
-DERIVE="$ROOT/.claude/scripts/lib/gate-derive.js"; [ -f "$DERIVE" ] || DERIVE="$ROOT/scripts/lib/gate-derive.js"
+# The reminder-state checker (hook-lightweighting §3.2): one computation of
+# {noted, dirty, digest_match, verdict, rounds, passed, owed} per gate plane,
+# derived from the live tree digest — `passed` already binds the recorded
+# verdict to the current content, so no separate provenance check is needed.
+# Installed copy first — the installer puts scripts under `.claude/scripts/`.
+CHECKER="$ROOT/.claude/scripts/review-state.js"; [ -f "$CHECKER" ] || CHECKER="$ROOT/scripts/review-state.js"
 ADV=""
-if [ -f "$DERIVE" ] && command -v node >/dev/null 2>&1; then
-  # Bounded like the advisory hooks *when a bounding tool exists*: the derivation
-  # hashes dirty and untracked content, which is unbounded on a pathological tree,
-  # and /remind runs interactively. A kill lands in the fallback below. With none of
-  # timeout/gtimeout/perl present the last branch runs node unbounded — the ladder
-  # has no pure-shell rung, and claiming otherwise is the overstatement doc review
-  # round 5 caught. The `git status` probe above is unbounded for the same reason.
+if [ -f "$CHECKER" ] && command -v node >/dev/null 2>&1; then
+  # Bounded *when a bounding tool exists*: the digest hashes dirty and untracked
+  # content, which is unbounded on a pathological tree, and /remind runs
+  # interactively. A kill lands in the fallback below. With none of
+  # timeout/gtimeout/perl present the last branch runs node unbounded — the
+  # ladder has no pure-shell rung. The `git status` probe above is unbounded for
+  # the same reason.
   T="${AUTO_LOOP_DERIVE_TIMEOUT:-10}"; case "$T" in '' | *[!0-9]*) T=10 ;; esac
   [ "$T" -gt 0 ] 2>/dev/null || T=10
   if command -v timeout >/dev/null 2>&1; then
-    ADV=$(timeout "$T" node "$DERIVE" "$ROOT" --advisory "$STATE_FILE" 2>/dev/null) || ADV=""
+    ADV=$(cd "$ROOT" && timeout "$T" node "$CHECKER" check --format=json 2>/dev/null) || ADV=""
   elif command -v gtimeout >/dev/null 2>&1; then
-    ADV=$(gtimeout "$T" node "$DERIVE" "$ROOT" --advisory "$STATE_FILE" 2>/dev/null) || ADV=""
+    ADV=$(cd "$ROOT" && gtimeout "$T" node "$CHECKER" check --format=json 2>/dev/null) || ADV=""
   elif command -v perl >/dev/null 2>&1; then
-    ADV=$(perl -e 'alarm shift; exec @ARGV or exit 127' "$T" node "$DERIVE" "$ROOT" --advisory "$STATE_FILE" 2>/dev/null) || ADV=""
+    ADV=$(cd "$ROOT" && perl -e 'alarm shift; exec @ARGV or exit 127' "$T" node "$CHECKER" check --format=json 2>/dev/null) || ADV=""
   else
-    ADV=$(node "$DERIVE" "$ROOT" --advisory "$STATE_FILE" 2>/dev/null) || ADV=""
+    ADV=$(cd "$ROOT" && node "$CHECKER" check --format=json 2>/dev/null) || ADV=""
   fi
 fi
 
@@ -134,33 +141,23 @@ if [ -n "$ADV" ]; then
   # `|| true`: a nonempty but malformed answer makes jq exit nonzero, and a failed
   # command substitution in an assignment aborts a caller that set -e — before the
   # fallback below could run. An empty value is the rejection this step wants anyway.
-  _remind_bool() { echo "$ADV" | jq -r --arg k "$1" '.[$k] | if type == "boolean" then tostring else "" end' 2>/dev/null || true; }
-  HAS_CODE=$(_remind_bool has_code_change); HAS_DOC=$(_remind_bool has_doc_change)
-  CODE_REVIEW=$(_remind_bool code_review_passed); DOC_REVIEW=$(_remind_bool doc_review_passed)
-  PRECOMMIT=$(_remind_bool precommit_passed)
-  # Provenance is part of the contract, not metadata. The resolver serves several
-  # callers and keeps the mirror authoritative in the one state where a digest
-  # receipt has nothing to bind to — outside a repository (`treeState=not-a-repo`,
-  # the planes it fell back on named in `mirror_planes`). Those are exactly the
-  # values this step refuses to read directly, so accepting them here would take
-  # the same stale-or-forged verdict by a longer route: a forged state file beside
-  # a non-repository directory would answer every gate PASS. Anything but a derived
-  # answer over a real tree is rejected, and the git fallback runs instead. The
-  # type is checked, not just the length: jq gives `""` and `{}` a length of zero
-  # too, so a length test alone accepts a malformed answer as derived — a missing
-  # or null `mirror_planes` fails closed on the same clause (round 20).
-  ADV_PROV=$(echo "$ADV" | jq -r 'if (.treeState == "ok") and ((.mirror_planes | type) == "array") and ((.mirror_planes | length) == 0) then "derived" else "mirrored" end' 2>/dev/null || true)
-  # All five or none — a partially parsed answer must not mix two policies.
-  if [ "$ADV_PROV" = "derived" ] && [ -n "$HAS_CODE" ] && [ -n "$HAS_DOC" ] && [ -n "$CODE_REVIEW" ] && [ -n "$DOC_REVIEW" ] && [ -n "$PRECOMMIT" ]; then
+  _remind_bool() { echo "$ADV" | jq -r --arg p "$1" --arg k "$2" '.[$p][$k] | if type == "boolean" then tostring else "" end' 2>/dev/null || true; }
+  HAS_CODE=$(_remind_bool code_review dirty); HAS_DOC=$(_remind_bool doc_review dirty)
+  CODE_REVIEW=$(_remind_bool code_review passed); DOC_REVIEW=$(_remind_bool doc_review passed)
+  PRECOMMIT=$(_remind_bool precommit passed)
+  CODE_NOTED=$(_remind_bool code_review noted); DOC_NOTED=$(_remind_bool doc_review noted)
+  # All seven or none — a partially parsed answer must not mix two policies. A
+  # checker run outside a repository, or against a malformed state slot, either
+  # exits nonzero (ADV empty) or yields non-boolean fields rejected here.
+  if [ -n "$HAS_CODE" ] && [ -n "$HAS_DOC" ] && [ -n "$CODE_REVIEW" ] && [ -n "$DOC_REVIEW" ] && [ -n "$PRECOMMIT" ] && [ -n "$CODE_NOTED" ] && [ -n "$DOC_NOTED" ]; then
     ADV_OK=true
   fi
-  unset ADV_PROV
 fi
 
 if [ "$ADV_OK" != "true" ]; then
-  # Resolver unavailable, so the ONE tree answer taken above is all there is, and it
-  # opens both planes or neither. It deliberately does NOT classify: only
-  # `gate-derive.js` does that, by full-path suffix over the whole repository.
+  # Checker unavailable, so the ONE tree answer taken above is all there is, and it
+  # opens both planes or neither. It deliberately does NOT classify: only the
+  # checker does that, by full-path suffix over the whole repository.
   # Per-plane pathspec probes were tried and removed, because an ordinary pathspec is
   # relative to the CWD: run from `sub/`, `-- '*.md'` cannot see a dirty `guide.md` at
   # the root while a negative-only probe still reports it, so a doc-only change reads
@@ -174,19 +171,20 @@ if [ "$ADV_OK" != "true" ]; then
   else
     HAS_CODE=true; HAS_DOC=true
   fi
-  # No verdict without the resolver — not even on a clean tree. The mirror records
-  # that a gate passed, never which tree passed it, and `git status` cannot supply the
-  # missing half: "clean" says nothing is uncommitted *now*, which is equally true one
-  # checkout later, so a PASS earned on commit A reads as current on an unrelated,
-  # equally clean commit B (round 18). A forged mirror is indistinguishable from a
-  # stale one by the same argument. So the degraded run answers the change question
-  # from git and leaves every verdict `false`.
+  # No verdict without the checker — not even on a clean tree. The state slot lives
+  # outside the repo keyed by a non-contractual hash, so this step cannot read it
+  # directly, and `git status` cannot supply the digest binding: "clean" says
+  # nothing is uncommitted *now*, which is equally true one checkout later, so a
+  # PASS earned on commit A would read as current on an unrelated, equally clean
+  # commit B. The degraded run answers the change question from git and leaves
+  # every verdict `false`, and the noted flags with them.
   #
-  # What that costs, stated plainly: detection 3 (review passed, no precommit) cannot
-  # fire on a degraded run, because its trigger is a verdict this path does not have.
-  # Detections 1, 2 and 5 still work off the tree. The trade is deliberate — a missed
-  # nudge about the next gate, rather than a stale PASS closing the current one.
+  # What that costs, stated plainly: detections 3 and 5 cannot fire on a degraded
+  # run — 3 triggers on a verdict and 5 on a noted flag, and this path has neither.
+  # Detections 1 and 2 still work off the tree. The trade is deliberate — a missed
+  # nudge, rather than a stale PASS closing the current gate.
   CODE_REVIEW=false; DOC_REVIEW=false; PRECOMMIT=false
+  CODE_NOTED=false; DOC_NOTED=false
 fi
 
 # Branch — same fence, so a redirected environment cannot report a feature branch as
@@ -210,22 +208,22 @@ For each detected issue, **Read the mapped rule file** and extract the key secti
 | 2 | Doc changed, no review | `HAS_DOC=true` + `DOC_REVIEW=false` | `rules/auto-loop.md` | Terminal completion invariant paragraph — the `.md` gate is `/codex-review-doc` |
 | 3 | Review passed, no precommit | `CODE_REVIEW=true` + `PRECOMMIT=false` | `rules/auto-loop.md` | "Gate sequence" paragraph in § Tiers |
 | 4 | On main branch | `BRANCH` is `main` or `master` | `rules/git-workflow.md` | Branch naming + protected branches |
-| 5 | Dirty worktree, no state | `DIRTY` non-empty + `STATE_FILE_EXISTS=false` | `CLAUDE.md` | "Required Checks" table |
+| 5 | Dirty plane, never noted | (`HAS_CODE=true` + `CODE_NOTED=false`) or (`HAS_DOC=true` + `DOC_NOTED=false`) | `CLAUDE.md` | "Required Checks" table — **fires once, aggregated**: name every never-noted dirty plane in one finding, not one row per plane |
 
-Without the resolver (`ADV_OK=false`) the step does not classify, so `HAS_CODE` and `HAS_DOC` move
-together, and **no verdict is available at all** — the mirror is not read on any degraded run,
-however clean the tree looks (see Step 1's comment: clean means "nothing uncommitted now", which an
-unrelated commit satisfies just as well). What remains:
+Without the checker (`ADV_OK=false`) the step does not classify, so `HAS_CODE` and `HAS_DOC` move
+together, and **no verdict and no noted flag are available at all** — the state slot is never read
+directly on any degraded run, however clean the tree looks (see Step 1's comment: clean means
+"nothing uncommitted now", which an unrelated commit satisfies just as well). What remains:
 
 | Degraded run | Verdicts | What fires |
 |--------------|----------|-----------|
-| Tree provably clean | All three `false` — no source for them | No **gate** row: rows 1 and 2 need a change flag, row 3 needs `CODE_REVIEW=true`, row 5 needs `DIRTY`. Row 4 is unaffected — it reads `BRANCH`, not the resolver, so a degraded clean run on `main` still reports it, and the run still terminates under § Step 4 |
-| Tree dirty or unverifiable | All three `false` — no source for them | Rows 1 and 2 both fire; row 5 too when no state file exists. Row 3 cannot, because `CODE_REVIEW` is `false` |
+| Tree provably clean | All three `false` — no source for them | No **gate** row: rows 1 and 2 need a change flag, row 3 needs `CODE_REVIEW=true`, row 5 needs a noted flag this path does not have. Row 4 is unaffected — it reads `BRANCH`, not the checker, so a degraded clean run on `main` still reports it, and the run still terminates under § Step 4 |
+| Tree dirty or unverifiable | All three `false` — no source for them | Rows 1 and 2 both fire. Rows 3 and 5 cannot: 3 triggers on `CODE_REVIEW=true`, 5 on a noted flag, and the degraded path has neither |
 
 So on a degraded dirty tree rows 1 and 2 are never separable — one shared cause, stated once
-("resolver unavailable, so both planes are reported as changed and no verdict is trusted"), not two
-independent detections. Never disclose `source=mirror` on a degraded run, and never dispatch
-`/precommit` from row 3 there: no mirror value was read, and row 3 cannot have fired.
+("checker unavailable, so both planes are reported as changed and no verdict is trusted"), not two
+independent detections. Never disclose `source=state` on a degraded run, and never dispatch
+`/precommit` from row 3 there: no state was read, and row 3 cannot have fired.
 
 ### Step 3: Output with Rule Context
 
@@ -272,7 +270,7 @@ branch, and `@rules/git-workflow.md` does not authorize this skill to run `git c
 nor is there a branch name to choose. State the finding and the command the human can run; that is
 the whole of it. If detection 4 is the *only* finding, this step ends without an invocation.
 
-**A degraded run terminates too, and not by claiming All Clear.** Without the resolver there is no
+**A degraded run terminates too, and not by claiming All Clear.** Without the checker there is no
 verdict, so re-reading Step 1 after a correction returns the *same* rows it returned before —
 `/codex-review-fast` cannot make `CODE_REVIEW` true when nothing can read a verdict. **Degradation
 dominates the terminal status**: whenever `ADV_OK` is false the reply ends at `### Degraded ⚠️`,
@@ -281,12 +279,12 @@ becoming a loop or a false clearance:
 
 | Degraded run | What terminates it |
 |--------------|--------------------|
-| An executable correction fired | Invoke **each distinct correction at most once**. When the re-read returns rows already corrected in this reply and the resolver is still unavailable, stop and report `### Degraded ⚠️` — the corrections ran, closure is unverifiable until the resolver answers |
-| No executable correction fired | Report `### Degraded ⚠️` as well, naming the resolver as the missing input. **Not `### All Clear ✅`**, and **not the lone-detection-4 exception either**: detection 4 fires on a degraded clean run on `main` and names no Skill, so that run reaches the end with no invocation and must still not claim a clearance nothing verified |
+| An executable correction fired | Invoke **each distinct correction at most once**. When the re-read returns rows already corrected in this reply and the checker is still unavailable, stop and report `### Degraded ⚠️` — the corrections ran, closure is unverifiable until the checker answers |
+| No executable correction fired | Report `### Degraded ⚠️` as well, naming the checker as the missing input. **Not `### All Clear ✅`**, and **not the lone-detection-4 exception either**: detection 4 fires on a degraded clean run on `main` and names no Skill, so that run reaches the end with no invocation and must still not claim a clearance nothing verified |
 
 So the complete list of outcomes that end this step without an invocation is **three**:
-`### All Clear ✅` (the resolver answered and nothing is owed), a lone detection 4 on a run the
-resolver answered, and `### Degraded ⚠️` where no executable correction fired. A degraded run that
+`### All Clear ✅` (the checker answered and nothing is owed), a lone detection 4 on a run the
+checker answered, and `### Degraded ⚠️` where no executable correction fired. A degraded run that
 *did* invoke corrections ends at `### Degraded ⚠️` too — that one is a termination, not an
 exception.
 
@@ -297,10 +295,10 @@ When user provides a rule name:
 1. **Resolve**: `rules/<rule>.md` → if not found, try `rules/<rule>-project.md` → if not found, list available via `Glob("rules/*.md")`
 2. **Read**: Read the full rule file
 3. **Summarize**: Extract core principles, prohibited behaviors, required actions
-4. **Check**: run Step 1 and use the variables it resolved. **Not the state file directly** — a
-   stored verdict is not bound to the tree that earned it, so a mirror `code_review.passed=true`
-   read after a subsequent edit reports compliance over an owed review. Step 1's resolver binds the
-   verdict to the current content; where it cannot, it says so
+4. **Check**: run Step 1 and use the variables it resolved. **Not the state slot directly** — the
+   checker's `passed` is what binds the stored verdict to the current tree digest; a raw slot read
+   after a subsequent edit reports compliance over an owed review. Where the checker cannot answer,
+   Step 1 says so
 5. **Output**: rule summary + current violation status + correction commands, then Step 4 —
    the execution contract applies to this mode too
 
@@ -312,7 +310,7 @@ When the model keeps drifting despite specific reminders:
 2. **Read all rules**: `Glob("rules/*.md")` → Read each file
 3. **For each rule**: Extract prohibited behaviors / core principles
 4. **Cross-reference**: Step 1's resolved variables against all rules — same reason as above, the
-   state file is not a second source of truth
+   state slot is not a second source of truth
 5. **Output**: full compliance report with every rule's status, then Step 4
 
 This is the "nuclear option" — high token cost but guarantees the model re-ingests all project rules. Use when repeated `/remind` calls haven't fixed the drift.
@@ -329,11 +327,11 @@ This is the "nuclear option" — high token cost but guarantees the model re-ing
 
 | Failure | Behavior |
 |---------|----------|
-| jq unavailable | The resolver's answer cannot be parsed, so the run degrades to the two rows below — fail-closed, never silently clean |
-| Resolver unavailable, tree provably clean | Change flags read `false`, verdicts read `false` (the mirror is never read — a clean tree does not bind a stored verdict to itself), so no gate row fires; detection 4 still can, reading `BRANCH`. The run terminates under § Step 4, which refuses a clearance for a run that verified nothing |
-| Resolver answered from anything but a derived read (`treeState` other than `ok`, or a `mirror_planes` that is not an **empty array** — a non-empty array, a missing field, `null`, `""` and `{}` are all rejected, since jq gives the last two length zero) | Rejected exactly like no answer at all — it carries the stored verdicts this step refuses to read directly. The rows below apply |
-| Resolver unavailable, tree dirty or unverifiable | **Both** planes open and all three verdicts read `false`. Rows 1 and 2 fire, row 5 when no state file exists; **row 3 cannot fire** — its trigger is `CODE_REVIEW=true`. Disclose the shared cause once |
-| State file missing | Not a degradation: the resolver derives from tree content and content-addressed receipts, so gates can still close. It only sets `STATE_FILE_EXISTS=false`, which is detection 5's input |
+| jq unavailable | The checker's answer cannot be parsed, so the run degrades to the rows below — fail-closed, never silently clean |
+| Checker unavailable, tree provably clean | Change flags read `false`, verdicts and noted flags read `false` (the state slot is never read directly — a clean tree does not bind a stored verdict to itself), so no gate row fires; detection 4 still can, reading `BRANCH`. The run terminates under § Step 4, which refuses a clearance for a run that verified nothing |
+| Checker answered with a malformed or partial object (a plane missing, a field non-boolean) | Rejected exactly like no answer at all — all seven fields or none. The rows below apply |
+| Checker unavailable, tree dirty or unverifiable | **Both** planes open; verdicts and noted flags all read `false`. Rows 1 and 2 fire; **rows 3 and 5 cannot** — 3 triggers on `CODE_REVIEW=true` and 5 on a noted flag, and the degraded path has neither. Disclose the shared cause once |
+| State slot missing | Not a degradation: the checker answers `noted:false` for that plane, which is exactly detection 5's input — a dirty plane that was never noted |
 | Rule file not found | List available rules via `Glob("rules/*.md")` |
 
 ## Execution Contract (reinforces top-level CRITICAL section)
@@ -373,7 +371,7 @@ Output: Reads rules/git-workflow.md → summarizes branch naming + forbidden ope
 
 ## Verification Checklist
 
-- [ ] Detection heuristics ran (Step 1's resolver, or its disclosed git fallback)
+- [ ] Detection heuristics ran (Step 1's checker, or its disclosed git fallback)
 - [ ] Relevant rules dynamically loaded (Read tool)
 - [ ] Rule text quoted inline for model re-ingestion
 - [ ] Correction commands are copy-pasteable

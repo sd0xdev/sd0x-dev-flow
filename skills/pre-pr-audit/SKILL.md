@@ -78,7 +78,7 @@ sequenceDiagram
 
 | Step | Dispatch | Action | Source |
 |------|----------|--------|--------|
-| A1 | Background Agent | Read precommit/verify state file | `.claude_review_state.json` — check `precommit.passed` + freshness (HEAD match) |
+| A1 | Background Agent | Read precommit gate state | `node scripts/review-state.js check --format=json`（installed copy first: `.claude/scripts/review-state.js`）— `precommit.passed` is content-addressed, so no separate freshness check; checker absent → report "no verdict source", never a pass |
 | A2 | **Foreground** (blocking) | Invoke `/risk-assess --mode fast` | Skill tool — get risk_level, top_affected, overall_score |
 | A3 | Background Agent | Detect changed files + map to test files | `git diff --name-only HEAD` → match against `test/` patterns |
 

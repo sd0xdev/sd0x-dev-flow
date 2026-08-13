@@ -123,12 +123,22 @@ file list, each file's profile, and what that profile says to read.
 Organize results into rating table + severity-grouped findings + gate. One gate for the plan: a batch
 that comes back `⛔ Needs revision` blocks the plan.
 
-**The conjunction is behaviour-layer, and the receipt cannot hold it.** `.claude_review_state.json`
-stores one `doc_review` verdict and each batch's parsed report overwrites it — last write wins,
-whatever an earlier batch said. So a passing batch dispatched after a blocked one banks a green
-receipt the plan has not earned. Hold the conjunction yourself: fix and re-dispatch every blocked
-batch (`references/review-loop-doc.md` § Loop Rules), and call the plan Mergeable only when the
-**latest** dispatch of every batch passed — never because the final dispatch happened to.
+**The conjunction is behaviour-layer, and the state slot cannot hold it.** The reminder state
+(hook-lightweighting § 3.2) stores one `doc_review` note and a later note overwrites it — last
+write wins, whatever an earlier batch said. Hold the conjunction yourself: fix and re-dispatch
+every blocked batch (`references/review-loop-doc.md` § Loop Rules), and call the plan Mergeable
+only when the **latest** dispatch of every batch passed — never because the final dispatch
+happened to. Then self-note the plan's verdict once, not per batch:
+
+```bash
+CHECKER=".claude/scripts/review-state.js"; [ -f "$CHECKER" ] || CHECKER="scripts/review-state.js"
+node "$CHECKER" note doc_review pass   # every batch's latest dispatch passed
+node "$CHECKER" note doc_review fail   # any batch still blocked — increments the rounds count
+```
+
+The note is the declared-provenance record the reminder hooks read; it is advisory, binds to the
+current tree digest (a later `.md` edit re-opens the plane by construction), and a failed note
+never fails the review — the cost is one redundant reminder line.
 
 ## Review Profiles
 
@@ -164,7 +174,9 @@ outcome auto-passes anything (Anchor Register #5, #6). Contract and escalation t
 
 ⛔ Needs revision → fix 🔴 items → `/codex-review-doc --continue <threadId>` → repeat until ✅ Mergeable.
 
-Max 3 rounds (`fast` tier — docs are the tier's primary case). Still failing → report blocker.
+The round budget is the tier's cap (`fast` — docs are the tier's primary case — caps at 6; an
+explicit `## Max Rounds` in `rules/auto-loop-project.md` overrides it, per `rules/auto-loop.md`
+§ Tiers). Still failing at the cap → report blocker.
 
 **🔴 only.** 🟡 and ⚪ are non-blocking: log them and proceed.
 
@@ -172,9 +184,11 @@ Max 3 rounds (`fast` tier — docs are the tier's primary case). Still failing �
 [NIT_DEFERRED] file:line | issue | reason: sub-threshold-doc | <ISO8601>
 ```
 
-That tag and field order are **hook-parsed** — `post-tool-review-state.sh` matches `[NIT_DEFERRED]` at column 0 and writes the entry to `.claude_nit_history.json` with a TTL, so the same 🟡 is not re-raised next session. `/codex-review-doc` is an eligible producer (the routing matches `codex-review`). Any other tag is behavior-layer prose that no hook reads.
-
-The parse runs on the **reviewer's output**, which is why `references/codex-prompt-doc.md` asks Codex for a `### Deferred Findings` section. The same line typed into your own reply is readable but persists nothing.
+That tag and field order are a **reporting convention** — nothing parses or persists the line
+(hook-lightweighting § 3.3: the nit-history store retired with the hook that owned it). The durable
+record is the review report and the conversation, where the line is greppable; keep the fixed field
+order for exactly that grep. `references/codex-prompt-doc.md` asks Codex for a `### Deferred
+Findings` section so the report itself carries the deferrals.
 
 Do not batch-fix 🟡/⚪ and re-review to confirm — that spends a round on findings the gate already declared non-blocking. The two exceptions are the same as for code (`@rules/auto-loop.md` § Sub-Threshold Findings): a one-line fix in a file already open, and a mis-marked security / data-integrity issue that should have been 🔴.
 

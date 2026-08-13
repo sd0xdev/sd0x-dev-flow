@@ -70,7 +70,8 @@ Consistent with `scripts/verify-runner.js:85`.
 
 ## Concurrency Safety (Lock Pattern)
 
-Modeled after `hooks/post-tool-review-state.sh:44`.
+Standard mkdir-based lock (atomic on POSIX — `mkdir` fails if the directory exists; the
+enforcement hook this pattern was originally copied from retired with hook-lightweighting).
 
 1. **Acquire lock**: `mkdir <cacheDir>/.lock` (no `-p`, atomic — fails if exists)
    - On failure: read `.lock` directory mtime via `stat` (macOS: `stat -f %m .lock`, Linux: `stat -c %Y .lock`)
@@ -81,7 +82,7 @@ Modeled after `hooks/post-tool-review-state.sh:44`.
 4. **Update latest.json**: copy newest snapshot (not symlink)
 5. **Release lock**: `rm -rf <cacheDir>/.lock`
 
-**Note**: Unlike `post-tool-review-state.sh` which writes `pid/ts` files inside the lock directory, `/test-health` uses lock directory mtime only (simpler — no PID tracking needed since write operations are fast and non-concurrent).
+**Note**: `/test-health` uses lock directory mtime only — no PID tracking needed since write operations are fast and non-concurrent.
 
 ## Trend Comparison Rules
 

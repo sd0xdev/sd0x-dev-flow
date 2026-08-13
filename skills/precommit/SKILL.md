@@ -39,7 +39,7 @@ Use Glob to check if `.claude/scripts/precommit-runner.js` exists in the project
 
 - **Found** → run: `node .claude/scripts/precommit-runner.js --mode full --tail 80`
   - If runner emits `## Overall: ✅ PASS`, use its output and skip to the Output section.
-  - If runner emits `## Overall: ⚠️ NO CHECKS RUN`, do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection so the project's real checks run. The marker means **no project validation executed and no policy step failed** — every validation step was a skip or `unavailable`, and any policy step (comment_blocks) either skipped or passed (a FAILING policy step is `❌ FAIL`, never this marker — line 30's asymmetry) — whether because the repo declares no runnable checks or because the required tools were not available to the runner (which orchestrates the ecosystem table below itself: it detects pyproject.toml/Cargo.toml/go.mod/… and runs those checks as first-class steps). Since WB5b the **runner's own append is the only receipt source** (spec § 3.6): the legacy Skill/Bash slash-form parsing retired once WB2b folded the ecosystem fallbacks into the runner, so a Step 2 fallback run mints **no** receipt at all and the gate stays open until the runner itself executes. This is fail-closed: an all-skip run never satisfies the gate on its own.
+  - If runner emits `## Overall: ⚠️ NO CHECKS RUN`, do **NOT** treat it as a pass — fall through to Step 2 ecosystem detection so the project's real checks run. The marker means **no project validation executed and no policy step failed** — every validation step was a skip or `unavailable`, and any policy step (comment_blocks) either skipped or passed (a FAILING policy step is `❌ FAIL`, never this marker — line 30's asymmetry) — whether because the repo declares no runnable checks or because the required tools were not available to the runner (which orchestrates the ecosystem table below itself: it detects pyproject.toml/Cargo.toml/go.mod/… and runs those checks as first-class steps). The runner self-notes its own verdict (`review-state.js note precommit pass|fail`); on `⚠️ NO CHECKS RUN` it notes **nothing** — the slot is untouched and the reminder persists, which is the correct reading of "nothing validated".
   - If runner **fails** (`## Overall: ❌ FAIL`), treat as a real precommit failure (do not silently fallback).
 - **NOT found** → **Auto-install attempt** (see precommit-fast for identical auto-install logic), then fallback to Step 2.
 
@@ -70,6 +70,20 @@ For Node.js projects, auto-detect package manager from lockfile.
 | test | `test:ci` → `test` → `test:fast` → `test:unit` | Skip with note |
 
 After lint:fix completes, run `git diff --name-only` to capture auto-fixed files.
+
+**After a conclusive fallback run, self-note the outcome** — the runner cannot see a run it did not
+perform, and the `rounds` count stays path-independent (a failure is a failure whichever engine ran
+it):
+
+```bash
+CHECKER=".claude/scripts/review-state.js"; [ -f "$CHECKER" ] || CHECKER="scripts/review-state.js"
+node "$CHECKER" note precommit pass   # every executed check passed
+node "$CHECKER" note precommit fail   # the checks ran and at least one failed
+```
+
+An **inconclusive** run (the checks could not execute at all) notes nothing — exactly like the
+runner's `⚠️ NO CHECKS RUN`: the slot stays untouched and the reminder persists. The note is
+advisory; a failed note is reported and never fails the run.
 
 ## Output
 

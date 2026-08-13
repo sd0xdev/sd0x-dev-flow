@@ -10,8 +10,8 @@ Each agent finding → structured entry:
 
 ```
 {
-  claim: "Hook state file uses mkdir-based locking for POSIX atomicity",
-  evidence: "hooks/post-tool-review-state.sh:44",
+  claim: "Review reminder state is one JSON slot per plane under ~/.cache",
+  evidence: "scripts/review-state.js:41",
   shard: "hooks",
   wave: 1,
   confidence: "High"

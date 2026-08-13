@@ -25,7 +25,7 @@ Adversarial review gate for plan-mode drafts: the plan is challenged by an indep
 - Review gate applies **only when this skill is actually invoked** (A1 skill-driven; enabled-but-unexecuted detection is v2).
 - Analysis-only: the reviewer surfaces findings; **Claude revises the plan** — the skill never rewrites or deletes plan content itself.
 - Review pass ≠ execution approval: the user still arbitrates the final plan after `ExitPlanMode` (FR-14 Won't).
-- Plan-review state lives in `plan_review.*` and is **fully isolated** from `code_review` / `doc_review` / `aggregate_gate` (NFR-7). Stop-guard treats a pending plan review as warn-only.
+- **Fully behaviour-layer**: no hook parses plan-review output and no state file records the loop. The skill counts its own rounds in conversation, and the sentinels below are prose contracts the model and the human read — nothing mechanical routes on them (hook-lightweighting § 3.3).
 
 ## Arguments
 
@@ -35,10 +35,10 @@ Adversarial review gate for plan-mode drafts: the plan is challenged by an indep
 | `--quick` | Single Codex pass, no loop |
 | `--dual` | Adds a secondary reviewer in parallel. **Off unless passed** — for a release or a security-sensitive plan, not routine planning |
 | `--deep` | Delegate to `/codex-brainstorm` (Nash equilibrium debate; attack/defense built-in) |
-| `--skip-review` | Immediate bypass: emit `[PLAN_REVIEW_SKIPPED]` + gate `SKIPPED`, present raw plan |
+| `--skip-review` | Immediate bypass: emit `[PLAN_REVIEW_SKIPPED]`, present raw plan |
 | `--verbose` | Round-by-round trail (default: summary only) |
 
-User escape (NFR-5): any explicit "skip review" / "直接看 plan" instruction — detected at skill entry **and** before each re-review round — exits within ≤1 round, emits `[PLAN_REVIEW_SKIPPED]`, runs `bash scripts/emit-plan-gate.sh SKIPPED`, and presents the current plan.
+User escape (NFR-5): any explicit "skip review" / "直接看 plan" instruction — detected at skill entry **and** before each re-review round — exits within ≤1 round, emits `[PLAN_REVIEW_SKIPPED]`, and presents the current plan.
 
 ## Workflow
 
@@ -48,12 +48,10 @@ sequenceDiagram
     participant RD as security-redact
     participant CX as Codex MCP
     participant SA as Secondary (Task)
-    participant ST as plan_review state (via hooks)
 
-    C->>ST: bash scripts/emit-plan-gate.sh PENDING <tier>
+    C->>C: Step 1: tier + round counter (in conversation)
     C->>RD: Step 2 redaction contract
     alt high-confidence secret hit
-        C->>ST: emit-plan-gate.sh DEGRADED secret-detected
         C->>C: [PLAN_REVIEW_DEGRADED] → ExitPlanMode (plan NOT sent to reviewer)
     else masked plan
         alt quick
@@ -68,31 +66,26 @@ sequenceDiagram
         end
         loop until ✅ Plan Ready or max_rounds (default 5)
             CX-->>C: findings + ## Plan Review sentinel
-            C->>C: revise plan (author-side)
+            C->>C: revise plan (author-side), increment round
             C->>CX: re-review (codex-reply, references/review-loop-plan.md)
         end
         alt converged
-            C->>ST: emit-plan-gate.sh READY
-            C->>C: trail summary → ExitPlanMode
+            C->>C: ✅ Plan Ready → trail summary → ExitPlanMode
         else max_rounds reached
-            C->>ST: emit-plan-gate.sh NEEDS_HUMAN
             C->>C: ⚠️ Plan Needs Human + residual findings → user arbitrates
         else reviewer unreachable
-            C->>ST: emit-plan-gate.sh DEGRADED reviewer-unavailable
             C->>C: [PLAN_REVIEW_DEGRADED] → ExitPlanMode
         end
     end
 ```
 
-### Step 1: Gate open + tier
+### Step 1: Tier + round budget
 
-Determine tier (`standard` default; `--quick` / `--deep` explicit), then open the cycle:
-
-```bash
-bash scripts/emit-plan-gate.sh PENDING <tier>
-```
-
-This resets the per-plan cycle (`plan_review.iteration_history` round 0, flags cleared) via the PostToolUse hook. Never edit `.claude_review_state.json` directly — all state flows through the hook.
+Determine tier (`standard` default; `--quick` / `--deep` explicit) and the round cap: read
+`## Plan Review Max Rounds` from `rules/auto-loop-project.md` directly (unset → **5**). The round
+counter lives **in this conversation** — state the current round in each re-review dispatch
+("round 2/5") so the count survives in the transcript. There is no state file to open and no
+script to run: the loop's bookkeeping is the skill's own.
 
 ### Step 2: Secret redaction (NFR-8, fail-closed)
 
@@ -103,7 +96,6 @@ const { scanHighConfidence, maskMediumConfidence } = require('./scripts/security
 const high = scanHighConfidence(planText);   // {name, fingerprint} | null
 if (high) {
   // fail-closed: plan is NOT sent to any reviewer
-  // → bash scripts/emit-plan-gate.sh DEGRADED secret-detected
   // → output [PLAN_REVIEW_DEGRADED]; plan still delivered to user via ExitPlanMode
 } else {
   send(maskMediumConfidence(planText));      // medium-confidence → [REDACTED] before send
@@ -150,12 +142,12 @@ The plan draft already exists in the session transcript (it is in-context text),
 
 ### Step 4: Convergence (independent budget)
 
-Decision table applied to `plan_review.iteration_history` (never the root code/doc budget):
+Decision table applied to the conversation's own round count (never the code/doc review budget):
 
 | # | Condition | Action |
 |---|-----------|--------|
-| 1 | `current_round >= max_rounds` (default 5; `auto-loop-project.md ## Plan Review Max Rounds`) | `bash scripts/emit-plan-gate.sh NEEDS_HUMAN` → `⚠️ Plan Needs Human` + residual findings (never silently pass) |
-| 2 | No P0/P1 findings this round | `bash scripts/emit-plan-gate.sh READY` → `✅ Plan Ready` → trail summary → ExitPlanMode |
+| 1 | `current_round >= max_rounds` (default 5; `auto-loop-project.md ## Plan Review Max Rounds`) | `⚠️ Plan Needs Human` + residual findings (never silently pass) — the user arbitrates, so nothing further is owed |
+| 2 | No P0/P1 findings this round | `✅ Plan Ready` → trail summary → ExitPlanMode |
 | 3 | Findings remain | Revise plan → re-review (continue loop) |
 
 Plateau/fingerprint detection is V2 (OQ-9); v1 relies on the hard cap only.
@@ -180,12 +172,12 @@ Default output before ExitPlanMode (3 columns minimum):
 
 | Source | Action |
 |--------|--------|
-| Reviewer unreachable (connection error / 401 / timeout) | Max 1 retry → `bash scripts/emit-plan-gate.sh DEGRADED reviewer-unavailable` → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
-| High-confidence secret in plan (Step 2) | NO reviewer send → `bash scripts/emit-plan-gate.sh DEGRADED secret-detected` → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
+| Reviewer unreachable (connection error / 401 / timeout) | Max 1 retry → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
+| High-confidence secret in plan (Step 2) | NO reviewer send → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
 
 Degradation never blocks plan mode: the plan is always delivered to the user in the same turn, with a grep-able degradation marker.
 
-## Sentinel Namespace (hard constraints)
+## Sentinel Namespace (prose contracts)
 
 | Sentinel | Meaning |
 |----------|---------|
@@ -196,16 +188,18 @@ Degradation never blocks plan mode: the plan is always delivered to the user in 
 | `[PLAN_REVIEW_DEGRADED]` | Reviewer unavailable or secret-detected (fail-closed) |
 | `[PLAN_REVIEW_SKIPPED]` | User-intent bypass (≠ degraded) |
 
-**Forbidden**: plan-review output must NEVER contain bare `✅ Ready` / `✅ Mergeable` / `## Gate: ✅` / bare `⛔ Blocked` — these collide with code/doc/aggregate routing in `hooks/post-tool-review-state.sh` and `hooks/stop-guard.sh`. The prompt templates repeat this constraint to the reviewer.
+**No hook parses these.** They are behaviour-layer signals: grep-able in the transcript, read by the model on resume and by the human arbitrating. That is exactly why the namespace still matters —
 
-**Fail-closed parsing**: MCP routing checks machine tokens (`[PLAN_REVIEW_DEGRADED]` / `[PLAN_REVIEW_SKIPPED]`) before verdict markers — degraded/skipped output quoting a verdict in prose must not lose its flags; then `⛔ Plan Blocked` before `✅ Plan Ready`, so output containing both verdict markers routes to blocked. Terminal `history[]` entries are owned by the `emit-plan-gate.sh` Bash path — all MCP writes skip history (verdict routing records verdict + iteration counts only; token routing uses no-history mode), so the later `emit-plan-gate.sh` snapshot carries fresh round/finding totals without double-writing. `NEEDS_HUMAN` stamps `status_reason: "needs-human"` so stop-guard treats it as terminal (user arbitrating), not as a pending review.
+**Forbidden**: plan-review output must NEVER contain bare `✅ Ready` / `✅ Mergeable` / `## Gate:` / bare `⛔ Blocked`. Those sentinels belong to the code/doc review planes (`rules/auto-loop.md` § Gate Sentinels), and a plan that quotes one publishes a verdict a later reader can mistake for a code or doc gate result. The prompt templates repeat this constraint to the reviewer.
+
+**Verdict precedence when reading reviewer output**: check the machine tokens (`[PLAN_REVIEW_DEGRADED]` / `[PLAN_REVIEW_SKIPPED]`) before verdict markers — degraded/skipped output quoting a verdict in prose must not lose its flags; then `⛔ Plan Blocked` before `✅ Plan Ready`, so output containing both verdict markers reads as blocked.
 
 ## Verification
 
-- [ ] `emit-plan-gate.sh PENDING <tier>` ran before first dispatch
+- [ ] Tier and round cap stated before first dispatch (round counter in conversation)
 - [ ] Plan text passed redaction contract before any reviewer send
 - [ ] Codex prompt used `references/codex-prompt-plan.md` (independent research mandate, candidate-artifact framing)
-- [ ] Terminal gate emitted exactly once (READY / NEEDS_HUMAN / DEGRADED / SKIPPED)
+- [ ] Exactly one terminal sentinel in the final output (Ready / Needs Human / DEGRADED / SKIPPED)
 - [ ] Trail summary present in final plan output
 - [ ] No bare code/doc sentinels emitted
 
@@ -220,14 +214,14 @@ Degradation never blocks plan mode: the plan is always delivered to the user in 
 
 ```
 Input: /plan-review
-Action: PENDING standard → redact → Codex review → loop → ✅ Plan Ready → trail summary → ExitPlanMode
+Action: tier standard, cap 5 → redact → Codex review → loop → ✅ Plan Ready → trail summary → ExitPlanMode
 
 Input: /plan-review --quick
-Action: PENDING quick → redact → single Codex pass → gate → ExitPlanMode
+Action: tier quick → redact → single Codex pass → verdict → ExitPlanMode
 
 Input: /plan-review --deep
-Action: PENDING deep → redact → Skill("codex-brainstorm", plan challenge) → equilibrium → gate
+Action: tier deep → redact → Skill("codex-brainstorm", plan challenge) → equilibrium → verdict
 
 Input: user says "skip review, show me the plan"
-Action: emit-plan-gate.sh SKIPPED → [PLAN_REVIEW_SKIPPED] → raw plan → ExitPlanMode
+Action: [PLAN_REVIEW_SKIPPED] → raw plan → ExitPlanMode
 ```

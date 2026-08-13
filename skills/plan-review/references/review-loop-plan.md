@@ -44,5 +44,5 @@ End your reply with the line \`## Plan Review\` followed by exactly ONE verdict 
 | Same thread | Always `codex-reply` with the saved `threadId` — context preservation across rounds |
 | Verify, not confirm | Ask "is it resolved?" + "did fixes introduce new issues?" — never "are my fixes correct?" |
 | Redaction every round | `REVISED_PLAN_TEXT` re-passes the Step 2 redaction contract before each send |
-| Round budget | Each round increments `plan_review.iteration_history.current_round` (hook-side, via `## Plan Review` sentinel parse); cap = `max_rounds` (default 5) |
+| Round budget | The round counter lives in the conversation — state "round n/max" in each dispatch so the count survives in the transcript; cap = `max_rounds` (default 5, `auto-loop-project.md ## Plan Review Max Rounds`) |
 | User escape check | Before dispatching each round, check for explicit user skip intent (NFR-5) |

@@ -30,7 +30,6 @@ cache/
 .tmp*
 *.tmp
 *.zip
-.claude_review_state.json
 ```
 
 ## Naming Conventions
