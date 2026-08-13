@@ -180,7 +180,20 @@ test('every hook exits 0 outside a repository and in an empty dir', () => {
   }
 });
 
-test('identical behaviour under zsh and bash (fallback path included)', () => {
+// Same availability guard as test/skills/remind.test.js: the CI runner (ubuntu-latest)
+// ships no zsh, and spawnSync on a missing binary returns status null — which reads as
+// a hook failure it is not. CI installs zsh explicitly (.github/workflows/ci.yml) so
+// the portability guard still runs there; the skip covers other zsh-less environments.
+const HAVE_ZSH = (() => {
+  try {
+    execFileSync('zsh', ['-c', 'exit 0'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test('identical behaviour under zsh and bash (fallback path included)', { skip: !HAVE_ZSH }, () => {
   const repo = makeRepo();
   const home = tmp('rh-home-');
   writeFileSync(join(repo, 'a.js'), 'const a = 2;\n');
