@@ -38,9 +38,15 @@ function writeScript(dir, name, exitCode) {
 function runPrecommit(dir, mode, extraEnv = {}) {
   const cacheDir = mkdtempSync(join(tmpdir(), 'sd0x-cache-'));
   tempDirs.push(cacheDir);
+  // Isolated HOME: the runner's end-of-run reminder note writes to
+  // ~/.cache/sd0x-dev-flow/state/<repo-key>/, and the real HOME must never
+  // accumulate temp-repo keys.
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
   const env = {
     ...process.env,
     CLAUDE_PRECOMMIT_CACHE_DIR: cacheDir,
+    HOME: home,
     ...extraEnv,
   };
   const stdout = execSync(`node ${runnerPath} --mode ${mode}`, {
@@ -54,7 +60,26 @@ function runPrecommit(dir, mode, extraEnv = {}) {
   const summary = JSON.parse(
     readFileSync(join(logDir, 'summary.json'), 'utf8')
   );
-  return { stdout, summary, logDir };
+  return { stdout, summary, logDir, home };
+}
+
+// The precommit note slot for the single repo a test's isolated HOME saw.
+// Returns null when no note was taken (hook-lightweighting §3.3: the
+// NO CHECKS RUN terminal takes none).
+function readPrecommitSlot(home) {
+  const stateRoot = join(home, '.cache', 'sd0x-dev-flow', 'state');
+  let keys;
+  try {
+    keys = require('node:fs').readdirSync(stateRoot);
+  } catch {
+    return null;
+  }
+  assert.equal(keys.length, 1, 'exactly one repo-key expected under the isolated HOME');
+  try {
+    return JSON.parse(readFileSync(join(stateRoot, keys[0], 'precommit.json'), 'utf8'));
+  } catch {
+    return null;
+  }
 }
 
 after(() => {
@@ -384,7 +409,7 @@ test('comment_blocks passes when every block is under the threshold', () => {
 test('comment_blocks alone does not satisfy "some validation ran"', () => {
   // A consuming project in another ecosystem (pytest/cargo/go) that happens to have a top-level
   // scripts/ dir: the checker runs and passes, every npm script skips. Counting the policy step
-  // as validation banked a ✅ PASS receipt with the project's own checks never invoked — the
+  // as validation banked a ✅ PASS with the project's own checks never invoked — the
   // exact false-green the three-state sentinel exists to prevent.
   const pkg = { name: 'temp', version: '1.0.0', scripts: {} };
   const dir = createTempRepo(pkg);
@@ -423,10 +448,9 @@ test('a FAILING comment_blocks is a FAIL, never swallowed by NO CHECKS RUN', () 
 // to PATH, defaulting to "record + exit 127" — a host installation can never
 // leak through, an unexpected invocation fails the step that made it, and a
 // 127 probe is indistinguishable from an absent tool. Stubs record their argv
-// to a file OUTSIDE the repo (writing into the tree after the baseline would
-// trip endpoint revalidation, which has its own dedicated tests below).
+// to a file OUTSIDE the repo, so a recording never shows up as a tree change
+// in the changed-files section or the note's digest.
 
-const receiptLog = require('../../scripts/lib/receipt-log');
 const treeDigest = require('../../scripts/lib/tree-digest');
 const { realpathSync } = require('node:fs');
 
@@ -470,18 +494,6 @@ function recordedLines(record) {
 
 function pathEnv(bin) {
   return { PATH: `${bin}:${process.env.PATH}` };
-}
-
-function ecoVerdictFile(cacheHome, repo) {
-  const slug = receiptLog.repoSlug(realpathSync(repo));
-  return join(cacheHome, 'sd0x-dev-flow', 'receipts', slug, 'verdicts.jsonl');
-}
-
-function receiptHomes() {
-  const cacheHome = mkdtempSync(join(tmpdir(), 'sd0x-xdg-'));
-  const tmpHome = mkdtempSync(join(tmpdir(), 'sd0x-tmp-'));
-  tempDirs.push(cacheHome, tmpHome);
-  return { cacheHome, tmpHome, env: { XDG_CACHE_HOME: cacheHome, TMPDIR: tmpHome + '/' } };
 }
 
 // One row per Skill-table ecosystem, both modes: pins the exact step list AND
@@ -664,7 +676,7 @@ for (const row of ECO_MATRIX) {
   }
 }
 
-test('a genuinely non-Node repo (no package.json) runs its ecosystem and lands the receipt through the runner append', () => {
+test('a genuinely non-Node repo (no package.json) runs its ecosystem and records the pass note through the runner', () => {
   // Every other ecosystem fixture is built through createTempRepo(), which
   // always writes a package.json — a mutation that quietly required one would
   // stay green without this repo-shaped negative (AC2's non-Node parity clause).
@@ -680,63 +692,56 @@ test('a genuinely non-Node repo (no package.json) runs its ecosystem and lands t
   const { bin } = makeToolBin();
   stubEcoTool(bin, 'ruff');
   stubEcoTool(bin, 'pytest');
-  const { cacheHome, env } = receiptHomes();
 
-  const { stdout, summary } = runPrecommit(dir, 'full', { ...pathEnv(bin), ...env });
+  const { stdout, summary, home } = runPrecommit(dir, 'full', pathEnv(bin));
   assert.match(stdout, /> ecosystems: python/);
   assert.equal(summary.overallPass, true);
-  const verdicts = receiptLog
-    .readRecords(ecoVerdictFile(cacheHome, dir))
-    .records.filter(r => r.kind === 'verdict');
-  assert.equal(verdicts.length, 1);
-  assert.equal(verdicts[0].verdict, 'pass');
-  assert.equal(verdicts[0].v, 1); // emitted records carry the schema version (AC7)
+  assert.match(stdout, /\[REVIEW_STATE\] precommit /, 'the note is echoed into the summary output');
+  const slot = readPrecommitSlot(home);
+  assert.ok(slot, 'a conclusive PASS takes a note');
+  assert.equal(slot.verdict, 'pass');
+  assert.equal(slot.rounds, 0);
   assert.equal(
-    verdicts[0].digest,
-    treeDigest.computeTreeState(realpathSync(dir)).planes.code.digest
+    slot.digest,
+    treeDigest.computeTreeState(realpathSync(dir)).planes.code.digest,
+    'the note binds the code-plane digest of the tree it verified'
   );
 });
 
 test('a missing required tool blocks PASS even when another check passes', () => {
   // The false-green the `unavailable` state exists to prevent: pytest green
-  // while ruff is not installed must NOT mint a PASS receipt.
+  // while ruff is not installed must NOT mint a PASS.
   const dir = createTempRepo({ name: 'temp', version: '1.0.0', scripts: {} });
   writeFileSync(join(dir, 'pyproject.toml'), '[project]\nname = "t"\n');
   mkdirSync(join(dir, 'tests', 'unit'), { recursive: true });
   const { bin } = makeToolBin();
   stubEcoTool(bin, 'pytest'); // ruff stays at the exit-127 default
-  const { cacheHome, env } = receiptHomes();
 
-  const { stdout, summary } = runPrecommit(dir, 'full', { ...pathEnv(bin), ...env });
+  const { stdout, summary, home } = runPrecommit(dir, 'full', pathEnv(bin));
   assert.equal(summary.overallPass, false);
   assert.match(stdout, /^## Overall: ❌ FAIL$/m);
   assert.match(stdout, /required tools unavailable: python_lint_fix \(tool missing: ruff\)/);
   const lint = summary.steps.find(s => s.name === 'python_lint_fix');
   assert.equal(lint.status, 'unavailable');
-  const verdicts = receiptLog
-    .readRecords(ecoVerdictFile(cacheHome, dir))
-    .records.filter(r => r.kind === 'verdict');
-  // Exact contract, not a vacuous "no pass": a partial run over an unavailable
-  // required tool appends exactly ONE fail verdict for the current digest —
-  // negative evidence names what it observed (FAIL is exempt from endpoint
-  // equality).
-  assert.equal(verdicts.length, 1);
-  assert.equal(verdicts[0].verdict, 'fail');
-  assert.equal(
-    verdicts[0].digest,
-    treeDigest.computeTreeState(realpathSync(dir)).planes.code.digest
-  );
+  // Exact contract, not a vacuous "no pass": a conclusive FAIL takes a fail
+  // note — negative evidence names what it observed, and the rounds counter
+  // starts ticking (hook-lightweighting §3.3).
+  const slot = readPrecommitSlot(home);
+  assert.ok(slot, 'a conclusive FAIL takes a note');
+  assert.equal(slot.verdict, 'fail');
+  assert.equal(slot.rounds, 1);
 });
 
-test('every ecosystem tool missing → all steps unavailable, ⚠️ NO CHECKS RUN', () => {
+test('every ecosystem tool missing → all steps unavailable, ⚠️ NO CHECKS RUN, no note', () => {
   // Nothing could run at all: fail-closed to the sentinel that routes to the
-  // Skill's human-facing fallback, and no receipt in either direction.
+  // Skill's human-facing fallback, and no note in either direction — an
+  // all-skip run is not evidence (hook-lightweighting §3.3, the third
+  // terminal).
   const dir = createTempRepo({ name: 'temp', version: '1.0.0', scripts: {} });
   writeFileSync(join(dir, 'pyproject.toml'), '[project]\nname = "t"\n');
   const { bin } = makeToolBin(); // all stubs exit 127
-  const { cacheHome, env } = receiptHomes();
 
-  const { stdout, summary } = runPrecommit(dir, 'full', { ...pathEnv(bin), ...env });
+  const { stdout, summary, home } = runPrecommit(dir, 'full', pathEnv(bin));
   assert.equal(summary.overallPass, false);
   const lint = summary.steps.find(s => s.name === 'python_lint_fix');
   const test_ = summary.steps.find(s => s.name === 'python_test');
@@ -745,8 +750,7 @@ test('every ecosystem tool missing → all steps unavailable, ⚠️ NO CHECKS R
   assert.equal(test_.status, 'unavailable');
   assert.equal(test_.reason, 'tool missing: pytest');
   assert.match(stdout, /^## Overall: ⚠️ NO CHECKS RUN/m);
-  const { records } = receiptLog.readRecords(ecoVerdictFile(cacheHome, dir));
-  assert.equal(records.filter(r => r.kind === 'verdict').length, 0);
+  assert.equal(readPrecommitSlot(home), null, 'NO CHECKS RUN takes no note');
 });
 
 test('pytest falls back to bare config-driven discovery when tests/unit is absent', () => {
@@ -869,7 +873,7 @@ test('polyglot repo: node and rust steps coexist, all lint-fix before build/test
     'test_unit',
     'rust_test',
   ]);
-  // The baseline invariant depends on this grouping: no lint-fix step may
+  // The changed-files capture depends on this grouping: no lint-fix step may
   // appear after any build/test step.
   const lastLint = names.reduce((a, n, i) => (n.endsWith('lint_fix') ? i : a), -1);
   const firstValidation = names.findIndex(
@@ -994,7 +998,7 @@ test('a hung probe is killed at PRECOMMIT_PROBE_TIMEOUT_MS and reads as unavaila
   // Bounded probes (round-2/3): a wedged toolchain must not hang the gate,
   // AND the kill must reach the probe's grandchildren (round-3 — wrapper
   // scripts fork their real tool; a survivor would keep running beside the
-  // real steps and could mutate the tree after the baseline). The stub forks
+  // real steps and could mutate the tree while they read it). The stub forks
   // a 30s sleeper and records its PID so the test can prove the whole
   // process group died, not just the shell.
   const dir = createTempRepo({ name: 'temp', version: '1.0.0', scripts: {} });
@@ -1166,11 +1170,12 @@ for (const row of UNAVAILABLE_MATRIX) {
   });
 }
 
-test('ecosystem PASS lands a receipt; baseline is captured after the last lint-fix', () => {
-  // A mutating ruff (the fix is the point of the step) must not poison the
-  // endpoint check: the baseline is captured AFTER the lint phase, so the
-  // receipt still lands. This is the WB2b parity claim — same direct append as
-  // the Node path.
+test('a mutating lint-fix still lands a pass note bound to the tree as it stands after the run', () => {
+  // A mutating ruff (the fix is the point of the step) must not lose the note:
+  // the note computes its digest at note time — end of run — so it binds the
+  // post-lint tree, and a stop-hook check over that tree reads passed instead
+  // of re-reminding (hook-lightweighting §3.3 replaces the old
+  // baseline/endpoint withholding with note-at-end).
   const dir = createTempRepo({ name: 'temp', version: '1.0.0', scripts: {} });
   writeFileSync(join(dir, 'pyproject.toml'), '[project]\nname = "t"\n');
   mkdirSync(join(dir, 'tests', 'unit'), { recursive: true });
@@ -1181,39 +1186,17 @@ test('ecosystem PASS lands a receipt; baseline is captured after the last lint-f
     'case "$1" in --version) exit 0;; esac\necho fixed >> lint-fixed.py\nexit 0'
   );
   stubEcoTool(bin, 'pytest');
-  const { cacheHome, env } = receiptHomes();
 
-  const { summary } = runPrecommit(dir, 'full', { ...pathEnv(bin), ...env });
+  const { summary, home } = runPrecommit(dir, 'full', pathEnv(bin));
   assert.equal(summary.overallPass, true);
-  const records = receiptLog
-    .readRecords(ecoVerdictFile(cacheHome, dir))
-    .records.filter(r => r.kind === 'verdict');
-  assert.equal(records.length, 1);
-  assert.equal(records[0].verdict, 'pass');
-  assert.equal(records[0].plane, 'precommit');
-  assert.equal(records[0].producer, 'precommit-runner');
-});
-
-test('a test step mutating the tree withholds the PASS receipt (endpoint drift)', () => {
-  // Negative control for the baseline placement: mutation AFTER the lint phase
-  // is drift, and a PASS receipt must be refused loudly.
-  const dir = createTempRepo({ name: 'temp', version: '1.0.0', scripts: {} });
-  writeFileSync(join(dir, 'pyproject.toml'), '[project]\nname = "t"\n');
-  mkdirSync(join(dir, 'tests', 'unit'), { recursive: true });
-  const { bin } = makeToolBin();
-  stubEcoTool(bin, 'ruff');
-  stubEcoTool(
-    bin,
-    'pytest',
-    'case "$1" in --version) exit 0;; esac\necho drift >> drifted.py\nexit 0'
+  const slot = readPrecommitSlot(home);
+  assert.ok(slot, 'the pass note landed despite the lint mutation');
+  assert.equal(slot.verdict, 'pass');
+  assert.equal(
+    slot.digest,
+    treeDigest.computeTreeState(realpathSync(dir)).planes.code.digest,
+    'the digest is the post-run tree — lint-fixed.py included'
   );
-  const { cacheHome, env } = receiptHomes();
-
-  const { stdout, summary } = runPrecommit(dir, 'full', { ...pathEnv(bin), ...env });
-  assert.equal(summary.overallPass, true, 'the checks themselves passed');
-  assert.match(stdout, /receipt withheld/);
-  const { records } = receiptLog.readRecords(ecoVerdictFile(cacheHome, dir));
-  assert.equal(records.filter(r => r.kind === 'verdict').length, 0);
 });
 
 test('a validation step still decides the verdict when a policy step also ran', () => {
@@ -1229,4 +1212,285 @@ test('a validation step still decides the verdict when a policy step also ran', 
   const { stdout, summary } = runPrecommit(dir, 'fast');
   assert.equal(summary.overallPass, true);
   assert.match(stdout, /^## Overall: ✅ PASS$/m);
+});
+
+test('conclusive note survives a failing summary.md write (note recorded before diagnostic persistence)', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const first = runPrecommit(dir, 'fast');
+  // Same repo, same HEAD → the next run resolves the same logDir. Replace the
+  // report with a directory so writeFileSync throws EISDIR mid-persistence.
+  const cacheDir = resolve(first.logDir, '..', '..');
+  rmSync(join(first.logDir, 'summary.md'), { force: true });
+  mkdirSync(join(first.logDir, 'summary.md'));
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: cacheDir, HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/, 'verdict still reaches stdout');
+  assert.match(stdout, /summary\.md write failed \(advisory\)/, 'failed diagnostic write is reported, not fatal');
+  const slot = readPrecommitSlot(home);
+  assert.ok(slot, 'precommit note must be recorded despite the failed diagnostic write');
+  assert.equal(slot.verdict, 'pass');
+});
+
+test('conclusive note survives a failing summary.json write too (all diagnostic persistence follows the note)', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const first = runPrecommit(dir, 'fast');
+  const cacheDir = resolve(first.logDir, '..', '..');
+  rmSync(join(first.logDir, 'summary.json'), { force: true });
+  mkdirSync(join(first.logDir, 'summary.json'));
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: cacheDir, HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/, 'verdict still reaches stdout');
+  assert.match(stdout, /summary\.json write failed \(diagnostic only\)/, 'failed summary.json write is reported, not fatal');
+  const slot = readPrecommitSlot(home);
+  assert.ok(slot, 'precommit note must be recorded despite the failed summary.json write');
+  assert.equal(slot.verdict, 'pass');
+});
+
+test('default cache in a repo without a .claude ignore rule falls back to user cache — the note survives its own diagnostics', () => {
+  const { existsSync } = require('node:fs');
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  // No CLAUDE_PRECOMMIT_CACHE_DIR: the runner must detect that .claude/cache is NOT
+  // gitignored here and keep its diagnostic writes out of the reviewed tree.
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/);
+  // (.claude/cache/xdg is still created in-repo, but as an EMPTY dir it never
+  // appears in git status and cannot move the digest.)
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  assert.ok(logsLine && logsLine[1].startsWith(require('node:fs').realpathSync(home)), 'diagnostic logs must live under the user cache, not the reviewed tree');
+  assert.ok(!existsSync(join(dir, '.claude', 'cache', 'precommit')), 'no unignored in-repo precommit cache writes');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true, 'diagnostic writes must not move the digest the note recorded');
+  assert.equal(check.precommit.passed, true);
+  assert.equal(check.precommit.owed, false);
+});
+
+test('explicit in-repo unignored cache override falls back to user cache with an advisory — the note stays valid', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '.precommit-cache', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/);
+  assert.match(stdout, /CLAUDE_PRECOMMIT_CACHE_DIR `\.precommit-cache` is inside the repo and not gitignored/);
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  assert.ok(logsLine && logsLine[1].startsWith(require('node:fs').realpathSync(home)), 'logs must land under the user cache, not the unignored override');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true, 'the override must not be allowed to move the digest the note recorded');
+  assert.equal(check.precommit.passed, true);
+  assert.equal(check.precommit.owed, false);
+});
+
+test('explicit in-repo cache override that IS gitignored is honoured as-is', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  writeFileSync(join(dir, '.gitignore'), '.precommit-cache/\n');
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '.precommit-cache', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/);
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  // realpath: git resolves /var → /private/var on macOS, mkdtemp does not.
+  const realDir = require('node:fs').realpathSync(dir);
+  assert.ok(logsLine && logsLine[1].startsWith(join(realDir, '.precommit-cache')), 'ignored explicit override is respected');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.passed, true, 'ignored cache writes cannot invalidate the note');
+});
+
+test('narrow ignore rule covering only a synthetic child does not qualify the cache — real write targets must be ignored', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  writeFileSync(join(dir, '.gitignore'), '.precommit-cache/ignore-probe\n');
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '.precommit-cache', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /is inside the repo and not gitignored/, 'a rule that ignores none of the real write targets must not qualify');
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  assert.ok(logsLine && logsLine[1].startsWith(require('node:fs').realpathSync(home)), 'falls back to the user cache');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.passed, true);
+  assert.equal(check.precommit.owed, false);
+});
+
+test('a "..cache" override is inside the repo, not external — unignored, it falls back like any in-repo path', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '..cache', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /`\.\.cache` is inside the repo and not gitignored/, '..cache must be classified as in-repo');
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  assert.ok(logsLine && logsLine[1].startsWith(require('node:fs').realpathSync(home)), 'falls back to the user cache');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true);
+  assert.equal(check.precommit.passed, true);
+});
+
+test('a lexically external cache that symlinks back into the repo is classified by its canonical destination', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const { mkdirSync, symlinkSync } = require('node:fs');
+  mkdirSync(join(dir, '.precommit-cache'));
+  const ext = mkdtempSync(join(tmpdir(), 'sd0x-ext-'));
+  tempDirs.push(ext);
+  symlinkSync(join(dir, '.precommit-cache'), join(ext, 'link'));
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: join(ext, 'link'), HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /is inside the repo and not gitignored/, 'the symlink destination, not the lexical path, decides containment');
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  assert.ok(logsLine && logsLine[1].startsWith(require('node:fs').realpathSync(home)), 'falls back to the user cache');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true);
+  assert.equal(check.precommit.passed, true);
+});
+
+test('a user cache that symlinks into the repo is rejected too — terminal fallback is the git-dir cache', () => {
+  const dir = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(dir, 'test.sh', 0);
+  const { mkdirSync, symlinkSync } = require('node:fs');
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  // Only the precommit leaf points into the repo; the sibling state dir stays real.
+  mkdirSync(join(home, '.cache', 'sd0x-dev-flow'), { recursive: true });
+  mkdirSync(join(dir, 'evil-cache'));
+  symlinkSync(join(dir, 'evil-cache'), join(home, '.cache', 'sd0x-dev-flow', 'precommit'));
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: dir,
+    env: { ...process.env, CLAUDE_PRECOMMIT_CACHE_DIR: '', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/);
+  assert.match(stdout, /the user cache also resolves inside the repo unignored — using the git-dir cache/);
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  const realDir = require('node:fs').realpathSync(dir);
+  assert.ok(logsLine && logsLine[1].startsWith(join(realDir, '.git')), 'logs land under the git dir, invisible to the worktree digest');
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: dir,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true, 'git-dir writes cannot move the worktree digest');
+  assert.equal(check.precommit.passed, true);
+  assert.equal(check.precommit.owed, false);
+});
+
+test('git-dir terminal fallback resolves a linked worktree .git FILE even when --absolute-git-dir fails', () => {
+  const { mkdirSync, symlinkSync } = require('node:fs');
+  const base = createTempRepo({ name: 'temp', scripts: { 'test:fast': './test.sh' } }, null);
+  writeScript(base, 'test.sh', 0);
+  execSync('git add -A && git -c user.name=t -c user.email=t@t commit -q -m files', { cwd: base });
+  const wt = join(base, '..', require('node:path').basename(base) + '-wt');
+  tempDirs.push(wt);
+  execSync(`git worktree add "${wt}" -b wt-branch`, { cwd: base, stdio: 'ignore' });
+  // Force the terminal fallback: user cache leaf symlinks into the worktree (unignored).
+  const home = mkdtempSync(join(tmpdir(), 'sd0x-home-'));
+  tempDirs.push(home);
+  mkdirSync(join(home, '.cache', 'sd0x-dev-flow'), { recursive: true });
+  mkdirSync(join(wt, 'evil-cache'));
+  symlinkSync(join(wt, 'evil-cache'), join(home, '.cache', 'sd0x-dev-flow', 'precommit'));
+  // PATH shim: fail exactly the --absolute-git-dir query, pass everything else through.
+  const shimDir = mkdtempSync(join(tmpdir(), 'sd0x-shim-'));
+  tempDirs.push(shimDir);
+  // Resolve the real git at runtime and hand it to the shim via env — a path
+  // baked in at authoring time only works on the machine that authored it.
+  const realGit = execSync('command -v git', { encoding: 'utf8' }).trim();
+  writeFileSync(join(shimDir, 'git'), '#!/bin/sh\nif [ "$1" = "rev-parse" ] && [ "$2" = "--absolute-git-dir" ]; then exit 1; fi\nexec "$REAL_GIT" "$@"\n');
+  chmodSync(join(shimDir, 'git'), 0o755);
+  const stdout = execSync(`node ${runnerPath} --mode fast`, {
+    cwd: wt,
+    env: { ...process.env, PATH: `${shimDir}:${process.env.PATH}`, REAL_GIT: realGit, CLAUDE_PRECOMMIT_CACHE_DIR: '', HOME: home },
+    encoding: 'utf8',
+  });
+  assert.match(stdout, /## Overall: ✅ PASS/);
+  assert.match(stdout, /using the git-dir cache/);
+  const logsLine = stdout.match(/- logs: `([^`]+)`/);
+  // The worktree's .git is a FILE; the resolved git dir lives under the base
+  // repo's .git/worktrees/<name>/ — never a path joined onto the .git file.
+  assert.ok(logsLine && /\.git\/worktrees\/.*sd0x-precommit-cache/.test(logsLine[1]), `git dir resolved through the .git file: ${logsLine && logsLine[1]}`);
+  const check = JSON.parse(
+    execSync(`node ${resolve(__dirname, '../../scripts/review-state.js')} check --format=json`, {
+      cwd: wt,
+      env: { ...process.env, HOME: home },
+      encoding: 'utf8',
+    })
+  );
+  assert.equal(check.precommit.digest_match, true);
+  assert.equal(check.precommit.passed, true);
 });

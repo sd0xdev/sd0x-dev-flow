@@ -2,13 +2,13 @@
 'use strict';
 
 /**
- * detect-scope.js — 3-layer scope detection for post-dev-recap.
+ * detect-scope.js — 2-layer scope detection for post-dev-recap.
  *
  * Output: ScopeReport JSON to stdout (see tech-spec §3.2.1).
  *
  * Exit codes:
  *   0 — success, scope detected
- *   1 — all 3 layers empty (need human input)
+ *   1 — both layers empty (need human input)
  *   2 — not a git repository
  *   3 — timeout exceeded (NFR-1 5s budget)
  *   4 — path-safety violation (NFR-8)
@@ -17,7 +17,10 @@
  * Layers (first non-empty wins):
  *   1. uncommitted — git diff HEAD + git status --porcelain (confidence: high)
  *   2. branch      — git diff <merge-base>..HEAD (confidence: medium)
- *   3. session     — .claude_review_state.json changed_files_since_review (confidence: low, best-effort)
+ *
+ * The former third layer read the repo-local review-state mirror, whose writers
+ * were deleted by hook-lightweighting § 3.3 — the two live layers are the whole
+ * contract.
  *
  * Tech spec: docs/features/post-dev-recap/2-tech-spec.md §3.4.1
  */
@@ -150,87 +153,6 @@ async function layerBranch(root) {
   return { source: 'branch', confidence: 'medium', files, baseRef };
 }
 
-/**
- * Repo-relative form of `abs`, or null when it does not live under `root`.
- *
- * The escape test is `..` exactly or `../` — NOT the `..` prefix: a real directory named
- * `..cache/` is inside the repo and starts with two dots, and rejecting it silently drops
- * legitimate edits from the session fallback.
- */
-function insideRoot(root, abs) {
-  const rel = path.relative(root, abs);
-  const escapes = rel === '..' || rel.startsWith(`..${path.sep}`);
-  return !rel || escapes || path.isAbsolute(rel) ? null : rel;
-}
-
-/**
- * Resolve symlinks in the deepest EXISTING ancestor of `p`, keeping the missing
- * remainder. `git rev-parse --show-toplevel` returns a resolved root, while the
- * hooks record whatever spelling the edit tool reported — on macOS that is
- * `/var/...` against a `/private/var/...` root, so a plain prefix compare drops
- * in-repo files. The leaf often does not exist (deleted, or never created).
- */
-function realpathBestEffort(p) {
-  const tail = [];
-  let head = p;
-  for (;;) {
-    try {
-      const real = fs.realpathSync(head);
-      return tail.length ? path.join(real, ...tail) : real;
-    } catch {
-      const parent = path.dirname(head);
-      if (parent === head) return p;
-      tail.unshift(path.basename(head));
-      head = parent;
-    }
-  }
-}
-
-function layerSession(root) {
-  const statePath = path.join(root, '.claude_review_state.json');
-  try {
-    const raw = fs.readFileSync(statePath, 'utf8');
-    const state = JSON.parse(raw);
-    // `changed_files_since_review` is what the hooks actually write (absolute
-    // paths, cleared on a passing code review). `recent_file_edits` has never
-    // had a writer in this repo, so reading only it made this layer return null
-    // every time — a silent no-op, not a fallback. Both are accepted, live one
-    // first, so a state file from either shape still resolves.
-    const edits = Array.isArray(state.changed_files_since_review) && state.changed_files_since_review.length > 0
-      ? state.changed_files_since_review
-      : state.recent_file_edits;
-    if (!Array.isArray(edits) || edits.length === 0) return null;
-    const files = new Map();
-    for (const entry of edits) {
-      let p = null;
-      let changeType = 'modified';
-      if (typeof entry === 'string') {
-        p = entry;
-      } else if (entry && typeof entry.path === 'string') {
-        p = entry.path;
-        changeType = entry.change_type || 'modified';
-      }
-      if (!p) continue;
-      // Absolute entries outside the repo are dropped, NOT escalated: the edit
-      // log is session-wide and legitimately records scratch files under other
-      // job directories, which are simply not this repo's scope. A RELATIVE
-      // entry is passed through untouched so a forged `../` still reaches the
-      // path-safety gate and fails the run — dropping those would launder an
-      // escape attempt into a quiet omission.
-      if (path.isAbsolute(p)) {
-        const rel = insideRoot(root, p) ?? insideRoot(root, realpathBestEffort(p));
-        if (rel === null) continue;
-        p = rel;
-      }
-      files.set(p, changeType);
-    }
-    if (files.size === 0) return null;
-    return { source: 'session', confidence: 'low', files, baseRef: 'session' };
-  } catch {
-    return null;
-  }
-}
-
 function mapGitStatus(code) {
   if (!code) return 'modified';
   const c = code[0];
@@ -246,7 +168,6 @@ function mapGitStatus(code) {
 }
 
 async function lineStats(root, filePath, baseRef) {
-  if (baseRef === 'session') return { added: 0, deleted: 0, total: 0 };
   const args = baseRef === 'HEAD'
     ? ['diff', '--numstat', 'HEAD', '--', filePath]
     : ['diff', '--numstat', `${baseRef}..HEAD`, '--', filePath];
@@ -423,7 +344,6 @@ async function main() {
   for (const [name, runner] of [
     ['uncommitted', () => layerUncommitted(root)],
     ['branch', () => layerBranch(root)],
-    ['session', () => Promise.resolve(layerSession(root))],
   ]) {
     try {
       const res = await runner();
@@ -435,12 +355,10 @@ async function main() {
       fallbackTrace.push({ layer: name, outcome: 'empty', detail: 'no changes detected' });
     } catch (err) {
       fallbackTrace.push({ layer: name, outcome: 'error', detail: String(err.message || err) });
-      // Git command failures on uncommitted/branch layers are unexpected — don't
-      // silently degrade to "all empty". Record and short-circuit to exit 5.
-      if (name !== 'session') {
-        hardError = err;
-        break;
-      }
+      // Git command failures are unexpected — don't silently degrade to
+      // "all empty". Record and short-circuit to exit 5.
+      hardError = err;
+      break;
     }
   }
 
@@ -478,7 +396,7 @@ async function main() {
       fallback_trace: fallbackTrace,
     };
     process.stdout.write(JSON.stringify(report, null, 2));
-    process.stderr.write('detect-scope: all 3 layers empty — need human input (pass --focus <keyword> or run from a feature branch)\n');
+    process.stderr.write('detect-scope: both layers empty — need human input (pass --focus <keyword> or run from a feature branch)\n');
     process.exit(1);
   }
 

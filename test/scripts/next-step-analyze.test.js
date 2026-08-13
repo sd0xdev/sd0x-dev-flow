@@ -9,6 +9,7 @@ const {
   rmSync,
   symlinkSync,
   chmodSync,
+  cpSync,
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
@@ -32,18 +33,46 @@ function createTempRepo() {
   return dir;
 }
 
+// Gate verdicts go through the real reminder-state checker (hook-lightweighting
+// § 3.2), not a mirror file — analyze.js reads `review-state.js check`, so the
+// fixture must produce state the checker itself derives. The checker is installed
+// under `.claude/scripts/` and hidden from git via `.git/info/exclude`, keeping
+// the worktree exactly as the test arranged it; each repo gets its own HOME so
+// the slot lands in an isolated cache, never the developer's.
+const CHECKER_SRC = resolve(__dirname, '../../scripts/review-state.js');
+const DIGEST_SRC = resolve(__dirname, '../../scripts/lib/tree-digest.js');
+const repoHomes = new Map();
+
+function installChecker(dir) {
+  const scriptsDir = join(dir, '.claude', 'scripts');
+  mkdirSync(join(scriptsDir, 'lib'), { recursive: true });
+  cpSync(CHECKER_SRC, join(scriptsDir, 'review-state.js'));
+  cpSync(DIGEST_SRC, join(scriptsDir, 'lib', 'tree-digest.js'));
+  writeFileSync(join(dir, '.git', 'info', 'exclude'), '.claude/\n');
+  if (!repoHomes.has(dir)) {
+    const home = mkdtempSync(join(tmpdir(), 'sd0x-ns-home-'));
+    tempDirs.push(home);
+    repoHomes.set(dir, home);
+  }
+}
+
+// Keeps the old mirror-shaped call sites readable: `{ code_review: { executed:
+// true, passed: true } }` becomes `note code_review pass`. Notes bind to the
+// CURRENT tree digest, so call this after the test's last file mutation — a
+// later edit flips the note to not-passed, which is the checker's contract, not
+// a fixture bug. `has_code_change`/`has_doc_change` keys are accepted and
+// ignored: change classes now derive from git alone.
 function writeReviewState(dir, overrides = {}) {
-  const state = {
-    session_id: '',
-    updated_at: new Date().toISOString(),
-    has_code_change: false,
-    has_doc_change: false,
-    code_review: { executed: false, passed: false, last_run: '' },
-    doc_review: { executed: false, passed: false, last_run: '' },
-    precommit: { executed: false, passed: false, last_run: '' },
-    ...overrides,
-  };
-  writeFileSync(join(dir, '.claude_review_state.json'), JSON.stringify(state, null, 2));
+  installChecker(dir);
+  for (const plane of ['code_review', 'doc_review', 'precommit']) {
+    const o = overrides[plane];
+    if (!o || (!o.executed && !o.passed)) continue;
+    execFileSync(
+      'node',
+      [join(dir, '.claude', 'scripts', 'review-state.js'), 'note', plane, o.passed ? 'pass' : 'fail'],
+      { cwd: dir, stdio: 'ignore', env: { ...process.env, HOME: repoHomes.get(dir) } }
+    );
+  }
 }
 
 // Preloaded into the analyze child process by the determinism tests, so directory enumeration is
@@ -125,6 +154,9 @@ function assertIntercepted(auditPath, expected) {
 
 function runAnalyze(dir, extraArgs = [], { descendingReaddir = false, auditPath, eaccesPath } = {}) {
   const env = { ...process.env };
+  // Same isolated HOME the fixture noted verdicts into — without it the child's
+  // checker would read the developer's real cache instead of the test's slots.
+  if (repoHomes.has(dir)) env.HOME = repoHomes.get(dir);
   if (eaccesPath) {
     // One directory made unreadable at the syscall, leaving the worktree and the diff untouched —
     // see helpers/readdir-eacces.js for why `chmod` cannot serve this test.
@@ -408,13 +440,6 @@ test('untracked directory — files expanded into diff summary', () => {
   writeFileSync(join(dir, 'newdir', 'b.js'), 'b');
   writeFileSync(join(dir, 'newdir', 'sub', 'c.js'), 'c');
   writeReviewState(dir);
-  // Commit review state so it's not untracked
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   // Should expand untracked directory into individual files
@@ -423,66 +448,48 @@ test('untracked directory — files expanded into diff summary', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Test 13: Stale code+doc state on clean worktree — suppresses gate-missing-code/doc
+// Test 13: Clean worktree with failed notes — no gate findings, no drift concept
+// The old state-drift finding retired with the mirror it watched: the reminder
+// state is content-addressed, so "state says changes but the tree is clean" is
+// no longer expressible — a note either binds the current digest or reads as
+// not-passed. What survives is the suppression half: gate rows need hasChanges.
 // ---------------------------------------------------------------------------
-test('stale state on clean worktree — gate-missing-code and gate-missing-doc suppressed', () => {
+test('clean worktree with failed notes — gate-missing-code and gate-missing-doc suppressed', () => {
   const dir = createTempRepo();
   execFileSync('git', ['checkout', '-b', 'feat/stale'], { cwd: dir, stdio: 'ignore' });
-  // State says both code AND doc changed, but worktree is clean
+  // Both planes carry a FAIL note on the clean tree — the antecedent "not passed"
+  // is true, but with no changes the gate rows must stay silent.
   writeReviewState(dir, {
-    has_code_change: true,
-    has_doc_change: true,
-    code_review: { executed: false, passed: false, last_run: '' },
-    doc_review: { executed: false, passed: false, last_run: '' },
+    code_review: { executed: true, passed: false, last_run: '' },
+    doc_review: { executed: true, passed: false, last_run: '' },
   });
-  // Commit the state file so it's not untracked
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output, exitCode } = runAnalyze(dir);
-  // Should have state-drift
-  const drift = output.findings.find(f => f.id === 'state-drift');
-  assert.ok(drift, 'state-drift should fire on clean worktree with stale state');
-  // gate-missing-code: antecedent true (has_code_change=true, passed=false) but suppressed
+  assert.ok(!output.findings.find(f => f.id === 'state-drift'),
+    'state-drift retired with the mirror — it must never resurface');
   const gateCode = output.findings.find(f => f.id === 'gate-missing-code');
   assert.equal(gateCode, undefined, 'gate-missing-code should NOT fire on clean worktree');
-  // gate-missing-doc: antecedent true (has_doc_change=true, passed=false) but suppressed
   const gateDoc = output.findings.find(f => f.id === 'gate-missing-doc');
   assert.equal(gateDoc, undefined, 'gate-missing-doc should NOT fire on clean worktree');
-  assert.equal(exitCode, 2, 'state-drift is P0, exit code should be 2');
+  assert.equal(exitCode, 0, 'a clean tree with no gate findings exits 0');
 });
 
 // ---------------------------------------------------------------------------
-// Test 14: Stale precommit state on clean worktree — suppresses gate-missing-precommit
+// Test 14: Clean worktree, review passed, precommit not — suppressed the same way
 // ---------------------------------------------------------------------------
-test('stale state on clean worktree — gate-missing-precommit suppressed', () => {
+test('clean worktree with passed review, no precommit note — gate-missing-precommit suppressed', () => {
   const dir = createTempRepo();
   execFileSync('git', ['checkout', '-b', 'feat/stale-pre'], { cwd: dir, stdio: 'ignore' });
-  // State says review passed but precommit pending — but worktree is clean
   writeReviewState(dir, {
-    has_code_change: true,
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: false, passed: false, last_run: '' },
   });
-  // Commit the state file so it's not untracked
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output, exitCode } = runAnalyze(dir);
-  const drift = output.findings.find(f => f.id === 'state-drift');
-  assert.ok(drift, 'state-drift should fire');
-  // gate-missing-precommit: antecedent true (passed=true, precommit=false) but suppressed
+  // gate-missing-precommit: antecedent true (review passed, precommit not) but suppressed
   const gatePre = output.findings.find(f => f.id === 'gate-missing-precommit');
   assert.equal(gatePre, undefined, 'gate-missing-precommit should NOT fire on clean worktree');
-  assert.equal(exitCode, 2, 'state-drift is P0');
+  assert.equal(exitCode, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -643,12 +650,6 @@ test('feature context — branch feat/my-feature resolves key', () => {
   execFileSync('git', ['checkout', '-b', 'feat/my-feature'], { cwd: dir, stdio: 'ignore' });
   writeReviewState(dir);
   // Commit state so worktree is clean
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'add state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   assert.ok(output.feature_context, 'feature_context should exist');
@@ -762,13 +763,6 @@ test('feature-complete — P3 when all gates pass + no sync issues', () => {
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  // Commit review state too so worktree stays clean
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   const f = output.findings.find(f => f.id === 'feature-complete');
@@ -798,9 +792,6 @@ test('feature-complete — withheld when the feature corpus could not be enumera
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' });
 
   // The control first — readable, and the completion claim fires. Without it, the assertions below
   // would also pass on a build where `feature-complete` had simply stopped working.
@@ -909,12 +900,6 @@ test('backlog context — lists incomplete features when feature_complete', () =
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   // feature-complete should fire for backlog-test
@@ -958,8 +943,6 @@ test('backlog headline reports the COUNT of incomplete features, not the display
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'], { cwd: dir, stdio: 'ignore' });
 
   const auditPath = makeAuditPath();
   const { output } = runAnalyze(dir, [], { descendingReaddir: true, auditPath });
@@ -982,8 +965,9 @@ test('backlog headline reports the COUNT of incomplete features, not the display
   // The script exits non-zero when findings exist, so read stdout off the error the same way
   // `runAnalyze` does; a bare execFileSync would throw on an ordinary, expected outcome.
   let md;
+  const mdEnv = { ...process.env, HOME: repoHomes.get(dir) };
   try {
-    md = execFileSync('node', [scriptPath, '--markdown'], { cwd: dir, encoding: 'utf8' });
+    md = execFileSync('node', [scriptPath, '--markdown'], { cwd: dir, encoding: 'utf8', env: mdEnv });
   } catch (err) {
     md = (err.stdout || '').toString();
   }
@@ -1018,8 +1002,6 @@ test('backlog reports the SORTED-first open request status when a feature has se
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'], { cwd: dir, stdio: 'ignore' });
 
   const auditPath = makeAuditPath();
   const { output } = runAnalyze(dir, [], { descendingReaddir: true, auditPath });
@@ -1208,12 +1190,6 @@ test('feature-complete does NOT fire on an unrecognised request Status', () => {
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   assert.ok(
@@ -1252,12 +1228,6 @@ function repoWithRequestBody(branch, key, body) {
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
   return dir;
 }
 
@@ -1286,12 +1256,6 @@ function repoWithPlantedRequest(branch, key, plant, postCommit) {
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
   if (postCommit) postCommit(reqDir, dir);
   return dir;
 }
@@ -1353,17 +1317,18 @@ test('a permission-denied request is open too', {
   assert.ok(!output.findings.find(f => f.id === 'feature-complete'));
 });
 
-test('a requests DIRECTORY that cannot be listed is open — not "no requests"', {
-  skip: AS_ROOT ? 'running as root: chmod 000 is not enforced' : false,
-}, () => {
+test('a requests DIRECTORY that cannot be listed is open — not "no requests"', () => {
   // The enumeration failure covers every request at once, so reading it as the empty case is the
   // largest version of the same fail-open. `has_requests` already established the directory
   // exists, which is what separates this from a genuine ENOENT.
+  // Injected at the syscall (not chmod 000): a 0000 directory also blinds git, the tree digest
+  // becomes unverifiable, the checker then rightly reports precommit as not-passed, and this
+  // finding — gated on a passed precommit — could never fire for an unrelated reason.
   const dir = repoWithPlantedRequest('feat/no-list', 'no-list', null);
-  chmodSync(join(dir, 'docs', 'features', 'no-list', 'requests'), 0o000);
-  chmodRestore.push(join(dir, 'docs', 'features', 'no-list', 'requests'));
 
-  const { output } = runAnalyze(dir);
+  const { output } = runAnalyze(dir, [], {
+    eaccesPath: join('docs', 'features', 'no-list', 'requests'),
+  });
   const stale = output.findings.find(f => f.id === 'request-stale');
   assert.ok(stale, 'an unlistable requests directory must not read as an empty one');
   assert.match(stale.message, /could not be listed/, 'the message must name the actual failure');
@@ -1459,12 +1424,6 @@ test('backlog lists a feature whose only request has no readable Status', () => 
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   assert.ok(output.backlog, 'precondition: the backlog is only built at phase feature_complete');
@@ -1499,12 +1458,6 @@ test('feature-complete blocked by ac-incomplete — no feature-complete when unc
     code_review: { executed: true, passed: true, last_run: '' },
     precommit: { executed: true, passed: true, last_run: '' },
   });
-  execFileSync('git', ['add', '.claude_review_state.json'], { cwd: dir, stdio: 'ignore' });
-  execFileSync(
-    'git',
-    ['-c', 'user.name=test', '-c', 'user.email=test@test', 'commit', '-m', 'state'],
-    { cwd: dir, stdio: 'ignore' }
-  );
 
   const { output } = runAnalyze(dir);
   const ac = output.findings.find(f => f.id === 'ac-incomplete');

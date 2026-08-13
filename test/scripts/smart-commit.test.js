@@ -2242,7 +2242,7 @@ test('control: a Commit Plan fence missing the Pre-flight line fails the templat
   const mutantFence = [
     '## Commit Plan',
     '',
-    '**Selection mode**: session-aware (default)',
+    '**Selection**: all uncommitted changes (live git status)',
     '**Author**: Jane Doe <jane@company.com> (local config)',
     '**Signing**: enabled (GPG, key: ABCD1234)',
     '**AI guard**: active (commit-msg hook installed)',
@@ -2272,4 +2272,33 @@ test('tech-spec §3.5 stays in sync with SKILL.md — no unconditional-Halt word
     '§3.5 must name the opt-in flag, not just SKILL.md');
   assert.ok(section.includes('警告並繼續'),
     '§3.5 decision table must describe the advisory default in the same terms as SKILL.md');
+});
+
+// --- Session-scope retirement (hook-lightweighting § 3.4) ---
+// The session_commit_scope store and its resolver were deleted with the state machine
+// that wrote them. Selection is live git status; the Commit Plan is the only filter.
+// A resurrected read would point Step 3 at a file nothing writes.
+
+test('session-scope selection stays retired — no state-file read, no resolver, no --all flag', () => {
+  const src = readFileSync(skillPath, 'utf8');
+  assert.ok(!src.includes('.claude_review_state'),
+    'the deleted state file must not be read for selection');
+  assert.ok(!src.includes('session-scope-resolver'),
+    'the deleted resolver must not be referenced');
+  assert.ok(!/Session-aware filtering/i.test(src),
+    'the session-aware selection section must stay retired');
+  assert.ok(!/\stouched_files\b/.test(src),
+    'the retired touched_files classification must not survive');
+  assert.match(src, /live git status/,
+    'the replacement contract — selection from live git status — must be stated');
+});
+
+test('control: the retirement note itself may name session_commit_scope as history', () => {
+  // The absence pins above deliberately do NOT ban the literal `session_commit_scope`:
+  // the retirement note names the store it replaced, which is the record working.
+  const src = readFileSync(skillPath, 'utf8');
+  const note = src.includes('session_commit_scope');
+  assert.ok(note, 'the retirement note should say what was retired, not hide it');
+  assert.match(src, /retired with the state\s+machine that wrote it/,
+    'the mention must be the retirement note, not a live read instruction');
 });

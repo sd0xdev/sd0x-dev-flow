@@ -16,7 +16,7 @@
  *   G2  required_gates must include doc-review (v1's report Write is always a doc mutation)
  *   O1  every step needs a non-empty why (observability, Signal 6)
  *   B1  steps ≤ max_plan_steps; group size ≤ max_workers; converge.max_rounds ≤ max_waves
- *   S1  serialized plan must not contain hook-parsed sentinel strings
+ *   S1  serialized plan must not contain gate-sentinel strings (behaviour-layer signals)
  *   SCHEMA  intent/done_definition non-empty, ids unique, known kinds, depends_on resolves + DAG
  *
  * The planner-supplied `mutating` flag is NOT the security boundary — why, and what actually
@@ -31,11 +31,13 @@ const fs = require('fs');
 const crypto = require('node:crypto');
 
 const VALID_KINDS = new Set(['fanout', 'main-skill', 'verify', 'gate', 'proposed-manual']);
-// Forbidden hook-parsed sentinels — literal substring match on the serialized
-// plan. Kept aligned with the strings hooks/stop-guard.sh and
-// hooks/post-tool-review-state.sh act on, so a plan that recites a gate verdict
-// (in a why/done_definition later surfaced in a preview/summary) cannot poison
-// the safety-plane gate parsing this feature is designed to isolate from.
+// Forbidden gate sentinels — literal substring match on the serialized plan.
+// The enforcement hooks that once parsed these strings are gone
+// (hook-lightweighting § 3.3), but the sentinels remain BEHAVIOUR-LAYER signals:
+// the model and reviewers read them in conversation as gate verdicts, so a plan
+// that recites one (in a why/done_definition later surfaced in a preview or
+// summary) injects a verdict no gate produced into exactly the text the model
+// reads to decide whether a gate is satisfied. The check therefore stays.
 // Substring match is literal: '✅ Ready' does NOT cover '✅ Plan Ready' (after
 // '✅ ' comes "Plan", not "Ready"), and '⛔ Blocked' does NOT cover
 // '⛔ Plan Blocked' — the plan-namespace sentinels are therefore listed
@@ -56,10 +58,10 @@ const FORBIDDEN_SENTINELS = [
   '⛔ Plan Blocked',
 ];
 
-// Mirrors of the EREs in hooks/stop-guard.sh:551,604 that no literal above can express.
-// `⛔ Blocked` / `⛔ Needs revision` / `⛔ Must fix` are already literals, but stop-guard's
-// `⛔.*(Block|Needs revision|Must fix)` also fires on `⛔ temporarily Blocked`, and nothing in
-// the literal list resembles `Gate.*(PASS|FAIL)` at all. Keep this list in sync with those greps.
+// Pattern-shaped variants no literal above can express. These EREs come from the
+// deleted enforcement hooks' greps; they survive because a HUMAN or the model
+// skimming a summary is at least as loose a matcher — `⛔ temporarily Blocked`
+// or `Gate must PASS` reads as a verdict just as readily as the exact token.
 const FORBIDDEN_SENTINEL_PATTERNS = [
   { re: /Gate.*(PASS|FAIL)/, label: 'Gate.*(PASS|FAIL)' },
   { re: /⛔.*(Block|Needs revision|Must fix)/, label: '⛔.*(Block|Needs revision|Must fix)' },
@@ -72,10 +74,9 @@ const FORBIDDEN_SENTINEL_PATTERNS = [
 // literal scan over JSON.stringify". Neither half held. Nothing rejects unknown keys, so an author
 // can name one anything; and the stringify scan matches only the exact literals, not the ERE
 // patterns below. A plan carrying the keys `"Gate must PASS before merge"` and
-// `"⛔ pipeline Blocked upstream"` validated `ok: true` while both match stop-guard's greps
-// verbatim. Live impact was bounded by the additive per-plane scans downstream, which is why this
-// was a P2 rather than a hole — but a sentinel scan that inspects half the document is not a
-// sentinel scan.
+// `"⛔ pipeline Blocked upstream"` validated `ok: true` while both read as gate verdicts to
+// anyone skimming the rendered plan. Impact was bounded, which is why this was a P2 rather than
+// a hole — but a sentinel scan that inspects half the document is not a sentinel scan.
 // Depth bound: a real plan nests a handful of levels, so anything past this is pathological input,
 // not a plan. Unbounded recursion turned such input into an uncaught RangeError — a stack trace on
 // stderr instead of the `{ok:false, violations}` this file guarantees everywhere else. Still
@@ -389,17 +390,17 @@ function validate(plan, context) {
   const serialized = JSON.stringify(plan);
   for (const sentinel of FORBIDDEN_SENTINELS) {
     if (serialized.includes(sentinel)) {
-      add('S1', `plan text contains forbidden hook-parsed sentinel "${sentinel}" — describe gates by name instead`);
+      add('S1', `plan text contains forbidden gate sentinel "${sentinel}" — describe gates by name instead`);
     }
   }
 
   // Regex-shaped forbidden sentinels. The literal list above enumerates EXACT sentinel strings,
-  // but stop-guard.sh does not match literals — `hooks/stop-guard.sh:551,604` grep
-  // `Gate.*(PASS|FAIL)` and `⛔.*(Block|Needs revision|Must fix)`, which accept text no literal
-  // covers. Verified: `why: "Gate must PASS before merge"` produces zero S1 hits yet matches
-  // stop-guard's ERE. That gap is exploitable because `LAST_REVIEW` takes `tail -1`: a plan
-  // preview rendered AFTER a genuine `⛔ Blocked` becomes the last matching line, and since it
-  // contains neither `⛔` nor `FAIL`, `BLOCKED_REASON` is never set and the block silently lifts.
+  // but a reader skimming a summary does not match literals: `why: "Gate must PASS before merge"`
+  // produces zero S1 hits from the list above yet reads as a gate verdict just as readily as the
+  // exact token — the loose-matcher argument at FORBIDDEN_SENTINEL_PATTERNS. The EREs came from the
+  // deleted enforcement hooks' greps (hook-lightweighting § 3.3), which is also where the concrete
+  // exploit was measured: a plan preview rendered after a genuine `⛔ Blocked` became the last
+  // verdict-shaped line the hook read, and the block silently lifted.
   // Matched per STRING VALUE and per line — mirroring grep's line-oriented semantics — rather than
   // over the single-line JSON.stringify, so `.*` cannot bridge two unrelated fields into a match.
   let planStrings;
@@ -417,7 +418,7 @@ function validate(plan, context) {
       for (const { re, label } of FORBIDDEN_SENTINEL_PATTERNS) {
         if (re.test(line) && !reportedPatterns.has(label)) {
           reportedPatterns.add(label);
-          add('S1', `plan text matches hook-parsed sentinel pattern /${label}/ ("${line.trim().slice(0, 80)}") — describe gates by name instead`);
+          add('S1', `plan text matches gate-sentinel pattern /${label}/ ("${line.trim().slice(0, 80)}") — describe gates by name instead`);
         }
       }
     }

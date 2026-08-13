@@ -17,27 +17,17 @@ const fs = require('fs');
 /**
  * Gate sentinels — deliberately NOT the doc-review vocabulary.
  *
- * These used to be doc review's own `Mergeable` / `Needs revision` pair, on the reasoning (1-requirements
- * FR-7 / NFR-5) that reusing doc review's words bought auto-loop compatibility. It did not. This
- * skill assembles its report locally and emits it as the model's own message, so it is never a
- * reviewer tool output and `post-tool-review-state.sh` — provenance-bound on both the Bash side
- * (COMMAND must be `codex-review-doc`/`review-spec`) and the MCP side (prompt AND output must both
- * carry the doc-review header) — cannot record a verdict from it. The revised FR-10 says exactly
- * this. So the shared vocabulary bought no state; what it did buy was a COLLISION.
- *
- * stop-guard.sh's transcript fallback (used whenever there is no readable state file) is
- * position-blind: it greps the conversation for a doc verdict and, separately, for a doc-review
- * command name. This skill's report supplied the verdict, and the token `/codex-review-doc` is
- * present in its own SKILL.md routing table, its references/review-loop.md, and preflight.js's
- * advisory — all of which land in the transcript BEFORE the report, so even verdict/command
- * ordering does not separate them. A necessity audit could therefore satisfy the doc gate that a
- * real doc review is supposed to satisfy.
- *
- * Namespacing the sentinel is the same fix `✅ Plan Ready` / `⛔ Plan Blocked` already applies to
- * the plan plane. The wording is chosen to miss EVERY stop-guard pattern, including the coarse
- * `⛔.*(Block|Needs revision|Must fix)` recency scan — hence `Revise` rather than the near-miss
- * `Audit Needs revision`, which that `.*` would still have caught. Pinned by
- * test/skills/necessity-audit/stop-guard-isolation.test.js against the real hook.
+ * These used to be doc review's own `Mergeable` / `Needs revision` pair, on the reasoning
+ * (1-requirements FR-7 / NFR-5) that reusing doc review's words bought auto-loop compatibility.
+ * It did not: this skill assembles its report locally and emits it as the model's own message,
+ * so it was never a doc-review verdict — and sentinels are behaviour-layer signals the model and
+ * reviewers read in conversation (hook-lightweighting § 3.3: nothing parses them anymore). A
+ * necessity audit ending in a bare `✅ Mergeable` still reads, to the model deciding whether the
+ * doc gate is satisfied, exactly like a doc review that never ran. The namespaced pair keeps the
+ * two verdicts unconfusable — the same fix `✅ Plan Ready` / `⛔ Plan Blocked` applies to the plan
+ * plane. (Historically this also collided with the deleted enforcement hooks' transcript greps —
+ * that machinery is gone, but the readability collision it exposed is the reason that stands.)
+ * Pinned by test/skills/necessity-audit/stop-guard-isolation.test.js.
  */
 const AUDIT_CLEAR = '✅ Audit Clear';
 const AUDIT_REVISE = '⛔ Audit Revise';

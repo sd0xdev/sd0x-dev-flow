@@ -150,14 +150,16 @@ function hashDirRecursive(absDir, depth = 0) {
 // so a hostile "read-only" worker could mutate a gitignored file (e.g. .env,
 // .claude/settings.local.json, a generated build artifact) with zero footprint in
 // every other snapshot check. We hash ignored content too — EXCLUDING ONLY the
-// intentional control/safety planes plus a few demonstrably high-churn / high-volume
+// intentional control plane plus a few demonstrably high-churn / high-volume
 // SUBTREES that would otherwise self-trip the verifier or blow up hash-object cost.
 // The exclusion is deliberately SURGICAL (not a blanket `.claude/`): stable ignored
 // config like .claude/settings*.json / .claude/runner-config.json AND the installed
-// hook/script symlinks stay hashed, so their tampering IS caught.
+// hook/script symlinks stay hashed, so their tampering IS caught. The former
+// safety-plane entries (.claude_review_state.json* and .claude_nit_history.json)
+// are gone with their writers (hook-lightweighting § 3.4): the reminder state
+// lives outside the repo under ~/.cache, so nothing hook-owned is written into
+// the tree anymore and there is no safety plane left to exclude.
 //   .claude_workflows/          orchestrator control plane (written each run by design).
-//   .claude_review_state.json*  hook-owned safety plane (+ .blocked/.lockdir siblings).
-//   .claude_nit_history.json    nit-history tooling state.
 //   .claude/cache/              precommit/tool caches — high churn (hundreds of files).
 //   .claude/worktrees/          full worktree checkouts — huge + self-referential.
 //   .claude/jobs/               background-job temp state — concurrent churn.
@@ -174,8 +176,6 @@ function hashDirRecursive(absDir, depth = 0) {
 // is content-hashed and fails closed on drift.
 const IGNORED_EXCLUDE_PREFIXES = [
   '.claude_workflows/',
-  '.claude_review_state.json',
-  '.claude_nit_history.json',
   '.claude/cache/',
   '.claude/worktrees/',
   '.claude/jobs/',
@@ -195,18 +195,12 @@ function isControlPlaneIgnored(p) {
     p.startsWith('node_modules/') ||
     p.includes('/node_modules/')
   ) return true;
-  return IGNORED_EXCLUDE_PREFIXES.some((pfx) => {
-    if (pfx.endsWith('/')) {
-      // Directory-style prefix (e.g. .claude/cache/): the dir node itself or any descendant.
-      return p === pfx.slice(0, -1) || p.startsWith(pfx);
-    }
-    // File-style prefix (e.g. .claude_review_state.json): the EXACT file, a dotted sibling
-    // (<name>.blocked / .lockdir / .XXXXXX temp), or a child under a same-named dir. A bare
-    // p.startsWith(pfx) would ALSO swallow an unrelated `<name>Xevil/…` that merely shares the
-    // leading characters, widening the hidden surface past the intended safety plane — so anchor
-    // the match to a `.`/`/` separator (or exact equality).
-    return p === pfx || p.startsWith(`${pfx}.`) || p.startsWith(`${pfx}/`);
-  });
+  // Every remaining entry is a directory-style prefix: the dir node itself or any
+  // descendant. The file-style arm (anchored `.`/`/` sibling matching) left with the
+  // safety-plane entries it served — resurrect it only with a file entry to need it.
+  return IGNORED_EXCLUDE_PREFIXES.some(
+    (pfx) => p === pfx.slice(0, -1) || p.startsWith(pfx)
+  );
 }
 
 // Directory subtrees excluded at the GIT pathspec level so `ls-files` never emits
@@ -808,19 +802,14 @@ function snapshot(repo) {
     // --exclude-standard skips gitignored files (e.g. .claude_workflows/ —
     // legitimate orchestrator run-state writes must not trip the verifier).
     // isControlPlaneIgnored ALSO runs here (not only on the ignored side below):
-    // the hook's own safety-plane siblings (.claude_review_state.json.blocked /
-    // .lockdir / .XXXXXX mktemp temps) are written DURING the snapshot→compare
-    // window and are NOT reliably gitignored in every consumer repo (a bare
-    // `.claude_review_state.json` .gitignore line does not cover the `.blocked`
-    // sibling). Left unfiltered they read as untracked churn → spurious drift on
-    // an otherwise clean tree. Filtering them here mirrors the ignored-side policy
-    // (control/safety-plane mutation is a documented v2 residual), so the same
-    // class of path is treated identically regardless of the repo's ignore config.
-    // SCOPE: this filter only removes them from untracked_content_sha256. When the
-    // target repo has NOT adopted the shipped `.claude_review_state.json*` .gitignore
-    // glob, these same siblings still surface in the UNFILTERED porcelain_sha256
-    // (`git status --porcelain -uall`), so a transient sibling can still trip a
-    // (fail-closed, safe) porcelain drift; full suppression needs the glob in place.
+    // a consumer repo that does not gitignore the control plane would otherwise
+    // report the orchestrator's own run-state writes as untracked churn →
+    // spurious drift on an otherwise clean tree. Filtering here mirrors the
+    // ignored-side policy (control-plane mutation is a documented v2 residual),
+    // so the same class of path is treated identically regardless of the repo's
+    // ignore config. The former hook safety-plane siblings this comment once
+    // described are gone: the reminder state lives under ~/.cache, outside the
+    // repo, so no hook writes into the snapshot→compare window anymore.
     const untrackedPaths = gitEnumerate(repo, ['ls-files', '--others', '--exclude-standard', '-z'])
       .split('\0')
       .filter(Boolean)

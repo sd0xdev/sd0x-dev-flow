@@ -1064,53 +1064,57 @@ test('run-verify snapshot: corrupt .git/config → fail-closed exit 1 (unverifia
   assert.equal(status, 1, 'an unverifiable (corrupt) repo must fail-closed');
 });
 
-test('run-verify compare: in-place rewrite of an untracked control-plane state file → no drift (untracked-side isControlPlaneIgnored)', () => {
+test('run-verify compare: rewrite of a retired safety-plane filename (.claude_review_state.json) → drift (file-style exclusion removed)', () => {
   const { base, repo } = createRepo();
-  // The hooks own .claude_review_state.json and rewrite it DURING an orchestrate run. When it
-  // is present at snapshot time its porcelain line stays "?? .claude_review_state.json" across
-  // an in-place content rewrite (porcelain blind spot — same class as the pre-existing-untracked
-  // -edit test above), so only untracked_content would catch it. Filtering the control plane out
-  // of untrackedPaths (mirroring the ignored side) means a legitimate hook rewrite of its own
-  // safety plane does not read as worker drift. NOT gitignored here on purpose, to isolate the
-  // untracked-side filter from the .gitignore-glob layer. Without the untrackedPaths filter this
-  // A→B rewrite trips untracked_content_sha256 → exit 1 (the non-tautology anchor).
-  writeFileSync(join(repo, '.claude_review_state.json'), '{"session_id":"a","has_code_change":false}\n');
+  // Retirement pin. The file-style isControlPlaneIgnored arm once excluded
+  // `.claude_review_state.json*` so the enforcement hooks could rewrite their own state plane
+  // mid-run without reading as worker drift. Hook-lightweighting moved reminder state outside
+  // the repo (~/.cache/sd0x-dev-flow/), the hooks that wrote this file are deleted, and the
+  // exclusion went with them — so a file by that name is now ordinary untracked content, and a
+  // worker writing to it MUST drift. Resurrecting the file-style arm turns this back into a
+  // verifier-invisible write path; this test exists to make that resurrection loud.
+  writeFileSync(join(repo, '.claude_review_state.json'), '{"session_id":"a"}\n');
   const { baselinePath } = snapshotToFile(base, repo);
-  assert.equal(compare(repo, baselinePath).exitCode, 0, 'a stable control-plane file must not self-drift');
-  writeFileSync(join(repo, '.claude_review_state.json'), '{"session_id":"a","has_code_change":true}\n');
+  assert.equal(compare(repo, baselinePath).exitCode, 0, 'a stable untracked file must not self-drift');
+  writeFileSync(join(repo, '.claude_review_state.json'), '{"session_id":"b"}\n');
   const result = compare(repo, baselinePath);
-  assert.equal(result.exitCode, 0, 'a hook rewriting its own state plane in place must not trip the verifier');
+  assert.equal(result.exitCode, 1, 'the retired safety-plane filename is ordinary content — its mutation must drift');
+  assert.ok(driftFields(result).includes('untracked_content_sha256'), 'the mutation must surface in the untracked digest');
 });
 
-test('run-verify compare: in-place rewrite of an untracked .blocked sibling → no drift (prefix match, not exact)', () => {
+test('run-verify compare: in-place rewrite inside untracked .claude_workflows/ → no drift (untracked-side directory arm)', () => {
   const { base, repo } = createRepo();
-  // isControlPlaneIgnored matches by PREFIX, so the .blocked / .lockdir / .XXXXXX siblings that a
-  // bare `.claude_review_state.json` .gitignore line does NOT cover are still dropped from the
-  // untracked side. Rewriting the sibling in place (stable porcelain "?? …") must not drift —
-  // this exercises the startsWith branch that the exact-match ignore rule would miss.
-  writeFileSync(join(repo, '.claude_review_state.json.blocked'), 'v1\n');
+  // The surviving isControlPlaneIgnored arm is directory-style prefixes, and it runs on the
+  // untracked side too: the orchestrator's own run-state writes land in .claude_workflows/
+  // DURING the run, and in a consumer repo that has not gitignored it the porcelain line stays
+  // "?? .claude_workflows/" across an in-place rewrite — only untracked_content would catch it.
+  // Deliberately NOT gitignored here, isolating the untracked-side filter from the
+  // .gitignore-glob layer. Without the filter this A→B rewrite trips untracked_content_sha256
+  // → exit 1 (the non-tautology anchor).
+  mkdirSync(join(repo, '.claude_workflows'));
+  writeFileSync(join(repo, '.claude_workflows', 'run.json'), '{"status":"planning"}\n');
   const { baselinePath } = snapshotToFile(base, repo);
-  writeFileSync(join(repo, '.claude_review_state.json.blocked'), 'v2\n');
+  assert.equal(compare(repo, baselinePath).exitCode, 0, 'a stable control-plane dir must not self-drift');
+  writeFileSync(join(repo, '.claude_workflows', 'run.json'), '{"status":"executing"}\n');
   const result = compare(repo, baselinePath);
-  assert.equal(result.exitCode, 0, 'a control-plane sibling rewrite must not trip the verifier (prefix filter)');
+  assert.equal(result.exitCode, 0, 'the orchestrator rewriting its own run-state must not trip the verifier');
 });
 
-test('run-verify compare: in-place rewrite of a stem-EXTENSION path (.claude_review_state.jsonX/…) → drift (separator-anchored filter)', () => {
+test('run-verify compare: rewrite under a stem-EXTENSION dir (.claude_workflowsX/) → drift (separator-anchored prefix)', () => {
   const { base, repo } = createRepo();
-  // isControlPlaneIgnored anchors the file-prefix match to a `.`/`/` separator, so a path that
-  // merely SHARES the leading characters (`.claude_review_state.jsonX/evil.js` — NOT a real
-  // safety-plane sibling) is not excluded. A bare startsWith would have silently hidden a
-  // mutation here. Not gitignored in this repo, and an in-place rewrite keeps porcelain stable,
-  // so only untracked_content catches it — isolating the separator anchoring. Without the anchor
-  // this A→B rewrite is filtered out → exit 0 (the non-tautology anchor).
-  const dir = join(repo, '.claude_review_state.jsonX');
+  // The directory arm anchors on the trailing `/` of the prefix, so a path that merely SHARES
+  // the leading characters (`.claude_workflowsX/evil.js` — NOT the control plane) is not
+  // excluded. A bare startsWith would have silently hidden a mutation here. Not gitignored, and
+  // an in-place rewrite keeps porcelain stable, so only untracked_content catches it —
+  // isolating the anchoring. Without the anchor this A→B rewrite is filtered out → exit 0.
+  const dir = join(repo, '.claude_workflowsX');
   mkdirSync(dir);
   writeFileSync(join(dir, 'evil.js'), 'module.exports = 1;\n');
   const { baselinePath } = snapshotToFile(base, repo);
   assert.equal(compare(repo, baselinePath).exitCode, 0, 'a stable stem-extension path must not self-drift');
   writeFileSync(join(dir, 'evil.js'), 'module.exports = 2;\n');
   const result = compare(repo, baselinePath);
-  assert.equal(result.exitCode, 1, 'a stem-extension path is not the safety plane — its mutation must drift');
+  assert.equal(result.exitCode, 1, 'a stem-extension path is not the control plane — its mutation must drift');
   assert.ok(driftFields(result).includes('untracked_content_sha256'), 'the un-excluded path must be in the untracked digest');
 });
 

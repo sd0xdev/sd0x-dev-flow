@@ -74,12 +74,21 @@ async function collectInputs(root) {
 
   const head = await gitShortHead(root);
 
-  let reviewState = null;
-  try {
-    const raw = fs.readFileSync(path.join(root, '.claude_review_state.json'), 'utf8');
-    reviewState = JSON.parse(raw);
-  } catch {
-    // no state file — graceful fallback
+  // Gate verdicts come from the reminder-state checker (installed copy first), whose
+  // answers are content-addressed — `passed` already binds the verdict to the current
+  // tree digest, so a stale note reads as not-passed rather than as drift to detect.
+  // Checker absent or unparseable → null: this script then reports change-class facts
+  // and claims no verdict, exactly like /remind's degraded path.
+  let gateState = null;
+  let checker = path.join(root, '.claude', 'scripts', 'review-state.js');
+  if (!fs.existsSync(checker)) checker = path.join(root, 'scripts', 'review-state.js');
+  if (fs.existsSync(checker)) {
+    try {
+      const r = await runCapture('node', [checker, 'check', '--format=json'], { cwd: root });
+      gateState = JSON.parse(r.stdout);
+    } catch {
+      // checker failed — degraded run, no verdicts
+    }
   }
 
   return {
@@ -88,7 +97,7 @@ async function collectInputs(root) {
     branch: (branch.stdout || '').trim(),
     diffStatRaw: (diffStat.stdout || '').trim(),
     head: head || 'unknown',
-    reviewState,
+    gateState,
   };
 }
 
@@ -177,7 +186,7 @@ function fileTypeCounts(files) {
 // ---------------------------------------------------------------------------
 // Gates
 // ---------------------------------------------------------------------------
-function evaluateGates(reviewState, files) {
+function evaluateGates(gateState, files) {
   const nonVendorFiles = files.filter(f =>
     !IGNORE_PREFIXES.some(prefix => f.file.startsWith(prefix))
   );
@@ -190,10 +199,12 @@ function evaluateGates(reviewState, files) {
     precommit: { required: hasCode, passed: false },
   };
 
-  if (reviewState) {
-    if (reviewState.code_review) gates.code_review.passed = !!reviewState.code_review.passed;
-    if (reviewState.doc_review) gates.doc_review.passed = !!reviewState.doc_review.passed;
-    if (reviewState.precommit) gates.precommit.passed = !!reviewState.precommit.passed;
+  // `passed` is the checker's own conjunction (noted && digest_match && verdict pass),
+  // so no freshness reasoning happens here — an edit after the note flips it to false.
+  if (gateState) {
+    if (gateState.code_review) gates.code_review.passed = !!gateState.code_review.passed;
+    if (gateState.doc_review) gates.doc_review.passed = !!gateState.doc_review.passed;
+    if (gateState.precommit) gates.precommit.passed = !!gateState.precommit.passed;
   }
 
   return gates;
@@ -210,7 +221,7 @@ function resolveFeatureContext(root, branch, changedPaths) {
 // ---------------------------------------------------------------------------
 // Phase detection
 // ---------------------------------------------------------------------------
-function detectPhase(gates, findings, reviewState, files) {
+function detectPhase(gates, findings, gateState, files) {
   const hasChanges = files.length > 0;
   const allGatesPass = Object.values(gates).every(g => !g.required || g.passed);
   const hasP0P1 = findings.some(f => f.priority === 'P0' || f.priority === 'P1');
@@ -218,7 +229,7 @@ function detectPhase(gates, findings, reviewState, files) {
   if (!hasChanges && allGatesPass) {
     return findings.some(f => f.id === 'feature-complete') ? 'feature_complete' : 'clean';
   }
-  if (reviewState && gates.precommit.required && gates.precommit.passed && !hasP0P1) return 'post_precommit';
+  if (gateState && gates.precommit.required && gates.precommit.passed && !hasP0P1) return 'post_precommit';
   if (allGatesPass && !hasP0P1) return 'ready_to_commit';
   return 'mid_development';
 }
@@ -363,7 +374,7 @@ function buildBacklogContext(root) {
 // ---------------------------------------------------------------------------
 function runHeuristics(inputs, files, gates, root, featureCtx) {
   const findings = [];
-  const { porcelainLines, branch, reviewState } = inputs;
+  const { porcelainLines, branch, gateState } = inputs;
   const changedPaths = files.map(f => f.file);
 
   // Helper: check if a directory exists in repo
@@ -379,29 +390,20 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     } catch { return false; }
   }
 
-  // 1. state-drift: review state flags inconsistent with git
+  // The former finding 1 (state-drift) retired with the mirror it watched: the
+  // reminder state is content-addressed, so a note for a tree that no longer
+  // exists reads as not-passed — there is no stored flag left to drift.
   const hasChanges = porcelainLines.length > 0 || files.length > 0;
-  if (reviewState) {
-    if (!hasChanges && (reviewState.has_code_change || reviewState.has_doc_change)) {
-      findings.push({
-        id: 'state-drift',
-        priority: 'P0',
-        message: 'Review state says changes exist but worktree is clean',
-        suggestion: 'Reset .claude_review_state.json or investigate stale state',
-      });
-    }
-  }
 
-  // 2-4: gate-missing checks — only when there are actual changes.
-  // When worktree is clean, state-drift above covers stale state.
-  // Note: stop-guard.sh enforces independently via has_code_change;
-  // this script is advisory — "reset state" is correct when nothing to review.
+  // 2-4: gate-missing checks — only when there are actual changes AND the checker
+  // answered. Without it this script claims no verdict (like /remind's degraded
+  // run) rather than reporting every gate as missing on no evidence.
   // Gate checks use computed gates.*.required (vendor-filtered) as authoritative.
   // Although post-edit-format.sh now also skips vendor paths, the computed gates
   // remain the single source of truth for this advisory script.
   if (hasChanges) {
     // 2. gate-missing-code: non-vendor code changed, review not passed
-    if (reviewState && gates.code_review.required && !gates.code_review.passed) {
+    if (gateState && gates.code_review.required && !gates.code_review.passed) {
       findings.push({
         id: 'gate-missing-code',
         priority: 'P0',
@@ -411,7 +413,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     }
 
     // 3. gate-missing-doc: docs changed, doc review not passed
-    if (reviewState && gates.doc_review.required && !gates.doc_review.passed) {
+    if (gateState && gates.doc_review.required && !gates.doc_review.passed) {
       findings.push({
         id: 'gate-missing-doc',
         priority: 'P0',
@@ -421,7 +423,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     }
 
     // 4. gate-missing-precommit: non-vendor code requires precommit, review passed but precommit not
-    if (reviewState && gates.precommit.required && gates.code_review.passed && !gates.precommit.passed) {
+    if (gateState && gates.precommit.required && gates.code_review.passed && !gates.precommit.passed) {
       findings.push({
         id: 'gate-missing-precommit',
         priority: 'P0',
@@ -571,7 +573,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
   }
 
   // 13. doc-sync-needed: precommit passed + feature has tech-spec + code in diff
-  if (reviewState && gates.precommit.passed && featureCtx && featureCtx.key) {
+  if (gateState && gates.precommit.passed && featureCtx && featureCtx.key) {
     if (featureCtx.has_tech_spec) {
       const codeInDiff = changedPaths.some(p => CODE_EXTS.includes(path.extname(p)));
       if (codeInDiff) {
@@ -586,7 +588,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
   }
 
   // 14. request-stale: precommit passed + the request is still open (see request-status.js)
-  if (reviewState && gates.precommit.passed && featureCtx && featureCtx.key && featureCtx.has_requests) {
+  if (gateState && gates.precommit.passed && featureCtx && featureCtx.key && featureCtx.has_requests) {
     const reqDir = path.join(root, featureCtx.docs_path, 'requests');
     try {
       // `.sort()` because the loop `break`s on the FIRST open request: without it, WHICH request
@@ -704,7 +706,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
   if (featureCtx && featureCtx.key && !corpusUnreadable) {
     const allGatesPass = Object.values(gates).every(g => !g.required || g.passed);
     const hasBlockers = findings.some(f => f.id === 'doc-sync-needed' || f.id === 'request-stale' || f.id === 'ac-incomplete');
-    if (allGatesPass && !hasBlockers && reviewState && gates.precommit.passed) {
+    if (allGatesPass && !hasBlockers && gateState && gates.precommit.passed) {
       findings.push({
         id: 'feature-complete',
         priority: 'P3',
@@ -723,7 +725,7 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
 function buildOutput(inputs, root) {
   const { summary, files } = parseDiffSummary(inputs.nameStatusLines, inputs.porcelainLines, root);
   const types = fileTypeCounts(files);
-  const gates = evaluateGates(inputs.reviewState, files);
+  const gates = evaluateGates(inputs.gateState, files);
   const changedPaths = files.map(f => f.file);
   const featureCtx = resolveFeatureContext(root, inputs.branch, changedPaths);
   const allFindings = runHeuristics(inputs, files, gates, root, featureCtx);
@@ -740,7 +742,7 @@ function buildOutput(inputs, root) {
     findingCount[f.priority] = (findingCount[f.priority] || 0) + 1;
   }
 
-  const phase = detectPhase(gates, allFindings, inputs.reviewState, files);
+  const phase = detectPhase(gates, allFindings, inputs.gateState, files);
   const next_actions = buildNextActions(allFindings, phase, featureCtx);
   const backlog = phase === 'feature_complete' ? buildBacklogContext(root) : null;
 

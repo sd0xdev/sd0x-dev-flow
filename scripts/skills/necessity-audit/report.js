@@ -8,12 +8,10 @@
  * `consolidate.js` selected (`✅ Audit Clear` / `⛔ Audit Revise`).
  *
  * Both are BEHAVIOUR-LAYER markers: they are read by a human and by Claude's auto-loop, and by
- * nothing else. No hook parses them — see the AUDIT_CLEAR/AUDIT_REVISE comment in consolidate.js
- * for why the doc-review vocabulary (its `Document Review` header + `Mergeable` sentinel) was
- * given up. The previous version of this comment claimed the header existed "for hook parsing
- * (hooks/post-tool-review-state.sh:641)"; that was wrong in both halves — this report is never a
- * reviewer tool output, so the provenance-gated doc branch never sees it, and the cited line
- * number had drifted long before anyone noticed the claim itself was false.
+ * nothing else. No hook parses them — since hook-lightweighting § 3.3 no hook parses ANY
+ * sentinel — see the AUDIT_CLEAR/AUDIT_REVISE comment in consolidate.js for why the doc-review
+ * vocabulary (its `Document Review` header + `Mergeable` sentinel) was given up anyway: the
+ * namespaced pair keeps an audit verdict unconfusable with a doc-review verdict in conversation.
  *
  * CLI:
  *   node report.js --input <file> --format markdown|json --output <file>

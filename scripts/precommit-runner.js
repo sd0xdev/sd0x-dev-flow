@@ -7,21 +7,26 @@
  * Auto-detects yarn/pnpm/npm from lockfile.
  * Multi-ecosystem orchestrator (WB2b): detects non-Node manifests (pyproject.toml,
  * Cargo.toml, go.mod, build.gradle, pom.xml, Gemfile) and runs their checks as
- * first-class steps with the same receipt append as the Node path.
+ * first-class steps alongside the Node path.
  *
  * Outputs:
  * - concise Markdown summary to stdout (for Claude Code context)
- * - writes full logs to .claude/cache/precommit/<repoKey>/<shortSha>/
- *   (or $CLAUDE_PRECOMMIT_CACHE_DIR)
+ * - writes full logs to <cacheBase>/<repoKey>/<shortSha>/, where cacheBase is
+ *   resolved in order: $CLAUDE_PRECOMMIT_CACHE_DIR (honoured only if outside the
+ *   repo or gitignored, symlinks resolved), else .claude/cache/precommit when
+ *   gitignored, else ~/.cache/sd0x-dev-flow/precommit (same check), else the
+ *   <git-dir>/sd0x-precommit-cache terminal fallback — an unignored in-repo cache
+ *   write after the reminder note would invalidate the note it just recorded.
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// stdout is a diagnostic sink, never the verdict channel: an early-closing pipe
-// (e.g. `runner | head`) raises EPIPE, and an unhandled one would kill the
-// process before the receipt append. Losing the sink must not lose the gate.
+// stdout is a diagnostic sink: an early-closing pipe (e.g. `runner | head`)
+// raises EPIPE, and an unhandled one would kill the process mid-run. Losing
+// the sink must not lose the run.
 process.stdout.on('error', () => {});
 process.stderr.on('error', () => {});
 const {
@@ -48,19 +53,6 @@ const {
   buildRecipes,
 } = require('./lib/utils');
 
-// Content-addressed receipt producer (WB2,
-// docs/features/auto-loop-evolution/2-tech-spec/2-content-addressed-receipts.md §3.4).
-// Optional: the installed copy in a consuming project may not ship these libs — there the
-// legacy stdout-parsing route still governs, so absence degrades to today's behaviour.
-let receiptLog = null;
-let treeDigest = null;
-try {
-  receiptLog = require('./lib/receipt-log');
-  treeDigest = require('./lib/tree-digest');
-} catch {
-  receiptLog = null;
-  treeDigest = null;
-}
 
 // Steps that check repo POLICY rather than validate the project. They can fail a run, but they
 // never satisfy "some validation ran" — see the overallPass comment for the false-green this
@@ -118,8 +110,8 @@ function parseArgs(argv) {
 }
 
 // Multi-ecosystem orchestration (WB2b, spec §3.4 round-6). The runner is the
-// single receipt producer, so it must close the gate for the same ecosystems
-// the precommit Skill's fallback table covers — the rows below encode
+// single conclusive-verdict source for precommit, so it must cover the same
+// ecosystems the precommit Skill's fallback table covers — the rows below encode
 // skills/precommit/SKILL.md § Ecosystem detection (the canonical human-facing
 // table). Absence comes in two kinds and they are NOT interchangeable:
 //
@@ -127,7 +119,7 @@ function parseArgs(argv) {
 //   golangci-lint, mvn, bundle, the gradle wrapper) marks the step
 //   `unavailable`: it never counts as "validation ran" AND it blocks a PASS —
 //   a detected ecosystem whose pinned check cannot execute is incomplete
-//   validation, and letting another passing step mint the receipt anyway is
+//   validation, and letting another passing step mint a PASS anyway is
 //   the false-green this distinction exists to prevent.
 // - A repo-declared capability absent (no spotless task, rubocop/rspec not in
 //   the bundle) is an ordinary skip, mirroring a missing package.json script:
@@ -202,7 +194,7 @@ function runProbe(cmd, probeArgs, opts = {}) {
         // Own process group (POSIX): a probe's grandchildren (wrapper scripts
         // fork their real tool — gradlew forks a JVM) must die with it on
         // timeout, or they keep running beside lint/build/test and can mutate
-        // the tree after the validation baseline.
+        // the tree while the checks read it.
         detached: process.platform !== 'win32',
       });
     } catch (e) {
@@ -494,9 +486,97 @@ async function main() {
   const repoBase = path.basename(repoRoot);
   const repoKey = `${safeSlug(repoBase)}--${sha1(remote).slice(0, 8)}`;
 
-  const cacheBase =
-    process.env.CLAUDE_PRECOMMIT_CACHE_DIR ||
-    path.join(repoRoot, '.claude', 'cache', 'precommit');
+  // In-repo cache only when git ignores it — explicit override included. The
+  // reminder note is recorded before the diagnostic writes land, so an UNignored
+  // in-repo cache write would dirty the code plane and immediately invalidate the
+  // note it just earned. check-ignore: exit 0 = ignored.
+  const userCache = path.join(os.homedir(), '.cache', 'sd0x-dev-flow', 'precommit');
+  // Probe the ACTUAL post-note write targets, not the directory or a synthetic
+  // child: a dir-only pattern (trailing slash) does not match a directory that
+  // does not exist yet, and a synthetic name could be narrowly ignored while the
+  // real files are not. All three must be ignored for the cache to qualify.
+  const isIgnored = async base => {
+    const dir = path.join(base, repoKey, short);
+    for (const f of ['summary.json', 'summary.md', 'runner.log']) {
+      const r = await runCapture('git', ['check-ignore', '-q', path.join(dir, f)], { cwd: repoRoot });
+      if (r.code !== 0) return false;
+    }
+    return true;
+  };
+  // Containment is decided on the CANONICAL destination: a lexically external
+  // path can be a symlink back into the repository, and the write lands where
+  // the symlink points. For not-yet-created descendants, canonicalize the
+  // nearest existing ancestor and re-append the unresolved suffix.
+  const canonicalize = p => {
+    let cur = p;
+    let suffix = '';
+    for (;;) {
+      try {
+        return path.join(fs.realpathSync(cur), suffix);
+      } catch {
+        suffix = suffix ? path.join(path.basename(cur), suffix) : path.basename(cur);
+        const parent = path.dirname(cur);
+        if (parent === cur) return p;
+        cur = parent;
+      }
+    }
+  };
+  const realRepoRoot = canonicalize(repoRoot);
+  // Every candidate — explicit override, in-repo default, user cache — passes the
+  // SAME canonical containment + ignore check; the first safe one wins. rel
+  // '..cache' is INSIDE the repo — only '..' itself, '../…', or an absolute rel
+  // (other volume) mean outside. Terminal fallback lives under the repo's git
+  // dir, which the worktree digest never sees.
+  const qualifies = async p => {
+    const rel = path.relative(realRepoRoot, p);
+    const inside =
+      !path.isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${path.sep}`);
+    return !inside || (await isIgnored(p));
+  };
+  let cacheBase = null;
+  let cacheNote = null;
+  const explicit = process.env.CLAUDE_PRECOMMIT_CACHE_DIR;
+  const first = canonicalize(
+    explicit
+      ? path.resolve(repoRoot, explicit)
+      : path.join(repoRoot, '.claude', 'cache', 'precommit')
+  );
+  if (await qualifies(first)) {
+    cacheBase = first;
+  } else {
+    if (explicit) {
+      const rel = path.relative(realRepoRoot, first);
+      cacheNote = `⚠️ CLAUDE_PRECOMMIT_CACHE_DIR \`${rel || '.'}\` is inside the repo and not gitignored — using the user cache instead (a post-note write there would invalidate the fresh precommit note)`;
+    }
+    const user = canonicalize(userCache);
+    if (await qualifies(user)) {
+      cacheBase = user;
+    } else {
+      // Never reconstruct `.git` by hand: in linked worktrees and submodules it is
+      // a FILE pointing at the real git dir. Ask git, falling back from absolute
+      // to repo-relative; if git cannot answer, report and stop — no checks have
+      // run yet, so nothing earned is lost.
+      const gd = await runCapture('git', ['rev-parse', '--absolute-git-dir'], {
+        cwd: repoRoot,
+      });
+      let gitDir = gd.code === 0 ? (gd.stdout || '').trim() : '';
+      if (!gitDir) {
+        const gd2 = await runCapture('git', ['rev-parse', '--git-dir'], {
+          cwd: repoRoot,
+        });
+        if (gd2.code === 0 && (gd2.stdout || '').trim())
+          gitDir = path.resolve(repoRoot, gd2.stdout.trim());
+      }
+      if (!gitDir) {
+        process.stdout.write(
+          '# precommit runner\n\n❌ cache resolution failed: the explicit/default/user caches all resolve inside the repo unignored, and the git dir could not be determined. Fix the cache configuration (set CLAUDE_PRECOMMIT_CACHE_DIR to an external or gitignored path) and re-run.\n'
+        );
+        return;
+      }
+      cacheBase = path.join(gitDir, 'sd0x-precommit-cache');
+      cacheNote = `${cacheNote ? `${cacheNote}; ` : '⚠️ '}the user cache also resolves inside the repo unignored — using the git-dir cache \`${cacheBase}\``;
+    }
+  }
 
   const logDir = path.join(cacheBase, repoKey, short);
   ensureDir(logDir);
@@ -516,31 +596,9 @@ async function main() {
   };
   writeJson(path.join(logDir, 'meta.json'), meta);
 
-  // Writability preflight: a producer must not run the gate silently degraded —
-  // an unwritable receipt log discovered only at append time would let the run's
-  // evidence vanish while its stdout still looked authoritative.
-  if (!receiptLog || !treeDigest) {
-    process.stdout.write(
-      '> ⚠️ content-addressed receipt producer unavailable (lib/tree-digest.js or lib/receipt-log.js not installed) — legacy stdout-route receipts only\n'
-    );
-  }
-  if (receiptLog) {
-    const pre = receiptLog.preflightWritable(repoRoot);
-    if (!pre.ok) {
-      process.stdout.write(
-        `# Precommit (${args.mode})\n\n` +
-          `❌ receipt log unwritable — refusing to run the gate silently degraded.\n` +
-          `   ${pre.error}\n\n` +
-          `## Overall: ❌ FAIL\n`
-      );
-      return;
-    }
-  }
-
   let statusBefore = '';
   let statusAfter = '';
   let changedAfterLint = [];
-  let baseline = null; // code-plane digest after lint:fix — the validation baseline
   const results = [];
   let summaryError = '';
   const pm = detectPackageManager(repoRoot);
@@ -700,29 +758,21 @@ async function main() {
     }
     steps.push(...eco.test);
 
-    // The validation baseline sits after the LAST intentionally-mutating step
-    // (every lint-fix step, whichever ecosystem contributed it) and before
-    // build/test; overallPass recomputes it and a PASS receipt requires the
-    // endpoints to be equal (§3.4).
+    // Capture auto-fixed files after the LAST intentionally-mutating step
+    // (every lint-fix step, whichever ecosystem contributed it).
     const isLintStep = n => n === 'lint_fix' || n.endsWith('_lint_fix');
     let lastLintIdx = -1;
     steps.forEach((s, i) => {
       if (isLintStep(s.name)) lastLintIdx = i;
     });
-    if (lastLintIdx === -1 && treeDigest) {
-      baseline = treeDigest.computeTreeState(repoRoot).planes.code;
-    }
     let anyLintRan = false;
 
     for (let i = 0; i < steps.length; i++) {
       const s = steps[i];
       await executeStep(s);
       if (!s.status && isLintStep(s.name)) anyLintRan = true;
-      if (i === lastLintIdx) {
-        if (anyLintRan) changedAfterLint = await gitDiffNameOnly(repoRoot);
-        if (treeDigest) {
-          baseline = treeDigest.computeTreeState(repoRoot).planes.code;
-        }
+      if (i === lastLintIdx && anyLintRan) {
+        changedAfterLint = await gitDiffNameOnly(repoRoot);
       }
     }
 
@@ -754,11 +804,11 @@ async function main() {
     // not project validation, and it passes in any repo holding a hooks/scripts/skills directory —
     // so counting it re-minted the all-skip false-green this sentinel exists to prevent: a Python
     // or Rust project that installed this plugin and happens to have a top-level `scripts/` would
-    // bank a ✅ PASS receipt with pytest/cargo never invoked. A policy step still FAILS the run.
+    // bank a ✅ PASS with pytest/cargo never invoked. A policy step still FAILS the run.
     //
     // UNAVAILABLE steps (a detected ecosystem's required tool missing) block a PASS outright:
     // validation that could not execute is incomplete, and a sibling step passing must not mint
-    // the receipt over the hole — e.g. pytest green while ruff is not installed.
+    // a PASS over the hole — e.g. pytest green while ruff is not installed.
     overallPass: (() => {
       const ran = results.filter(
         r => r.status !== 'skip' && r.status !== 'unavailable'
@@ -771,128 +821,6 @@ async function main() {
     })(),
     error: summaryError || undefined,
   };
-  // Content-addressed verdict append (WB2): the producer records what it knows,
-  // independent of stdout surviving truncation, piping, or backgrounding. It
-  // runs BEFORE any diagnostic write (summary.json, summary.md) — evidence
-  // production must not die to a failing diagnostic sink. The NO CHECKS RUN
-  // state appends nothing — an all-skip run is not evidence in either
-  // direction; a crashed run (summaryError) has no verdict to record.
-  const receiptPolicyOnly =
-    results.length > 0 &&
-    results.every(
-      r =>
-        r.status === 'skip' ||
-        r.status === 'unavailable' ||
-        isPolicyStep(r.name)
-    );
-  const receiptPolicyFailed = results.some(
-    r => isPolicyStep(r.name) && r.status !== 'skip' && r.code !== 0
-  );
-  if (
-    receiptLog &&
-    treeDigest &&
-    !summaryError &&
-    !(receiptPolicyOnly && !receiptPolicyFailed)
-  ) {
-    try {
-      const endpoint = treeDigest.computeTreeState(repoRoot).planes.code;
-      const verdict = summary.overallPass ? 'pass' : 'fail';
-      const endpointsMatch =
-        baseline &&
-        !baseline.partial &&
-        !endpoint.partial &&
-        baseline.digest === endpoint.digest;
-      if (verdict === 'pass' && !endpointsMatch) {
-        // The tree drifted between lint:fix and overallPass (or a digest was
-        // partial): a PASS receipt is refused — loudly — and the gate stays
-        // open. FAIL is exempt below: negative evidence names what it observed.
-        process.stdout.write(
-          `> ⚠️ receipt withheld: baseline digest ${
-            (baseline && baseline.digest) || '(partial)'
-          } != endpoint ${endpoint.digest || '(partial)'} — tree changed during checks\n`
-        );
-        appendLog(runnerLog, `[${nowISO()}] receipt_withheld endpoint_mismatch\n`);
-      } else {
-        const rec = {
-          v: 1,
-          kind: 'verdict',
-          plane: 'precommit',
-          digest: endpoint.digest,
-          verdict,
-          mode: args.mode,
-          head: short,
-          time: nowISO(),
-          producer: 'precommit-runner',
-        };
-        if (endpoint.partial) rec.partial = true;
-        if (verdict === 'pass' && endpoint.digest) {
-          // Resolution is recorded only after actually reading the fallback
-          // file; an unreadable fallback resolves nothing (over-block, §4).
-          const ts = receiptLog.readTombstones(repoRoot);
-          if (ts.ok) {
-            const ids = receiptLog.matchingTombstoneIds(
-              ts.records,
-              'precommit',
-              endpoint.digest
-            );
-            if (ids.length) {
-              rec.resolves = ids.map(id => ({
-                plane: 'precommit',
-                digest: endpoint.digest,
-                id,
-              }));
-            }
-          }
-        }
-        try {
-          const { file } = receiptLog.resolveReceiptPaths(repoRoot);
-          receiptLog.appendRecords(file, [rec]);
-          appendLog(runnerLog, `[${nowISO()}] receipt_appended verdict=${verdict}\n`);
-        } catch (e) {
-          // Primary append failed: tombstone the pair on the fallback path so an
-          // older same-digest PASS cannot silently close this gate (§4).
-          appendLog(
-            runnerLog,
-            `[${nowISO()}] receipt_append_failed ${String(e && e.message)}\n`
-          );
-          try {
-            if (!endpoint.digest) {
-              // A partial digest matches nothing, so there is no (plane, digest)
-              // pair an older PASS could close — nothing to tombstone.
-              throw new Error('endpoint digest partial — no pair to block');
-            }
-            receiptLog.appendTombstone(repoRoot, [
-              { plane: 'precommit', digest: endpoint.digest },
-            ]);
-            process.stdout.write(
-              `> ⚠️ receipt append failed (${String(
-                e && e.message
-              )}); tombstone written — this (plane, digest) stays blocked until a later run resolves it\n`
-            );
-          } catch (e2) {
-            process.stdout.write(
-              `> ❌ receipt append AND tombstone write failed: ${String(
-                e && e.message
-              )} / ${String(e2 && e2.message)}\n`
-            );
-          }
-        }
-      }
-    } catch (e) {
-      process.stdout.write(
-        `> ⚠️ receipt production failed: ${String((e && e.message) || e)}\n`
-      );
-    }
-  }
-
-  try {
-    writeJson(path.join(logDir, 'summary.json'), summary);
-    appendLog(runnerLog, `[${nowISO()}] summary_written\n`);
-  } catch (e) {
-    process.stdout.write(
-      `> ⚠️ summary.json write failed (diagnostic only): ${String((e && e.message) || e)}\n`
-    );
-  }
 
   // Output concise Markdown (for Claude Code context)
   const lines = [];
@@ -900,6 +828,7 @@ async function main() {
   lines.push(`- repo: \`${repoRoot}\``);
   lines.push(`- HEAD: \`${short}\``);
   lines.push(`- logs: \`${logDir}\``);
+  if (cacheNote) lines.push(`- ${cacheNote}`);
   if (summary.error) lines.push(`- runner_error: \`${summary.error}\``);
   lines.push('');
   lines.push('## Git status (before)');
@@ -1005,9 +934,55 @@ async function main() {
   lines.push('');
 
   const summaryMd = lines.join('\n');
-  writeText(path.join(logDir, 'summary.md'), summaryMd);
-  appendLog(runnerLog, `[${nowISO()}] summary_md_written\n`);
   process.stdout.write(summaryMd);
+
+  // Reminder-state note (hook-lightweighting §3.3): PASS → note pass,
+  // FAIL → note fail, NO CHECKS RUN → no note. A failed note is reported
+  // and never fails the run. Recorded BEFORE the diagnostic summary.md write:
+  // a conclusive verdict must not be lost to a fallible report write.
+  if (!(noValidationRan && !policyFailed)) {
+    const verdict = summary.overallPass ? 'pass' : 'fail';
+    try {
+      const noteRes = require('child_process').spawnSync(
+        process.execPath,
+        [path.join(__dirname, 'review-state.js'), 'note', 'precommit', verdict],
+        { cwd: repoRoot, encoding: 'utf8', timeout: 15000 }
+      );
+      if (noteRes.error || noteRes.signal)
+        process.stdout.write(
+          `> ⚠️ review-state note failed (advisory): ${noteRes.signal ? `killed by ${noteRes.signal} (timeout)` : String(noteRes.error.message || noteRes.error)}\n`
+        );
+      else if (noteRes.status === 0) process.stdout.write(noteRes.stdout);
+      else
+        process.stdout.write(
+          `> ⚠️ review-state note failed (advisory): ${(noteRes.stderr || '').trim()}\n`
+        );
+    } catch (e) {
+      process.stdout.write(
+        `> ⚠️ review-state note failed (advisory): ${String((e && e.message) || e)}\n`
+      );
+    }
+  }
+
+  // Diagnostic persistence last, and advisory: the verdict already reached stdout
+  // and the reminder state above, so a failing — or merely blocking (FIFO, stalled
+  // mount) — cache write can no longer wedge the run before its outcome is recorded.
+  try {
+    writeJson(path.join(logDir, 'summary.json'), summary);
+    appendLog(runnerLog, `[${nowISO()}] summary_written\n`);
+  } catch (e) {
+    process.stdout.write(
+      `> ⚠️ summary.json write failed (diagnostic only): ${String((e && e.message) || e)}\n`
+    );
+  }
+  try {
+    writeText(path.join(logDir, 'summary.md'), summaryMd);
+    appendLog(runnerLog, `[${nowISO()}] summary_md_written\n`);
+  } catch (e) {
+    process.stdout.write(
+      `> ⚠️ summary.md write failed (advisory): ${String((e && e.message) || e)}\n`
+    );
+  }
 }
 
 main().catch(e => {

@@ -113,25 +113,21 @@ function countLines(absPath) {
   return matches ? matches.length : 0;
 }
 
-function readStateAdvisory(root, absPath) {
-  const stateFile = path.join(root, '.claude_review_state.json');
-  if (!fs.existsSync(stateFile)) return { recentPass: false, reason: 'no state file' };
+function readStateAdvisory(root) {
+  // Advisory only. The verdict comes from the reminder-state checker (installed
+  // copy first); its `passed` is content-addressed — bound to the current tree
+  // digest — so the old last_run-vs-commit-time freshness math is gone with the
+  // mirror file it compensated for. Checker absent → no claim, warn-side.
+  let checker = path.join(root, '.claude', 'scripts', 'review-state.js');
+  if (!fs.existsSync(checker)) checker = path.join(root, 'scripts', 'review-state.js');
+  if (!fs.existsSync(checker)) return { recentPass: false, reason: 'no reminder-state checker' };
   try {
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    const dr = state.doc_review || {};
-    if (!dr.passed) return { recentPass: false, reason: 'no doc_review.passed' };
-    const lastRunMs = dr.last_run ? Date.parse(dr.last_run) : 0;
-    let commitMs = 0;
-    try {
-      const ts = execFileSync('git', ['log', '-1', '--format=%ct', '--', absPath], { cwd: root, encoding: 'utf8' }).trim();
-      commitMs = ts ? parseInt(ts, 10) * 1000 : 0;
-    } catch {
-      // file has no commit history
-    }
-    if (lastRunMs > commitMs) return { recentPass: true };
-    return { recentPass: false, reason: 'stale doc_review' };
+    const out = execFileSync('node', [checker, 'check', '--format=json'], { cwd: root, encoding: 'utf8' });
+    const dr = JSON.parse(out).doc_review || {};
+    if (dr.passed) return { recentPass: true };
+    return { recentPass: false, reason: 'no doc_review pass bound to the current tree' };
   } catch {
-    return { recentPass: false, reason: 'state file unparseable' };
+    return { recentPass: false, reason: 'checker unreadable' };
   }
 }
 
@@ -232,7 +228,7 @@ function main() {
     result.featureKey = ctx.key;
 
     if (!skipPreflight) {
-      const advisory = readStateAdvisory(root, absPath);
+      const advisory = readStateAdvisory(root);
       if (!advisory.recentPass) {
         result.warnings.push(
           'ℹ️ No recent /codex-review-doc pass detected in this session. Recommend running /codex-review-doc first.',
