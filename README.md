@@ -288,7 +288,7 @@ Real-world scenarios showing which skills to combine and in what order.
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 8 | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 21 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 22 | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Minimal Context Footprint

@@ -185,7 +185,7 @@ function buildWhatsIncludedCount({ publicCount, bundledCount, disk }) {
     `| Agents | ${disk.agents} | strict-reviewer, verify-app, coverage-analyst, architecture-designer |`,
     `| Hooks | ${disk.hooks} | pre-edit-guard, auto-format, review state tracking, stop guard, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard, session-init |`,
     `| Rules | ${disk.rules} | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |`,
-    `| Scripts | ${disk.scripts} | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile |`,
+    `| Scripts | ${disk.scripts} | precommit runner, verify runner, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, emit-review-gate, emit-plan-gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, security-redact, readme-catalog, check-doc-links, resolve-review-profile, dispatch-log CLI |`,
   ].join('\n');
 }
 
