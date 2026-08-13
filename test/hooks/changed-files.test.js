@@ -316,9 +316,30 @@ after(() => {
 // D-3: changed_files_since_review tracking + reset (R13)
 // =============================================================================
 
+// WB5b: post-edit-format.sh no longer creates or migrates the state file —
+// session-init.sh owns creation. Tracking tests therefore seed the minimal
+// state the edit hook now REQUIRES to record anything.
+function seedState(workDir) {
+  writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify({
+    schema_version: 2,
+    has_code_change: false,
+    code_review: { executed: false, passed: false, last_run: '' },
+    iteration_history: { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false },
+  }));
+}
+
+test('WB5b retirement pin: a code edit with NO state file creates none (session-init owns creation)', () => {
+  const workDir = makeTempDir('sd0x-cf-nostate-');
+  const binDir = setupStubBin();
+  runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
+  assert.equal(readState(workDir), null,
+    'the edit hook must not resurrect state-file creation — gates re-open by derivation, not by stored flags');
+});
+
 test('single code edit appends file to changed_files_since_review', () => {
   const workDir = makeTempDir('sd0x-cf-single-');
   const binDir = setupStubBin();
+  seedState(workDir);
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state = readState(workDir);
   assert.ok(state, 'state file should exist after code edit');
@@ -331,6 +352,7 @@ test('single code edit appends file to changed_files_since_review', () => {
 test('editing same file twice does not produce duplicates (unique)', () => {
   const workDir = makeTempDir('sd0x-cf-unique-');
   const binDir = setupStubBin();
+  seedState(workDir);
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state = readState(workDir);
@@ -344,6 +366,7 @@ test('editing same file twice does not produce duplicates (unique)', () => {
 test('editing two different code files tracks both', () => {
   const workDir = makeTempDir('sd0x-cf-two-');
   const binDir = setupStubBin();
+  seedState(workDir);
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/a.ts', env: { HOOK_NO_FORMAT: '1' } });
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/b.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state = readState(workDir);
@@ -356,6 +379,7 @@ test('editing two different code files tracks both', () => {
 test('doc edit also appends to changed_files_since_review', () => {
   const workDir = makeTempDir('sd0x-cf-doc-');
   const binDir = setupStubBin();
+  seedState(workDir);
   runEditHook({ cwd: workDir, binDir, filePath: '/project/docs/readme.md', env: { HOOK_NO_FORMAT: '1' } });
   const state = readState(workDir);
   assert.ok(state);
@@ -382,23 +406,32 @@ test('// [] fallback: state missing changed_files_since_review still produces [f
 });
 
 test('code_review pass resets changed_files_since_review to empty array', () => {
+  // WB5b retired the legacy Bash/Skill verdict route — a `/codex-review-fast`
+  // Bash line no longer records a verdict. The reset now rides the MCP route
+  // (request provenance + headed output + sentinel), which needs REAL jq: the
+  // stub's short-circuits would skip the provenance checks the route depends on.
   const workDir = makeTempDir('sd0x-cf-reset-');
-  const binDir = setupStubBin();
-  runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
+  const realBinDir = makeTempDir('sd0x-cf-reset-bin-');
+  writeExecutable(join(realBinDir, 'npx'), '#!/bin/sh\nexit 0\n');
+  seedState(workDir);
+  runEditHook({ cwd: workDir, binDir: realBinDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
   let state = readState(workDir);
   assert.deepEqual(state.changed_files_since_review, ['/project/src/app.ts']);
   const result = runReviewHook({
     cwd: workDir,
-    binDir,
+    binDir: realBinDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready',
+      tool_name: 'mcp__codex__codex',
+      tool_input: {
+        prompt: 'You are a senior Code Reviewer. Review the changes.\n\n## Output Format\n\n### Merge Gate\n\n- ✅ Ready: No P0/P1, safe to merge\n- ⛔ Blocked: Has P0/P1, needs fix',
+      },
+      tool_response: { content: [{ type: 'text', text: '### Merge Gate\n✅ Ready\n' }] },
     },
   });
   assert.equal(result.status, 0);
   state = readState(workDir);
   assert.ok(state);
+  assert.equal(state.code_review.passed, true, 'the MCP route must record the pass');
   assert.deepEqual(
     state.changed_files_since_review, [],
     'code_review pass must reset changed_files_since_review to []'

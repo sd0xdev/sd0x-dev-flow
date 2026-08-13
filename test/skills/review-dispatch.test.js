@@ -403,11 +403,13 @@ test('review_mode writes keep the initialize-single / transition-only-to-dual in
   assert.ok(shellSources.length > 10, 'source enumeration collapsed — the guard would go vacuous');
 
   // Constructors: the literal sits inside the initial-state JSON template, so it is a seed, not a
-  // transition. Both writer hooks carry their own copy of that template.
-  for (const file of ['hooks/post-tool-review-state.sh', 'hooks/post-edit-format.sh']) {
-    assert.match(read(file), /"review_mode":\s*"single",/,
-      `${file}: the initial-state template must still seed review_mode to single`);
-  }
+  // transition. WB5b retired post-edit-format.sh's state creation outright (session-init owns
+  // creation; gates re-open by derivation), so the review hook carries the one remaining copy —
+  // and the edit hook must NOT grow one back.
+  assert.match(read('hooks/post-tool-review-state.sh'), /"review_mode":\s*"single",/,
+    'hooks/post-tool-review-state.sh: the initial-state template must still seed review_mode to single');
+  assert.doesNotMatch(read('hooks/post-edit-format.sh'), /"review_mode"/,
+    'hooks/post-edit-format.sh: WB5b retired its state constructor — a review_mode write here is a resurrection');
 
   // Transitions against an existing state. Three shapes, because a downgrade need not be a literal
   // assignment: `.review_mode = X` (any value, quoted or a jq variable), `setpath(["review_mode"];…)`

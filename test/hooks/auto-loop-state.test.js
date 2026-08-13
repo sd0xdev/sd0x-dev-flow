@@ -123,8 +123,14 @@ test('field names are identical across emitters (one parser reads them all)', ()
       // `_alf_transition` (old->observed, plus `degraded=` when the write did not land), so the
       // literal does not appear at the call site. Accepting the helper keeps this a field-name
       // check rather than a formatting check — the helper's own output is pinned below.
-      assert.match(call, /receipts=|\$\(_alf_transition /,
-        `${file}: an emit call carries no receipts= and does not build one`);
+      //
+      // Edit events are the WB5b exception: the edit emitter no longer writes receipts (its gate
+      // re-opens by derivation at check time, not by a stored-flag write), so there is no receipt
+      // transition for it to report — `pending=` carries the whole claim for those lines.
+      if (!/event=(code|doc)_edit /.test(call)) {
+        assert.match(call, /receipts=|\$\(_alf_transition /,
+          `${file}: an emit call carries no receipts= and does not build one`);
+      }
       assert.match(call, /pending=/, `${file}: an emit call carries no pending=`);
       // phase/round/tier ride inside _alf_common, which is why they are checked through it.
       assert.match(call, /\$\(_alf_common\)/,
@@ -477,4 +483,41 @@ test('[ITERATION_STATE] survives R2 (an earlier request AC depends on it)', () =
   // signal something else already reads.
   assert.match(read('hooks/post-compact-auto-loop.sh'), /\[ITERATION_STATE\] round=/,
     'the legacy sentinel must still be emitted');
+});
+
+// WB5a/WB5c: the derived-reads adapter (advisory derived-read merge, bounded
+// resolver invocation) is a THIRD duplicated region in the same
+// three reminder hooks. Same rationale as the emitter block, same guard: the
+// local install is flat, no sourced lib exists, so duplication is deliberate —
+// and this identity test is what makes it safe to edit.
+const WB5A_START = '# === WB5a: derived reads (dual-read merge — one shared resolver) ===\n';
+const WB5A_END = '# === Sidecar fail-closed marker ===\n';
+
+test('the WB5a derived-reads adapter is byte-identical across the three reminder hooks', () => {
+  const blocks = REMINDERS.map((f) => {
+    const src = read(f);
+    const i = src.indexOf(WB5A_START);
+    assert.notEqual(i, -1, `${f}: WB5a adapter block not found`);
+    const j = src.indexOf(WB5A_END, i);
+    assert.notEqual(j, -1, `${f}: WB5a adapter block has no terminator`);
+    return [f, src.slice(i, j)];
+  });
+  const [refFile, reference] = blocks[0];
+  for (const [file, block] of blocks.slice(1)) {
+    assert.equal(block, reference,
+      `${file}: WB5a adapter diverged from ${refFile} — mirror the edit into all three`);
+  }
+  // Non-vacuity: the region must actually carry the resolver invocation and
+  // the all-or-none parse gate.
+  assert.match(reference, /--advisory "\$STATE_FILE"/);
+  assert.match(reference, /_ADV_OK="true"/);
+  // WB5c retired the legacy scoping exit (no-state + no-derivation + no-sidecar
+  // → exit 0): a missing state file reads false-everything and the generic
+  // no-changes exit stays silent, so the special case carried no behavior. The
+  // retirement pin keeps a resurrected copy from diverging silently.
+  assert.doesNotMatch(reference, /_STATE_PRESENT/,
+    'the WB5c-retired scoping exit must not reappear in the shared adapter');
+  // The timeout bound must stay validated: `timeout 0` and `alarm 0` both mean
+  // "no bound", so the strictly-positive rewrite is load-bearing, not cosmetic.
+  assert.match(reference, /10#\$_ADV_TIMEOUT/);
 });

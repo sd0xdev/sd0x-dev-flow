@@ -1,7 +1,7 @@
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { resolve, join } = require('node:path');
-const { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, readFileSync, existsSync, symlinkSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, chmodSync, rmSync, readFileSync, existsSync, symlinkSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 const { tmpdir } = require('node:os');
 
@@ -29,6 +29,10 @@ function createWorkDir(stateJson, cooldownAge) {
   spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir });
   spawnSync('git', ['config', 'user.name', 'test'], { cwd: dir });
   writeFileSync(join(dir, '.gitignore'), '');
+  // Production repos gitignore the state artifacts (this repo's .gitignore does); without
+  // the exclusion the WB5a derived reads would count the untracked state/cooldown files
+  // themselves as code-plane dirt and every "clean tree" fixture would derive owed=true.
+  appendFileSync(join(dir, '.git', 'info', 'exclude'), '.claude_review_state.json*\n.cooldown_test\n');
   spawnSync('git', ['add', '.'], { cwd: dir });
   spawnSync('git', ['-c', 'commit.gpgsign=false', 'commit', '-m', 'init'], { cwd: dir });
 
@@ -55,12 +59,19 @@ function createWorkDir(stateJson, cooldownAge) {
 // Reconciliation runs the -uall walk only under a timeout helper (no helper → fail-closed
 // skip). This shim provides a passthrough `timeout` so reconciliation tests deterministically
 // take the bounded branch regardless of whether the host ships a real `timeout`/`gtimeout`.
+// It also plants a FAILING `node`: with node available the WB5a derived reads supersede the
+// porcelain reconciliation entirely (GIT_PORCELAIN=__ADV_DERIVED__), so the legacy branch these
+// tests pin would silently go unexercised. Disabling node forces the dual-read fallback — the
+// branch still shipped until the WB5c flip retires it (and these shims with it).
 function makeTimeoutShimDir() {
   const dir = mkdtempSync(join(tmpdir(), 'ups-timeout-shim-'));
   tempDirs.push(dir);
   const shim = join(dir, 'timeout');
   writeFileSync(shim, '#!/bin/sh\nshift; exec "$@"\n');
   chmodSync(shim, 0o755);
+  const nodeShim = join(dir, 'node');
+  writeFileSync(nodeShim, '#!/bin/sh\nexit 1\n');
+  chmodSync(nodeShim, 0o755);
   return dir;
 }
 
@@ -152,14 +163,38 @@ test('a clean session that inherited dual mode is not sent to the aggregate gate
 });
 
 test('pending precommit → output contains /precommit', () => {
+  // WB5c: a mirror `code_review.passed: true` is inert on a derivable tree, so
+  // the "code reviewed, precommit still owed" shape needs a real digest receipt
+  // closing code_review at the current tree — same setup as the digest-closure
+  // test below, minus the precommit verdict.
+  const receiptLog = require('../../scripts/lib/receipt-log.js');
+  const treeDigest = require('../../scripts/lib/tree-digest.js');
+  const xdg = mkdtempSync(join(tmpdir(), 'ups-pc-xdg-'));
+  tempDirs.push(xdg);
   const { dir, cooldownFile } = createWorkDir({
     has_code_change: true,
     code_review: { passed: true },
     precommit: { passed: false },
   });
   writeFileSync(join(dir, 'app.js'), 'console.log("dirty")'); // modify tracked file
+  const prevXdg = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = xdg;
+  try {
+    const digest = treeDigest.computeTreeState(dir).planes.code.digest;
+    const { file } = receiptLog.resolveReceiptPaths(dir);
+    receiptLog.appendRecords(file, [
+      { v: 1, kind: 'verdict', time: new Date().toISOString(), plane: 'code_review', digest, verdict: 'pass' },
+    ]);
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = prevXdg;
+  }
 
-  const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    XDG_CACHE_HOME: xdg,
+  });
   assert.equal(result.status, 0);
   assert.ok(result.stdout.includes('/precommit'), 'should suggest /precommit');
 });
@@ -291,6 +326,10 @@ test('stale state: partial git stdout on timeout-kill is discarded → inject (n
   const shim = join(shimDir, 'timeout');
   writeFileSync(shim, "#!/bin/sh\nprintf '%s\\n' ' M notes.txt'\nexit 124\n");
   chmodSync(shim, 0o755);
+  // Failing node → WB5a derivation unavailable → the legacy porcelain branch this test pins runs.
+  const nodeShim = join(shimDir, 'node');
+  writeFileSync(nodeShim, '#!/bin/sh\nexit 1\n');
+  chmodSync(nodeShim, 0o755);
   const result = runHook(dir, {
     REVIEW_GUARD_COOLDOWN: '0',
     REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
@@ -492,3 +531,201 @@ test('the cooldown write never follows a pre-planted symlink at the staging name
   // Non-vacuity: the hook must actually have reached the cooldown write, or nothing was tested.
   assert.notEqual(readFileSync(cooldownFile, 'utf8').trim(), '0', 'the cooldown timestamp must have been updated');
 });
+
+// === WB5a: derived reads (dual-read merge via resolveAdvisory) ===
+// The strongest discriminator from the legacy path: reconciliation only ever
+// DOWNGRADES a stored flag (true→false), so a reminder injected while the
+// mirror says has_code_change=false can only have come from the derivation
+// raising the flag off tree content.
+test('WB5a: derivation raises a false mirror flag — dirty code the mirror never recorded → inject', () => {
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: false,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(dir, 'app.js'), 'console.log("edited after the state write")');
+
+  const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `derived obligation must inject despite mirror-false flags; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // Exact-token disclosure: derivation ran, and with no verdict for the current
+  // digest every gate still answers from the mirror.
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+  assert.match(line, /suggested=\/codex-review-fast/);
+});
+
+test('WB5a: a digest closure silences the reminder the mirror would have raised', () => {
+  const receiptLog = require('../../scripts/lib/receipt-log.js');
+  const treeDigest = require('../../scripts/lib/tree-digest.js');
+  const xdg = mkdtempSync(join(tmpdir(), 'ups-adv-xdg-'));
+  tempDirs.push(xdg);
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: true,
+    code_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+  // PASS verdicts for the CURRENT code digest on both code-plane gates: the
+  // digest path closes them and the stale mirror-false must not re-open them.
+  const prevXdg = process.env.XDG_CACHE_HOME;
+  process.env.XDG_CACHE_HOME = xdg;
+  try {
+    const digest = treeDigest.computeTreeState(dir).planes.code.digest;
+    const { file } = receiptLog.resolveReceiptPaths(dir);
+    receiptLog.appendRecords(file, [
+      { v: 1, kind: 'verdict', time: new Date().toISOString(), plane: 'code_review', digest, verdict: 'pass' },
+      { v: 1, kind: 'verdict', time: new Date().toISOString(), plane: 'precommit', digest, verdict: 'pass', mode: 'full' },
+    ]);
+  } finally {
+    if (prevXdg === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = prevXdg;
+  }
+
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    XDG_CACHE_HOME: xdg,
+  });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), '', 'digest-closed gates must not remind off the stale mirror');
+});
+
+test('WB5a: derivation unavailable → mirror answers alone and the fact line says source=state_file', () => {
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: true,
+    code_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+  // Failing node → resolveAdvisory unreachable → the jq mirror reads stand.
+  const shimDir = mkdtempSync(join(tmpdir(), 'ups-nonode-shim-'));
+  tempDirs.push(shimDir);
+  writeFileSync(join(shimDir, 'node'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(shimDir, 'node'), 0o755);
+
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    PATH: `${shimDir}:${process.env.PATH}`,
+  });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `mirror fallback must still inject; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, / source=state_file /, 'the window fallback must disclose itself');
+  assert.doesNotMatch(line, /mirror_planes=/);
+});
+
+test('WB5a: missing state file no longer silences a dirty tree — derivation answers alone', () => {
+  const { dir, cooldownFile } = createWorkDir(null);
+  writeFileSync(join(dir, 'app.js'), 'console.log("dirty with no mirror at all")');
+
+  const result = runHook(dir, { REVIEW_GUARD_COOLDOWN: '0', REVIEW_GUARD_COOLDOWN_FILE: cooldownFile });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `a failed/deleted state write must not hide a dirty tree; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+});
+
+test('WB5a: derivation past AUTO_LOOP_DERIVE_TIMEOUT is killed → disclosed mirror fallback', () => {
+  const { dir, cooldownFile } = createWorkDir({
+    has_code_change: true,
+    code_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+  // A node that hangs past the bound: the ladder must kill it and land in the
+  // mirror fallback (source=state_file), never block the interactive event.
+  // A passthrough `timeout` is NOT planted — the hook must find a real
+  // timeout/gtimeout/perl on the host PATH (all three branches enforce the
+  // same bound, so which one fires is host detail).
+  const shimDir = mkdtempSync(join(tmpdir(), 'ups-slow-node-shim-'));
+  tempDirs.push(shimDir);
+  // `exec` so the kill closes the substitution pipe — a forked sleep would
+  // inherit it and the harness (not the hook) would wait out the full 30s.
+  writeFileSync(join(shimDir, 'node'), '#!/bin/sh\nexec sleep 30\n');
+  chmodSync(join(shimDir, 'node'), 0o755);
+
+  const started = Date.now();
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    AUTO_LOOP_DERIVE_TIMEOUT: '1',
+    PATH: `${shimDir}:${process.env.PATH}`,
+  });
+  const elapsed = Date.now() - started;
+  assert.equal(result.status, 0);
+  assert.ok(elapsed < 15000, `the bound must actually cut the wait (took ${elapsed}ms)`);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `mirror fallback must still inject; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, / source=state_file /, 'a killed derivation is the disclosed window fallback');
+});
+
+// WB5c retired the legacy scoping exit, but the behavior it used to threaten is
+// still worth pinning: a sidecar marker with no state file and no derivation must
+// force a fail-closed injection — silent degradation is only acceptable when no
+// fail-closed evidence stands (WB5a round-2 P2, re-scoped by the WB5c flip).
+test('no state file + sidecar + no derivation → fail-closed injection, never silence', () => {
+  const { dir, cooldownFile } = createWorkDir(null);
+  writeFileSync(join(dir, '.claude_review_state.json.blocked'), 'lock_failure');
+  const shimDir = mkdtempSync(join(tmpdir(), 'ups-conj-shim-'));
+  tempDirs.push(shimDir);
+  writeFileSync(join(shimDir, 'node'), '#!/bin/sh\nexit 1\n');
+  chmodSync(join(shimDir, 'node'), 0o755);
+
+  const result = runHook(dir, {
+    REVIEW_GUARD_COOLDOWN: '0',
+    REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+    PATH: `${shimDir}:${process.env.PATH}`,
+  });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `a sidecar marker must survive the missing-state scoping exit; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code,doc\b/, 'sidecar fail-closed forcing must set both change flags');
+  assert.match(line, / source=state_file /, 'no derivation ran, so the source token is the mirror');
+});
+
+// `timeout 0` runs unbounded and the perl fallback's `alarm 0` (what a non-numeric
+// value coerces to) disables the alarm — either value would silently remove the very
+// bound the block exists for. The validation is branch-independent (it rewrites
+// _ADV_TIMEOUT before any ladder branch runs), so exercising it through the host's
+// branch covers the class; the drift test pins the `10#$_ADV_TIMEOUT` token itself.
+for (const bad of ['0', 'not-a-number']) {
+  test(`WB5a: AUTO_LOOP_DERIVE_TIMEOUT=${bad} falls back to the 10s default bound`, () => {
+    const { dir, cooldownFile } = createWorkDir({
+      has_code_change: true,
+      code_review: { passed: false },
+      precommit: { passed: false },
+    });
+    writeFileSync(join(dir, 'app.js'), 'console.log("dirty")');
+    const shimDir = mkdtempSync(join(tmpdir(), 'ups-badto-shim-'));
+    tempDirs.push(shimDir);
+    // `exec` so the kill closes the substitution pipe (see the timeout test above).
+    writeFileSync(join(shimDir, 'node'), '#!/bin/sh\nexec sleep 30\n');
+    chmodSync(join(shimDir, 'node'), 0o755);
+
+    const started = Date.now();
+    const result = runHook(dir, {
+      REVIEW_GUARD_COOLDOWN: '0',
+      REVIEW_GUARD_COOLDOWN_FILE: cooldownFile,
+      AUTO_LOOP_DERIVE_TIMEOUT: bad,
+      PATH: `${shimDir}:${process.env.PATH}`,
+    });
+    const elapsed = Date.now() - started;
+    assert.equal(result.status, 0);
+    assert.ok(elapsed < 15000, `an invalid bound must degrade to the default, not to none (took ${elapsed}ms)`);
+    const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+    assert.ok(line, `mirror fallback must still inject; got: ${JSON.stringify(result.stdout)}`);
+    assert.match(line, / source=state_file /);
+  });
+}

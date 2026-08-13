@@ -208,24 +208,10 @@ const RESET_FILTER_BODY = (() => {
   return reviewState.slice(at + 1, close);
 })();
 
-/**
- * `RESET_FILTER_BODY` calls `retire_dispatch_epoch($p; $n)` in its plane-wide branch (round-23
- * P1#1) — a jq `def` the production hook PREPENDS ahead of this same literal as a separate bash
- * string piece (`_DISPATCH_EPOCH_RETIRE_DEF`), precisely so the literal itself never has to embed a
- * splice-breaking quote. Extracted the same way `_DISPATCH_EPOCH_RETIRE_JQ`'s body is (single-quote
- * delimited, no literal `'` inside it) and wrapped in the same `def …: … ;` the hook uses, so real
- * jq resolves the call instead of erroring "not defined".
- */
-const DISPATCH_EPOCH_RETIRE_JQ_BODY = (() => {
-  const marker = "_DISPATCH_EPOCH_RETIRE_JQ='";
-  const at = reviewState.indexOf(marker);
-  assert.notEqual(at, -1, '_DISPATCH_EPOCH_RETIRE_JQ not found in post-tool-review-state.sh');
-  const open = at + marker.length - 1;
-  const close = reviewState.indexOf("'", open + 1);
-  assert.notEqual(close, -1, 'could not delimit _DISPATCH_EPOCH_RETIRE_JQ');
-  return reviewState.slice(open + 1, close);
-})();
-const RESET_FILTER = `def retire_dispatch_epoch($p; $n): ${DISPATCH_EPOCH_RETIRE_JQ_BODY} ;\n${RESET_FILTER_BODY}`;
+// WB5b: the dispatch-epoch retirement `def` and the background-marker consume arguments are gone
+// from update_state's program — the mirror write is verdict + convergence reset only, so the
+// extracted body IS the whole filter.
+const RESET_FILTER = RESET_FILTER_BODY;
 
 /**
  * `$rmr` is the RESOLVED project cap, and the filter resets only when the persisted cap already
@@ -248,73 +234,35 @@ function runReset(iterationHistory, { key = 'precommit', passed = true, rmr } = 
     'jq',
     ['-c', '--arg', 'key', key, '--argjson', 'rmr', resolveRmr(input, rmr),
       '--argjson', 'executed', 'true', '--argjson', 'passed', String(passed),
-      '--arg', 'mode', '', '--arg', 'now', 'T', '--arg', 'ct', '', '--arg', 'cp', '',
-      '--argjson', 'self', '0', RESET_FILTER],
+      '--arg', 'mode', '', '--arg', 'now', 'T', RESET_FILTER],
     { input, encoding: 'utf8' }
   );
   return { status: r.status, err: r.stderr || '', doc: r.stdout ? JSON.parse(r.stdout) : null };
 }
 
-// The receipt filter also retires a TASK-SCOPED background-review marker — `$ct` + `$cp` together,
-// which is recovery banking the one marker it is retiring. Passing `$cp` alone (no `$ct`) now
-// retires the WHOLE plane instead: round-23 (P1#1) folded the plane-wide marker sweep AND its
-// dispatch_count/dispatch_epoch retirement into this SAME jq transaction (previously a separate
-// `_clear_background_reviews` call under a separate lock — a real race window). `$self` binds
-// whether the caller itself also releases one dispatch slot on that plane (1 for the two MCP
-// foreground call sites, 0 for the two legacy Bash/Skill sites and for every test below that isn't
-// specifically exercising that interaction). Empty `$cp`, or `$cp` with no `$ct`, must both leave
-// the list untouched when `$cp` is also empty — but `$cp` alone is now a real plane-wide retirement,
-// not a no-op.
-function runConsume(markers, { ct = '', cp = '', key = 'code_review', self = 0 } = {}) {
+// WB5b retirement pin: the background-marker consume machinery (`$ct`/`$cp`/`$self`, the
+// plane-wide sweep, dispatch_count/dispatch_epoch retirement) is gone from update_state's program.
+// The dispatch log owns pairing now; a stray legacy key in the state file must simply pass through
+// this filter untouched — neither swept nor re-shaped.
+test('real jq: the mirror filter no longer touches a legacy background_reviews key', { skip: !HAVE_JQ }, () => {
+  const markers = [
+    { plane: 'code', task: 'tk-a', at: 'T' },
+    { plane: 'doc', task: 'tk-b', at: 'T' },
+  ];
   const input = JSON.stringify({
     background_reviews: markers,
     iteration_history: { current_round: 1, max_rounds: 30, findings_by_round: [] },
   });
   const r = spawnSync(
     'jq',
-    ['-c', '--arg', 'key', key, '--argjson', 'rmr', '30',
+    ['-c', '--arg', 'key', 'code_review', '--argjson', 'rmr', '30',
       '--argjson', 'executed', 'true', '--argjson', 'passed', 'false',
-      '--arg', 'mode', '', '--arg', 'now', 'T', '--arg', 'ct', ct, '--arg', 'cp', cp,
-      '--argjson', 'self', String(self), RESET_FILTER],
+      '--arg', 'mode', '', '--arg', 'now', 'T', RESET_FILTER],
     { input, encoding: 'utf8' }
   );
-  assert.equal(r.status, 0, `real jq rejected the production receipt filter:\n${r.stderr}`);
-  return JSON.parse(r.stdout).background_reviews.map((m) => `${m.plane}/${m.task}`);
-}
-
-const CONSUME_FIXTURE = [
-  { plane: 'code', task: 'tk-a', at: 'T' },
-  { plane: 'code', task: 'tk-b', at: 'T' },
-  { plane: 'doc', task: 'tk-a', at: 'T' },
-];
-
-test('real jq: update_state retires a TASK-SCOPED marker, or the WHOLE plane when only $cp is given', { skip: !HAVE_JQ }, () => {
-  // Round-23 P1#1 RESTORED the plane-wide wipe inside update_state's own jq transaction (round-22
-  // had moved it out to a separate `_clear_background_reviews` call under a separate lock — a real
-  // race window between the two writes). `$cp` alone (no `$ct`) now sweeps every marker on that
-  // plane, dedup-counted by DISTINCT TASK so a duplicated marker row (an accepted, tested scenario —
-  // see the double-marker regression elsewhere) is not double-charged against dispatch_count.
-  assert.deepEqual(
-    runConsume(CONSUME_FIXTURE, { cp: 'code' }), ['doc/tk-a'],
-    'plane alone, no task: both code-plane markers (2 distinct tasks) are swept, doc is untouched',
-  );
-  assert.deepEqual(
-    runConsume(CONSUME_FIXTURE, { ct: 'tk-a', cp: 'code' }), ['code/tk-b', 'doc/tk-a'],
-    'task-scoped: recovery banking tk-a retires tk-a on ITS plane and nothing else',
-  );
-  // The negative control, and the one that matters most: every pre-existing caller passes neither
-  // argument, and a clause that dropped markers on an empty `$cp` would silently make each of them
-  // a plane-wide retirement.
-  assert.deepEqual(
-    runConsume(CONSUME_FIXTURE).length, 3,
-    'neither argument: the marker list is untouched',
-  );
-  // A task id with no marker on the named plane must remove nothing — `$ct` and `$cp` both have to
-  // match an actual marker, there is no escape that widens this into a plane-wide match.
-  assert.deepEqual(
-    runConsume(CONSUME_FIXTURE, { ct: 'tk-missing', cp: 'code' }).length, 3,
-    'task-scoped with an absent task: nothing is retired',
-  );
+  assert.equal(r.status, 0, `real jq rejected the production mirror filter:\n${r.stderr}`);
+  assert.deepEqual(JSON.parse(r.stdout).background_reviews, markers,
+    'the retired machinery must not resurface as a sweep inside the mirror write');
 });
 
 const RESET_FIXTURE = { findings_by_round: [{ total: 1 }] };
@@ -439,8 +387,7 @@ function runResetRaw(rawJson, rmr) {
     'jq',
     ['-c', '--arg', 'key', 'precommit', '--argjson', 'rmr', resolveRmr(rawJson, rmr),
       '--argjson', 'executed', 'true', '--argjson', 'passed', 'true',
-      '--arg', 'mode', '', '--arg', 'now', 'T', '--arg', 'ct', '', '--arg', 'cp', '',
-      '--argjson', 'self', '0', RESET_FILTER],
+      '--arg', 'mode', '', '--arg', 'now', 'T', RESET_FILTER],
     { input: rawJson, encoding: 'utf8' }
   );
   return { status: r.status, err: r.stderr || '', doc: r.stdout ? JSON.parse(r.stdout) : null };
@@ -613,13 +560,12 @@ const runWriteRaw = (raw, mr) => {
   return JSON.parse(r.stdout);
 };
 
-test('the two _reconcile_max_rounds twins run the identical filter text', { skip: !HAVE_JQ }, () => {
-  // post-edit-format.sh carries a hand-copied twin. Drift between them means one hook heals the cap
-  // and the other silently does not, which is invisible from either hook's own suite.
-  assert.equal(extractFilter(editFormat, 'cur=$(jq -r '), RECONCILE_READ,
-    'the post-edit-format read filter has drifted from post-tool-review-state');
-  assert.equal(extractFilter(editFormat, 'if jq --argjson mr "$want" '), RECONCILE_WRITE,
-    'the post-edit-format write filter has drifted from post-tool-review-state');
+test('the _reconcile_max_rounds twin stays retired from post-edit-format', { skip: !HAVE_JQ }, () => {
+  // The edit hook's hand-copied twin left with WB5b — it no longer creates, migrates, or heals the
+  // state file, so a reappearing copy would be drift back toward two writers of one cap. The one
+  // remaining reconciler lives in post-tool-review-state.sh (RECONCILE_READ/RECONCILE_WRITE above).
+  assert.equal(editFormat.indexOf('_reconcile_max_rounds'), -1,
+    'post-edit-format must not regrow a max_rounds reconciler');
 });
 
 test('real jq: the read filter yields nothing for every shape that must not be reconciled',

@@ -125,8 +125,8 @@ _alf_field() {
   _alf_val "${out:-${2:-unknown}}"
 }
 # Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
-# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
-# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# mktemp, empty-output and lock-contention failures alike (see its degraded paths). Emitting the
+# verdict that was REQUESTED would assert a durable
 # state that may never have been committed, which is the one thing this signal must not do.
 #
 # THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
@@ -291,10 +291,10 @@ if ! command -v jq &>/dev/null; then
   exit 0
 fi
 
-# Graceful degradation: no state file = no output
-if [[ ! -f "$STATE_FILE" ]]; then
-  exit 0
-fi
+# No state file is not an exit (WB5c): the mirror reads below just come back
+# false-everything, and the derivation answers obligations from tree content
+# without it. With neither available, the generic no-changes exit below stays
+# silent — advisory hooks degrade silently; stop-guard carries the enforcement.
 
 # Read state
 HAS_CODE=$(jq -r '.has_code_change // false' "$STATE_FILE" 2>/dev/null || echo "false")
@@ -302,6 +302,64 @@ HAS_DOC=$(jq -r '.has_doc_change // false' "$STATE_FILE" 2>/dev/null || echo "fa
 CODE_PASSED=$(jq -r '.code_review.passed // false' "$STATE_FILE" 2>/dev/null || echo "false")
 DOC_PASSED=$(jq -r '.doc_review.passed // false' "$STATE_FILE" 2>/dev/null || echo "false")
 PRE_PASSED=$(jq -r '.precommit.passed // false' "$STATE_FILE" 2>/dev/null || echo "false")
+
+# === WB5a: derived reads (dual-read merge — one shared resolver) ===
+# Obligation and receipt validity now come from tree content (tech spec §3.5):
+# resolveAdvisory() in scripts/lib/gate-derive.js applies the merge policy in
+# exactly one place — derived owed replaces the change flags in both
+# directions, treeState 'unverifiable' forces everything open, a digest
+# closure/negative outranks the mirror, and only an UNDERIVABLE tree
+# (not-a-repo/unreadable) keeps the mirror value read above — on a derivable
+# tree a plane the digest cannot close reads false (WB5c, window closed). The
+# sidecar override below stays AFTER this merge — same ordering as stop-guard,
+# so a write-failure marker still forces its plane open over digest evidence.
+_ADV_OK="false"
+_ADV_MIRROR_PLANES=""
+_ADV_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || _ADV_SELF_DIR=""
+_ADV_DERIVE="${_ADV_SELF_DIR%/hooks}/scripts/lib/gate-derive.js"
+if [[ -n "$_ADV_SELF_DIR" && -f "$_ADV_DERIVE" ]] && command -v node &>/dev/null; then
+  # Bounded: the derivation walks the index and hashes dirty/untracked content,
+  # which is unbounded on pathological trees (huge untracked artifacts) — and
+  # this hook runs synchronously on interactive events. A timeout kill lands in
+  # the derivation-unavailable fallback below (partial JSON fails the
+  # all-or-none parse) — advisory-only now that WB5c closed the dual-read
+  # window, and a disclosed degradation is never a wrong answer.
+  _ADV_TIMEOUT="${AUTO_LOOP_DERIVE_TIMEOUT:-10}"
+  # Validated strictly positive: `timeout 0` means NO timeout, and the perl
+  # fallback's `alarm 0`/non-numeric input disables the alarm — either would
+  # let a configuration value silently remove the bound this block exists for.
+  if ! [[ "$_ADV_TIMEOUT" =~ ^[0-9]+$ ]] || ((10#$_ADV_TIMEOUT == 0)); then
+    _ADV_TIMEOUT=10
+  fi
+  if command -v timeout &>/dev/null; then
+    _ADV_JSON=$(timeout "$_ADV_TIMEOUT" node "$_ADV_DERIVE" "$PWD" --advisory "$STATE_FILE" 2>/dev/null) || _ADV_JSON=""
+  elif command -v gtimeout &>/dev/null; then
+    _ADV_JSON=$(gtimeout "$_ADV_TIMEOUT" node "$_ADV_DERIVE" "$PWD" --advisory "$STATE_FILE" 2>/dev/null) || _ADV_JSON=""
+  elif command -v perl &>/dev/null; then
+    _ADV_JSON=$(perl -e 'alarm shift; exec @ARGV or exit 127' "$_ADV_TIMEOUT" node "$_ADV_DERIVE" "$PWD" --advisory "$STATE_FILE" 2>/dev/null) || _ADV_JSON=""
+  else
+    _ADV_JSON=$(node "$_ADV_DERIVE" "$PWD" --advisory "$STATE_FILE" 2>/dev/null) || _ADV_JSON=""
+  fi
+  if [[ -n "$_ADV_JSON" ]]; then
+    _adv_bool() {
+      local v
+      v=$(jq -r --arg k "$1" '.[$k] | if type == "boolean" then tostring else "" end' <<<"$_ADV_JSON" 2>/dev/null) || v=""
+      case "$v" in true | false) printf '%s' "$v" ;; esac
+    }
+    _ADV_HC=$(_adv_bool has_code_change)
+    _ADV_HD=$(_adv_bool has_doc_change)
+    _ADV_CR=$(_adv_bool code_review_passed)
+    _ADV_DR=$(_adv_bool doc_review_passed)
+    _ADV_PC=$(_adv_bool precommit_passed)
+    # All five or none: a partially-parsed answer must not mix policies.
+    if [[ -n "$_ADV_HC" && -n "$_ADV_HD" && -n "$_ADV_CR" && -n "$_ADV_DR" && -n "$_ADV_PC" ]]; then
+      HAS_CODE="$_ADV_HC"; HAS_DOC="$_ADV_HD"
+      CODE_PASSED="$_ADV_CR"; DOC_PASSED="$_ADV_DR"; PRE_PASSED="$_ADV_PC"
+      _ADV_OK="true"
+      _ADV_MIRROR_PLANES=$(jq -r '(.mirror_planes // []) | join(",")' <<<"$_ADV_JSON" 2>/dev/null) || _ADV_MIRROR_PLANES=""
+    fi
+  fi
+fi
 
 # === Sidecar fail-closed marker ===
 if _sidecar_any; then
@@ -319,7 +377,14 @@ fi
 # avoids walking a large untracked tree on every compaction when no review is pending.
 # Bound git with timeout/gtimeout (cross-platform); -uall can be costly on big trees.
 # Skip when sidecar present — would undo fail-closed HAS_* forcing.
-if [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) ]] && ! _sidecar_any; then
+# Skip when derived reads succeeded — the derivation already re-read the tree
+# (and sees through ignore=all, unreadable dirs, and hidden submodules the
+# porcelain probe cannot); a second git-status downgrade could only undo that
+# (fail-open, R4-1 class). __ADV_DERIVED__ ≠ __GIT_UNAVAILABLE__ keeps the
+# degraded token honest.
+if [[ "$_ADV_OK" == "true" ]]; then
+  GIT_PORCELAIN="__ADV_DERIVED__"
+elif [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) ]] && ! _sidecar_any; then
   if command -v timeout &>/dev/null || command -v gtimeout &>/dev/null || command -v perl &>/dev/null; then
     # Capture stderr + force LC_ALL=C: `git status` exits 0 but only WARNS on stderr and OMITS a
     # subtree it could not open (unreadable dir). A stderr-discarding, ambient-locale probe would miss
@@ -351,7 +416,7 @@ if [[ ( "$HAS_CODE" == "true" || "$HAS_DOC" == "true" ) ]] && ! _sidecar_any; th
 else
   GIT_PORCELAIN="__GIT_UNAVAILABLE__"
 fi
-if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" ]]; then
+if [[ "$GIT_PORCELAIN" != "__GIT_UNAVAILABLE__" && "$GIT_PORCELAIN" != "__ADV_DERIVED__" ]]; then
   # here-string (not echo | grep): grep -q's early-exit on match would SIGPIPE the
   # writer under `set -o pipefail`, flipping the pipeline non-zero and falsely
   # downgrading the flag on large -uall output.
@@ -546,9 +611,11 @@ Then ONE bounded adjustment, then back to the loop. Disposition — including ev
   [[ "$HAS_CODE" == "true" && "$PRE_PASSED" != "true" ]] && _ALF_PENDING="${_ALF_PENDING}${_ALF_PENDING:+,}precommit"
   _ALF_DEGRADED=""
   [[ "$GIT_PORCELAIN" == "__GIT_UNAVAILABLE__" ]] && _ALF_DEGRADED=" degraded=change_flags_unreconciled"
+  _ALF_SOURCE="source=state_file"
+  [[ "$_ADV_OK" == "true" ]] && _ALF_SOURCE="source=digest${_ADV_MIRROR_PLANES:+ mirror_planes=${_ADV_MIRROR_PLANES}}"
   cat <<EOF
-[AUTO_LOOP_RESUME] event=compaction change=${_ALF_CHANGE} receipts=code_review:${CODE_PASSED},doc_review:${DOC_PASSED},precommit:${PRE_PASSED} $(_alf_common) pending=${_ALF_PENDING:-none} suggested=${NEXT}${_ALF_DEGRADED}
-Context was compacted. The state above was re-read from the state file, not recovered from the summary.
+[AUTO_LOOP_RESUME] event=compaction change=${_ALF_CHANGE} receipts=code_review:${CODE_PASSED},doc_review:${DOC_PASSED},precommit:${PRE_PASSED} $(_alf_common) ${_ALF_SOURCE} pending=${_ALF_PENDING:-none} suggested=${NEXT}${_ALF_DEGRADED}
+Context was compacted. The state above was re-read at compaction time — its provenance is the source= token (digest: tree content + receipts, mirror only for the disclosed fallback planes; state_file: stored mirror alone) — not recovered from the summary.
 ${ITER_LINE:+${ITER_LINE}
 }${THINK_HARDER:+${THINK_HARDER}
 }

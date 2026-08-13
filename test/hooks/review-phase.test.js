@@ -388,6 +388,18 @@ function runStopGuard({ cwd, binDir, input, env = {} }) {
   });
 }
 
+// WB5b: post-edit-format.sh no longer creates the state file (session-init owns
+// creation), so phase tests that drive the edit hook seed the minimal state first.
+function seedState(cwd, extra = {}) {
+  writeFileSync(join(cwd, '.claude_review_state.json'), JSON.stringify({
+    schema_version: 2,
+    has_code_change: false,
+    code_review: { executed: false, passed: false, last_run: '' },
+    iteration_history: { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0, strategic_reset_fired: false },
+    ...extra,
+  }));
+}
+
 function readState(cwd) {
   const p = join(cwd, '.claude_review_state.json');
   if (!existsSync(p)) return null;
@@ -410,13 +422,20 @@ after(() => {
 
 // --- Transitions written by the hooks ---
 
-test('T1: code edit transitions review_phase → pending_review', () => {
+test('T1 retired (WB5b): a code edit no longer drives review_phase — the seeded phase stays put', () => {
+  // The edit→pending_review transition lived in the edit hook's retired state
+  // branch. Obligation now derives from tree content at check time; the phase
+  // field moves only on producer events (aggregate gate, review verdict,
+  // precommit runner).
   const workDir = makeTempDir('sd0x-rp-t1-');
   const binDir = setupStubBin();
+  seedState(workDir, { review_phase: 'idle' });
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state = readState(workDir);
   assert.ok(state);
-  assert.equal(state.review_phase, 'pending_review');
+  assert.equal(state.review_phase, 'idle', 'an edit must not move the phase machine');
+  assert.deepEqual(state.changed_files_since_review, ['/project/src/app.ts'],
+    'advisory tracking still records the edit');
 });
 
 test('T2: PENDING aggregate gate sets review_phase → pending_review', () => {
@@ -501,7 +520,7 @@ test('T5: /precommit pass sets review_phase → idle', () => {
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ✅ PASS',
     },
   });
@@ -616,14 +635,13 @@ test('T9: stop-guard with no missing work omits phase hint even if phase ≠ idl
 
 // --- Init + edge cases ---
 
-test('T10: edit on fresh workdir creates state and sets review_phase', () => {
+test('T10 retired (WB5b): an edit on a fresh workdir creates NO state file (session-init owns creation)', () => {
   const workDir = makeTempDir('sd0x-rp-t10-');
   const binDir = setupStubBin();
   // No pre-existing state file
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/fresh.ts', env: { HOOK_NO_FORMAT: '1' } });
-  const state = readState(workDir);
-  assert.ok(state, 'state file must be created from fresh edit');
-  assert.equal(state.review_phase, 'pending_review');
+  assert.equal(readState(workDir), null,
+    'the edit hook must not resurrect state-file creation — gates re-open by derivation');
 });
 
 test('T11: phase update with failing jq is graceful (no crash, no phase field mutation)', () => {
@@ -667,20 +685,25 @@ test('T12: doc-only edit does not flip phase to pending_review', () => {
   );
 });
 
-test('T13: sequential edits keep phase at pending_review (idempotent)', () => {
+test('T13: sequential edits leave a seeded pending_review phase untouched (WB5b: edits never write phase)', () => {
   const workDir = makeTempDir('sd0x-rp-t13-');
   const binDir = setupStubBin();
+  seedState(workDir, { review_phase: 'pending_review' });
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/a.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state1 = readState(workDir);
   assert.equal(state1.review_phase, 'pending_review');
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/b.ts', env: { HOOK_NO_FORMAT: '1' } });
   const state2 = readState(workDir);
-  assert.equal(state2.review_phase, 'pending_review', 'second edit must not change phase away from pending_review');
+  assert.equal(state2.review_phase, 'pending_review', 'edits must not change the phase in either direction');
 });
 
-test('T14: full cycle edit → READY → precommit pass ends at review_phase = idle', () => {
+test('T14: full cycle READY → precommit pass ends at review_phase = idle (WB5b: the edit leg writes no phase)', () => {
   const workDir = makeTempDir('sd0x-rp-t14-');
   const binDir = setupStubBin();
+  seedState(workDir, {
+    review_phase: 'pending_review',
+    aggregate_gate: { executed: false, gate: null, source: null, reason: null, last_run: '' },
+  });
   runEditHook({ cwd: workDir, binDir, filePath: '/project/src/cycle.ts', env: { HOOK_NO_FORMAT: '1' } });
   assert.equal(readState(workDir).review_phase, 'pending_review');
   runReviewHook({
@@ -698,7 +721,7 @@ test('T14: full cycle edit → READY → precommit pass ends at review_phase = i
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ✅ PASS',
     },
   });

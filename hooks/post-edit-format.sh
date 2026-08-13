@@ -133,8 +133,8 @@ _alf_field() {
   _alf_val "${out:-${2:-unknown}}"
 }
 # Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
-# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
-# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# mktemp, empty-output and lock-contention failures alike (see its degraded paths). Emitting the
+# verdict that was REQUESTED would assert a durable
 # state that may never have been committed, which is the one thing this signal must not do.
 #
 # THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
@@ -847,12 +847,6 @@ _set_own_sidecar_locked() {
   return 0
 }
 
-_write_fail_closed_sidecar() {
-  _set_own_sidecar "state_init_failed:${_EDIT_PLANE}" && return 0
-  echo "[Edit Hook] CRITICAL: could not write state file OR its .blocked sidecar (disk full / unwritable dir) — the review gate may FAIL-OPEN for this edit; free space and re-edit to re-arm the gate" >&2
-  return 0
-}
-
 # Clear the shared `.blocked` sidecar only when THIS transaction actually supersedes the marker
 # that is there.
 #
@@ -991,264 +985,6 @@ _edit_write_failed() {
   return 0
 }
 
-# Initialize state file if it doesn't exist
-init_state_file() {
-  if [[ ! -f "$STATE_FILE" ]]; then
-    # R6: read project max_rounds override for initial value (fallback 30)
-    local _mr
-    _mr=$(_read_project_max_rounds 30)
-    # Crash-atomic REPLACEMENT, not atomic create: temp + rename means the jq readers never see a
-    # truncated file, but `[[ ! -f ]]` + overwriting rename is still racy create-if-absent — two
-    # processes can both see it absent and the loser's rename discards the winner's document.
-    # Same defect and same fix as post-tool-review-state.sh init_state_file; deferred in
-    # docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
-    # The write AND its size-guard share a single `if` CONDITION so `set -euo pipefail` is
-    # suppressed for them: a bare `cat > tmp << EOF` that fails (ENOSPC) would otherwise abort
-    # the hook BEFORE the guard runs, leaking an orphan temp. A failed/empty write falls to
-    # `else` and is cleaned up. Mirrors session-init.sh's writer.
-    # Fail-CLOSED on init failure: when the state file is ABSENT and we cannot create it
-    # (mktemp unavailable, ENOSPC, or the rename fails), leave the `.blocked` sidecar so
-    # stop-guard fails CLOSED (STATE_FILE-absent + .blocked-present → block, stop-guard.sh
-    # L171). Without this, `set -e` aborts the CALLER (e.g. update_change_flag in the locked
-    # code path) after a REAL edit but BEFORE the successful path's state write / sidecar clear,
-    # leaving NEITHER state NOR sidecar → stop-guard's no-state path ALLOWS the unreviewed edit
-    # (fail-OPEN). A later successful edit clears the sidecar (see ~L409/L454), so the marker is
-    # self-healing. NOTE: post-tool-review-state.sh's init_state_file intentionally does NOT do
-    # this — there a missing verdict leaves the gate PENDING (already fail-closed), so the
-    # asymmetry is by design, not an oversight.
-    local _tmp
-    if ! _tmp=$(_state_staging_file); then
-      _write_fail_closed_sidecar
-      return 1
-    fi
-    if cat > "$_tmp" << EOF && [[ -s "$_tmp" ]]; then
-{
-  "session_id": "",
-  "updated_at": "",
-  "review_mode": "single",
-  "has_code_change": false,
-  "has_doc_change": false,
-  "code_review": {"executed": false, "passed": false, "last_run": ""},
-  "doc_review": {"executed": false, "passed": false, "last_run": ""},
-  "precommit": {"executed": false, "passed": false, "last_run": ""},
-  "aggregate_gate": {"executed": false, "gate": null, "source": null, "reason": null, "last_run": ""},
-  "schema_version": 2,
-  "iteration_history": {"current_round": 0, "max_rounds": ${_mr}, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}
-}
-EOF
-      _may_commit_state && mv "$_tmp" "$STATE_FILE" || {
-        rm -f "$_tmp" 2>/dev/null || true
-        _write_fail_closed_sidecar
-        return 1
-      }
-    else
-      rm -f "$_tmp" 2>/dev/null || true
-      _write_fail_closed_sidecar
-      return 1
-    fi
-  fi
-}
-
-# Read an integer setting from a "## <Heading>" section of auto-loop-project.md.
-# Kept BYTE-FOR-BYTE identical to post-tool-review-state.sh's copy (these two writer
-# hooks share no sourced lib, so the guard against silent divergence is textual
-# equivalence — a change in one must be mirrored verbatim in the other).
-# Scans from the heading until next "## " heading, picking first bare integer line.
-# Tracks multi-line HTML comment state so integers inside <!-- ... --> blocks are not picked up.
-# Heading is matched literally and anchored (^## <heading>$), so "Max Rounds" cannot
-# accidentally match the longer "Plan Review Max Rounds" section.
-_read_project_int_setting() {
-  local heading="$1"
-  local default_val="$2"
-  local rf val
-  for rf in "rules/auto-loop-project.md" ".claude/rules/auto-loop-project.md"; do
-    [[ ! -f "$rf" ]] && continue
-    val=$(awk -v heading="$heading" '
-      function strip_comments(line,    out, op, cp) {
-        out = ""
-        while (length(line) > 0) {
-          if (in_comment) {
-            cp = index(line, "-->")
-            if (cp == 0) { return out }
-            in_comment = 0
-            line = substr(line, cp + 3)
-          } else {
-            op = index(line, "<!--")
-            if (op == 0) { out = out line; break }
-            out = out substr(line, 1, op - 1)
-            line = substr(line, op + 4)
-            in_comment = 1
-          }
-        }
-        return out
-      }
-      {
-        # Literal heading match (no regex metacharacters expected in headings)
-        stripped = $0
-        sub(/[[:space:]]+$/, "", stripped)
-        if (stripped == "## " heading) { in_section = 1; next }
-      }
-      /^## / && in_section { exit }
-      in_section {
-        processed = strip_comments($0)
-        gsub(/[[:space:]]/, "", processed)
-        if (processed ~ /^[0-9]+$/) { print processed; exit }
-      }
-    ' "$rf" 2>/dev/null) || val=""
-    if [[ "$val" =~ ^[0-9]+$ && "$val" -ge 3 && "$val" -le 50 ]]; then
-      echo "$val"; return
-    fi
-  done
-  echo "$default_val"
-}
-
-# Read max_rounds override from project config (R6)
-_read_project_max_rounds() {
-  _read_project_int_setting "Max Rounds" "${1:-30}"
-}
-
-# Migrate state file to schema v2 (add iteration_history if missing).
-# CONTENT-gated, not version-gated — see the twin in post-tool-review-state.sh for the full
-# rationale: session-init.sh writes a schema_version 2 state that carries only
-# session_commit_scope, and a `ver < 2` guard can never repair it, so the project
-# `## Max Rounds` override stayed unread for the whole session.
-_migrate_state_v2() {
-  local state_file="${1:-$STATE_FILE}"
-  [[ ! -f "$state_file" ]] && return 0
-  local ver has_iter
-  ver=$(jq -r '.schema_version // 1' "$state_file" 2>/dev/null || echo 1)
-  [[ "$ver" =~ ^[0-9]+$ ]] || ver=1
-  has_iter=$(jq -r 'has("iteration_history")' "$state_file" 2>/dev/null || echo "true")
-  if [[ "$ver" -lt 2 || "$has_iter" != "true" ]]; then
-    local mr tmp target
-    mr=$(_read_project_max_rounds 30)
-    # Best-effort migration: an unavailable temp must not abort the caller's transaction.
-    tmp=$(_state_staging_file) || return 0
-    target=2
-    [[ "$ver" -gt 2 ]] && target="$ver"
-    # Size-guard + temp cleanup, kept in sync with the twin in post-tool-review-state.sh. Without
-    # the `-s` check a jq that exits 0 having written nothing (or a truncated write on ENOSPC)
-    # renames an EMPTY file over the state, which the jq readers — stop-guard included — then
-    # treat as corrupt, forcing strict mode on warn-mode users with no way for any writer to
-    # repair it. Without the `rm -f` a failed jq leaks its temp beside the state file on every
-    # hook invocation. The gate is CONTENT-based (`has_iter != true`), so it fires on every state
-    # session-init.sh creates: this path is hot, and it is an EDIT-plane write, i.e. the one that
-    # runs most often.
-    if jq --argjson mr "$mr" --argjson sv "$target" '.schema_version = $sv
-      | .iteration_history //= {"current_round": 0, "max_rounds": $mr, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}' \
-      "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _may_commit_state; then
-      mv "$tmp" "$state_file"
-    else
-      rm -f "$tmp" 2>/dev/null || true
-    fi
-  fi
-}
-
-# Twin of post-tool-review-state.sh's `_reconcile_max_rounds` — see there for why this exists
-# and why divergence is corrected in both directions. Kept here as well because the edit plane
-# runs far more often than the review plane, so this is where an upgraded default actually lands
-# for an existing session.
-_reconcile_max_rounds() {
-  local state_file="${1:-$STATE_FILE}"
-  [[ ! -f "$state_file" ]] && return 0
-  local cur want tmp
-  # Mirrors stop-guard's corrupt-cap verdict so this function cannot repair away a fail-closed
-  # signal — see the twin in post-tool-review-state.sh for the clause-by-clause reasoning.
-  cur=$(jq -r 'if (.iteration_history | type) == "null" then "absent"
-    elif (.iteration_history | type) != "object" then "corrupt"
-    elif (.iteration_history.max_rounds == null) then "absent"
-    else ((.iteration_history.max_rounds | numbers
-    | select((floor == .) and . >= 1 and . <= 100000)
-    | select((if . < 3 then 3 elif . > 50 then 50 else . end) | tostring | test("^[0-9]+$"))
-    | floor) // "corrupt")
-    end' "$state_file" 2>/dev/null || echo "corrupt")
-  # "absent" (parent null/missing, or present but capless) is materialised below; "corrupt" is
-  # exactly what stop-guard rejects across BOTH its stages — jq's pair and the Bash regex that
-  # judges it — which is why the clamp is mirrored here. The clamp only vets the SPELLING; what
-  # this emits is the raw persisted cap, so persisted 100 against a configured 50 still repairs.
-  # See the twin for the full reasoning.
-  case "$cur" in
-    absent) ;;
-    ''|corrupt|*[!0-9]*) return 0 ;;
-  esac
-  want=$(_read_project_max_rounds 30)
-  [[ "$want" == "$cur" ]] && return 0
-  # Best-effort: an unavailable temp must not abort the caller's transaction.
-  tmp=$(_state_staging_file) || return 0
-  if jq --argjson mr "$want" '.iteration_history = ((.iteration_history // {"current_round": 0, "findings_by_round": [], "total_rounds_session": 0, "strategic_reset_fired": false}) | .max_rounds = $mr)' \
-    "$state_file" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _may_commit_state && mv "$tmp" "$state_file" 2>/dev/null; then
-    :
-  else
-    rm -f "$tmp" 2>/dev/null || true
-  fi
-  # Unconditional success — see the twin in post-tool-review-state.sh for why a cache refresh must
-  # never be able to abort its caller.
-  return 0
-}
-
-
-# Twin of `_DISPATCH_EPOCH_RETIRE_JQ`/`_DISPATCH_EPOCH_RETIRE_DEF` in post-tool-review-state.sh —
-# this file has no shared lib to source, so the filter is duplicated rather than split across a
-# process boundary. Same body, same contract: decrement `dispatch_count[$p]` by `$n`, and only once
-# it reaches zero clear `dispatch_epoch[$p]` and the count entry. See the sibling for the full
-# reasoning (round-22 finding #1/#3 on why `$n` is a parameter, not a hardcoded 1).
-_DISPATCH_EPOCH_RETIRE_JQ='
-  .dispatch_count = ((.dispatch_count // {}) | .[$p] = (((.[$p] // $n) - $n) as $newval | if $newval < 0 then 0 else $newval end))
-  | (if ((.dispatch_count[$p] // 0) <= 0)
-     then (.dispatch_epoch = ((.dispatch_epoch // {}) | del(.[$p])))
-          | (.dispatch_count = ((.dispatch_count // {}) | del(.[$p])))
-     else . end)
-  | (if ((.dispatch_epoch // {}) | length) == 0 then del(.dispatch_epoch) else . end)
-  | (if ((.dispatch_count // {}) | length) == 0 then del(.dispatch_count) else . end)
-'
-_DISPATCH_EPOCH_RETIRE_DEF="def retire_dispatch_epoch(\$p; \$n): ${_DISPATCH_EPOCH_RETIRE_JQ} ;
-"
-
-invalidate_review() {
-  local key="$1" plane
-  plane="${key%_review}"
-  if [[ ! -f "$STATE_FILE" ]]; then
-    return 0
-  fi
-  local tmp
-  tmp=$(_state_staging_file) || { _edit_write_failed "invalidate_review:$key"; return 0; }
-  # Two things, and they cover two different windows. Dropping the plane's markers covers
-  # handoff → recovery: a marker exists, and this edit says its verdict is stale. Stamping the
-  # plane's edit epoch covers dispatch → handoff — the ~120 s in which the reviewer is reading and
-  # no marker exists yet, so there is nothing to drop. Recovery compares the two instants; an edit
-  # at or after the dispatch refuses the verdict.
-  #
-  # An edit is the event that knows. Nothing sampled at the handoff can reconstruct this: an edit
-  # made while the reviewer read, then reverted, leaves the tree byte-identical to what any later
-  # sample would see, and the reviewer still never read it.
-  # The stamped value is drawn from `.seq_counter`, the same monotonic counter
-  # `_record_dispatch_epoch` draws from (hooks/post-tool-review-state.sh) — not a wall-clock read.
-  # Recovery's `edited_at >= marker_de` comparison only holds if both sides come from one strictly
-  # increasing source; two independent `date`/`EPOCHSECONDS` reads are not guaranteed never to go
-  # backwards (leap seconds, NTP step, a suspended sandbox clock).
-  #
-  # Round-24 finding #1: dropping a marker here is its TERMINAL disposition — once removed, recovery
-  # can never find it again, so the dispatch that marker stood for must release its reference in this
-  # SAME transaction. Skipping that released the marker but not the count, permanently orphaning it
-  # (the plane never returns to zero until SessionStart). `$n` is the distinct-task count among the
-  # plane's markers, computed before they are dropped — the same dedup already used elsewhere.
-  if jq --arg key "$key" --arg plane "$plane" \
-       "${_DISPATCH_EPOCH_RETIRE_DEF}"'((.seq_counter // 0) + 1) as $now
-        | .seq_counter = $now
-        | .[$key].passed = false
-        | (((.background_reviews // []) | map(select(.plane == $plane)) | map(.task) | unique | length)) as $n
-        | .background_reviews = ((.background_reviews // []) | map(select(.plane != $plane)))
-        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .[$plane] = $now)
-        | retire_dispatch_epoch($plane; $n)' \
-       "$STATE_FILE" > "$tmp" 2>/dev/null \
-     && [[ -s "$tmp" ]] && _may_commit_state && mv "$tmp" "$STATE_FILE" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$tmp" 2>/dev/null || true
-  _edit_write_failed "invalidate_review:$key"
-  return 0
-}
-
 # Reset aggregate_gate on edit (invalidates dual-review results)
 invalidate_aggregate_gate() {
   if [[ ! -f "$STATE_FILE" ]]; then
@@ -1267,32 +1003,6 @@ invalidate_aggregate_gate() {
     rm -f "$tmp" 2>/dev/null || true
     _edit_write_failed "invalidate_aggregate_gate"
   fi
-  return 0
-}
-
-# Update state file for change tracking
-update_change_flag() {
-  local flag="$1"
-
-  init_state_file
-  # R6: apply project max_rounds override on fresh state file (no-op when schema_version >= 2)
-  _migrate_state_v2 "$STATE_FILE" || true
-  # A pre-existing iteration_history keeps its original cap; reconcile it against project config.
-  _reconcile_max_rounds "$STATE_FILE" || true
-
-  local now
-  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-  local tmp
-  tmp=$(_state_staging_file) || { _edit_write_failed "update_change_flag:$flag"; return 0; }
-  if jq --arg flag "$flag" --arg now "$now" '.[$flag] = true | .updated_at = $now' \
-     "$STATE_FILE" > "$tmp" 2>/dev/null && [[ -s "$tmp" ]] && _may_commit_state && mv "$tmp" "$STATE_FILE" 2>/dev/null; then
-    return 0
-  fi
-  rm -f "$tmp" 2>/dev/null || true
-  # The most consequential write of the transaction: without the flag NOTHING downstream knows an
-  # edit happened, so this failure must never be silent.
-  _edit_write_failed "update_change_flag:$flag"
   return 0
 }
 
@@ -1380,231 +1090,96 @@ _track_session_touched_file() {
 
 # Track code changes (all recognized code extensions, incl. shell scripts: sh/bash/zsh —
 # this repo's own hooks are .sh, so shell edits must engage the review gate)
+#
+# WB5b: the gate-state writes this branch used to perform — `has_code_change = true`,
+# `code_review/precommit.passed = false`, edit epochs, background_reviews sweeps — are RETIRED.
+# The obligation is now derived at check time from tree content vs receipts
+# (scripts/lib/gate-derive.js; tech spec §3.5–§3.6), so an edit re-opens its gates structurally,
+# with no stored flag to raise or verdict to reset. What this branch still owns:
+#   • advisory tracking (changed_files_since_review, session_commit_scope — no gate reads them);
+#   • the aggregate_gate mirror reset — the dual-mode aggregate branch in stop-guard reads that
+#     mirror directly (§3.6 Stays column, ❓Q1), and a mirror kept alive without its edit-reset
+#     would fail OPEN in dual mode after an edit;
+#   • the fact line, whose `pending=` claim is structural truth (an edit owes its plane's gates),
+#     not a read-back of state this branch no longer writes — hence no `receipts=` token.
 if echo "$file_path" | grep -Eq '\.(ts|tsx|js|jsx|mjs|cjs|py|pyw|go|rs|java|kt|kts|rb|php|swift|c|cpp|cc|h|hpp|cs|scala|ex|exs|sh|bash|zsh|ipynb)$'; then
   if _lock; then
     _EDIT_HOLDS_LOCK=1
-    update_change_flag "has_code_change"
     _track_changed_file "$file_path" || true
     _track_session_touched_file "$file_path" || true
-    # Set review phase to pending (D-4) — graceful on jq failure
-    (
-      _phase_tmp=$(_state_staging_file)
-      if jq '.review_phase = "pending_review"' "$STATE_FILE" > "$_phase_tmp" 2>/dev/null && [[ -s "$_phase_tmp" ]] && _may_commit_state; then
-        mv "$_phase_tmp" "$STATE_FILE"
-      else
-        rm -f "$_phase_tmp" 2>/dev/null
-      fi
-    ) 2>/dev/null || true
-    invalidate_review "code_review"
-    invalidate_review "precommit"
     invalidate_aggregate_gate
-    # NOTE: iteration_history is deliberately NOT reset here.
-    # A code edit is a step *inside* one convergence loop (review → fix → re-review),
-    # not the start of a new one. Resetting current_round on every edit made
-    # stop-guard's `current_round >= max_rounds` hard cap unreachable — the counter
-    # could never exceed 1 because auto-loop always edits between reviews (observed
-    # live: total_rounds_session=98 with current_round=0, max_rounds=10). Wiping
-    # findings_by_round likewise destroyed the per-round trend data the convergence
-    # table depends on. The counter is reset on *convergence* instead
-    # (precommit/doc_review pass — the reset lives in post-tool-review-state.sh's `update_state`
-    # jq filter, gated on `current_round < max_rounds` so an exhausted budget is never refunded).
-    # Clear any stale sidecar ONLY if EVERY write in this transaction landed. A partial
-    # transaction leaves the previous passes intact, so erasing the marker there would hand the
-    # gate a state that was never actually invalidated.
-    # code_review + precommit are the gates this branch just invalidated, so only THEIR lost
-    # verdicts are superseded here; a lost doc verdict is not.
-    # `_own_lock`, not just the write flags: clearing a sidecar marker is the one FAIL-OPEN action
-    # in this transaction, and `_EDIT_WRITE_FAILED` only reports whether OUR writes returned
-    # success. A stale-recovery takeover mid-transaction (the TTL arm fires on age, not liveness)
-    # leaves a second writer inside its own critical section, so our writes can succeed and still
-    # be clobbered — and we would then erase a marker standing in for a transition that no longer
-    # landed. Retaining a marker we could have cleared costs one redundant gate; clearing one we
-    # should not have costs the gate entirely.
+    # Clear any stale sidecar ONLY if EVERY write in this transaction landed, and only under
+    # ownership (`_own_lock`): clearing a marker is the one FAIL-OPEN action here, and a
+    # stale-recovery takeover mid-transaction can clobber writes that returned success.
     if [[ "$_EDIT_WRITE_FAILED" -eq 0 ]] && _own_lock; then
-      # `:code` only. The doc-plane copies of these three reasons stand for a lost DOC
-      # invalidation, which a successful code transaction does not perform and therefore cannot
+      # `:code` only — the doc-plane copies stand for a lost DOC transaction this one cannot
       # supersede. `lock_failure` / `aggregate_write_failed` are aggregate-plane markers and DO
       # belong here: this transaction resets `aggregate_gate` outright, which is exactly the
       # committed transition those two were standing in for.
       _clear_superseded_sidecar \
-        edit_lock_contention:code state_init_failed:code state_write_failed:code \
-        verdict_write_failed:code_review verdict_write_failed:precommit \
+        edit_lock_contention:code state_write_failed:code \
         lock_failure aggregate_write_failed
     fi
     _unlock
     _EDIT_HOLDS_LOCK=0
     echo "[Edit Hook] Code change detected: $file_path" >&2
-    echo "[Edit Hook] Invalidated code_review + precommit + aggregate_gate (iteration counter retained)" >&2
-    # `receipts=` reads all-false by construction here: the transaction that just committed is what
-    # invalidated them. The round is NOT reset by an edit, which is why it is worth stating — a
-    # reader who assumes the counter tracks edits will misjudge how close the cap is.
+    echo "[Edit Hook] code_review + precommit re-open by derivation; aggregate_gate mirror reset" >&2
+    # The round is NOT reset by an edit (it counts convergence, not keystrokes — the reset lives
+    # in post-tool-review-state.sh's update_state, gated on `current_round < max_rounds`).
     _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
-      "receipts=code_review:false,precommit:false $(_alf_common)" \
+      "$(_alf_common)" \
       "pending=code_review,precommit $(_alf_sensitivity "${file_path}")" >&2
   else
-    # Fail-closed: sidecar marker (atomic) + best-effort unlocked writes
+    # Fail-closed: sidecar marker (atomic). The aggregate mirror reset cannot run without the
+    # lock, but the marker alone holds every gate — stop-guard force-pins all gates (dual
+    # included) closed while any sidecar reason stands, and the next committed edit transaction
+    # performs the reset before clearing it.
     _set_own_sidecar "edit_lock_contention:${_EDIT_PLANE}" || true
-    update_change_flag "has_code_change" 2>/dev/null || true
-    invalidate_review "code_review" 2>/dev/null || true
-    invalidate_review "precommit" 2>/dev/null || true
-    invalidate_aggregate_gate 2>/dev/null || true
     echo "[Edit Hook] Code change detected (degraded — lock contention, sidecar marker set): $file_path" >&2
-    # The degraded branch owes a fact more than the committed one does. Without it the reader sees a
-    # fact line after a clean edit and nothing after a contended one, which reads as "no edit
-    # happened" — the inverse of the truth. The invalidations above are best-effort, so `receipts`
-    # states the intent and `degraded` states that the sidecar, not the state file, is holding it.
+    # The degraded branch owes a fact more than the committed one does: silence here reads as
+    # "no edit happened" — the inverse of the truth.
     _alf_emit "event=code_edit change=code file=$(_alf_val "${file_path}")" \
-      "receipts=code_review:false,precommit:false $(_alf_common)" \
+      "$(_alf_common)" \
       "pending=code_review,precommit degraded=edit_lock_contention $(_alf_sensitivity "${file_path}")" >&2
   fi
 fi
 
 # Track doc changes (.md, .mdx)
+#
+# WB5b: same retirement as the code branch above — `has_doc_change`, `doc_review.passed = false`,
+# the edit-epoch stamp and the background_reviews sweep are gone; the doc gate re-opens by
+# derivation. What remains is the advisory tracking and the aggregate_gate mirror reset, which
+# `invalidate_aggregate_gate` performs only when the mirror object exists — so this branch no
+# longer creates the state file just to record an edit nothing reads.
 if echo "$file_path" | grep -Eq '\.(md|mdx)$'; then
   if _lock; then
     _EDIT_HOLDS_LOCK=1
-    # Atomic: merge flag set + review invalidation + aggregate gate reset (3 ops → 1 jq call).
-    # The doc plane writes its own jq rather than going through `invalidate_review`, so the marker
-    # retirement AND the edit-epoch stamp documented there are restated here — same reasons, same
-    # writes, doc plane. Omitting the stamp here is not a smaller version of the same bug: it is the
-    # same bug, since the dispatch → handoff window exists on either plane.
-    init_state_file
-    _doc_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    _doc_has_agg=$(jq 'has("aggregate_gate")' "$STATE_FILE" 2>/dev/null || echo "false")
-    _doc_write_ok=false
-    # `|| true` on mktemp so an unavailable temp is reported through the sidecar below rather than
-    # aborting the hook under `set -e` with no marker written at all.
-    _doc_tmp=$(_state_staging_file) || _doc_tmp=""
-    if [[ -n "$_doc_tmp" ]]; then
-      # Round-24 finding #1 (same as invalidate_review's code-plane copy above): dropping the doc
-      # plane's markers here is their terminal disposition, so the dispatch(es) they stood for must
-      # release their reference in this SAME transaction — `$n` is the distinct-task count among
-      # them, computed before they are dropped.
-      if [[ "$_doc_has_agg" == "true" ]]; then
-        jq --arg now "$_doc_now" \
-          "${_DISPATCH_EPOCH_RETIRE_DEF}"'
-          ((.seq_counter // 0) + 1) as $de
-          | .seq_counter = $de
-          | .has_doc_change = true
-          | .updated_at = $now
-          | .doc_review.passed = false
-          | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
-          | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
-          | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
-          | .aggregate_gate.executed = false
-          | .aggregate_gate.gate = null
-          | .aggregate_gate.reason = null
-          | retire_dispatch_epoch("doc"; $n)
-        ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null \
-          && [[ -s "$_doc_tmp" ]] && _may_commit_state && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null && _doc_write_ok=true
-      else
-        jq --arg now "$_doc_now" \
-          "${_DISPATCH_EPOCH_RETIRE_DEF}"'
-          ((.seq_counter // 0) + 1) as $de
-          | .seq_counter = $de
-          | .has_doc_change = true
-          | .updated_at = $now
-          | .doc_review.passed = false
-          | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
-          | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
-          | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
-          | retire_dispatch_epoch("doc"; $n)
-        ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null \
-          && [[ -s "$_doc_tmp" ]] && _may_commit_state && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null && _doc_write_ok=true
-      fi
-      [[ "$_doc_write_ok" == "true" ]] || rm -f "$_doc_tmp" 2>/dev/null || true
-    fi
-    # Non-critical array appends (graceful, own size guards)
     _track_changed_file "$file_path" || true
     _track_session_touched_file "$file_path" || true
-    # Same rule as the code branch: a failed write must SET the marker, not merely decline to
-    # clear it. Declining alone leaves `doc_review.passed` at its previous `true` with no marker,
-    # which stop-guard reads as a satisfied gate over an unreviewed doc edit.
-    # Same ownership requirement as the code branch above.
-    if [[ "$_doc_write_ok" == "true" && "$_EDIT_WRITE_FAILED" -eq 0 ]] && _own_lock; then
-      # doc_review is the only verdict plane this branch invalidates — notably NOT code_review or
-      # precommit, which is the asymmetry the blind `rm -f` here erased.
+    invalidate_aggregate_gate
+    # Same clear discipline as the code branch: only a fully-landed transaction, under ownership.
+    if [[ "$_EDIT_WRITE_FAILED" -eq 0 ]] && _own_lock; then
+      # `:doc` only — the code-plane copies stand for a lost CODE transaction this one cannot
+      # supersede. The aggregate-plane markers belong here for the same reason as in the code
+      # branch: this transaction resets `aggregate_gate` outright.
       _clear_superseded_sidecar \
-        edit_lock_contention:doc state_init_failed:doc state_write_failed:doc \
-        verdict_write_failed:doc_review \
+        edit_lock_contention:doc state_write_failed:doc \
         lock_failure aggregate_write_failed
-    elif [[ "$_doc_write_ok" != "true" ]]; then
-      _edit_write_failed "doc_change_transaction"
     fi
     _unlock
     _EDIT_HOLDS_LOCK=0
     echo "[Edit Hook] Doc change detected: $file_path" >&2
-    echo "[Edit Hook] Invalidated doc_review + aggregate_gate" >&2
-    # A doc edit does not touch the code plane, so `pending` names only what this transaction
-    # invalidated — the code receipts, whatever they read, are not this event's business.
+    echo "[Edit Hook] doc_review re-opens by derivation; aggregate_gate mirror reset" >&2
+    # A doc edit does not touch the code plane, so `pending` names only its own gate.
     _alf_emit "event=doc_edit change=doc file=$(_alf_val "${file_path}")" \
-      "receipts=doc_review:false $(_alf_common)" \
+      "$(_alf_common)" \
       "pending=doc_review" >&2
   else
-    # Fail-closed: sidecar marker (atomic) + best-effort single unlocked jq write
+    # Fail-closed: sidecar marker (atomic) — same contract as the code branch's degraded arm.
     _set_own_sidecar "edit_lock_contention:${_EDIT_PLANE}" || true
-    init_state_file
-    _doc_now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    _doc_has_agg=$(jq 'has("aggregate_gate")' "$STATE_FILE" 2>/dev/null || echo "false")
-    # UNLOCKED-WRITER: by definition — this whole `else` is the branch taken when `_lock` FAILED,
-    # so there is no ownership to assert and `_own_lock`/`_may_commit_state` would refuse every
-    # write here. The two `mv`s below are therefore deliberately bare, and the sidecar marker set
-    # above is what makes the GATE safe: the durable record of this doc edit is the marker, not the
-    # JSON, so losing these bytes cannot fail the gate open.
-    #
-    # Gate safety is not transaction safety, and only the first is claimed here. These `mv`s are
-    # whole-file replaces, so the direction that matters is the opposite of the reassuring one: a
-    # snapshot staged before the lock holder commits will, on rename, DISCARD what the holder
-    # wrote — round counts, receipts, iteration history — and the marker restores none of it.
-    # `update_aggregate_blocked` has the same shape. Recorded, with the interleaving and the
-    # sidecar-only fix, in
-    # docs/features/auto-loop-evolution/requests/2026-08-04-degraded-writer-lost-update.md.
-    #
-    # Degrade, never abort: the sidecar above is already set, so skipping the best-effort JSON
-    # write is fail-closed — but aborting here would also skip the diagnostic below, leaving the
-    # degraded path completely silent.
-    _doc_tmp=$(_state_staging_file) || _doc_tmp=""
-    # Round-24 finding #6 (P2): this degraded arm used to omit both the monotonic edit stamp AND the
-    # marker/reference release the locked arm above performs — a doc edit landing here left
-    # `last_edit_epoch_by_plane.doc` stale (a later recovery could bank a pre-edit review as fresh)
-    # and orphaned any dropped markers' dispatch_count/epoch (finding #1, same fix as the locked arm).
-    # Racy by the file's own contract (a snapshot staged before the lock holder commits can still lose
-    # to that holder's `mv`), but when it DOES land it must be semantically correct, not merely absent.
-    if [[ -z "$_doc_tmp" ]]; then
-      :
-    elif [[ "$_doc_has_agg" == "true" ]]; then
-      jq --arg now "$_doc_now" \
-        "${_DISPATCH_EPOCH_RETIRE_DEF}"'
-        ((.seq_counter // 0) + 1) as $de
-        | .seq_counter = $de
-        | .has_doc_change = true
-        | .updated_at = $now
-        | .doc_review.passed = false
-        | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
-        | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
-        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
-        | .aggregate_gate.executed = false
-        | .aggregate_gate.gate = null
-        | .aggregate_gate.reason = null
-        | retire_dispatch_epoch("doc"; $n)
-      ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_doc_tmp" 2>/dev/null
-    else
-      jq --arg now "$_doc_now" \
-        "${_DISPATCH_EPOCH_RETIRE_DEF}"'
-        ((.seq_counter // 0) + 1) as $de
-        | .seq_counter = $de
-        | .has_doc_change = true
-        | .updated_at = $now
-        | .doc_review.passed = false
-        | (((.background_reviews // []) | map(select(.plane == "doc")) | map(.task) | unique | length)) as $n
-        | .background_reviews = ((.background_reviews // []) | map(select(.plane != "doc")))
-        | .last_edit_epoch_by_plane = ((.last_edit_epoch_by_plane // {}) | .doc = $de)
-        | retire_dispatch_epoch("doc"; $n)
-      ' "$STATE_FILE" > "$_doc_tmp" 2>/dev/null && mv "$_doc_tmp" "$STATE_FILE" 2>/dev/null || rm -f "$_doc_tmp" 2>/dev/null
-    fi
     echo "[Edit Hook] Doc change detected (degraded — lock contention, sidecar marker set): $file_path" >&2
     _alf_emit "event=doc_edit change=doc file=$(_alf_val "${file_path}")" \
-      "receipts=doc_review:false $(_alf_common)" \
+      "$(_alf_common)" \
       "pending=doc_review degraded=edit_lock_contention" >&2
   fi
 fi

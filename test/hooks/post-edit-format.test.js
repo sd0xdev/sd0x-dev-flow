@@ -37,11 +37,7 @@ function writeExecutable(filePath, content) {
   chmodSync(filePath, 0o755);
 }
 
-// opts.emptyMigration: the schema-migration jq exits 0 having written NOTHING. Real jq does this
-// on a truncated write (ENOSPC) and on some filter/input combinations; without a size guard the
-// hook then renames the EMPTY temp over the state file, and every reader — stop-guard included —
-// sees a 0-byte state it can neither parse nor repair.
-function setupStubBin(opts = {}) {
+function setupStubBin() {
   const binDir = makeTempDir('sd0x-post-edit-format-bin-');
 
   // Stub jq that handles:
@@ -245,25 +241,6 @@ if (query && query.includes('session_commit_scope.touched_files') && vars.f) {
   process.exit(0);
 }
 
-// Handle schema migration: .schema_version = $sv | .iteration_history //= {...}
-// ($sv replaced the hardcoded 2 so a v3 state missing the subtree is repaired without
-// being rewound to v2; $mr carries the project ## Max Rounds override.)
-if (query && query.includes('schema_version = $sv') && query.includes('iteration_history')) {
-  if (${opts.emptyMigration ? 'true' : 'false'}) { process.stdout.write(''); process.exit(0); }
-  data.schema_version = vars.sv !== undefined ? vars.sv : 2;
-  if (!data.iteration_history) {
-    data.iteration_history = {
-      current_round: 0,
-      max_rounds: vars.mr !== undefined ? vars.mr : 30,
-      findings_by_round: [],
-      total_rounds_session: 0,
-      strategic_reset_fired: false,
-    };
-  }
-  process.stdout.write(JSON.stringify(data));
-  process.exit(0);
-}
-
 process.stdout.write('');
 `;
   writeExecutable(join(binDir, 'jq'), stubJq);
@@ -366,7 +343,7 @@ test('suspicious path exits 0 with warning', () => {
 // State tracking: code changes
 // =============================================================================
 
-test('.ts file sets has_code_change in state', () => {
+test('.ts file classifies as a code edit (fact line; WB5b: no stored flag)', () => {
   const workDir = makeTempDir('sd0x-format-ts-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -376,12 +353,11 @@ test('.ts file sets has_code_change in state', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'state file should exist');
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /event=code_edit change=code/, 'the fact line carries the classification');
+  assert.equal(readState(workDir), null, 'no state file is created just to record an edit nothing reads');
 });
 
-test('.tsx file sets has_code_change in state', () => {
+test('.tsx file classifies as a code edit (fact line)', () => {
   const workDir = makeTempDir('sd0x-format-tsx-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -391,12 +367,11 @@ test('.tsx file sets has_code_change in state', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /event=code_edit change=code/);
+  assert.equal(readState(workDir), null);
 });
 
-test('.js file sets has_code_change in state', () => {
+test('.js file classifies as a code edit (fact line)', () => {
   const workDir = makeTempDir('sd0x-format-js-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -406,12 +381,11 @@ test('.js file sets has_code_change in state', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /event=code_edit change=code/);
+  assert.equal(readState(workDir), null);
 });
 
-test('.sh shell hook sets has_code_change in state (this repo is .sh-primary)', () => {
+test('.sh shell hook classifies as a code edit (this repo is .sh-primary)', () => {
   const workDir = makeTempDir('sd0x-format-sh-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -421,51 +395,48 @@ test('.sh shell hook sets has_code_change in state (this repo is .sh-primary)', 
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'state file should exist');
-  assert.equal(state.has_code_change, true, '.sh edits must engage the review gate');
+  assert.match(result.stderr, /event=code_edit change=code/, '.sh edits must engage the review gate (by derivation)');
+  assert.equal(readState(workDir), null);
 });
 
-test('init_state_file failure after a code edit leaves the .blocked sidecar (fail-closed, no fail-open)', () => {
-  // Codex iteration-11 P1: with the state file ABSENT and mktemp failing (unavailable / ENOSPC),
-  // init_state_file returns 1 and `set -e` aborts the locked code path BEFORE writing any state or
-  // sidecar. Stop-guard would then see neither → no-state ALLOW → the unreviewed edit ships (fail-OPEN).
-  // The fix writes `.blocked` on init failure so stop-guard fails CLOSED (STATE_FILE-absent + .blocked
-  // present → block, stop-guard.sh L171). Simulate mktemp failure with a PATH stub that exits 1; the
-  // `.blocked` write is a bash redirect (no mktemp) so it still succeeds. Non-tautology: drop the
-  // sidecar write and no `.blocked` exists → the existsSync assertion flips to false.
-  const workDir = makeTempDir('sd0x-format-init-fail-');
+test('a code edit with NO state file writes nothing — derivation owns the obligation (WB5b)', () => {
+  // Before WB5b an absent state file was an init duty, and an init failure needed a fail-closed
+  // `.blocked` sidecar (Codex iteration-11 P1). Both are retired: the gate obligation is derived
+  // at check time from tree content vs receipts (scripts/lib/gate-derive.js), so an edit over no
+  // state leaves NOTHING on disk — no state file, no sidecar on either plane — and the stderr
+  // fact line is the only trace. A failing mktemp must change none of that: there is no stored
+  // gate left to fail closed for.
+  const workDir = makeTempDir('sd0x-format-nostate-');
   const binDir = setupStubBin();
-  // Shadow mktemp with a failing stub (binDir is first in PATH) so init_state_file's create fails.
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
-  runHook({
+  const result = runHook({
     cwd: workDir,
     binDir,
     filePath: '/project/hooks/some-hook.sh',
     env: { HOOK_NO_FORMAT: '1' },
   });
-  // The hook aborts under set -e (a nonzero exit is expected); the invariant under test is the marker.
-  const statePath = join(workDir, '.claude_review_state.json');
-  const blockedPath = join(workDir, '.claude_review_state.json.blocked');
-  assert.equal(existsSync(statePath), false, 'no state file must exist when init could not create it');
-  assert.equal(
-    existsSync(blockedPath),
-    true,
-    'init failure after a code edit must leave the .blocked fail-closed sidecar',
-  );
+  assert.equal(result.status, 0);
+  assert.equal(readState(workDir), null, 'no state file must be created');
+  assert.deepEqual(_sidecarMarkers(workDir), [], 'no sidecar marker on either plane');
+  assert.match(result.stderr, /event=code_edit change=code/, 'the fact line still reports the edit');
 });
 
-test('init failure with the shared sidecar unwritable DIVERTS to a per-event marker, not a CRITICAL', () => {
+test('a failed mirror write with the shared sidecar unwritable DIVERTS to a per-event marker, not a CRITICAL', () => {
   // A directory at `.blocked` makes the append fail with EISDIR — rc=1, not the rc=2 symlink
-  // refusal. This used to be the injection for "state AND sidecar both failed", and it asserted the
-  // CRITICAL diagnostic, because `_set_own_sidecar` diverted to the emergency marker on rc=2 alone.
-  // That was pinning a fail-open: the shared sidecar has ONE fixed name, so a directory sitting on
-  // it says nothing about whether a SIBLING can be created — and `_sidecar_emergency_mark` needs
-  // only a sibling name, no `mktemp` and no lock. The marker was being dropped where it was
-  // perfectly writable. The hook now diverts on every nonzero rc; this test states the new contract,
-  // and the one below keeps the genuine total-loss case with an injection that actually produces it.
+  // refusal. The shared sidecar has ONE fixed name, so a directory sitting on it says nothing
+  // about whether a SIBLING can be created — and `_sidecar_emergency_mark` needs only a sibling
+  // name, no `mktemp` and no lock. The hook diverts on every nonzero rc; this test states that
+  // contract for the surviving write path: WB5b retired the flag/receipt writes, so the aggregate
+  // mirror reset is the transaction whose staging fails here.
   const workDir = makeTempDir('sd0x-format-sidecar-eisdir-');
   const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+    })
+  );
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
   mkdirSync(join(workDir, '.claude_review_state.json.blocked'));
   const result = runHook({
@@ -476,45 +447,46 @@ test('init failure with the shared sidecar unwritable DIVERTS to a per-event mar
   });
   assert.deepEqual(
     _sidecarMarkers(workDir),
-    ['state_init_failed:code'],
+    ['state_write_failed:code'],
     'the EISDIR append must divert to a per-event marker rather than drop the reason',
   );
   assert.match(
     result.stderr,
-    /shared sidecar write failed \(rc=1\); recorded 'state_init_failed:code' as a per-event marker instead/,
+    /shared sidecar write failed \(rc=1\); recorded 'state_write_failed:code' as a per-event marker instead/,
     'the diagnostic must name the rc it diverted from',
   );
   assert.doesNotMatch(
     result.stderr,
-    /CRITICAL: could not write state file OR its \.blocked sidecar/,
-    'a recoverable write failure must not be reported as "neither store could be written"',
+    /CRITICAL/,
+    'a recoverable write failure must not be reported as total loss',
   );
   assert.equal(
-    existsSync(join(workDir, '.claude_review_state.json')),
-    false,
-    'no state file is created when init could not run',
+    readState(workDir).aggregate_gate.gate,
+    'READY',
+    'the failed staging must leave the state file untouched',
   );
 });
 
-test('init failure where BOTH sidecar planes fail surfaces a CRITICAL stderr diagnostic (no silent fail-open)', () => {
-  // strict iteration-12 P2: under ENOSPC / an unwritable dir the `.blocked` write shares the failure
-  // mode it guards, leaving neither state nor sidecar — a silent fail-OPEN. No marker can be written
-  // on a full disk, but the hook must at least SURFACE that.
+test('a failed mirror write where BOTH sidecar planes fail surfaces a CRITICAL stderr diagnostic (no silent fail-open)', () => {
+  // strict iteration-12 P2, WB5b shape: under ENOSPC / an unwritable dir the `.blocked` write can
+  // share the failure mode it guards, leaving neither a committed state write nor a sidecar. No
+  // marker can be written on a full disk, but the hook must at least SURFACE that.
   //
   // The injection has to defeat BOTH planes, which a per-filename obstruction cannot do: the
-  // emergency marker picks a name no test can predict. `_sidecar_emergency_mark` stages with a bash
-  // redirect and then commits with `mv`, so a failing `mv` stub is the one lever that stops the
-  // per-event plane without also stopping the directory it writes into. Paired with the `.blocked`
-  // directory (shared plane) and the failing `mktemp` (state plane), all three stores are down.
-  //
-  // SCOPE, so the isolation is not read as stronger than it is: the `mv` stub is global, so it also
-  // breaks `_lock`'s rename-aside takeover and the state commit. Everything is down, and the
-  // assertions below hold for that. What this test therefore CANNOT distinguish is "the emergency
-  // marker channel specifically is dead" from "the process can no longer commit anything at all" —
-  // it pins the diagnostic on total loss, not the attribution of that loss to one plane. The
-  // per-plane behaviour is covered by the rc=1 divert test above, where only the shared plane fails.
+  // emergency marker picks a name no test can predict. `_sidecar_emergency_mark` stages with a
+  // bash redirect and then commits with `mv`, so a failing `mv` stub is the one lever that stops
+  // the per-event plane without also stopping the directory it writes into. Paired with the
+  // `.blocked` directory (shared plane) and the failing `mktemp` (staging), all three stores are
+  // down. The `mv` stub is global, so this pins the diagnostic on total loss, not the attribution
+  // of the loss to one plane — the rc=1 divert test above covers the per-plane behaviour.
   const workDir = makeTempDir('sd0x-format-sidecar-total-loss-');
   const binDir = setupStubBin();
+  writeFileSync(
+    join(workDir, '.claude_review_state.json'),
+    JSON.stringify({
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+    })
+  );
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
   writeExecutable(join(binDir, 'mv'), '#!/bin/sh\nexit 1\n');
   mkdirSync(join(workDir, '.claude_review_state.json.blocked'));
@@ -526,17 +498,12 @@ test('init failure where BOTH sidecar planes fail surfaces a CRITICAL stderr dia
   });
   assert.match(
     result.stderr,
-    /CRITICAL: could not write state file OR its \.blocked sidecar/,
-    'a total (state + both sidecar planes) write failure must surface a CRITICAL diagnostic',
+    /CRITICAL: state write failed \(invalidate_aggregate_gate\) AND the \.blocked sidecar could not be written/,
+    'a total (staging + both sidecar planes) write failure must surface a CRITICAL diagnostic',
   );
-  // Non-vacuity: the CRITICAL must be reached because nothing landed, not merely printed alongside a
-  // marker that did. Without this the test passes against the very divert it is distinguishing from.
+  // Non-vacuity: the CRITICAL must be reached because nothing landed, not merely printed alongside
+  // a marker that did.
   assert.deepEqual(_sidecarMarkers(workDir), [], 'no marker may have landed on either plane');
-  assert.equal(
-    existsSync(join(workDir, '.claude_review_state.json')),
-    false,
-    'no state file is created when init could not run',
-  );
 });
 
 test('malformed REVIEW_STATE_LOCK_TIMEOUT ("5s") does NOT wedge _lock with "integer expected" under contention', () => {
@@ -584,53 +551,49 @@ test('malformed REVIEW_STATE_LOCK_TIMEOUT ("5s") does NOT wedge _lock with "inte
   );
 });
 
-test('.bash shell script sets has_code_change in state', () => {
+test('.bash shell script classifies as a code edit (fact line)', () => {
   const workDir = makeTempDir('sd0x-format-bash-');
   const binDir = setupStubBin();
   const result = runHook({
     cwd: workDir,
     binDir,
-    filePath: '/project/scripts/deploy.bash',
+    filePath: '/project/scripts/setup.bash',
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /event=code_edit change=code/);
+  assert.equal(readState(workDir), null);
 });
 
-test('.zsh shell script sets has_code_change in state', () => {
+test('.zsh shell script classifies as a code edit (fact line)', () => {
   const workDir = makeTempDir('sd0x-format-zsh-');
   const binDir = setupStubBin();
   const result = runHook({
     cwd: workDir,
     binDir,
-    filePath: '/project/scripts/profile.zsh',
+    filePath: '/project/scripts/env.zsh',
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /event=code_edit change=code/);
+  assert.equal(readState(workDir), null);
 });
 
-// =============================================================================
-// State tracking: doc changes
-// =============================================================================
-
 test('an unavailable mktemp DEGRADES the doc transaction — it must not abort before the sidecar', () => {
-  // `_track_changed_file` is called from the doc branch WITHOUT a `|| true` guard and BEFORE that
-  // branch decides to set or clear the `.blocked` marker. Its `$(mktemp)` was unguarded, so under
-  // `set -euo pipefail` an unavailable temp aborted the hook right there: no sidecar, a stale
-  // `doc_review.passed: true` left over an unreviewed doc edit, and the lock quietly released by
-  // the EXIT trap. A NON-critical bookkeeping append was thus able to produce a silent fail-OPEN.
-  // Seeded with a passing doc_review so the stale-verdict half of the failure is real, not
-  // hypothetical.
+  // Under `set -euo pipefail` an unguarded `$(mktemp)` used to abort the hook mid-transaction:
+  // no sidecar, the lock quietly released by the EXIT trap — a silent fail-OPEN produced by a
+  // bookkeeping append. The guard is intrinsic in `_state_staging_file` now, and post-WB5b the
+  // write whose staging fails here is the aggregate mirror reset. The doc_review mirror receipt
+  // is untouched by design (derivation owns the doc gate); the marker is what holds the
+  // aggregate mirror closed for dual-mode readers.
   const workDir = makeTempDir('sd0x-format-mktemp-fail-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ has_doc_change: true, doc_review: { executed: true, passed: true } })
+    JSON.stringify({
+      doc_review: { executed: true, passed: true, last_run: 'T1' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+    })
   );
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
 
@@ -644,18 +607,20 @@ test('an unavailable mktemp DEGRADES the doc transaction — it must not abort b
   assert.equal(result.status, 0, 'the hook must degrade, not abort');
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
   assert.ok(existsSync(sidecar), 'a failed doc transaction must leave the fail-closed marker');
-  // Keyed by the plane that wrote it: this is a DOC edit, so the marker stands for a lost doc
-  // invalidation and only a later successful DOC transaction may retire it.
+  // Keyed by the plane that wrote it: only a later successful DOC transaction may retire it.
   assert.equal(readFileSync(sidecar, 'utf8').trim(), 'state_write_failed:doc');
+  assert.equal(
+    readState(workDir).aggregate_gate.gate,
+    'READY',
+    'the failed staging leaves the stale aggregate in place — which is exactly why the marker matters',
+  );
 });
 
 test('a DOC edit must not clear a marker standing in for a lost CODE verdict (cross-plane fail-open)', () => {
-  // The `.blocked` sidecar has four writers across two hooks, and this branch used to retire it
-  // with a blind `rm -f`. The fail-OPEN that produced: post-tool-review-state.sh raises
-  // `verdict_write_failed:code_review` when a BLOCKING code verdict could not be written, which
-  // means `code_review.passed` is still the `true` from the previous round and ONLY the marker is
-  // holding the gate. This branch invalidates `doc_review` and nothing else — so deleting that
-  // marker leaves a passing code review, no sidecar, and a blocking verdict that evaporated.
+  // The `.blocked` sidecar has multiple writers across two hooks, and this branch used to
+  // retire it with a blind `rm -f`. A `state_write_failed:code` marker stands for a lost CODE
+  // transaction; a doc-plane transaction cannot supersede it, so deleting it here would erase
+  // the only evidence that a code-plane write was dropped.
   const workDir = makeTempDir('sd0x-format-crossplane-');
   const binDir = setupStubBin();
   writeFileSync(
@@ -667,7 +632,7 @@ test('a DOC edit must not clear a marker standing in for a lost CODE verdict (cr
     })
   );
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
-  writeFileSync(sidecar, 'verdict_write_failed:code_review');
+  writeFileSync(sidecar, 'state_write_failed:code');
 
   const result = runHook({
     cwd: workDir,
@@ -682,26 +647,28 @@ test('a DOC edit must not clear a marker standing in for a lost CODE verdict (cr
 });
 
 test('a DOC edit DOES clear the doc-plane marker it supersedes (retention must not latch)', () => {
-  // The other half of the rule: over-retention would be safe but useless, so the branch must still
-  // retire what its own jq genuinely supersedes — here `doc_review.passed` is set back to false.
+  // The other half of the rule: over-retention would be safe but useless, so a fully-committed
+  // doc transaction must still retire its own plane's lost-write marker. WB5b: supersession is
+  // about the marker, not the mirror verdict — doc_review is left untouched, because the doc
+  // gate re-opens by derivation, not by a stored reset.
   const workDir = makeTempDir('sd0x-format-ownplane-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ has_doc_change: true, doc_review: { executed: true, passed: true } })
+    JSON.stringify({ doc_review: { executed: true, passed: true, last_run: 'T1' } })
   );
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
-  writeFileSync(sidecar, 'verdict_write_failed:doc_review');
+  writeFileSync(sidecar, 'state_write_failed:doc');
 
   runHook({ cwd: workDir, binDir, filePath: '/project/docs/readme.md', env: { HOOK_NO_FORMAT: '1' } });
 
-  assert.equal(existsSync(sidecar), false, 'a doc transaction supersedes a lost doc verdict');
-  assert.equal(readState(workDir).doc_review.passed, false);
+  assert.equal(existsSync(sidecar), false, 'a committed doc transaction supersedes its own lost write');
+  assert.equal(readState(workDir).doc_review.passed, true, 'the mirror receipt is untouched (WB5b)');
 });
 
 test('a CODE edit must not clear a marker standing in for a lost DOC verdict', () => {
-  // Mirror image. The code branch invalidates code_review + precommit; `doc_review.passed` is
-  // untouched, so a lost doc verdict is not superseded here either.
+  // Mirror image. A `state_write_failed:doc` marker stands for a lost DOC transaction; a
+  // code-plane transaction cannot supersede it.
   const workDir = makeTempDir('sd0x-format-crossplane2-');
   const binDir = setupStubBin();
   writeFileSync(
@@ -709,7 +676,7 @@ test('a CODE edit must not clear a marker standing in for a lost DOC verdict', (
     JSON.stringify({ has_doc_change: true, doc_review: { executed: true, passed: true } })
   );
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
-  writeFileSync(sidecar, 'verdict_write_failed:doc_review');
+  writeFileSync(sidecar, 'state_write_failed:doc');
 
   runHook({ cwd: workDir, binDir, filePath: '/project/src/index.ts', env: { HOOK_NO_FORMAT: '1' } });
 
@@ -718,16 +685,19 @@ test('a CODE edit must not clear a marker standing in for a lost DOC verdict', (
 });
 
 test('a FAILED code transaction sets the marker and does not clear it (mirror of the doc branch)', () => {
-  // The doc branch has this pin; the code branch had only its happy path, so removing the
-  // `_EDIT_WRITE_FAILED` gate that suppresses the end-of-transaction clear left the suite green.
-  // What the gate prevents: a partial transaction leaves the previous review/precommit PASSES
-  // intact, so clearing the marker there hands stop-guard a state that was never invalidated —
-  // the edit ships unreviewed. Seeded with a passing code_review so the stale verdict is real.
+  // What the `_EDIT_WRITE_FAILED` gate prevents: a partial transaction must not run the
+  // end-of-transaction sidecar clear, or a failed sibling write's marker would be erased by a
+  // later successful step. Post-WB5b the failing write is the aggregate mirror reset; the mirror
+  // receipts are untouched by design and the marker is what keeps dual-mode readers closed.
   const workDir = makeTempDir('sd0x-format-code-degraded-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ has_code_change: true, code_review: { executed: true, passed: true }, precommit: { executed: true, passed: true } })
+    JSON.stringify({
+      code_review: { executed: true, passed: true, last_run: 'T1' },
+      precommit: { executed: true, passed: true, last_run: 'T1' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
+    })
   );
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
 
@@ -744,7 +714,7 @@ test('a FAILED code transaction sets the marker and does not clear it (mirror of
   assert.match(readFileSync(sidecar, 'utf8'), /state_write_failed/);
 });
 
-test('.md file sets has_doc_change in state', () => {
+test('.md file classifies as a doc edit (fact line; WB5b: no stored flag)', () => {
   const workDir = makeTempDir('sd0x-format-md-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -754,12 +724,11 @@ test('.md file sets has_doc_change in state', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'state file should exist');
-  assert.equal(state.has_doc_change, true);
+  assert.match(result.stderr, /event=doc_edit change=doc/, 'the fact line carries the classification');
+  assert.equal(readState(workDir), null, 'no state file is created just to record an edit nothing reads');
 });
 
-test('.mdx file sets has_doc_change in state', () => {
+test('.mdx file classifies as a doc edit (fact line)', () => {
   const workDir = makeTempDir('sd0x-format-mdx-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -769,9 +738,8 @@ test('.mdx file sets has_doc_change in state', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_doc_change, true);
+  assert.match(result.stderr, /event=doc_edit change=doc/);
+  assert.equal(readState(workDir), null);
 });
 
 // =============================================================================
@@ -800,9 +768,8 @@ test('.py file tracks as code change', () => {
     filePath: '/project/script.py',
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'State file should be created for .py');
-  assert.equal(state.has_code_change, true, '.py should set has_code_change');
+  assert.match(result.stderr, /event=code_edit change=code/, '.py must classify as code');
+  assert.equal(readState(workDir), null);
 });
 
 // =============================================================================
@@ -834,9 +801,11 @@ test('src/build/ is NOT treated as vendor (no false positive)', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'src/build/*.ts should still be tracked');
-  assert.equal(state.has_code_change, true);
+  assert.match(
+    result.stderr,
+    /event=code_edit change=code/,
+    'src/build/*.ts must still be tracked — only vendor directories are skipped',
+  );
 });
 
 // =============================================================================
@@ -897,7 +866,10 @@ for (const [label, filePath, wantChange, wantPending] of [
     assert.match(line, /\bphase=\S+/);
     assert.match(line, /\bround=\d+\/\d+/);
     assert.match(line, /\btier=(fast|standard|thorough)\b/);
-    assert.match(line, /receipts=\S+/);
+    // WB5b: no `receipts=` token — the pending claim is structural (an edit owes its plane's
+    // gates), not a read-back of state this hook no longer writes.
+    assert.doesNotMatch(line, /receipts=/, 'the retired receipts read-back must not reappear');
+    if (label === 'code') assert.match(line, /\bsensitivity=\S+/);
     assert.ok(!result.stdout.includes('[AUTO_LOOP_STATE]'),
       'the block belongs on stderr — stdout is the hook protocol channel and would be parsed as a verdict');
   });
@@ -917,52 +889,23 @@ test('HOOK_NO_FORMAT=1 still tracks code changes', () => {
     env: { HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
-});
-
-// =============================================================================
-// State file initialization
-// =============================================================================
-
-test('state file initializes with correct structure', () => {
-  const workDir = makeTempDir('sd0x-format-init-');
-  const binDir = setupStubBin();
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  // Check initial structure is preserved
-  assert.equal(typeof state.session_id, 'string');
-  assert.equal(typeof state.updated_at, 'string');
-  assert.equal(state.has_code_change, true);
-  assert.equal(state.has_doc_change, false);
-  assert.ok(state.code_review);
-  assert.ok(state.doc_review);
-  assert.ok(state.precommit);
+  assert.match(result.stderr, /event=code_edit change=code/, 'tracking must survive the formatter opt-out');
 });
 
 // =============================================================================
 // Edit-time invalidation
 // =============================================================================
 
-test('code edit invalidates code_review.passed', () => {
-  const workDir = makeTempDir('sd0x-format-invalidate-code-');
+test('a code edit leaves the mirror receipts untouched — invalidation is derived, not stored (WB5b)', () => {
+  const workDir = makeTempDir('sd0x-format-mirror-untouched-');
   const binDir = setupStubBin();
-  // Pre-seed state with passed code_review
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
     JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
       code_review: { executed: true, passed: true, last_run: 'T1' },
       doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: false, passed: false, last_run: '' },
+      precommit: { executed: true, passed: true, last_run: 'T1' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
     })
   );
   runHook({
@@ -973,449 +916,36 @@ test('code edit invalidates code_review.passed', () => {
   });
   const state = readState(workDir);
   assert.ok(state);
-  assert.equal(state.code_review.passed, false, 'code_review.passed should be invalidated');
-  assert.equal(state.code_review.executed, true, 'code_review.executed should be preserved');
-  assert.equal(state.code_review.last_run, 'T1', 'code_review.last_run should be preserved');
+  // The gates re-open by DERIVATION (gate-derive.js compares tree content against receipts);
+  // resetting the mirror here would double-write what the derivation already answers, and a
+  // mirror write failure would then fabricate an open gate no evidence supports.
+  assert.equal(state.code_review.passed, true, 'the code_review mirror receipt is not reset by an edit');
+  assert.equal(state.precommit.passed, true, 'the precommit mirror receipt is not reset by an edit');
+  // The aggregate mirror is the ONE surviving gate write: stop-guard's dual-mode branch reads it
+  // directly, and keeping it alive without its edit-reset would fail OPEN after an edit.
+  assert.equal(state.aggregate_gate.executed, false, 'the aggregate mirror IS reset');
+  assert.equal(state.aggregate_gate.gate, null);
 });
 
-// === Background-review markers are retired by the edit that re-opens their plane ===
+// === WB5b: background_reviews / dispatch_count / dispatch_epoch are retired ===
 //
-// The sequence that made a marker lie: a review is backgrounded and records task T; its report
-// arrives as a task notification, which fires no hook; the report is acted on by editing a file;
-// the edit re-opens the gate. Without this, stop-guard still finds T — the gate IS open, so its
-// filter matches — and tells the reader the gate is open because that review's verdict was lost,
-// naming a thread that already finished and predates the change. Retiring on the invalidating
-// write is what keeps "gate open" and "why" from drifting apart.
-test('#10: a code edit retires the code marker whose gate it re-opens', () => {
-  const workDir = makeTempDir('sd0x-format-bg-retire-code-');
+// The eleven tests that lived here drove marker retirement and dispatch-reference crediting
+// through this hook's edit transactions. WB5b removed the machinery wholesale: a backgrounded
+// review is task-owned in the dispatch log (WB3, dispatch-cli `own`) and settled by the pairing
+// sweep; nothing in the state file records or retires it any more. The retirement itself is
+// pinned in doc-plane-counters.test.js ('a PreToolUse dispatch stamps none of the retired
+// dispatch-epoch keys') and by session-init.sh del()ing the keys from carried-over state.
+
+test('a doc edit leaves the doc_review mirror receipt untouched (WB5b)', () => {
+  const workDir = makeTempDir('sd0x-format-doc-mirror-untouched-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
     JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: true, passed: true, last_run: 'T1' },
-      doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [
-        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
-        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
-      ],
-    })
-  );
-
-  runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
-
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, false, 'the edit must re-open the code gate');
-  assert.deepEqual(
-    state.background_reviews.map((e) => e.plane),
-    ['doc'],
-    'the code marker is retired with the receipt it explained; the doc plane is untouched',
-  );
-});
-
-test('#10: a doc edit retires the doc marker whose gate it re-opens', () => {
-  const workDir = makeTempDir('sd0x-format-bg-retire-doc-');
-  const binDir = setupStubBin();
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [
-        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
-        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
-      ],
-    })
-  );
-
-  runHook({ cwd: workDir, binDir, filePath: '/project/docs/guide.md', env: { HOOK_NO_FORMAT: '1' } });
-
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false, 'the edit must re-open the doc gate');
-  assert.deepEqual(
-    state.background_reviews.map((e) => e.plane),
-    ['code'],
-    'the doc marker goes with its receipt; a code marker is a different plane and stays',
-  );
-});
-
-// The other direction, so the retirement above cannot quietly become "clear everything on any
-// edit". A cross-plane edit leaves both the receipt and the marker alone — stop-guard still owes
-// the reader the explanation for a gate this edit did not touch.
-test('#10: a doc edit leaves a code marker in place', () => {
-  const workDir = makeTempDir('sd0x-format-bg-retire-crossplane-');
-  const binDir = setupStubBin();
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: true, passed: true, last_run: 'T1' },
-      doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [{ plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' }],
-    })
-  );
-
-  runHook({ cwd: workDir, binDir, filePath: '/project/docs/guide.md', env: { HOOK_NO_FORMAT: '1' } });
-
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true, 'a doc edit must not re-open the code gate');
-  assert.deepEqual(
-    state.background_reviews.map((e) => e.task),
-    ['k03reia4w'],
-    'the code marker still explains a code gate nothing has re-opened',
-  );
-});
-
-// The contended arm. The doc plane writes its own jq twice — once inside the lock, once as the
-// degraded best-effort rewrite — and only the locked copy carried the retirement clause at first.
-// That asymmetry is invisible from the three tests above, which all run uncontended: the degraded
-// rewrite still re-opens the gate, so a marker surviving it re-attaches to a gate the edit caused.
-// The code plane has the same shape and reaches the retirement through `invalidate_review` rather
-// than a second copy of the transform — but "reaches it through a shared helper" is an argument,
-// not evidence, and the AC-trace review said so. The code-plane twin below is the evidence.
-test('#10: the DEGRADED doc path retires the doc marker too', () => {
-  const workDir = makeTempDir('sd0x-format-bg-retire-degraded-');
-  const binDir = setupStubBin();
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [
-        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
-        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
-      ],
-    })
-  );
-  // Hold the state lock so `_lock` times out and the doc transaction takes its degraded arm.
-  const stLock = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(stLock, { recursive: true });
-  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
-
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/docs/guide.md',
-    env: { HOOK_NO_FORMAT: '1', REVIEW_STATE_LOCK_TIMEOUT: '0' },
-  });
-
-  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false, 'the degraded rewrite still re-opens the doc gate');
-  assert.deepEqual(
-    state.background_reviews.map((e) => e.plane),
-    ['code'],
-    'so it must retire the doc marker with it — otherwise the marker explains a gate the edit caused',
-  );
-});
-
-// The code-plane twin. The committed code arm and this one both call `invalidate_review`, so the
-// retirement clause lives in one place and cannot diverge the way the doc plane's two transforms
-// did — but that is a claim about the source, and nothing failed if the degraded arm stopped
-// calling it. Dropping `invalidate_review "code_review"` from the contended branch below is exactly
-// the mutation this catches: the gate still re-opens (via the sidecar) while the marker survives to
-// explain it.
-test('#10: the DEGRADED code path retires the code marker through invalidate_review', () => {
-  const workDir = makeTempDir('sd0x-format-bg-retire-degraded-code-');
-  const binDir = setupStubBin();
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: true, passed: true, last_run: 'T1' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: true, passed: true, last_run: 'T1' },
-      background_reviews: [
-        { plane: 'code', task: 'k03reia4w', at: '2026-08-08T04:00:00Z' },
-        { plane: 'doc', task: 'kviu64mc0', at: '2026-08-08T04:19:15Z' },
-      ],
-    })
-  );
-  // Hold the state lock so `_lock` times out and the code transaction takes its degraded arm.
-  const stLock = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(stLock, { recursive: true });
-  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
-
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1', REVIEW_STATE_LOCK_TIMEOUT: '0' },
-  });
-
-  assert.match(result.stderr, /Code change detected \(degraded — lock contention/, 'the degraded code arm is the one under test');
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, false, 'the degraded rewrite still re-opens the code gate');
-  assert.deepEqual(
-    state.background_reviews.map((e) => e.plane),
-    ['doc'],
-    'so the code marker goes with it, and the doc plane the edit did not touch is left standing',
-  );
-});
-
-// === invalidate_review releases the dispatch reference the retired marker stood for (round-24 P1#1) ===
-//
-// The four tests above (stub jq) prove the marker is dropped. They cannot prove the OTHER half of
-// the fix — the dispatch reference that marker's removal is the terminal disposition for is also
-// released, in the SAME transaction — because the stub never modelled `dispatch_count`/
-// `dispatch_epoch` at all. Both run against real jq.
-
-test('invalidate_review credits by DISTINCT TASK among the dropped markers, not by row (round-24 P1#1)', { skip: !HAVE_REAL_JQ }, () => {
-  // Two rows share task `tk-dup` (the same backgrounded handoff observed twice — the exact duplicate
-  // shape `background-verdict-recovery.test.js` already covers for consumption); a third, `tk-other`,
-  // is a distinct dispatch. Dropping all three code-plane markers as this edit's side effect must
-  // release exactly 2 units (one per distinct task) — crediting by ROW would release 3 and
-  // over-retire a genuinely unrelated fourth dispatch that has no marker at all yet.
-  const workDir = makeTempDir('sd0x-format-p1-dedup-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: true, passed: true, last_run: 'T1' },
-      doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [
-        { plane: 'code', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
-        { plane: 'code', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
-        { plane: 'code', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
-      ],
-      dispatch_count: { code: 3 },
-      dispatch_epoch: { code: 1 },
-    })
-  );
-
-  const result = runRealHook({ cwd: workDir, filePath: '/project/src/app.ts' });
-
-  assert.equal(result.status, 0, result.stderr);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, false, 'the edit still re-opens the code gate');
-  assert.deepEqual(state.background_reviews, [], 'all three code-plane markers are dropped');
-  assert.equal(state.dispatch_count.code, 1,
-    'exactly 2 units released for 2 distinct tasks — crediting by row would have released 3 and dropped this below the one genuinely unrelated dispatch still outstanding');
-  assert.ok(state.dispatch_epoch.code, 'the epoch survives — the plane is not fully retired yet');
-});
-
-test('invalidate_review retires the plane\'s dispatch_count/epoch entirely when the last reference releases (round-24 P1#1)', { skip: !HAVE_REAL_JQ }, () => {
-  const workDir = makeTempDir('sd0x-format-p1-fullretire-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: true, passed: true, last_run: 'T1' },
-      doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [{ plane: 'code', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
-      dispatch_count: { code: 1 },
-      dispatch_epoch: { code: 1 },
-    })
-  );
-
-  const result = runRealHook({ cwd: workDir, filePath: '/project/src/app.ts' });
-
-  assert.equal(result.status, 0, result.stderr);
-  const state = readState(workDir);
-  assert.deepEqual(state.background_reviews, []);
-  assert.equal(state.dispatch_count, undefined,
-    'the last reference on the plane releases — under the bug this stuck at {code: 1} forever, since nothing ever retires a marker-only leak');
-  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
-});
-
-// === doc-plane dispatch-reference retirement, real jq (round-25 finding #5) ===
-//
-// The pair above proves the CODE plane's reference-counting arithmetic against real jq, because it
-// runs through the shared `invalidate_review` helper (one copy of `retire_dispatch_epoch`, one thing
-// to verify). The doc plane does NOT go through that helper — it writes its own jq inline, TWICE
-// (the locked arm above ~line 1483 and the degraded arm's best-effort rewrite below it), and each of
-// those has its OWN `if $doc_has_agg` / `else` split (whether `aggregate_gate` exists in the seed
-// state), for four independently-written jq programs total. The stub-jq tests above (`#10: ...`)
-// prove each of those four drops the right MARKER; none of them can prove the reference-count half,
-// because the stub never modelled `dispatch_count`/`dispatch_epoch` at all — same limitation the
-// comment above the code-plane pair already names. These four run the real filter, one per variant.
-
-test('doc edit (locked, aggregate_gate present) credits by distinct task among dropped doc markers', { skip: !HAVE_REAL_JQ }, () => {
-  const workDir = makeTempDir('sd0x-format-doc-p5-locked-agg-dedup-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
       code_review: { executed: false, passed: false, last_run: '' },
       doc_review: { executed: true, passed: true, last_run: 'T1' },
       precommit: { executed: false, passed: false, last_run: '' },
       aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
-      background_reviews: [
-        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
-        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
-        { plane: 'doc', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
-      ],
-      dispatch_count: { doc: 3 },
-      dispatch_epoch: { doc: 1 },
-    })
-  );
-
-  const result = runRealHook({ cwd: workDir, filePath: '/project/docs/guide.md' });
-
-  assert.equal(result.status, 0, result.stderr);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false, 'the edit still re-opens the doc gate');
-  assert.deepEqual(state.background_reviews, [], 'all three doc-plane markers are dropped');
-  assert.equal(state.dispatch_count.doc, 1,
-    'exactly 2 units released for 2 distinct tasks — crediting by row would have released 3 and dropped this below the one genuinely unrelated dispatch still outstanding');
-  assert.ok(state.dispatch_epoch.doc, 'the epoch survives — the plane is not fully retired yet');
-});
-
-test('doc edit (locked, no aggregate_gate) retires dispatch_count/epoch entirely on the last reference', { skip: !HAVE_REAL_JQ }, () => {
-  const workDir = makeTempDir('sd0x-format-doc-p5-locked-noagg-fullretire-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [{ plane: 'doc', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
-      dispatch_count: { doc: 1 },
-      dispatch_epoch: { doc: 1 },
-    })
-  );
-
-  const result = runRealHook({ cwd: workDir, filePath: '/project/docs/guide.md' });
-
-  assert.equal(result.status, 0, result.stderr);
-  const state = readState(workDir);
-  assert.deepEqual(state.background_reviews, []);
-  assert.equal(state.dispatch_count, undefined,
-    'the last reference on the plane releases — under the bug this stuck at {doc: 1} forever, since nothing ever retires a marker-only leak');
-  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
-});
-
-test('doc edit (DEGRADED, aggregate_gate present) still credits by distinct task', { skip: !HAVE_REAL_JQ }, () => {
-  const workDir = makeTempDir('sd0x-format-doc-p5-degraded-agg-dedup-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
-      background_reviews: [
-        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:00Z' },
-        { plane: 'doc', task: 'tk-dup', at: '2026-08-08T04:00:01Z' },
-        { plane: 'doc', task: 'tk-other', at: '2026-08-08T04:00:02Z' },
-      ],
-      dispatch_count: { doc: 3 },
-      dispatch_epoch: { doc: 1 },
-    })
-  );
-  // Hold the state lock so `_lock` times out and the doc transaction takes its degraded
-  // (unlocked-writer) arm — the jq program under test here is the SECOND, independently-written
-  // copy, not the locked one the two tests above exercised.
-  const stLock = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(stLock, { recursive: true });
-  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
-
-  const result = runRealHook({
-    cwd: workDir,
-    filePath: '/project/docs/guide.md',
-    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
-  });
-
-  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false, 'the degraded rewrite still re-opens the doc gate');
-  assert.deepEqual(state.background_reviews, [], 'all three doc-plane markers are dropped');
-  assert.equal(state.dispatch_count.doc, 1,
-    'exactly 2 units released for 2 distinct tasks, same arithmetic as the locked arm — the degraded rewrite is a SEPARATE jq program and must not diverge from it');
-  assert.ok(state.dispatch_epoch.doc, 'the epoch survives — the plane is not fully retired yet');
-});
-
-test('doc edit (DEGRADED, no aggregate_gate) retires dispatch_count/epoch entirely on the last reference', { skip: !HAVE_REAL_JQ }, () => {
-  const workDir = makeTempDir('sd0x-format-doc-p5-degraded-noagg-fullretire-');
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
-      background_reviews: [{ plane: 'doc', task: 'tk-only', at: '2026-08-08T04:00:00Z' }],
-      dispatch_count: { doc: 1 },
-      dispatch_epoch: { doc: 1 },
-    })
-  );
-  const stLock = join(workDir, '.claude_review_state.json.lockdir');
-  mkdirSync(stLock, { recursive: true });
-  writeFileSync(join(stLock, 'ts'), String(Math.floor(Date.now() / 1000)));
-
-  const result = runRealHook({
-    cwd: workDir,
-    filePath: '/project/docs/guide.md',
-    env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
-  });
-
-  assert.match(result.stderr, /degraded — lock contention/, 'the degraded arm is the one under test');
-  const state = readState(workDir);
-  assert.deepEqual(state.background_reviews, []);
-  assert.equal(state.dispatch_count, undefined,
-    'the last reference on the plane releases even through the degraded, unlocked rewrite');
-  assert.equal(state.dispatch_epoch, undefined, 'and the epoch retires with it');
-});
-
-test('code edit invalidates precommit.passed', () => {
-  const workDir = makeTempDir('sd0x-format-invalidate-precommit-');
-  const binDir = setupStubBin();
-  // Pre-seed state with passed precommit
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: false, passed: false, last_run: '' },
-      precommit: { executed: true, passed: true, last_run: 'T1' },
-    })
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/scripts/build.js',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.precommit.passed, false, 'precommit.passed should be invalidated');
-  assert.equal(state.precommit.executed, true, 'precommit.executed should be preserved');
-});
-
-test('doc edit invalidates doc_review.passed', () => {
-  const workDir = makeTempDir('sd0x-format-invalidate-doc-');
-  const binDir = setupStubBin();
-  // Pre-seed state with passed doc_review
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      has_code_change: false,
-      has_doc_change: false,
-      code_review: { executed: false, passed: false, last_run: '' },
-      doc_review: { executed: true, passed: true, last_run: 'T1' },
-      precommit: { executed: false, passed: false, last_run: '' },
     })
   );
   runHook({
@@ -1426,9 +956,8 @@ test('doc edit invalidates doc_review.passed', () => {
   });
   const state = readState(workDir);
   assert.ok(state);
-  assert.equal(state.doc_review.passed, false, 'doc_review.passed should be invalidated');
-  assert.equal(state.doc_review.executed, true, 'doc_review.executed should be preserved');
-  assert.equal(state.doc_review.last_run, 'T1', 'doc_review.last_run should be preserved');
+  assert.equal(state.doc_review.passed, true, 'the doc gate re-opens by derivation, not a stored reset');
+  assert.equal(state.aggregate_gate.executed, false, 'the aggregate mirror IS reset on a doc edit');
 });
 
 // =============================================================================
@@ -1512,8 +1041,7 @@ test('no aggregate_gate in state: edit does not crash', () => {
   });
   assert.equal(result.status, 0, 'should not crash when aggregate_gate is absent');
   const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.has_code_change, true);
+  assert.ok(state, 'the state file still parses after the transaction');
 });
 
 test('code edit clears sidecar .blocked marker', () => {
@@ -1546,14 +1074,13 @@ test('code edit clears sidecar .blocked marker', () => {
   );
 });
 
-test('doc edit atomic state update — flag + review + aggregate in single write', () => {
+test('doc edit commits only its surviving writes — aggregate mirror reset, no flag, no verdict reset (WB5b)', () => {
   const workDir = makeTempDir('sd0x-format-doc-atomic-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
     JSON.stringify({
       has_doc_change: false,
-      has_code_change: false,
       code_review: { executed: false, passed: false, last_run: '' },
       doc_review: { executed: true, passed: true, last_run: 'T1' },
       precommit: { executed: false, passed: false, last_run: '' },
@@ -1568,11 +1095,10 @@ test('doc edit atomic state update — flag + review + aggregate in single write
   });
   const state = readState(workDir);
   assert.ok(state, 'state file should exist');
-  assert.equal(state.has_doc_change, true, 'should set has_doc_change');
-  assert.equal(state.doc_review.passed, false, 'should invalidate doc_review');
-  assert.equal(state.aggregate_gate.executed, false, 'should reset aggregate_gate.executed');
-  assert.equal(state.aggregate_gate.gate, null, 'should null aggregate_gate.gate');
-  assert.ok(state.updated_at, 'should set updated_at');
+  assert.equal(state.has_doc_change, false, 'the retired flag write must not reappear');
+  assert.equal(state.doc_review.passed, true, 'the mirror receipt is untouched');
+  assert.equal(state.aggregate_gate.executed, false, 'the aggregate mirror reset is the surviving write');
+  assert.equal(state.aggregate_gate.gate, null);
 });
 
 test('doc edit does NOT invalidate code_review', () => {
@@ -1647,6 +1173,11 @@ test('arbitration: defers when local hook exists and registered in settings', ()
   assert.equal(result.status, 0, 'should defer to local hook');
   // Deferred means no state file created
   assert.equal(readState(workDir), null, 'should not create state when deferred');
+  assert.doesNotMatch(
+    result.stderr,
+    /Code change detected/,
+    'deferral means the tracking never ran — post-WB5b the absent state file alone proves nothing',
+  );
 });
 
 test('arbitration: dev mode bypass when hooks/hooks.json exists', () => {
@@ -1663,9 +1194,7 @@ test('arbitration: dev mode bypass when hooks/hooks.json exists', () => {
     env: { CLAUDE_PROJECT_DIR: workDir, HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'should run normally and create state in dev mode');
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /Code change detected/, 'dev mode must run the tracking normally');
 });
 
 test('arbitration: no local hook runs normally', () => {
@@ -1678,9 +1207,7 @@ test('arbitration: no local hook runs normally', () => {
     filePath: '/project/src/app.ts',
     env: { CLAUDE_PROJECT_DIR: workDir, HOOK_NO_FORMAT: '1' },
   });
-  const state = readState(workDir);
-  assert.ok(state, 'should run normally when no local hook');
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /Code change detected/, 'should run normally when no local hook');
 });
 
 test('arbitration: CLAUDE_PROJECT_DIR unset runs normally', () => {
@@ -1692,9 +1219,7 @@ test('arbitration: CLAUDE_PROJECT_DIR unset runs normally', () => {
     filePath: '/project/src/app.ts',
     env: { HOOK_NO_FORMAT: '1' },
   });
-  const state = readState(workDir);
-  assert.ok(state, 'should run normally without CLAUDE_PROJECT_DIR');
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /Code change detected/, 'should run normally without CLAUDE_PROJECT_DIR');
 });
 
 test('arbitration: local hook exists but not in settings runs normally', () => {
@@ -1707,9 +1232,7 @@ test('arbitration: local hook exists but not in settings runs normally', () => {
     filePath: '/project/src/app.ts',
     env: { CLAUDE_PROJECT_DIR: workDir, HOOK_NO_FORMAT: '1' },
   });
-  const state = readState(workDir);
-  assert.ok(state, 'should run normally when not registered');
-  assert.equal(state.has_code_change, true);
+  assert.match(result.stderr, /Code change detected/, 'should run normally when not registered');
 });
 
 test('arbitration: registered in settings.local.json defers', () => {
@@ -1725,6 +1248,11 @@ test('arbitration: registered in settings.local.json defers', () => {
   });
   assert.equal(result.status, 0, 'should defer via settings.local.json');
   assert.equal(readState(workDir), null, 'should not create state when deferred');
+  assert.doesNotMatch(
+    result.stderr,
+    /Code change detected/,
+    'deferral means the tracking never ran — post-WB5b the absent state file alone proves nothing',
+  );
 });
 
 // =============================================================================
@@ -1861,223 +1389,13 @@ test('D-5: scope invalid (session_id mismatch) does not track', () => {
   );
 });
 
-// =============================================================================
-// R6: max_rounds project override applied on init
-// =============================================================================
-
-test('R6: init reads project max_rounds override (15) on fresh state', () => {
-  const workDir = makeTempDir('sd0x-format-r6-override-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n15\n\n## Git Memory\n'
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 15,
-    'fresh init must read override from rules/auto-loop-project.md'
-  );
-});
-
-test('content-gated migration repairs a session-init v2 state missing iteration_history', () => {
-  // session-init.sh writes {schema_version: 2, session_commit_scope: {...}} with NO
-  // iteration_history. The former `ver < 2` version gate could never repair it, so the
-  // project ## Max Rounds override went unread for the entire session and stop-guard fell
-  // back to a hardcoded 10.
-  const workDir = makeTempDir('sd0x-format-migrate-v2-partial-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n7\n'
-  );
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({
-      schema_version: 2,
-      session_id: 's1',
-      session_commit_scope: { session_id: 's1', baseline_dirty_files: [], touched_files: [] },
-    })
-  );
-  runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.ok(state.iteration_history, 'partial v2 state must gain iteration_history');
-  assert.equal(state.iteration_history.max_rounds, 7, 'must read the project override, not fall back to the shipped default');
-});
-
-test('content-gated migration does not downgrade a v3 state missing iteration_history', () => {
-  const workDir = makeTempDir('sd0x-format-migrate-v3-nodowngrade-');
-  const binDir = setupStubBin();
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ schema_version: 3, session_id: 's1', plan_review: { executed: false } })
-  );
-  runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.schema_version, 3, 'repair must not rewind schema_version to 2');
-  assert.ok(state.iteration_history, 'v3 state must still gain the missing subtree');
-});
-
-test('migration jq that exits 0 with EMPTY output leaves the state intact (no 0-byte overwrite)', () => {
-  // `_migrate_state_v2` in this hook had drifted from its byte-for-byte twin in
-  // post-tool-review-state.sh: it lacked `2>/dev/null`, the `[[ -s "$tmp" ]]` size guard, and the
-  // `rm -f "$tmp"` cleanup. A jq that exits 0 having written nothing therefore renamed an EMPTY
-  // file over the state. That is unrecoverable by design: every writer sees the file EXISTS so
-  // none recreates it, and every reader's jq fails on it — stop-guard then treats the session as
-  // permanently corrupt. The migration gate is CONTENT-based (`has_iter != true`), so it fires on
-  // EVERY state session-init.sh creates: this is the hot path, on the most frequently run hook.
-  const workDir = makeTempDir('sd0x-format-migrate-emptyjq-');
-  const binDir = setupStubBin({ emptyMigration: true });
-  const original = JSON.stringify({
-    schema_version: 2,
-    session_id: 's1',
-    session_commit_scope: { session_id: 's1', baseline_dirty_files: [], touched_files: [] },
-  });
-  const statePath = join(workDir, '.claude_review_state.json');
-  writeFileSync(statePath, original);
-  const result = runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
-  assert.equal(result.status, 0, 'a failed migration must not abort the hook');
-  const raw = readFileSync(statePath, 'utf8');
-  assert.notEqual(raw.length, 0, 'the state file must never be truncated to 0 bytes');
-  const state = JSON.parse(raw);
-  assert.equal(state.session_id, 's1', 'the pre-migration content must survive verbatim');
-  assert.equal(state.schema_version, 2, 'and an unapplied migration must leave the version alone');
-});
-
-test('a failed migration leaves no .tmp litter beside the state file', () => {
-  // The `rm -f "$tmp"` half of the same divergence: without it every hook invocation on a state
-  // that still needs migrating drops another temp next to the state file.
-  const workDir = makeTempDir('sd0x-format-migrate-tmplitter-');
-  const binDir = setupStubBin({ emptyMigration: true });
-  writeFileSync(
-    join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ schema_version: 2, session_id: 's1' })
-  );
-  runHook({ cwd: workDir, binDir, filePath: '/project/src/app.ts', env: { HOOK_NO_FORMAT: '1' } });
-  const leftovers = readdirSync(workDir).filter(
-    (f) => f.startsWith('.claude_review_state.json') && f !== '.claude_review_state.json'
-  );
-  assert.deepEqual(leftovers, [], `failed migration must clean up its temp: ${leftovers.join(', ')}`);
-});
-
-test('R6: init reads override with real template shape (comment block between heading and value)', () => {
-  const workDir = makeTempDir('sd0x-format-r6-realshape-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  // Mirrors the shape generated by /install-rules: heading → blank → HTML comment → blank → override value
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n\n<!-- Override the default max_rounds for review iteration hard cap.\n     Default: 30 (from auto-loop.md). Set lower for faster feedback, higher for complex reviews.\n     Range: 3-50. Parsed by hooks on schema migration.\n     To override: uncomment and set the line below (must be a bare integer, no comments). -->\n\n25\n\n## Git Memory\n'
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 25,
-    'parser must scan past HTML comment block to find bare integer override'
-  );
-});
-
-test('R6: init ignores commented placeholder and falls back to default', () => {
-  const workDir = makeTempDir('sd0x-format-r6-commented-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  // Placeholder state (as shipped by /install-rules): value is still inside an HTML comment
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n\n<!-- Override description. -->\n\n<!-- 10 -->\n\n## Git Memory\n'
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 30,
-    'commented-out placeholder must NOT be treated as an override'
-  );
-});
-
-test('R6: init ignores integer inside multi-line HTML comment', () => {
-  const workDir = makeTempDir('sd0x-format-r6-multiline-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  // Integer placed inside a multi-line <!-- ... --> block must NOT be picked up as an override
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Auto-Loop Project Overrides\n\n## Max Rounds\n<!--\n7\n-->\n\n## Git Memory\n'
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 30,
-    'integer inside multi-line HTML comment must be treated as commented-out'
-  );
-});
-
-test('R6: init falls back to 30 when no override set', () => {
-  const workDir = makeTempDir('sd0x-format-r6-default-');
-  const binDir = setupStubBin();
-  // No auto-loop-project.md — fallback to default 30
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 30,
-    'fresh init must default to 30 when no project override'
-  );
-});
-
-test('R6: init rejects out-of-range override (100) and uses default', () => {
-  const workDir = makeTempDir('sd0x-format-r6-reject-');
-  const binDir = setupStubBin();
-  mkdirSync(join(workDir, 'rules'), { recursive: true });
-  writeFileSync(
-    join(workDir, 'rules', 'auto-loop-project.md'),
-    '# Overrides\n\n## Max Rounds\n100\n'
-  );
-  runHook({
-    cwd: workDir,
-    binDir,
-    filePath: '/project/src/app.ts',
-    env: { HOOK_NO_FORMAT: '1' },
-  });
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(
-    state.iteration_history.max_rounds, 30,
-    'out-of-range override must fall back to default'
-  );
-});
+// === WB5b: init/migration retired from this hook ===
+//
+// The R6 max_rounds-override and content-gated-migration tests that lived here drove this
+// hook's init, schema-migration and project-setting readers, all removed with the writer
+// retirement: this hook no longer creates or migrates the state file. The max_rounds override and
+// its bounds live in post-tool-review-state.sh (`_reconcile_max_rounds`) and are pinned by
+// max-rounds-default-consistency.test.js and the post-tool suite.
 
 // === deep-explore regressions: prettier binary requirement + NotebookEdit ===
 
@@ -2112,6 +1430,9 @@ test('local node_modules prettier binary → invoked directly (no config needed)
 });
 
 test('NotebookEdit notebook_path → tracked as code change (gate bypass regression)', () => {
+  // NotebookEdit matches the Edit|Write hook matcher but carries notebook_path, not file_path —
+  // without the coalesce, notebook edits silently bypass change tracking (no fact line, no
+  // aggregate reset) and the review gate never hears about them.
   const workDir = makeTempDir('sd0x-format-notebook-');
   const binDir = setupStubBin();
   writeFileSync(join(workDir, 'analysis.ipynb'), '{}');
@@ -2122,12 +1443,10 @@ test('NotebookEdit notebook_path → tracked as code change (gate bypass regress
       tool_input: { notebook_path: 'analysis.ipynb' },
     }),
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`, HOOK_NO_FORMAT: '1' },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'notebook edit must create/update review state');
-  assert.equal(state.has_code_change, true, 'notebook edit must invalidate review');
+  assert.match(result.stderr, /event=code_edit change=code/, 'notebook edits must engage the code plane');
 });
 
 test('global prettier + config file → invoked', () => {
@@ -2153,7 +1472,7 @@ test('global prettier without config file → not invoked (no project opt-in)', 
   assert.ok(!existsSync(marker), 'global binary alone is not a project opt-in signal');
 });
 
-test('.ipynb with valid session scope → code branch: has_code_change + touched_files', () => {
+test('.ipynb with valid session scope → code branch: fact line + touched_files', () => {
   const workDir = makeTempDir('sd0x-format-notebook-scope-');
   const binDir = setupStubBin();
   spawnSync('git', ['init', '--initial-branch=main'], { cwd: workDir });
@@ -2183,9 +1502,10 @@ test('.ipynb with valid session scope → code branch: has_code_change + touched
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
-  // has_code_change proves the notebook took the code branch (the generic
-  // non-code branch tracks touched_files but never sets this flag).
-  assert.equal(state.has_code_change, true, 'notebook must classify as code');
+  // The fact line proves the notebook took the code branch — the generic non-code branch tracks
+  // touched_files too but emits no [AUTO_LOOP_STATE] line (WB5b retired the stored flag this
+  // assertion used to read).
+  assert.match(result.stderr, /event=code_edit change=code/, 'notebook must classify as code');
   assert.ok(
     state.session_commit_scope.touched_files.includes('analysis.ipynb'),
     'code branch must also record the notebook in session commit scope'
@@ -2212,6 +1532,7 @@ test('code edit preserves current_round so the max_rounds hard cap stays reachab
       doc_review: { executed: false, passed: false, last_run: '' },
       precommit: { executed: false, passed: false, last_run: '' },
       session_commit_scope: { baseline_commit: '', touched_files: [], updated_at: '' },
+      aggregate_gate: { executed: true, gate: 'READY', reason: null, last_run: 'T1' },
       iteration_history: {
         current_round: 7,
         max_rounds: 10,
@@ -2231,7 +1552,7 @@ test('code edit preserves current_round so the max_rounds hard cap stays reachab
 
   assert.equal(result.status, 0);
   const state = readState(workDir);
-  assert.equal(state.code_review.passed, false, 'edit must still invalidate the review gate');
+  assert.equal(state.aggregate_gate.executed, false, 'a write must actually commit — otherwise the round asserts are vacuous');
   assert.equal(
     state.iteration_history.current_round,
     7,
@@ -2267,8 +1588,12 @@ test('a poisoned lock ts does not execute: `$(( ))` treats lock metadata as arit
 
   assert.equal(result.status, 0);
   assert.ok(!existsSync(pwn), 'lock metadata must never be evaluated as an arithmetic expression');
-  const state = readState(workDir);
-  assert.equal(state.has_code_change, true, 'untrusted metadata must reclaim the stale lock, not wedge it');
+  assert.match(result.stderr, /Code change detected: /, 'the committed arm must run');
+  assert.doesNotMatch(
+    result.stderr,
+    /degraded — lock contention/,
+    'untrusted metadata must reclaim the stale lock, not wedge the edit into the degraded arm',
+  );
 });
 
 // =============================================================================
@@ -2812,12 +2137,10 @@ const STATE_LOCKDIR_NAME = '.claude_review_state.json.lockdir';
 const PRE_TAKEOVER_STATE = {
   session_id: 's1',
   updated_at: 'T0',
-  has_code_change: false,
-  has_doc_change: true,
   code_review: { executed: false, passed: false, last_run: '' },
   doc_review: { executed: true, passed: true, last_run: 'T0' },
   precommit: { executed: true, passed: true, last_run: 'T0' },
-  aggregate_gate: { executed: false, gate: null, source: null, reason: null, last_run: '' },
+  aggregate_gate: { executed: true, gate: 'READY', source: 'single', reason: null, last_run: 'T0' },
   schema_version: 2,
   iteration_history: {
     current_round: 0,
@@ -2843,8 +2166,9 @@ function runStateWriteTakeover({ prefix, mode }) {
   const env = { HOOK_NO_FORMAT: '1' };
   if (mode) {
     Object.assign(env, {
-      SD0X_JQ_TAKEOVER_QUERY: '.passed = false',
-      SD0X_JQ_TAKEOVER_KEY: 'code_review',
+      // WB5b: the aggregate mirror reset is the one staged gate rewrite an edit still makes,
+      // so the takeover fires from inside ITS jq.
+      SD0X_JQ_TAKEOVER_QUERY: 'aggregate_gate.executed = false',
       SD0X_JQ_TAKEOVER_MODE: mode,
       SD0X_JQ_TAKEOVER_LOCKDIR: join(workDir, STATE_LOCKDIR_NAME),
       SD0X_JQ_TAKEOVER_STATE: statePath,
@@ -2870,8 +2194,7 @@ test('code edit whose lock is renamed away mid-transaction cannot restore the st
   // would hold just as well against a hook that writes nothing at all.
   const control = runStateWriteTakeover({ prefix: 'sd0x-format-stage-control-', mode: null });
   assert.equal(control.result.status, 0);
-  assert.equal(control.state.has_code_change, true, 'control: the edit must record its own flag');
-  assert.equal(control.state.code_review.passed, false, 'control: code_review must be invalidated');
+  assert.equal(control.state.aggregate_gate.executed, false, 'control: the aggregate reset must actually land');
   assert.equal(control.state.doc_review.passed, true, 'control: nothing revoked the doc verdict here');
 
   const taken = runStateWriteTakeover({ prefix: 'sd0x-format-stage-rename-', mode: 'rename' });
@@ -2886,6 +2209,11 @@ test('code edit whose lock is renamed away mid-transaction cannot restore the st
     taken.state.updated_at,
     'T-CONTENDER',
     'the contender’s commit must survive intact, not be partially overwritten'
+  );
+  assert.equal(
+    taken.state.aggregate_gate.gate,
+    'READY',
+    "the displaced reset must not land over the contender's aggregate"
   );
   // Hygiene, not the structural proof: a declined commit must not leak its staged temp either way.
   // The staging LOCATION is pinned by the derived test below — under a rename takeover the commit
@@ -2933,7 +2261,7 @@ test('every locked state rewrite stages inside the lock and re-checks ownership 
     .split('\n')
     .map((l, i) => ({ l, i }))
     .filter(({ l }) => /\bmv "\$_?[A-Za-z_]*tmp" "\$(STATE_FILE|state_file)"/.test(l) && !l.trim().startsWith('#'));
-  assert.ok(commits.length >= 8, `expected >= 8 staged commits, saw ${commits.length}`);
+  assert.ok(commits.length >= 3, `expected >= 3 staged commits, saw ${commits.length}`);
   const lines = src.split('\n');
   for (const { l, i } of commits) {
     // The guard sits either on the same line or on the `if` condition immediately above it.
@@ -3272,12 +2600,12 @@ const NEEDS_JQ = HAVE_JQ
   ? false
   : 'requires a real jq: the wait count is MEASURED by running the hooks, and a stub cannot answer both hooks\' queries';
 
-// Reachable under `failMktemp`: `_state_staging_file` fails, so the transaction leaves through this
-// arm and never reaches the trailing `_edit_write_failed` at the end of the function. Anchoring on
-// the trailing one measured 3 → 3 and looked like a broken measurement when it was a probe placed
-// on a line the scenario never executes.
-const PROBE_ANCHOR = '  tmp=$(_state_staging_file) || { _edit_write_failed "update_change_flag:$flag"; return 0; }';
-const PROBE_INSERT = '  tmp=$(_state_staging_file) || { _edit_write_failed "update_change_flag:$flag"; _edit_write_failed "probe_extra_caller"; return 0; }';
+// Reachable under `failMktemp`: `_state_staging_file` fails, so the aggregate reset leaves
+// through this arm. WB5b retired the other gate-write sites (change flag, review/precommit
+// invalidation), so the aggregate mirror reset carries the one surviving `_edit_write_failed`
+// caller to anchor the probe on.
+const PROBE_ANCHOR = '    tmp=$(_state_staging_file) || { _edit_write_failed "invalidate_aggregate_gate"; return 0; }';
+const PROBE_INSERT = '    tmp=$(_state_staging_file) || { _edit_write_failed "invalidate_aggregate_gate"; _edit_write_failed "probe_extra_caller"; return 0; }';
 
 test('the measured wait count is DYNAMIC — an extra caller of a shared helper moves it', { skip: NEEDS_JQ }, () => {
   // The control for the measurement above, and the exact mutation the old site-count derivation

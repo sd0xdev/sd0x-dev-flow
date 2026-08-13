@@ -27,15 +27,16 @@ const HOOK_CATCHALL_TOKEN = "warning:[^'\\'']*open directory";
 const JS_CATCHALL_TOKEN = "warning:[^']*open directory";
 
 // Each hook that treats a directory-omission warning as UNAVAILABLE, and how many detection
-// sites it carries (stop-guard reconciles at a probe AND a recon site).
+// sites it carries (stop-guard detects at the corrupt-state probe, the WB5c
+// derivation-unavailable git probe, and the recon site).
 const HOOK_SITES = [
   ['post-compact-auto-loop.sh', 1],
   ['post-skill-auto-loop.sh', 1],
   ['user-prompt-review-guard.sh', 1],
   ['session-init.sh', 1],
-  ['stop-guard.sh', 2],
+  ['stop-guard.sh', 3],
 ];
-const TOTAL_HOOK_SITES = HOOK_SITES.reduce((n, [, c]) => n + c, 0); // 6
+const TOTAL_HOOK_SITES = HOOK_SITES.reduce((n, [, c]) => n + c, 0); // 7
 
 function countOccurrences(haystack, needle) {
   let n = 0;
@@ -78,6 +79,26 @@ test('all gate hooks + run-verify.js share the same open-directory catch-all', (
   assert.ok(
     rv.includes(JS_CATCHALL_TOKEN),
     'run-verify.js must carry the same warning:[^\']*open directory catch-all the hooks mirror'
+  );
+});
+
+test('tree-digest.js carries the literal + catch-all pair at BOTH status readers (WB4 digest reader)', () => {
+  // The check-time derivation reads the tree through readStatus, and each
+  // gitlink runs its own nested status; a warn-and-omit read at either site is
+  // the same fail-open class the hook sites close, so the detector must not
+  // drift relative to them — at either site.
+  const td = readFileSync(join(ROOT, 'scripts/lib/tree-digest.js'), 'utf8');
+  const literalSites = countOccurrences(td, LITERAL_ONLY_ERE);
+  const catchAllSites = countOccurrences(td, JS_CATCHALL_TOKEN);
+  assert.equal(
+    literalSites,
+    2,
+    'tree-digest.js must carry two literal-verb omission detection sites (readStatus + gitlink nested status)'
+  );
+  assert.equal(
+    catchAllSites,
+    literalSites,
+    `tree-digest.js: ${literalSites - catchAllSites} detection site(s) missing the catch-all stem`
   );
 });
 

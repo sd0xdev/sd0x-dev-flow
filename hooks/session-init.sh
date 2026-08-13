@@ -14,8 +14,8 @@ if ! command -v jq &> /dev/null; then exit 0; fi
 
 # True (exit 0) when the working tree has any dirty/untracked code or doc file.
 # A .blocked sidecar means "a code/doc edit happened but the state write failed"
-# — a fail-closed marker. On a new session we reset has_code_change=false, and
-# reconciliation elsewhere is one-way (true→false only), so if we ALSO delete the
+# — a fail-closed marker. On a new session the reset clears every mirror receipt
+# (and WB5b deleted the stored change flags outright), so if we ALSO delete the
 # sidecar while reviewable files are still dirty we erase every trace and let an
 # unreviewed edit from the crashed session stop unchecked. So the sidecar is only
 # cleared when the tree is genuinely clean (a true orphan). The two alternations
@@ -574,17 +574,26 @@ if [[ -f "$STATE_FILE" ]]; then
     #
     # These used to be two writes with `_unlock` between them, and the second was unlocked
     # outright: it re-read `$STATE_FILE`, set one key, and renamed the whole document back. Any
-    # write that landed in between — most consequentially `post-edit-format.sh` raising
-    # `has_code_change=true` for an edit made moments after session start — was read before the
-    # change and clobbered by the rename after it. The reset had just set that flag to false, so
-    # the lost update was precisely the one that re-arms the gate, and nothing downstream re-raises
-    # it: reconciliation only relaxes flags, it never sets them.
+    # write that landed in between — most consequentially `post-edit-format.sh` raising the
+    # then-stored `has_code_change=true` flag for an edit made moments after session start — was
+    # read before the change and clobbered by the rename after it. The reset had just set that
+    # flag to false, so the lost update was precisely the one that re-armed the gate. The flag is
+    # retired (WB5b), but the atomicity argument holds for every field this write still touches.
     #
     # Merging them removes the window rather than narrowing it. There is no interval in which the
     # state is half-reset, and the whole session-start mutation is a single atomic rename.
+    #
+    # WB5a–WB5c: the receipt booleans written below are the MIRROR — advisory-only now
+    # that the window flip (WB5c) landed. Consumers (stop-guard and the three advisory
+    # hooks) derive obligation and validity from tree content via
+    # scripts/lib/gate-derive.js; the mirror answers only where no tree exists for a
+    # digest receipt to bind to (not-a-repo). The reset still zeroes the mirrors so
+    # that legacy authority never carries a stale PASS across sessions. WB5b retired
+    # the stored change flags and the background_reviews list outright (their writers
+    # are gone), so the reset del()s them from carried-over state — tech spec §3.5–§3.6.
     if jq --arg sid "$NEW_SESSION_ID" --arg now "$NOW" --argjson bl "$BASELINE" '
       .session_id = $sid | .updated_at = $now |
-      .has_code_change = false | .has_doc_change = false |
+      del(.has_code_change, .has_doc_change) |
       .code_review = {"executed":false,"passed":false} |
       .doc_review = {"executed":false,"passed":false} |
       .precommit = {"executed":false,"passed":false} |
@@ -594,7 +603,7 @@ if [[ -f "$STATE_FILE" ]]; then
       .iteration_history.strategic_reset_fired = false |
       .iteration_history.stall_streak = 0 |
       .iteration_history.stall_memory = [] |
-      .background_reviews = [] |
+      del(.background_reviews) |
       del(.dispatch_epoch) |
       del(.dispatch_count) |
       del(.last_edit_epoch_by_plane) |
@@ -616,9 +625,9 @@ if [[ -f "$STATE_FILE" ]]; then
     _unlock
     # Clear a stale .blocked sidecar ONLY when the tree has no dirty reviewable
     # files. Otherwise the marker may flag a real unreviewed edit from the
-    # crashed session; since the reset just set has_code_change=false and
-    # reconciliation never re-raises it, keeping the sidecar is the only thing
-    # that re-engages the gate (downstream hooks force HAS_CODE=true on it).
+    # crashed session; keeping it is what re-engages the gate (stop-guard
+    # force-pins every gate on any sidecar), while a genuinely clean tree
+    # proves the marker is an orphan.
     # Only run the (potentially costly -uall) scan when a sidecar actually exists —
     # with no sidecar there is nothing to clear, so the scan would be pure waste.
     # Serialization and the inside-the-lock re-scan live in _clear_orphan_sidecar.
@@ -668,3 +677,26 @@ else
   # Gate the scan on sidecar existence — no sidecar → nothing to clear → skip the walk.
   _clear_orphan_sidecar
 fi
+
+# === WB3: activation barrier (tech spec §3.4 visibility) ===
+# The protocol's first act for a session: append the {kind:"activation"} record BEFORE any tool
+# call exists, so every real entry of the session postdates activated_at and "this call's own
+# entry" becomes decidable rather than inferred. Idempotent (the CLI appends nothing when the
+# session already has one) and advisory: a failed or skipped append degrades to lazy activation
+# at first protocol contact — one conservatively-quarantined call at worst — and never blocks
+# session start. The CLI ships beside this hook in both layouts (repo scripts/ when self-hosting,
+# plugin-root scripts/ as the plugin copy), same resolution as post-tool-review-state.sh.
+_WB3_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || _WB3_SELF_DIR=""
+_WB3_CLI="${_WB3_SELF_DIR%/hooks}/scripts/dispatch-cli.js"
+if [[ -n "$_WB3_SELF_DIR" && -f "$_WB3_CLI" ]] && command -v node &>/dev/null; then
+  if ! _WB3_OUT=$(printf '%s' "$INPUT" | node "$_WB3_CLI" activate 2>&1); then
+    echo "[Session Init] activation record not written (${_WB3_OUT:-no detail}) — capture-time binding degrades to lazy activation" >&2
+  fi
+  # Liveness-based compaction: fold aged dispositions into frontiers and drop
+  # aged terminal dispatch records. Advisory — a failed compaction only leaves
+  # the log longer, never less correct (every drop is coverage-checked inside).
+  if ! _WB3_OUT=$(printf '%s' "$INPUT" | node "$_WB3_CLI" compact 2>&1); then
+    echo "[Session Init] dispatch-log compaction skipped (${_WB3_OUT:-no detail})" >&2
+  fi
+fi
+exit 0

@@ -61,11 +61,9 @@ test('every hook-side max_rounds default agrees', () => {
       label: 'post-tool-review-state project-setting default',
       re: /_read_project_int_setting "Max Rounds" "\$\{1:-(\d+)\}"/,
     },
-    {
-      file: 'hooks/post-edit-format.sh',
-      label: 'post-edit-format project-setting default',
-      re: /_read_project_int_setting "Max Rounds" "\$\{1:-(\d+)\}"/,
-    },
+    // hooks/post-edit-format.sh no longer carries a project-setting site: WB5b retired its state
+    // creation/migration entirely, so the only default it reads is the shared emitter's `// 30`
+    // (pinned byte-identical across emitters by auto-loop-state.test.js).
   ];
 
   for (const { file, label, re } of sites) {
@@ -78,9 +76,10 @@ test('every hook-side max_rounds default agrees', () => {
 });
 
 test('_read_project_max_rounds call sites pass the shared default', () => {
-  // Two hooks initialise state and each passes an explicit fallback to the reader. A call site
-  // passing a stale value overrides the reader's own default, so the reader agreeing is not enough.
-  for (const file of ['hooks/post-tool-review-state.sh', 'hooks/post-edit-format.sh']) {
+  // One hook initialises state and passes an explicit fallback to the reader. A call site
+  // passing a stale value overrides the reader's own default, so the reader agreeing is not
+  // enough. (post-edit-format.sh left this list with WB5b — it no longer initialises state.)
+  for (const file of ['hooks/post-tool-review-state.sh']) {
     const calls = [...read(file).matchAll(/_read_project_max_rounds (\d+)/g)];
     assert.ok(calls.length > 0, `${file}: expected at least one _read_project_max_rounds call site`);
     for (const c of calls) {
@@ -138,7 +137,9 @@ test('jq-stub defaults in the hook test suites agree with the shipped default', 
   const expected = {
     'test/hooks/review-phase.test.js': 6,
     'test/hooks/changed-files.test.js': 3,
-    'test/hooks/post-edit-format.test.js': 1,
+    // post-edit-format.test.js dropped to zero sites with WB5b: its stub no longer mirrors any
+    // default because the hook it stubs no longer creates or migrates the state file.
+    'test/hooks/post-edit-format.test.js': 0,
     // 4 since the stub gained an exact-match read branch for `.iteration_history.max_rounds // 30`
     // (the round/cap reads behind `_alf_common` and the mid-loop checkpoint).
     'test/hooks/post-tool-review-state.test.js': 4,

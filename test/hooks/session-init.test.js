@@ -80,7 +80,9 @@ test('session-init: new session resets review state', () => {
   assert.equal(result.status, 0);
   const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
   assert.equal(state.session_id, 'new-session-xyz');
-  assert.equal(state.has_code_change, false);
+  // WB5b: the stored change flags are retired — the reset deletes them rather than zeroing them.
+  assert.equal(state.has_code_change, undefined, 'retired flag must be deleted, not reset');
+  assert.ok(!Object.hasOwn(state, 'has_code_change'));
   assert.equal(state.code_review.passed, false);
   assert.equal(state.iteration_history.current_round, 0);
   // total_rounds_session should be preserved
@@ -234,7 +236,8 @@ test('session-init: empty session_id legacy state gets full reset', () => {
   assert.equal(result.status, 0);
   const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
   assert.equal(state.session_id, 'new-session');
-  assert.equal(state.has_code_change, false, 'should reset stale flags');
+  // WB5b: the legacy stored flag is deleted by the reset, not zeroed.
+  assert.ok(!Object.hasOwn(state, 'has_code_change'), 'stale legacy flag must be deleted');
   assert.equal(state.code_review.passed, false, 'should reset review state');
 });
 
@@ -930,10 +933,11 @@ test('session-init: orphan sidecar clear declines when the lock was taken over m
   assert.match(contended.result.stderr, /clear abandoned — lock was taken over/);
 });
 
-test('a new session clears background_reviews (the task they name cannot survive one)', () => {
+test('a new session deletes background_reviews outright (the key is retired with its writer)', () => {
   // The handoff placeholder says it outright: "it does not survive exiting this session." A marker
-  // carried into a new session therefore points at a task that cannot exist, and stop-guard would
-  // offer it as the reason a gate is open and tell the reader to continue a dead thread. Issue #10.
+  // carried into a new session therefore points at a task that cannot exist. WB5b retired the
+  // writer entirely, so the reset now deletes the key rather than emptying it — a `[]` left behind
+  // would be a live schema key with no producer.
   const workDir = makeTempDir('sd0x-session-init-bg-markers-');
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
@@ -953,7 +957,7 @@ test('a new session clears background_reviews (the task they name cannot survive
 
   assert.equal(result.status, 0);
   const state = JSON.parse(readFileSync(join(workDir, '.claude_review_state.json'), 'utf8'));
-  assert.deepEqual(state.background_reviews, [], 'no marker outlives the session that produced it');
+  assert.ok(!Object.hasOwn(state, 'background_reviews'), 'the retired key must be deleted, not emptied');
 });
 
 test('a new session clears every freshness clock, so the first dispatch is not born stale', () => {

@@ -1081,3 +1081,85 @@ test('R10 a non-numeric AUTO_LOOP_CHECKPOINT_ROUNDS falls back to 10, never to a
   assert.equal(existsSync(join(cwd, 'pwned')), false, 'no command substitution may run');
   assert.ok(result.stdout.includes('[STRATEGIC_RESET]'), 'round 11 still meets the default 10');
 });
+
+// === WB5a: derived reads (dual-read merge via resolveAdvisory) ===
+// Real git + real jq (no stubs): reconciliation only ever DOWNGRADES a stored
+// flag, so a resume block carrying change=code while the mirror says
+// has_code_change=false can only come from the derivation reading the tree.
+test('WB5a: derivation raises a false mirror flag off tree content → resume block with source=digest', () => {
+  const cwd = makeTempDir('sd0x-pc-wb5a-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  // Production repos gitignore the state file; without this the untracked
+  // state file is itself code-plane dirt and the assertion goes vacuous.
+  writeFileSync(join(cwd, '.git', 'info', 'exclude'), '.claude_review_state.json*\n');
+  writeStateFile(cwd, {
+    has_code_change: false,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(cwd, 'app.js'), '// edited after the state write');
+
+  const result = runHook({ cwd, env: { CLAUDE_PROJECT_DIR: cwd } });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_RESUME]'));
+  assert.ok(line, `derived obligation must surface in the resume block; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+});
+
+test('WB5a: clean tree lowers a true mirror flag → silent resume, no porcelain downgrade needed', () => {
+  const cwd = makeTempDir('sd0x-pc-wb5a-clean-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  writeFileSync(join(cwd, '.git', 'info', 'exclude'), '.claude_review_state.json*\n');
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: true,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+
+  const result = runHook({ cwd, env: { CLAUDE_PROJECT_DIR: cwd } });
+  assert.equal(result.status, 0);
+  assert.doesNotMatch(result.stdout, /\[AUTO_LOOP_RESUME\]/,
+    'derived owed=false must not resurrect stale stored flags after compaction');
+});
+
+test('WB5a: missing state file no longer silences a dirty tree — derivation answers alone', () => {
+  const cwd = makeTempDir('sd0x-pc-wb5a-nostate-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  writeFileSync(join(cwd, 'app.js'), '// dirty with no mirror at all');
+
+  const result = runHook({ cwd, env: { CLAUDE_PROJECT_DIR: cwd } });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_RESUME]'));
+  assert.ok(line, `a failed/deleted state write must not hide a dirty tree; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+});

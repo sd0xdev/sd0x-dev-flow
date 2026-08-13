@@ -200,8 +200,8 @@ _alf_field() {
   _alf_val "${out:-${2:-unknown}}"
 }
 # Reads a receipt back from the state file AFTER a write, because `update_state` returns 0 on its
-# mktemp, empty-output and lock-contention failures alike (post-tool-review-state.sh — see the
-# `_verdict_write_failed` calls). Emitting the verdict that was REQUESTED would assert a durable
+# mktemp, empty-output and lock-contention failures alike (see its degraded paths). Emitting the
+# verdict that was REQUESTED would assert a durable
 # state that may never have been committed, which is the one thing this signal must not do.
 #
 # THREE-VALUED on purpose. Collapsing "no state to read" into `false` is what made read-back weaker
@@ -372,22 +372,130 @@ TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
 if [[ -z "$TRANSCRIPT" || ! -f "$TRANSCRIPT" ]]; then
   # A missing/unreadable transcript must NOT bypass the review-state gate (fail-closed).
   # The state file is the PRIMARY enforcement source and needs no transcript; only the
-  # legacy fallback scan (USE_STATE_FILE=false branch) reads the transcript. Allow the stop
-  # only when there is genuinely no state to enforce. This mirrors the jq-unavailable
-  # fail-closed branch above. (Prior code unconditionally exited ok here, letting a missing
-  # transcript silently clear a pending strict/dual gate — a fail-OPEN hole.)
-  # Sidecar-only (STATE_FILE absent + .blocked present) already failed closed above, so a
-  # missing state file here means there is genuinely nothing to enforce.
-  if [[ ! -f "$STATE_FILE" ]]; then
-    echo "[Stop Guard] Cannot read transcript and no review state — allowing stop" >&2
-    echo '{"ok":true,"reason":"no transcript; no review state"}'
-    exit 0
-  fi
-  # State file exists → defer to state-file enforcement below (transcript not needed there).
+  # legacy fallback scan (USE_STATE_FILE=false branch) reads the transcript. This used to
+  # early-allow when the state file was ALSO missing — but the check-time derivation and its
+  # git probe need no transcript either (round-2 P1): deleting both the state file and the
+  # transcript path must not skip them. So no early exit: fall through with TRANSCRIPT=""
+  # (the sweep and the legacy scan skip themselves on an empty path), let the derivation
+  # answer, and let the promotion block decide. A host where nothing can answer — no state,
+  # no derivation, not a repo — reaches the legacy scan with an empty conversation and still
+  # allows, exactly the case the old early exit was for.
   if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
-    echo "[Stop Guard] Transcript missing; deferring to review-state enforcement" >&2
+    echo "[Stop Guard] Transcript missing; deferring to state/derivation enforcement" >&2
   fi
   TRANSCRIPT=""
+fi
+
+# === WB4: final pairing sweep (check-time writer) ===
+# A backgrounded review can complete without ever firing a PostToolUse event;
+# its verdict then exists only in the transcript. Sweeping HERE — before any
+# gate value is read — binds and settles it under the producer lock, so the
+# derivation below judges a log that already holds everything the transcript
+# can prove. Advisory: a failed sweep only leaves the gate open (fail-closed),
+# never blocks the stop decision itself. CLI resolution matches
+# session-init.sh: the scripts ship beside this hook in both layouts.
+_GD_SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd -P)" || _GD_SELF_DIR=""
+_GD_CLI="${_GD_SELF_DIR%/hooks}/scripts/dispatch-cli.js"
+_GD_DERIVE="${_GD_SELF_DIR%/hooks}/scripts/lib/gate-derive.js"
+_GD_SOURCE="mirror"
+_GD_OBLIGATION_DERIVED=false
+_GD_TREE_UNVERIFIABLE=false
+_GD_FALLBACK_PLANES=""
+# Full GIT_* env fence, shared by EVERY direct git this gate logic runs (the WB5c fallback
+# probe, the corrupt-state probe, the stale-git reconciliation): repository resolution must
+# match tree-digest.js cleanGitEnv — strip the whole namespace dynamically (a fixed list could
+# not enumerate future names) and pin each call with `git -C "$PWD"`. Round-2 P1: fencing only
+# the fallback probe left the reconciliation redirectable by ambient GIT_DIR/GIT_WORK_TREE,
+# which could downgrade a mirror-held obligation against some OTHER, cleaner repository.
+# `+`-guarded expansion at each use keeps bash 3.2's `set -u` from aborting on an empty array.
+_GD_GIT_FENCE=()
+while IFS='=' read -r _gd_fence_k _; do
+  [[ "$_gd_fence_k" == GIT_* ]] && _GD_GIT_FENCE+=(-u "$_gd_fence_k")
+done < <(env)
+# Containment-proved stderr capture, shared by the sweep and the two git probes (resolved
+# paths BOTH sides, /tmp fallback subject to the same check): a TMPDIR inside (or symlinked
+# into) the repo would otherwise let the capture file itself dirty the porcelain a probe is
+# reading — self-inflicted, repeating on every Stop (round-2 P2). The boundary is the physical
+# WORKTREE ROOT, not $PWD (round-3 P2): with the hook cwd below the root, a repo-local TMPDIR
+# outside that subdirectory passed a $PWD-based test and still planted the capture inside the
+# tree. Outside any repository the boundary falls back to the physical cwd; a worktree whose
+# root cannot be resolved physically — or a rev-parse refusal with a `.git` ancestor proving a
+# tree exists — yields NO capture path, and callers keep their fail-closed disposition.
+# Prints the created path; prints nothing when no candidate proves out.
+_gd_safe_tmpfile() {
+  local _pfx="$1" _bound _cand _res _f _walk _next
+  _bound=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} git -C "$PWD" rev-parse --show-toplevel 2>/dev/null) || _bound=""
+  if [[ -n "$_bound" ]]; then
+    _bound=$(cd "$_bound" 2>/dev/null && pwd -P) || return 1
+    [[ -n "$_bound" ]] || return 1
+  else
+    # rev-parse named no root. Any `.git` ancestor still proves a worktree we cannot bound —
+    # no capture path (fail-closed). A genuinely repo-free cwd bounds at its physical self.
+    _walk="$PWD"
+    while :; do
+      [[ -e "$_walk/.git" || -L "$_walk/.git" ]] && return 1
+      _next="${_walk%/*}"
+      [[ -z "$_next" ]] && _next="/"
+      [[ "$_next" == "$_walk" ]] && break
+      _walk="$_next"
+    done
+    _bound=$(pwd -P 2>/dev/null) || _bound="$PWD"
+  fi
+  # A bound of `/` contains every absolute path, but the case pattern below
+  # ("$_bound"/* → //*) matches none of them — so a worktree rooted at / would
+  # accept /tmp while it sits inside the tree (round-4 P2). No candidate can
+  # escape a root bound: no capture path, callers stay fail-closed.
+  [[ "$_bound" == "/" ]] && return 1
+  for _cand in "${TMPDIR:-/tmp}" /tmp; do
+    case "$_cand" in /*) ;; *) continue ;; esac
+    _res=$(cd "$_cand" 2>/dev/null && pwd -P) || continue
+    [[ -n "$_res" ]] || continue
+    case "$_res" in "$_bound" | "$_bound"/*) continue ;; esac
+    _f=$(mktemp "${_res}/${_pfx}.XXXXXX" 2>/dev/null) || continue
+    printf '%s' "$_f"
+    return 0
+  done
+  return 1
+}
+if [[ -n "$TRANSCRIPT" && -n "$_GD_SELF_DIR" && -f "$_GD_CLI" ]] && command -v node &>/dev/null; then
+  # The CLI reports a refused-but-handled sweep as exit 0 with ok:false in the
+  # JSON (its reports ride stderr) — reading exit status alone would swallow
+  # exactly the runs whose reviews stayed unsettled. Capture both streams and
+  # judge ok on the JSON.
+  _GD_SWEEP_OUT=""
+  _GD_SWEEP_ERR=""
+  _GD_SWEEP_STATUS=0
+  # The stderr capture file must never land inside the tree under review: a
+  # relative TMPDIR (or one pointing into the repo) would add an untracked
+  # code-plane file mid-sweep, shifting the digest the endpoint revalidates
+  # against and settling a genuine PASS as no-verdict. Same posture as the
+  # receipt/tombstone resolver: EVERY candidate — the /tmp fallback included —
+  # passes the same resolution + containment proof (R4-2: a repo rooted at
+  # /tmp, or at macOS's physical /private/tmp, would otherwise re-admit the
+  # unproven fallback the containment check just rejected), on RESOLVED paths
+  # (`pwd -P` both sides, R3-3) — a lexical compare would accept /tmp/x
+  # symlinked into the repo. Round-3 P2 moved the proof into the shared
+  # _gd_safe_tmpfile above, which also fixed its boundary: the WORKTREE ROOT,
+  # not $PWD, so a subdirectory cwd cannot re-admit a repo-local TMPDIR. No
+  # candidate proves out → capture is skipped entirely rather than trusted.
+  _GD_SWEEP_ERRFILE="$(_gd_safe_tmpfile sg-sweep-err)" || _GD_SWEEP_ERRFILE=""
+  if [[ -n "$_GD_SWEEP_ERRFILE" ]]; then
+    _GD_SWEEP_OUT=$(printf '%s' "$INPUT" | node "$_GD_CLI" sweep 2>"$_GD_SWEEP_ERRFILE") || _GD_SWEEP_STATUS=$?
+    _GD_SWEEP_ERR=$(cat "$_GD_SWEEP_ERRFILE" 2>/dev/null || true)
+    # Guarded: an unremovable temp file must never abort the hook under
+    # `set -e` — a non-0/2 exit here is read as "no objection" (fail-open).
+    rm -f "$_GD_SWEEP_ERRFILE" 2>/dev/null || true
+  else
+    # No capture file (no proven temp dir, or mktemp failed): let the CLI's
+    # stderr flow straight through to the hook's — discarding it here would
+    # reintroduce the swallowed-diagnostics defect (R2-5) on exactly the path
+    # where the operator most needs the reason (R5-1).
+    _GD_SWEEP_OUT=$(printf '%s' "$INPUT" | node "$_GD_CLI" sweep) || _GD_SWEEP_STATUS=$?
+  fi
+  _GD_SWEEP_OK=$(jq -r '.ok // false' <<< "$_GD_SWEEP_OUT" 2>/dev/null || echo false)
+  if [[ "$_GD_SWEEP_STATUS" -ne 0 || "$_GD_SWEEP_OK" != "true" ]]; then
+    echo "[Stop Guard] final pairing sweep did not settle (exit=${_GD_SWEEP_STATUS} ok=${_GD_SWEEP_OK})${_GD_SWEEP_ERR:+ — ${_GD_SWEEP_ERR}} — unsettled background reviews stay open (fail-closed)" >&2
+  fi
 fi
 
 # === Prefer reading state file === (STATE_FILE defined above for the jq-unavailable check)
@@ -408,6 +516,20 @@ DOC_REVIEW_PASSED=false
 PRECOMMIT_PASSED=false
 _AGG_OBLIGATION=false
 _AGG_OUTSTANDING=false
+# WB5c P1 fix additions to the same contract. _GD_ANSWERED records whether the derivation (or
+# its git probe) positively answered this stop — it decides the promotion past the transcript
+# fallback below, so an inherited environment value would fabricate that promotion (or veto it).
+# The rest are read after the state branch on paths the promotion newly makes reachable:
+# PRECOMMIT_MODE is read UNGUARDED at the REQUIRE_FULL re-check, and the sidecar/dual trio kept
+# their fail-safe meaning only because the state branch always assigned them before use.
+_GD_ANSWERED=false
+PRECOMMIT_MODE=""
+REVIEW_MODE=""
+REVIEW_PHASE=""
+DUAL_GATE_PASSED=""
+SIDECAR_ESCALATE=false
+_SIDECAR_RAW=""
+_SIDECAR_EVENT_PRESENT=false
 
 if [[ -f "$STATE_FILE" ]]; then
   USE_STATE_FILE=true
@@ -560,8 +682,8 @@ if [[ -f "$STATE_FILE" ]]; then
       # LC_ALL=C pins the warning to git's untranslated English form the grep below matches — under a
       # non-English locale (e.g. this project's zh-TW hosts) git localizes it ("警告: 無法開啟目錄…"),
       # the English-only regex misses it, and an unreviewed edit is released (locale-dependent fail-OPEN).
-      _probe_err="$(mktemp 2>/dev/null || echo '')"
-      if [[ -n "$_probe_err" ]] && _probe=$(LC_ALL=C git status --porcelain 2>"$_probe_err"); then
+      _probe_err="$(_gd_safe_tmpfile sg-probe-err)" || _probe_err=""
+      if [[ -n "$_probe_err" ]] && _probe=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} LC_ALL=C git -C "$PWD" status --porcelain 2>"$_probe_err"); then
         if [[ -n "$_probe" ]] || grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_probe_err"; then
           HAS_CODE_CHANGE="true"
           HAS_DOC_CHANGE="true"
@@ -575,10 +697,271 @@ if [[ -f "$STATE_FILE" ]]; then
         HAS_CODE_CHANGE="true"
         HAS_DOC_CHANGE="true"
       fi
-      [[ -n "$_probe_err" ]] && rm -f "$_probe_err"
+      # Same P2 class as the derivation probe: an rm abort is a non-0/2 exit → fail-open.
+      rm -f "$_probe_err" 2>/dev/null || true
+    fi
+  fi
+fi
+
+# WB5c P1 fix (Codex round-1): the state branch CLOSES here so the derivation below runs
+# UNCONDITIONALLY. With the whole digest path nested inside `[[ -f "$STATE_FILE" ]]`, deleting
+# (or never creating) the state file skipped the derivation entirely and dropped this stop to
+# the 500-line transcript scan — the weakest reader in the file — which is exactly the trade a
+# tampered or lost state file must not be able to buy. The state-only blocks (sidecar, dual,
+# plan advisory, stale-git reconciliation) re-open under USE_STATE_FILE below, and a derived
+# answer with no state file promotes itself past the transcript fallback after they close.
+# The block keeps its original two-space indent; bash does not care and the diff stays readable.
+
+  # === WB4/WB5c: check-time derivation (digest path authoritative) ===
+  # deriveGates (§3.5) answers obligation from the dirty set and validity from
+  # the newest verdict-bearing record for (plane, plane_digest). A derived
+  # obligation replaces the stored has_*_change flags (both directions — the
+  # dirty set IS the obligation, session provenance no longer scopes it), a
+  # digest-closed gate marks its receipt passed, and an unresolved tombstone
+  # forces its pair open whatever the mirror says (§4 — the veto is absolute).
+  # WB5c closed the dual-read window: on a derivable tree a plane the digest
+  # path cannot positively close is OPEN — the mirror is consulted for validity
+  # only where no tree exists for a receipt to bind to (not-a-repo/unreadable
+  # classification). Ordering is load-bearing: the SIDECAR and DUAL blocks below
+  # run AFTER this one, so a write-failure marker still forces its plane open
+  # over digest evidence (fail-closed) and the dual-mode aggregate branch stays
+  # untouched. The no-state-file transcript fallback keeps its legacy scan.
+  _GD_JSON=""
+  if [[ -n "$_GD_SELF_DIR" && -f "$_GD_DERIVE" ]] && command -v node &>/dev/null; then
+    _GD_JSON=$(node "$_GD_DERIVE" "$PWD" 2>/dev/null) || _GD_JSON=""
+  fi
+  if [[ -n "$_GD_JSON" ]] && jq -e '.v == 1 and (.planes | type == "object")' <<< "$_GD_JSON" >/dev/null 2>&1; then
+    _GD_SOURCE="digest"
+    while IFS= read -r _gd_report; do
+      [[ -n "$_gd_report" ]] && echo "[Stop Guard] gate-derive: ${_gd_report}" >&2
+    done < <(jq -r '.reports[]?' <<< "$_GD_JSON" 2>/dev/null || true)
+    _GD_CODE_OWED=$(jq -r '.planes.code_review.owed' <<< "$_GD_JSON" 2>/dev/null || echo null)
+    _GD_DOC_OWED=$(jq -r '.planes.doc_review.owed' <<< "$_GD_JSON" 2>/dev/null || echo null)
+    if [[ ( "$_GD_CODE_OWED" == "true" || "$_GD_CODE_OWED" == "false" ) \
+       && ( "$_GD_DOC_OWED" == "true" || "$_GD_DOC_OWED" == "false" ) ]]; then
+      HAS_CODE_CHANGE="$_GD_CODE_OWED"
+      HAS_DOC_CHANGE="$_GD_DOC_OWED"
+      _GD_OBLIGATION_DERIVED=true
+      _GD_ANSWERED=true
+    else
+      # Two underivable states with opposite dispositions (gate-derive P0-3):
+      # outside a repo there is no tree this derivation could speak for — the
+      # mirror keeps its authority. An 'unverifiable' tree EXISTS but could not
+      # be read (warn-and-omit subtree, git error): it must not read as clean,
+      # so both obligations are forced ON, fail-closed. The force fires only on
+      # the EXPLICIT classifier value: gate-derive always emits one of
+      # ok/not-a-repo/unverifiable, so any other reading here means the jq
+      # layer, not git, degraded — that is dual-read infrastructure absence,
+      # and the mirror (whose own reconciliation probes are fail-closed)
+      # retains authority, said out loud.
+      _GD_TREE=$(jq -r '.treeState // empty' <<< "$_GD_JSON" 2>/dev/null || echo "")
+      if [[ "$_GD_TREE" == "unverifiable" ]]; then
+        HAS_CODE_CHANGE="true"
+        HAS_DOC_CHANGE="true"
+        _GD_OBLIGATION_DERIVED=true
+        _GD_ANSWERED=true
+        # Obligation alone is not enough (R2-1): an unverifiable tree has
+        # partial digests, so every validity branch below would fall back to
+        # the stored *.passed values — and a stale mirror PASS describes a tree
+        # this stop cannot prove is still the one that was reviewed. Invalidate
+        # every receipt too, and pin the dual aggregate (sidecar precedent) so
+        # the recompute cannot restore it.
+        CODE_REVIEW_PASSED="false"
+        CODE_RECEIPT_PERSISTED="false"
+        DOC_REVIEW_PASSED="false"
+        PRECOMMIT_PASSED="false"
+        DUAL_GATE_PASSED="false"
+        _GD_TREE_UNVERIFIABLE=true
+        echo "[Stop Guard] gate-derive: tree unverifiable — obligations forced on and every receipt invalidated for this stop (fail-closed)" >&2
+      elif [[ "$_GD_TREE" == "not-a-repo" ]]; then
+        echo "[Stop Guard] gate-derive: obligation underivable (not a git repository) — stored change flags retained (dual-read)" >&2
+      else
+        echo "[Stop Guard] gate-derive: obligation unreadable (treeState='${_GD_TREE}') — stored change flags retained (dual-read)" >&2
+      fi
+    fi
+    _GD_VETO=$(jq -r '.planes.code_review.veto' <<< "$_GD_JSON" 2>/dev/null || echo true)
+    _GD_CLOSED=$(jq -r '.planes.code_review.closedByDigest' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    _GD_AFAIL=$(jq -r '.planes.code_review.authoritativeFail' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    if [[ "$_GD_VETO" == "true" || "$_GD_AFAIL" == "true" ]]; then
+      CODE_REVIEW_PASSED="false"
+      CODE_RECEIPT_PERSISTED="false"
+      # Pin the dual aggregate too (sidecar precedent): the dual recompute
+      # below skips when DUAL_GATE_PASSED is already "false", so without this
+      # pin a READY aggregate would overwrite the forced-open gate value.
+      DUAL_GATE_PASSED="false"
+      if [[ "$_GD_VETO" == "true" ]]; then
+        echo "[Stop Guard] gate-derive: unresolved tombstone stands against code_review — gate forced open (§4 veto, absolute)" >&2
+      else
+        echo "[Stop Guard] gate-derive: authoritative digest negative for code_review — gate forced open, mirror not consulted" >&2
+      fi
+    elif [[ "$_GD_CLOSED" == "true" ]]; then
+      CODE_REVIEW_PASSED="true"
+      CODE_RECEIPT_PERSISTED="true"
+    elif [[ "$_GD_OBLIGATION_DERIVED" == "true" && "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      # WB5c (§3.6): the dual-read window is closed. On a derivable tree a plane the digest path
+      # cannot positively close is OPEN — the mirror is advisory and is not consulted for
+      # validity. (An unverifiable tree already invalidated every receipt above; not-a-repo
+      # keeps the mirror below, since no tree exists for a digest receipt to bind to.)
+      CODE_REVIEW_PASSED="false"
+      CODE_RECEIPT_PERSISTED="false"
+      [[ "$HAS_CODE_CHANGE" == "true" ]] \
+        && echo "[Stop Guard] gate-derive: no digest receipt closes code_review at the current tree — gate open (mirror retired)" >&2
+    elif [[ "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      # not-a-repo / unreadable classifier: the mirror keeps its legacy authority, said in the
+      # fact line via mirror_planes.
+      _GD_FALLBACK_PLANES="code_review"
+    fi
+    _GD_VETO=$(jq -r '.planes.doc_review.veto' <<< "$_GD_JSON" 2>/dev/null || echo true)
+    _GD_CLOSED=$(jq -r '.planes.doc_review.closedByDigest' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    _GD_AFAIL=$(jq -r '.planes.doc_review.authoritativeFail' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    if [[ "$_GD_VETO" == "true" || "$_GD_AFAIL" == "true" ]]; then
+      DOC_REVIEW_PASSED="false"
+      if [[ "$_GD_VETO" == "true" ]]; then
+        echo "[Stop Guard] gate-derive: unresolved tombstone stands against doc_review — gate forced open (§4 veto, absolute)" >&2
+      else
+        echo "[Stop Guard] gate-derive: authoritative digest negative for doc_review — gate forced open, mirror not consulted" >&2
+      fi
+    elif [[ "$_GD_CLOSED" == "true" ]]; then
+      DOC_REVIEW_PASSED="true"
+    elif [[ "$_GD_OBLIGATION_DERIVED" == "true" && "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      DOC_REVIEW_PASSED="false"
+      [[ "$HAS_DOC_CHANGE" == "true" ]] \
+        && echo "[Stop Guard] gate-derive: no digest receipt closes doc_review at the current tree — gate open (mirror retired)" >&2
+    elif [[ "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      _GD_FALLBACK_PLANES="${_GD_FALLBACK_PLANES}${_GD_FALLBACK_PLANES:+,}doc_review"
+    fi
+    _GD_VETO=$(jq -r '.planes.precommit.veto' <<< "$_GD_JSON" 2>/dev/null || echo true)
+    _GD_CLOSED=$(jq -r '.planes.precommit.closedByDigest' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    _GD_AFAIL=$(jq -r '.planes.precommit.authoritativeFail' <<< "$_GD_JSON" 2>/dev/null || echo false)
+    if [[ "$_GD_VETO" == "true" || "$_GD_AFAIL" == "true" ]]; then
+      PRECOMMIT_PASSED="false"
+      if [[ "$_GD_VETO" == "true" ]]; then
+        echo "[Stop Guard] gate-derive: unresolved tombstone stands against precommit — gate forced open (§4 veto, absolute)" >&2
+      else
+        echo "[Stop Guard] gate-derive: authoritative digest negative for precommit — gate forced open, mirror not consulted" >&2
+      fi
+    elif [[ "$_GD_CLOSED" == "true" ]]; then
+      PRECOMMIT_PASSED="true"
+      # gate-derive already enforced mode_ok (incl. PRECOMMIT_REQUIRE_FULL), so
+      # the derived mode replaces the mirror's — otherwise the REQUIRE_FULL
+      # re-check below would judge digest evidence by the mirror's stale mode.
+      _GD_PC_MODE=$(jq -r '.planes.precommit.mode // ""' <<< "$_GD_JSON" 2>/dev/null || echo "")
+      case "$_GD_PC_MODE" in
+        full|fast) PRECOMMIT_MODE="$_GD_PC_MODE" ;;
+      esac
+    elif [[ "$_GD_OBLIGATION_DERIVED" == "true" && "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      PRECOMMIT_PASSED="false"
+      [[ "$HAS_CODE_CHANGE" == "true" ]] \
+        && echo "[Stop Guard] gate-derive: no digest receipt closes precommit at the current tree — gate open (mirror retired)" >&2
+    elif [[ "$_GD_TREE_UNVERIFIABLE" != "true" ]]; then
+      _GD_FALLBACK_PLANES="${_GD_FALLBACK_PLANES}${_GD_FALLBACK_PLANES:+,}precommit"
+    fi
+  else
+    # WB5c (§3.6): the dual-read window is closed — the mirror no longer stands in for an
+    # unavailable derivation. WB5b retired the stored change flags, so in this branch the mirror
+    # reads false-everything and "mirror only" would silently allow every stop: the exact
+    # fail-open window this flip exists to close. git itself can still answer the obligation
+    # half without node: a dirty (or unverifiable) tree forces every gate open with receipts
+    # invalidated, exactly like treeState=unverifiable; only a provably clean tree — or no
+    # repository at all, where no tree exists to gate — leaves nothing owed. Same probe
+    # discipline as the corrupt-state branch above: zero-exit + empty stdout + no omitted-dir
+    # warning is the only reading accepted as clean (LC_ALL=C pins the warning's English form).
+    # P1 fix (Codex round-1): the probe must resolve THE SAME repository the digest path would
+    # have — tree-digest.js strips the whole GIT_* namespace (cleanGitEnv) and pins every call
+    # with `-C repoRoot`. Without that fence an ambient GIT_DIR/GIT_WORK_TREE redirect points
+    # this probe at some other, cleaner repository and a dirty workspace reads as provably
+    # clean (measured: exit 0, empty porcelain, the real dirty entries invisible). The shared
+    # _GD_GIT_FENCE above carries the namespace strip; round-2 hoisted it so the corrupt-state
+    # probe and the stale-git reconciliation run under the exact same posture.
+    # Exit status alone is NOT the repo test: `--is-inside-work-tree` prints `false` and exits 0
+    # from inside a .git directory (and under some redirects), so require stdout exactly `true`.
+    _gd_fb_inwt=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} git -C "$PWD" rev-parse --is-inside-work-tree 2>/dev/null) || _gd_fb_inwt=""
+    if [[ "$_gd_fb_inwt" == "true" ]]; then
+      # Only the probe branch is marked 'unavailable': its answers come from git, not the state
+      # file, and the fact line must say so. The proven-no-repo branch below keeps
+      # _GD_SOURCE="mirror" because there the state file genuinely is the authority —
+      # source=state_file stays honest.
+      _GD_SOURCE="unavailable"
+      _GD_ANSWERED=true
+      # The probe OWNS the obligation answer, same as the derivation (P1 fix, second half):
+      # without this the stale-git reconciliation below — an UNFENCED `git status -uall` —
+      # would re-read the redirected repository and downgrade the fail-closed flags to false.
+      _GD_OBLIGATION_DERIVED=true
+      _gd_fb_err="$(_gd_safe_tmpfile sg-probe-err)" || _gd_fb_err=""
+      _gd_fb_dirty="unknown"
+      if [[ -n "$_gd_fb_err" ]] && _gd_fb=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} LC_ALL=C git -C "$PWD" status --porcelain 2>"$_gd_fb_err"); then
+        if [[ -z "$_gd_fb" ]] \
+           && ! grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_gd_fb_err"; then
+          _gd_fb_dirty="false"
+        else
+          _gd_fb_dirty="true"
+        fi
+      fi
+      # `|| true` (P2 fix): a plain `rm -f` abort here would kill the hook under `set -e` with a
+      # non-0/2 status the harness reads as "no objection" — fail-open on the fail-closed branch.
+      rm -f "$_gd_fb_err" 2>/dev/null || true
+      if [[ "$_gd_fb_dirty" == "false" ]]; then
+        HAS_CODE_CHANGE="false"
+        HAS_DOC_CHANGE="false"
+        echo "[Stop Guard] gate derivation unavailable — tree provably clean, nothing owed this stop (run /install-scripts if scripts/lib/gate-derive.js is missing)" >&2
+      else
+        HAS_CODE_CHANGE="true"
+        HAS_DOC_CHANGE="true"
+        CODE_REVIEW_PASSED="false"
+        CODE_RECEIPT_PERSISTED="false"
+        DOC_REVIEW_PASSED="false"
+        PRECOMMIT_PASSED="false"
+        DUAL_GATE_PASSED="false"
+        echo "[Stop Guard] gate derivation unavailable on a tree that is not provably clean — obligations forced on and receipts invalidated (fail-closed; mirror retired; run /install-scripts if scripts/lib/gate-derive.js is missing)" >&2
+      fi
+    else
+      # rev-parse refused, or answered anything but `true`. Positive-evidence classification,
+      # mirroring gate-derive.js's not-a-repo test (error message + lstat ENOENT on .git): only
+      # a PROVEN absence of any `.git` entry from $PWD up to / keeps the mirror's authority. A
+      # corrupt repository, a broken git binary, or a cwd inside a .git directory all leave a
+      # tree that may carry unreviewed edits — unverifiable is not clean (fail-closed, exactly
+      # like treeState=unverifiable). `-e || -L` keeps a broken .git symlink counted as present,
+      # matching the classifier's lstat semantics.
+      # Parameter expansion, not `dirname` — the file's standing rule: a fail-closed path must
+      # not abort at 127 on a host (or curated test PATH) without the helper binary.
+      _gd_fb_gitdir="false"
+      _gd_fb_walk="$PWD"
+      while :; do
+        if [[ -e "$_gd_fb_walk/.git" || -L "$_gd_fb_walk/.git" ]]; then
+          _gd_fb_gitdir="true"
+          break
+        fi
+        _gd_fb_next="${_gd_fb_walk%/*}"
+        [[ -z "$_gd_fb_next" ]] && _gd_fb_next="/"
+        [[ "$_gd_fb_next" == "$_gd_fb_walk" ]] && break
+        _gd_fb_walk="$_gd_fb_next"
+      done
+      if [[ "$_gd_fb_gitdir" == "true" ]]; then
+        _GD_SOURCE="unavailable"
+        _GD_ANSWERED=true
+        _GD_OBLIGATION_DERIVED=true
+        HAS_CODE_CHANGE="true"
+        HAS_DOC_CHANGE="true"
+        CODE_REVIEW_PASSED="false"
+        CODE_RECEIPT_PERSISTED="false"
+        DOC_REVIEW_PASSED="false"
+        PRECOMMIT_PASSED="false"
+        DUAL_GATE_PASSED="false"
+        echo "[Stop Guard] gate derivation unavailable and git cannot read the tree a .git entry proves exists — obligations forced on and receipts invalidated (fail-closed)" >&2
+      else
+        # Same disposition as the derivation's own not-a-repo classification: outside a
+        # repository there is no tree for a digest receipt to bind to, so the mirror keeps its
+        # legacy authority — here that authority is whatever the state file still says.
+        echo "[Stop Guard] gate derivation unavailable outside a git repository — mirror keeps its legacy authority (no tree to gate)" >&2
+      fi
     fi
   fi
 
+# === State-file-only blocks re-open here (sidecar / dual / plan advisory / stale-git) ===
+# They consume the mirror's own records and sidecar markers, which only exist when a state file
+# does; for the no-state case the derivation above has already spoken, and the promotion block
+# after this region decides whether its answer or the transcript fallback governs.
+if [[ "$USE_STATE_FILE" == "true" ]]; then
   # === Sidecar fail-closed marker (race-safe lock-failure signal) ===
   # The fail-closed GATE VALUES below always apply — a sidecar means this update did not land, so
   # no verdict in the JSON can be trusted. Whether it also ESCALATES the user's guard mode depends
@@ -773,26 +1156,29 @@ if [[ -f "$STATE_FILE" ]]; then
     # preserved → fail closed). LC_ALL=C pins the warning to git's untranslated English form the regex
     # matches — a zh-TW host emits "警告: 無法開啟目錄…", which an ambient-locale probe would miss. If
     # mktemp itself fails we cannot capture stderr → also hold (unverifiable ≠ clean).
-    _recon_err="$(mktemp 2>/dev/null || echo '')"
+    # Round-2 P1: every arm runs under the shared _GD_GIT_FENCE with `-C "$PWD"` — an ambient
+    # GIT_DIR redirect must not let a listing from some OTHER repo downgrade a held obligation
+    # (fenced, a non-repo cwd makes git FAIL → __GIT_UNAVAILABLE__ → flags kept, fail-closed).
+    _recon_err="$(_gd_safe_tmpfile sg-recon-err)" || _recon_err=""
     if [[ -z "$_recon_err" ]]; then
       GIT_PORCELAIN="__GIT_UNAVAILABLE__"
     else
       if command -v timeout &>/dev/null; then
-        GIT_PORCELAIN=$(LC_ALL=C timeout 5 git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+        GIT_PORCELAIN=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} LC_ALL=C timeout 5 git -C "$PWD" status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
       elif command -v gtimeout &>/dev/null; then
-        GIT_PORCELAIN=$(LC_ALL=C gtimeout 5 git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+        GIT_PORCELAIN=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} LC_ALL=C gtimeout 5 git -C "$PWD" status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
       else
         # Stock macOS ships neither timeout nor gtimeout. perl's alarm+exec bounds the -uall walk
         # identically (the timer survives exec; SIGALRM's default action kills git → non-zero exit
         # → UNAVAILABLE), mirroring session-init.sh's _capture_baseline. Without this tier the
         # PRIMARY reconciliation path never ran on such hosts: a stale has_*_change survived a
         # revert or external commit and kept the stop gate demanding a review of nothing.
-        GIT_PORCELAIN=$(LC_ALL=C perl -e 'alarm 5; exec @ARGV or exit 127' git status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
+        GIT_PORCELAIN=$(env ${_GD_GIT_FENCE[@]+"${_GD_GIT_FENCE[@]}"} LC_ALL=C perl -e 'alarm 5; exec @ARGV or exit 127' git -C "$PWD" status --porcelain -uall 2>"$_recon_err") || GIT_PORCELAIN="__GIT_UNAVAILABLE__"
       fi
       if grep -qiE '(could not|cannot|unable to) open directory|warning:[^'\'']*open directory' "$_recon_err"; then
         GIT_PORCELAIN="__GIT_UNAVAILABLE__"
       fi
-      rm -f "$_recon_err"
+      rm -f "$_recon_err" 2>/dev/null || true
     fi
   else
     # No timeout helper → cannot bound the -uall walk → skip (fail-closed: trust state flags)
@@ -829,7 +1215,11 @@ if [[ -f "$STATE_FILE" ]]; then
     # the current session (e.g., pre-existing untracked files). The state
     # file's false→true transition is handled by post-tool-review-state.sh
     # at edit time, which has the correct session context.
-    if [[ "$HAS_CODE_CHANGE" == "true" ]]; then
+    # WB4: skipped entirely when the derivation above already answered
+    # obligation — its planeOf() classification is the §3.5 contract (every
+    # non-.md/.mdx file is code), while the extension lists below miss e.g. a
+    # dirty package.json and would downgrade a derived true back to false.
+    if [[ "$HAS_CODE_CHANGE" == "true" && "$_GD_OBLIGATION_DERIVED" != "true" ]]; then
       # Use a here-string (not echo | grep) so grep -q's early-exit on match cannot
       # SIGPIPE the writer: under `set -o pipefail`, a large -uall output piped into
       # `grep -q` lets grep close the pipe early, killing echo (exit 141), which would
@@ -842,7 +1232,7 @@ if [[ -f "$STATE_FILE" ]]; then
       fi
     fi
     # Override stale has_doc_change if no doc files in worktree
-    if [[ "$HAS_DOC_CHANGE" == "true" ]]; then
+    if [[ "$HAS_DOC_CHANGE" == "true" && "$_GD_OBLIGATION_DERIVED" != "true" ]]; then
       if ! grep -qE '\.(md|mdx)($|[[:space:]]|")' <<< "$GIT_PORCELAIN_CLEAN"; then
         HAS_DOC_CHANGE="false"
         if [[ "${HOOK_DEBUG:-}" == "1" ]]; then
@@ -852,6 +1242,21 @@ if [[ -f "$STATE_FILE" ]]; then
     fi
   fi
   # If git unavailable → fail-open, trust state file
+fi
+
+# === WB5c P1 fix: a derived answer outranks the transcript fallback ===
+# The legacy scan below exists for hosts with NO state file and NO derivation — grep inference
+# over a 500-line window. When the derivation (or its git probe) positively answered this stop,
+# that answer must govern: falling through would let deleting the state file trade digest
+# evidence for the weakest reader in the file. Promotion, not a third branch, so the MISSING
+# evaluation and fact emitter read the derived values through the exact code path the
+# state-file case already exercises; the fact line stays honest because _GD_SOURCE is always
+# digest or git_probe whenever _GD_ANSWERED is true. not-a-repo and jq-layer degradation leave
+# _GD_ANSWERED false and keep the legacy transcript scan.
+if [[ "$USE_STATE_FILE" == "false" && "$_GD_ANSWERED" == "true" ]]; then
+  USE_STATE_FILE=true
+  STATE="{}"
+  echo "[Stop Guard] no state file, but the gate derivation answered this stop — evaluating derived receipts instead of the transcript fallback" >&2
 fi
 
 # === Fallback: Read transcript content (limited scan range) ===
@@ -1390,43 +1795,29 @@ if [[ -n "${MISSING:-}" ]]; then
   # recorded receipts, the transcript holds inferences drawn from a 500-line window. Saying so is
   # cheaper than having the reader guess, and it is the same disclosure the degraded paths make.
   if [[ "$USE_STATE_FILE" == "true" ]]; then
-    _ALF_SOURCE="source=state_file"
+    # Observability (§3.5, WB5c): digest = the derivation drove these values; mirror_planes
+    # names any plane whose validity still came from the stored receipts (post-flip that is
+    # only the not-a-repo/unreadable classification). git_probe = the derivation was
+    # unavailable and a direct git status probe answered instead (fail-closed unless provably
+    # clean). state_file = the mirror kept its legacy authority — derivation unavailable
+    # outside a git repository.
+    if [[ "${_GD_SOURCE:-mirror}" == "digest" ]]; then
+      _ALF_SOURCE="source=digest${_GD_FALLBACK_PLANES:+ mirror_planes=${_GD_FALLBACK_PLANES}}"
+    elif [[ "${_GD_SOURCE:-mirror}" == "unavailable" ]]; then
+      _ALF_SOURCE="source=git_probe degraded=derive_unavailable"
+    else
+      _ALF_SOURCE="source=state_file"
+    fi
   else
     _ALF_SOURCE="source=transcript degraded=no_state_file"
   fi
   _alf_emit "event=stop_attempt change=${_ALF_CHANGE} mode=${GUARD_MODE} ${_ALF_SOURCE}" \
     "receipts=code_review:${CODE_RECEIPT_PERSISTED},doc_review:${DOC_REVIEW_PASSED},precommit:${PRECOMMIT_PASSED}" \
     "$(_alf_common)" "pending=${_ALF_PENDING:-none}" >&2
-  # A backgrounded review leaves behind a verdict no hook can ever collect (issue #10). Without
-  # this line the reader sees only `Missing steps: /codex-review-doc`, which is indistinguishable
-  # from never having run one — and the rational response to *that* reading is to re-run, the one
-  # action guaranteed to hit the same timeout again. Reported in both modes: warn mode is where a
-  # loop actually churns, since strict at least stops.
-  #
-  # Filtered to planes whose gate is still open, so a marker left by a review that later succeeded
-  # falls silent on its own — no sweep step to forget, and no claim that outlives its evidence.
-  # Restricted to doc/code because those are the gates MISSING enumerates; a plan-plane marker has
-  # no open obligation here to attach itself to.
-  #
-  #
-  # The wording below is deliberately weaker than the marker looks. Two limits it may not outrun:
-  # provenance is a REQUEST-side substring, so a task that merely discusses `Merge Gate` mints one;
-  # and a handoff committing after an edit re-attaches to a gate the edit caused — the edit landing
-  # between DISPATCH and handoff, which is why retirement cannot reach it. Hence "looked like a
-  # review", never "a review ran", and the other two causes named rather than excluded.
-  # Why neither is closed rather than worded around:
-  # docs/features/auto-loop-evolution/requests/2026-08-08-receipt-integrity-issues-9-10-11.md
-  # § No authenticated provenance, § No review generation.
-  if [[ "$USE_STATE_FILE" == "true" && -f "$STATE_FILE" ]]; then
-    _BG_OPEN=$(jq -r --arg doc "$DOC_REVIEW_PASSED" --arg code "$CODE_RECEIPT_PERSISTED" '
-      (.background_reviews // [])
-      | map(select((.plane == "doc" and $doc != "true")
-                   or (.plane == "code" and $code != "true")))
-      | map("\(.plane) (task \(.task))") | unique | join(", ")' "$STATE_FILE" 2>/dev/null) || _BG_OPEN=""
-    if [[ -n "$_BG_OPEN" ]]; then
-      echo "[Stop Guard] Note — a Codex task whose request looked like a review of ${_BG_OPEN} was moved to the background: its report arrives as a task notification, which fires no hook, so no verdict was recorded. That is request-side evidence only — it does not prove a review of this plane ran, so read the task's report before deciding. Two other things leave this gate open: an edit made after the task was dispatched — including one that landed before this marker was written, which is the ordering retirement cannot reach — and simply never having completed a review of this plane. Re-running from scratch hits the same timeout; narrow the scope, or continue the existing thread with the current diff. Issue #10" >&2
-    fi
-  fi
+  # WB5b (§3.6): the state-file advisory note about backgrounded reviews is retired with its
+  # writer. A backgrounded review (issue #10) is task-owned in the dispatch log (WB3), and the
+  # pairing sweep reports an unsettled dispatch from evidence that survives compaction —
+  # request-side markers in the state file no longer exist to report from.
   if [[ "$GUARD_MODE" == "strict" ]]; then
     # On exit 2 only stderr reaches the model (stdout JSON is test-consumed),
     # so the actionable instruction must be here, not just in the JSON.

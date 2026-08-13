@@ -214,24 +214,25 @@ test('a symlink at the SHARED sidecar is not evidence and its target is not dele
 // post-edit-format: the append
 // ---------------------------------------------------------------------------
 
-// Mirrors the stub bin in post-edit-format.test.js, reduced to what these tests exercise: the
-// hook's `jq` reads the edited path out of the tool input, and `mktemp` is shadowed with a failing
-// stub so `init_state_file` fails and the hook reaches `_set_own_sidecar`.
+// WB5b: the edit hook no longer creates or migrates the state file, so `state_init_failed` has no
+// trigger left — with no state on disk an edit owes no write at all (the gate re-opens by
+// derivation). The surviving fail-closed raise is `state_write_failed:<plane>`: a state file whose
+// `aggregate_gate` mirror must be reset, with the staging `mktemp` failing under it. Real `jq`
+// does the parsing; only `mktemp` (and the formatter's `npx`) are shadowed.
 function setupEditStubBin() {
   const binDir = makeTempDir('sd0x-sidecar-symlink-bin-');
-  writeExecutable(
-    join(binDir, 'jq'),
-    '#!/usr/bin/env node\n' +
-      "const fs = require('fs');\n" +
-      "const input = fs.readFileSync(0, 'utf8');\n" +
-      'try {\n' +
-      '  const parsed = JSON.parse(input);\n' +
-      "  process.stdout.write((parsed.tool_input && parsed.tool_input.file_path) || '');\n" +
-      "} catch { process.stdout.write(''); }\n"
-  );
   writeExecutable(join(binDir, 'npx'), '#!/bin/sh\nexit 0\n');
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
   return binDir;
+}
+
+function seedAggregateState(workDir) {
+  writeFileSync(
+    join(workDir, STATE),
+    JSON.stringify({
+      aggregate_gate: { executed: true, gate: 'READY', source: null, reason: null, last_run: '' },
+    })
+  );
 }
 
 function runEditHook(workDir, binDir, filePath) {
@@ -243,9 +244,10 @@ function runEditHook(workDir, binDir, filePath) {
   });
 }
 
-test('CONTROL: a failed state init really does append its reason to a REAL shared sidecar', () => {
+test('CONTROL: a failed state write really does append its reason to a REAL shared sidecar', () => {
   const workDir = makeTempDir('sd0x-sidecar-write-control-');
   const binDir = setupEditStubBin();
+  seedAggregateState(workDir);
 
   runEditHook(workDir, binDir, '/project/src/app.ts');
 
@@ -254,15 +256,16 @@ test('CONTROL: a failed state init really does append its reason to a REAL share
     true,
     'control: with no symlink in the way the reason lands in the shared file'
   );
-  assert.match(readFileSync(join(workDir, SHARED_SIDECAR), 'utf8'), /state_init_failed:code/);
+  assert.match(readFileSync(join(workDir, SHARED_SIDECAR), 'utf8'), /state_write_failed:code/);
 });
 
 test('the shared sidecar append is refused through a symlink and DIVERTED to a per-event marker', () => {
   // `>>` follows the link and appends into its target. Refusing is only half the fix — a marker
-  // exists precisely because a blocking verdict was already lost, so dropping it would be
+  // exists precisely because a blocking transition was already lost, so dropping it would be
   // fail-OPEN. The reason has to land somewhere this process owns.
   const workDir = makeTempDir('sd0x-sidecar-write-symlink-');
   const binDir = setupEditStubBin();
+  seedAggregateState(workDir);
   const outsider = join(workDir, 'outsider.txt');
   writeFileSync(outsider, 'untouched\n');
   symlinkSync('outsider.txt', join(workDir, SHARED_SIDECAR));
@@ -278,7 +281,7 @@ test('the shared sidecar append is refused through a symlink and DIVERTED to a p
   assert.equal(markers.length, 1, 'the refused reason must be diverted, not dropped');
   assert.match(
     readFileSync(join(workDir, markers[0]), 'utf8'),
-    /state_init_failed:code/,
+    /state_write_failed:code/,
     'the diverted marker must carry the same reason the append would have recorded'
   );
   assert.match(
@@ -299,14 +302,19 @@ test('the shared sidecar append is refused through a symlink and DIVERTED to a p
 const stateHook = resolve(__dirname, '../../hooks/post-tool-review-state.sh');
 
 test('post-tool-review-state refuses the same append through a symlink and diverts it too', () => {
+  // WB5b: a lost mirror verdict no longer raises a sidecar (the mirror is advisory), so the
+  // surviving `_set_own_sidecar` caller in this hook is the aggregate branch — a recognized
+  // `emit-review-gate.sh` invocation whose aggregate write fails on the shadowed mktemp raises
+  // `aggregate_write_failed`, and the raise must refuse the symlink exactly like the edit hook's.
   const workDir = makeTempDir('sd0x-sidecar-verdict-symlink-');
   const binDir = makeTempDir('sd0x-sidecar-verdict-bin-');
-  // Only mktemp is shadowed — real jq does the parsing. The failing mktemp makes `update_state`
-  // lose a BLOCKING verdict, which is the one condition that raises this sidecar.
+  // Only mktemp is shadowed — real jq does the parsing.
   writeExecutable(join(binDir, 'mktemp'), '#!/bin/sh\nexit 1\n');
   writeFileSync(
     join(workDir, STATE),
-    JSON.stringify({ has_code_change: true, code_review: { executed: true, passed: true } })
+    JSON.stringify({
+      aggregate_gate: { executed: false, gate: null, source: null, reason: null, last_run: '' },
+    })
   );
   const outsider = join(workDir, 'outsider.txt');
   writeFileSync(outsider, 'untouched\n');
@@ -316,8 +324,8 @@ test('post-tool-review-state refuses the same append through a symlink and diver
     cwd: workDir,
     input: JSON.stringify({
       tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked',
+      tool_input: { command: 'bash scripts/emit-review-gate.sh READY' },
+      tool_output: 'REVIEW_GATE=READY',
     }),
     encoding: 'utf8',
     env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
@@ -327,14 +335,14 @@ test('post-tool-review-state refuses the same append through a symlink and diver
   assert.equal(
     readFileSync(outsider, 'utf8'),
     'untouched\n',
-    'a lost BLOCKING verdict must not be appended through the link into an arbitrary file'
+    'a lost aggregate transition must not be appended through the link into an arbitrary file'
   );
   const markers = eventMarkers(workDir);
   assert.equal(markers.length, 1, 'the refused reason must be diverted, not dropped');
   assert.match(
     readFileSync(join(workDir, markers[0]), 'utf8'),
-    /verdict_write_failed:code_review/,
-    'the diverted marker must carry the keyed reason the shared file would have taken'
+    /aggregate_write_failed/,
+    'the diverted marker must carry the reason the shared file would have taken'
   );
 });
 

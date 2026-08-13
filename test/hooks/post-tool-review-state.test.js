@@ -882,7 +882,12 @@ after(() => {
   }
 });
 
-test('/codex-review-fast pass sets code_review passed true', () => {
+// WB5b retirement pins: the legacy Bash command-name route (`/codex-review-fast`,
+// `/codex-review-doc`, `/precommit` as a slash command) no longer records verdicts. The MCP
+// route (code/doc) and the clean runner invocation (precommit) are the surviving producers —
+// their positive tests live below. These pins keep the retirement from silently regressing:
+// a Bash slash-command event must write NOTHING, not even an initialized state file.
+test('Bash /codex-review-fast pass records nothing — the legacy route is retired (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -895,11 +900,10 @@ test('/codex-review-fast pass sets code_review passed true', () => {
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true);
+  assert.equal(readState(workDir), null, 'no state write for a retired producer');
 });
 
-test('/codex-review-fast block sets code_review passed false', () => {
+test('Bash /codex-review-fast block records nothing either — dropped, not inverted (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-block-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -912,11 +916,10 @@ test('/codex-review-fast block sets code_review passed false', () => {
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, false);
+  assert.equal(readState(workDir), null, 'a blocking verdict on a retired route is dropped, never banked');
 });
 
-test('/codex-review-doc pass sets doc_review passed true', () => {
+test('Bash /codex-review-doc pass records nothing — the doc plane is MCP-only (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-doc-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -929,11 +932,10 @@ test('/codex-review-doc pass sets doc_review passed true', () => {
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, true);
+  assert.equal(readState(workDir), null, 'no doc verdict from the retired Bash route');
 });
 
-test('/precommit pass sets precommit passed true', () => {
+test('runner-form precommit pass sets precommit passed true', () => {
   const workDir = makeTempDir('sd0x-post-tool-precommit-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -941,13 +943,14 @@ test('/precommit pass sets precommit passed true', () => {
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: \u2705 PASS',
     },
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
   assert.equal(state.precommit.passed, true);
+  assert.equal(state.precommit.mode, 'full', 'the runner form carries its --mode into state');
 });
 
 test('/precommit interrupted Bash run does NOT record passing verdict (fail-closed)', () => {
@@ -963,7 +966,7 @@ test('/precommit interrupted Bash run does NOT record passing verdict (fail-clos
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: { interrupted: true, stdout: '## Overall: ✅ PASS' },
     },
   });
@@ -984,7 +987,7 @@ test('/precommit NON-interrupted Bash run with final PASS still records pass (in
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: { interrupted: false, stdout: '## Overall: ✅ PASS' },
     },
   });
@@ -1007,7 +1010,7 @@ test('a full-mode precommit whose BUILD step was skipped is recorded, but the di
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: {
         interrupted: false,
         stdout: '# Precommit (full)\n## Steps\n- ⏭️ build (skipped: script missing)\n## Overall: ✅ PASS',
@@ -1033,7 +1036,7 @@ test('a full-mode precommit that actually built emits no skipped-build warning (
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: {
         interrupted: false,
         stdout: '# Precommit (full)\n## Steps\n- ✅ build (0) 1.2s\n## Overall: ✅ PASS',
@@ -1072,7 +1075,7 @@ test('convergence reset: a precommit PASS below the cap rewinds current_round to
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: { interrupted: false, stdout: '## Overall: ✅ PASS' },
     },
   });
@@ -1125,7 +1128,7 @@ test('convergence reset: an EXHAUSTED budget is never refunded, even by a passin
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: { interrupted: false, stdout: '## Overall: ✅ PASS' },
     },
   });
@@ -1149,15 +1152,11 @@ test('convergence reset: an EXHAUSTED budget is never refunded, even by a passin
   );
 });
 
-test('/precommit interrupted SKILL run does NOT record passing verdict (fail-closed, tool-agnostic guard)', () => {
-  // Mirror of the interrupted-Bash guard for the Skill launch path. A /precommit Skill killed
-  // mid-run can carry a PARTIAL `## Overall: ✅ PASS` (a test-tail printed before the runner's
-  // final summary); that partial output DOES satisfy _skill_output_has_verdict, so it survives
-  // the placeholder skip and — under a Bash-only guard — would fall through to the LAST-Overall
-  // recorder and bank a truncated PASS (fail-OPEN). The guard is now tool-name-agnostic: any
-  // interrupted precommit response records executed=true/passed=false so /precommit re-runs.
-  // Non-tautology: restoring the `TOOL_NAME == "Bash"` qualifier lets the Skill case fall through
-  // and record passed=true, flipping the final assertion.
+test('an interrupted SKILL precommit records nothing — the Skill producer is retired (WB5b)', () => {
+  // Pre-WB5b this pinned the tool-agnostic interrupted guard (executed=true/passed=false). The
+  // Skill route no longer produces precommit verdicts at all, so the truncated PASS must now be
+  // dropped entirely: no state, not even a fail-closed one. The interrupted guard itself stays
+  // pinned by the runner-form Bash test above.
   const workDir = makeTempDir('sd0x-post-tool-precommit-skill-interrupted-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -1170,10 +1169,7 @@ test('/precommit interrupted SKILL run does NOT record passing verdict (fail-clo
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.notEqual(state, null, 'interrupted Skill run should still record an (executed, not-passed) verdict');
-  assert.equal(state.precommit.executed, true, 'the interrupted Skill attempt is recorded as executed');
-  assert.equal(state.precommit.passed, false, 'an interrupted Skill precommit must not record passed=true');
+  assert.equal(readState(workDir), null, 'a retired producer records nothing, interrupted or not');
 });
 
 test('large MCP code review with ⛔ Blocked records passed=false (SIGPIPE must not invert fail-closed precedence)', () => {
@@ -1324,7 +1320,7 @@ test('/precommit NO CHECKS RUN third-state records no verdict (fail-closed)', ()
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       // precommit-runner's fail-closed third state (no runnable scripts).
       tool_output: '## Overall: ⚠️ NO CHECKS RUN (no runnable scripts — configure lint/build/test or run ecosystem checks)',
     },
@@ -1348,7 +1344,7 @@ test('/precommit NO CHECKS RUN followed by a real PASS records the PASS', () => 
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       // Runner emitted the third state, then the skill fell through to ecosystem
       // detection and emitted a real verdict in the same output — the real one wins.
       tool_output:
@@ -1405,7 +1401,7 @@ test('Bash /precommit whose LAST `## Overall:` line carries both verdicts record
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: 'lint ok\n## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN',
     },
   });
@@ -1425,7 +1421,7 @@ test('Bash /precommit ending in the exact PASS sentinel still records passed=tru
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Steps\n- lint:fix ok\n- build ok\n- test ok\n\n## Overall: ✅ PASS  ',
     },
   });
@@ -1459,9 +1455,9 @@ test('re-run flips code_review passed from false to true', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u26d4',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     },
   });
   let state = readState(workDir);
@@ -1471,31 +1467,15 @@ test('re-run flips code_review passed from false to true', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   state = readState(workDir);
   assert.equal(state.code_review.passed, true);
 });
 
-test('/codex-review (without -fast) sets code_review', () => {
-  const workDir = makeTempDir('sd0x-post-tool-review-full-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review' },
-      tool_output: '## Gate: \u2705',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true);
-});
 
 test('/precommit-fast sets precommit passed', () => {
   const workDir = makeTempDir('sd0x-post-tool-precommit-fast-');
@@ -1505,7 +1485,7 @@ test('/precommit-fast sets precommit passed', () => {
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit-fast' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode fast' },
       tool_output: '## Overall: \u2705 PASS',
     },
   });
@@ -1820,10 +1800,10 @@ test('Bash command merely echoing the word "precommit" records no verdict (skill
   );
 });
 
-test('Skill precommit event carrying a ## Overall verdict (fallback ecosystem path) records the verdict', () => {
-  // When skills/precommit falls back to ecosystem detection (no runner script), the SKILL's own
-  // final output carries `## Overall: ✅ PASS`. That Skill event (name matches the Skill-only
-  // alternation) must be recorded via the else branch, not dropped as a placeholder.
+test('Skill precommit output carrying a ## Overall verdict records nothing (WB5b)', () => {
+  // The Skill-route precommit producer is retired: only the clean runner invocation
+  // (`node .claude/scripts/precommit-runner.js --mode full|fast`) mints a precommit verdict.
+  // A Skill event whose output quotes the sentinel must write nothing at all.
   const workDir = makeTempDir('sd0x-post-tool-skill-verdict-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -1836,10 +1816,7 @@ test('Skill precommit event carrying a ## Overall verdict (fallback ecosystem pa
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'a Skill precommit verdict must create/record state');
-  assert.equal(state.precommit.executed, true, 'Skill precommit verdict must be recorded, not treated as a placeholder');
-  assert.equal(state.precommit.passed, true);
+  assert.equal(readState(workDir), null, 'the retired Skill route must not create state');
 });
 
 test('Bash command with HOOK_DEBUG=1 env prefix before node ...precommit-runner.js records verdict', () => {
@@ -2080,7 +2057,10 @@ test('Bash /precommit slash command with an embedded newline records no verdict 
 // direct-Bash route below still exists in the hook, so both directions of it stay pinned here \u2014
 // and both must land in `legacy`, never in `verdicts`: this route never incremented `dispatches`,
 // so counting it as a verdict would drive `dispatches - verdicts` negative.
-test('/review-spec via the legacy Bash route records a pass and counts as legacy', () => {
+test('Bash /review-spec records nothing — spec review counts via MCP only (WB5b)', () => {
+  // The legacy Bash `/review-spec` producer (and its `doc_iteration_history.legacy` counter)
+  // is retired with the command-name route. A spec review reaches the doc plane through the
+  // MCP dispatch, whose provenance carries `Document Review` on both sides.
   const workDir = makeTempDir('sd0x-post-tool-review-spec-pass-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -2089,40 +2069,19 @@ test('/review-spec via the legacy Bash route records a pass and counts as legacy
     input: {
       tool_name: 'Bash',
       tool_input: { command: '/review-spec' },
-      tool_output: '\u2705 Mergeable',
+      tool_output: '✅ Mergeable',
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, true);
-  assert.equal(state.doc_iteration_history.legacy, 1);
-  assert.equal(state.doc_iteration_history.verdicts, 0);
-});
-
-test('/review-spec via the legacy Bash route records a block and counts as legacy', () => {
-  const workDir = makeTempDir('sd0x-post-tool-review-spec-block-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/review-spec' },
-      tool_output: '\u26d4 Needs revision',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false);
-  assert.equal(state.doc_iteration_history.legacy, 1);
+  assert.equal(readState(workDir), null, 'no verdict and no legacy counter from the retired route');
 });
 
 // --- Doc-plane instrumentation (advisory counters; never affect a gate) ---
 
 // The PreToolUse `dispatches` counter and its code-plane negative control live in
-// test/hooks/background-verdict-recovery.test.js: that suite runs against REAL jq, and the
-// PreToolUse path writes through `_record_dispatch_epoch`'s filter, which this suite's stub does
-// not evaluate — a case placed here would assert nothing about the production filter.
+// test/hooks/doc-plane-counters.test.js: that suite runs against REAL jq, and the PreToolUse path
+// writes through a jq filter this suite's stub does not evaluate — a case placed here would
+// assert nothing about the production filter.
 
 test('an MCP doc verdict increments verdicts and the matching outcome field', () => {
   const binDir = setupStubBin();
@@ -2410,8 +2369,11 @@ for (const [command, label] of CODE_REVIEW_SPOOF_COMMANDS) {
   });
 }
 
-test('Bash /codex-review-fast (clean invocation) still records code_review', () => {
-  // Guards the fix against over-tightening: the legitimate slash form must keep working.
+test('Bash /codex-review-fast (clean invocation) records nothing — route retired (WB5b)', () => {
+  // Formerly the over-tightening guard for the spoof suite above: the clean slash form had to
+  // keep working. WB5b retired the whole command-name route, so the clean form now proves the
+  // OTHER direction — even a perfectly-shaped legacy invocation writes no state. The spoof
+  // cases above still hold (nothing may record), and MCP provenance owns the positive path.
   const workDir = makeTempDir('sd0x-post-tool-cmd-ok-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -2424,9 +2386,7 @@ test('Bash /codex-review-fast (clean invocation) still records code_review', () 
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'clean slash invocation should record state');
-  assert.equal(state.code_review.executed, true);
+  assert.equal(readState(workDir), null, 'clean slash invocation no longer records state');
 });
 
 test('Bash grep mention of review-spec does not record doc_review', () => {
@@ -2591,7 +2551,7 @@ test('MCP quoted precommit FAIL does not revoke a genuine Bash-recorded pass', (
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: \u2705 PASS',
     },
   });
@@ -2687,7 +2647,10 @@ test('D1: security review with ⛔ Needs revision but no ## Document Review does
 // Qualified (namespaced) command tests — /sd0x-dev-flow:command
 // =============================================================================
 
-test('/sd0x-dev-flow:codex-review-fast pass sets code_review passed true', () => {
+// WB5b: the qualified plugin-prefixed command forms (`/sd0x-dev-flow:codex-review-fast`,
+// `:codex-review-doc`, `:precommit`, `:review-spec`) rode the same retired command-name route.
+// One pin covers the class; the unqualified pins above cover the bare forms.
+test('qualified /sd0x-dev-flow:codex-review-fast records nothing (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-qual-code-');
   const binDir = setupStubBin();
   const result = runHook({
@@ -2700,59 +2663,7 @@ test('/sd0x-dev-flow:codex-review-fast pass sets code_review passed true', () =>
     },
   });
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true, 'qualified codex-review-fast should set code_review');
-});
-
-test('/sd0x-dev-flow:codex-review-doc pass sets doc_review passed true', () => {
-  const workDir = makeTempDir('sd0x-post-tool-qual-doc-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/sd0x-dev-flow:codex-review-doc' },
-      tool_output: '\u2705 Mergeable',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, true, 'qualified codex-review-doc should set doc_review');
-});
-
-test('/sd0x-dev-flow:precommit pass sets precommit passed true', () => {
-  const workDir = makeTempDir('sd0x-post-tool-qual-pre-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/sd0x-dev-flow:precommit' },
-      tool_output: '## Overall: \u2705 PASS',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.precommit.passed, true, 'qualified precommit should set precommit');
-});
-
-test('/sd0x-dev-flow:review-spec pass sets doc_review passed true', () => {
-  const workDir = makeTempDir('sd0x-post-tool-qual-review-spec-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/sd0x-dev-flow:review-spec' },
-      tool_output: '\u2705 Mergeable',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, true, 'qualified review-spec should set doc_review');
+  assert.equal(readState(workDir), null, 'the qualified form is the same retired route');
 });
 
 test('MCP doc review mentioning OWASP still sets doc_review (regression)', () => {
@@ -2839,9 +2750,9 @@ test('a mktemp failure inside a LOCKED helper releases the lock (no self-deadloc
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: {
       MKTEMP_COUNT_FILE: join(workDir, 'mktemp.count'),
@@ -2873,7 +2784,7 @@ test('an EMPTY jq result is never renamed over the state file (size guard)', () 
   const result = runHook({
     cwd: workDir,
     binDir,
-    input: { tool_name: 'Bash', tool_input: { command: '/codex-review-fast' }, tool_output: '## Gate: ✅ Ready' },
+    input: { tool_name: 'mcp__codex__codex', tool_input: { prompt: REVIEW_PROMPT }, tool_output: { content: '### Merge Gate\n\n✅ Ready' } },
   });
 
   assert.equal(result.status, 0, 'the hook must degrade, not crash');
@@ -2883,25 +2794,9 @@ test('an EMPTY jq result is never renamed over the state file (size guard)', () 
   assert.equal(readdirSync(workDir).filter((f) => /\.claude_review_state\.json\.[A-Za-z0-9]{6}$/.test(f)).length, 0, 'and no temp is leaked beside it');
 });
 
-test('a long PASS output that needs the UNANCHORED fallback is still recorded (no SIGPIPE inversion)', () => {
-  // `check_passed`'s fallback deliberately avoids `... | grep -q ...`: `grep -q` exits at its first
-  // match, SIGPIPEs the writer, and under `set -o pipefail` the pipeline returns 141 — so a
-  // genuinely PASSING review reads as failed. Review outputs are long, which makes this the common
-  // case rather than a corner one. The marker here is indented so the anchored branch cannot match
-  // and the fallback is the code path actually under test.
-  const workDir = makeTempDir('sd0x-post-tool-checkpassed-sigpipe-');
-  const binDir = setupStubBin();
-  const body = Array.from({ length: 20000 }, (_, i) => `  ## Gate: ✅ Ready (line ${i})`).join('\n');
+// WB5b: the legacy `check_passed` unanchored fallback is retired with the Bash route. The
+// MCP parser's large-output/SIGPIPE behaviour is pinned by the two sigpipe tests above.
 
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: { tool_name: 'Bash', tool_input: { command: '/codex-review-fast' }, tool_output: body },
-  });
-
-  assert.equal(result.status, 0);
-  assert.equal(readState(workDir).code_review.passed, true, 'a long unanchored PASS must not invert to false');
-});
 
 test('poisoned NIT lock metadata is not evaluated as arithmetic', () => {
   // `_nit_lock` is a byte-for-byte twin of `_lock`, against a second in-tree directory any process
@@ -2931,13 +2826,16 @@ test('poisoned NIT lock metadata is not evaluated as arithmetic', () => {
   assert.ok(!existsSync(pwn), 'nit lock metadata must never be evaluated as an arithmetic expression');
 });
 
-test('a LOST BLOCKING verdict raises the fail-closed sidecar (stale ✅ must not stand)', () => {
+test('a LOST BLOCKING verdict raises NO sidecar — advisory mirror, loud diagnostic (WB5b)', () => {
+  // `_verdict_write_failed` and its `verdict_write_failed:<key>` marker are retired: the mirror
+  // receipt is advisory during the dual-read window, and the content-addressed receipt log is
+  // what stop-guard derives gates from. A lost mirror write must therefore surface as a stderr
+  // diagnostic and NOTHING else — no sidecar, and the stale mirror left exactly as found.
   const workDir = makeTempDir('sd0x-post-tool-lost-blocking-');
   const binDir = setupStubBin();
-  // Pre-seed so init_state_file returns early and the failure lands in update_state, not in init.
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ has_code_change: true, code_review: { executed: true, passed: true } })
+    JSON.stringify({ code_review: { executed: true, passed: true } })
   );
   writeExecutable(join(binDir, 'mktemp'), FAILING_MKTEMP);
 
@@ -2945,28 +2843,31 @@ test('a LOST BLOCKING verdict raises the fail-closed sidecar (stale ✅ must not
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     },
   });
 
   assert.equal(result.status, 0, 'the hook must degrade, not crash');
-  const sidecar = join(workDir, '.claude_review_state.json.blocked');
-  assert.ok(existsSync(sidecar), 'a blocking verdict that could not be written must raise the marker');
-  // KEYED by gate. The key is what lets the other writer of this sidecar (post-edit-format.sh)
-  // decide whether its own transaction supersedes the loss: its doc branch invalidates
-  // `doc_review` only, so it must not retire a marker standing in for a lost CODE verdict.
-  assert.equal(readFileSync(sidecar, 'utf8').trim(), 'verdict_write_failed:code_review');
-  // The point of the marker: the JSON genuinely still says the OLD passing verdict.
-  assert.equal(readState(workDir).code_review.passed, true, 'the write really was lost — only the sidecar holds the gate');
+  assert.equal(
+    existsSync(join(workDir, '.claude_review_state.json.blocked')),
+    false,
+    'the fail-closed sidecar writer is retired — the receipt log owns the gate'
+  );
+  assert.match(result.stderr, /mirror verdict NOT recorded \(mktemp\).*advisory only/,
+    'the loss is loud, not silent');
+  assert.equal(readState(workDir).code_review.passed, true,
+    'the stale mirror really is stale — which is why the receipt log, not this file, owns the gate');
 });
 
 test('a lost BLOCKING verdict is reported degraded even when the receipt already read false', () => {
   // Read-back's blind spot. When the receipt already holds the requested value, a dropped write
-  // renders `false->false` exactly like a successful no-op — inequality detects nothing, and the
-  // test above misses it because it starts from `passed: true`. The keyed sidecar that
-  // `_verdict_write_failed` raises is the evidence, and it must be attributed to THIS call.
+  // renders `false->false` exactly like a successful no-op — inequality detects nothing. WB5b
+  // retired the `verdict_write_failed` sidecar that used to close this half: the mirror is
+  // advisory now, so the evidence is the pair of loud lines — update_state naming the failure
+  // (mktemp) and the branch flagging the unconfirmed write — with NO sidecar raised and the fact
+  // line honestly carrying the read-back `false->false`.
   const workDir = makeTempDir('sd0x-post-tool-lost-idempotent-');
   const binDir = setupStubBin();
   writeFileSync(
@@ -2979,19 +2880,23 @@ test('a lost BLOCKING verdict is reported degraded even when the receipt already
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     },
   });
 
   assert.equal(result.status, 0, 'the hook must degrade, not crash');
+  assert.match(result.stderr, /mirror verdict NOT recorded \(mktemp\).*advisory only/,
+    'update_state must name the failure it swallowed');
+  assert.match(result.stderr, /code_review mirror write not confirmed/,
+    'the branch must flag the unconfirmed write beside the fact line');
   const line = result.stderr.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
   assert.ok(line, `no fact block emitted; stderr: ${result.stderr}`);
   assert.match(line, /receipts=code_review:false->false/,
-    'both snapshots genuinely read false — that is what makes this case invisible to inequality');
-  assert.match(line, /degraded=[^ ]*verdict_not_recorded/,
-    'a verdict that update_state reported as lost must not render as a clean no-op');
+    'both snapshots genuinely read false — the fact line reports the read-back, not the request');
+  assert.equal(existsSync(join(workDir, '.claude_review_state.json.blocked')), false,
+    'the retired sidecar must not be raised for a lost mirror write');
 });
 
 test('a same-plane marker cleared by a committed write is not reported as this write failing', () => {
@@ -3012,7 +2917,7 @@ test('a same-plane marker cleared by a committed write is not reported as this w
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ⛔ FAIL',
     },
   });
@@ -3040,9 +2945,9 @@ test('a marker on a DIFFERENT plane is never attributed to this write', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     },
   });
 
@@ -3068,9 +2973,9 @@ test('a LOST PASSING verdict raises NO sidecar (already fail-closed; must not bl
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
 
@@ -3081,16 +2986,16 @@ test('a LOST PASSING verdict raises NO sidecar (already fail-closed; must not bl
   );
 });
 
-test('a committed verdict write clears its OWN marker and retains the edit plane\'s', () => {
-  // Ownership discipline: the verdict plane may retire `verdict_write_failed` (the next committed
-  // verdict is exactly what supersedes it) but an `edit_lock_contention` marker records an
-  // unrecorded EDIT, which a review verdict proves nothing about — the review may predate it.
-  for (const [marker, shouldSurvive] of [
-    ['verdict_write_failed:code_review', false],
-    // A lost verdict on a DIFFERENT gate is not superseded by this one: recording a code verdict
-    // says nothing about the precommit pass the missing verdict was meant to overwrite.
-    ['verdict_write_failed:precommit', true],
-    ['edit_lock_contention', true],
+test('a committed verdict write retires NO markers — the setter is retired with them (WB5b)', () => {
+  // The verdict plane no longer writes `verdict_write_failed:*` markers, so there is nothing of
+  // its own to retire — and it must not touch what other planes left behind. Every seeded marker
+  // survives a committed verdict write, including a legacy `verdict_write_failed` line from a
+  // pre-WB5b session: this hook has no clearing site for it any more (session-init's orphan
+  // sweep owns stale-marker cleanup).
+  for (const marker of [
+    'verdict_write_failed:code_review',
+    'verdict_write_failed:precommit',
+    'edit_lock_contention',
   ]) {
     const workDir = makeTempDir('sd0x-post-tool-sidecar-own-');
     const binDir = setupStubBin();
@@ -3101,13 +3006,13 @@ test('a committed verdict write clears its OWN marker and retains the edit plane
       cwd: workDir,
       binDir,
       input: {
-        tool_name: 'Bash',
-        tool_input: { command: '/codex-review-fast' },
-        tool_output: '## Gate: ✅ Ready',
+        tool_name: 'mcp__codex__codex',
+        tool_input: { prompt: REVIEW_PROMPT },
+        tool_output: { content: '### Merge Gate\n\n✅ Ready' },
       },
     });
 
-    assert.equal(existsSync(sidecar), shouldSurvive, `${marker}: survival must follow ownership, not luck`);
+    assert.equal(existsSync(sidecar), true, `${marker}: a verdict write owns no marker to retire`);
   }
 });
 
@@ -3276,9 +3181,9 @@ test('arbitration: defers when local hook exists and registered in settings', ()
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3298,9 +3203,9 @@ test('arbitration: dev mode bypass when hooks/hooks.json exists', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3318,9 +3223,9 @@ test('arbitration: no local hook runs normally', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3336,9 +3241,9 @@ test('arbitration: CLAUDE_PROJECT_DIR unset runs normally', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   const state = readState(workDir);
@@ -3354,9 +3259,9 @@ test('arbitration: local hook exists but not in settings runs normally', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3374,9 +3279,9 @@ test('arbitration: registered in settings.local.json defers', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: \u2705',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3413,9 +3318,9 @@ test('total_rounds_session increments on code review iteration', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready\n- [P2] Minor issue',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready\n- [P2] Minor issue' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -3449,9 +3354,9 @@ test('R6: init reads override with real template shape (comment block between he
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   assert.equal(result.status, 0);
@@ -3475,9 +3380,9 @@ test('R6: init ignores commented placeholder and falls back to default', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   assert.equal(result.status, 0);
@@ -3501,9 +3406,9 @@ test('R6: init ignores integer inside multi-line HTML comment', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   assert.equal(result.status, 0);
@@ -3527,9 +3432,9 @@ test('R6: init rejects out-of-range override (100) and uses default', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   assert.equal(result.status, 0);
@@ -3545,42 +3450,11 @@ test('R6: init rejects out-of-range override (100) and uses default', () => {
 // v3.0.12: PostToolUse field rename — tool_response (current) // tool_output (legacy)
 // =============================================================================
 
-test('v3.0.12: tool_response Bash shape drives review state', () => {
-  const workDir = makeTempDir('sd0x-post-tool-tr-bash-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_response: '## Gate: ✅',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'state file must be written');
-  assert.equal(state.code_review.executed, true);
-  assert.equal(state.code_review.passed, true);
-});
+// WB5b: the `tool_response` Bash/Skill string shapes for the retired review route are gone
+// with it; the surviving Bash consumers (runner-form precommit, emit-review-gate) and the MCP
+// object shapes below pin the normalizer from every live direction.
 
-test('v3.0.12: tool_response Skill shape captures gate', () => {
-  const workDir = makeTempDir('sd0x-post-tool-tr-skill-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'codex-review-fast' },
-      tool_response: '## Gate: ✅ Ready',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state);
-  assert.equal(state.code_review.passed, true);
-});
+
 
 test('v3.0.12: tool_response MCP object .content string', () => {
   const workDir = makeTempDir('sd0x-post-tool-tr-mcp-str-');
@@ -3656,39 +3530,17 @@ test('v3.0.12: tool_response takes precedence over legacy tool_output', () => {
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_response: '## Gate: ✅',
-      tool_output: '## Gate: ⛔ Blocked (stale legacy field)',
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
+      tool_response: '## Overall: ✅ PASS',
+      tool_output: '## Overall: ❌ FAIL (stale legacy field)',
     },
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
   assert.ok(state);
-  assert.equal(state.code_review.passed, true, 'tool_response (passed) must win over tool_output (blocked)');
+  assert.equal(state.precommit.passed, true, 'tool_response (PASS) must win over tool_output (FAIL)');
 });
 
-test('v3.0.12: Bash structured tool_response normalizes stdout', () => {
-  const workDir = makeTempDir('sd0x-post-tool-bash-obj-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_response: {
-        stdout: '## Gate: ✅\n',
-        stderr: '',
-        interrupted: false,
-        isImage: false,
-      },
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.ok(state, 'Bash structured object must be normalized to stdout');
-  assert.equal(state.code_review.passed, true);
-});
 
 test('v3.0.12: Bash structured tool_response routes /precommit pass marker', () => {
   const workDir = makeTempDir('sd0x-post-tool-bash-pc-');
@@ -3698,7 +3550,7 @@ test('v3.0.12: Bash structured tool_response routes /precommit pass marker', () 
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_response: {
         stdout: '## Overall: ✅ PASS\n',
         stderr: '',
@@ -3916,9 +3768,9 @@ test('plan gate: NFR-7 — code review write never touches plan_review', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_response: { stdout: '## Gate: ✅ Ready' },
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_response: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
   assert.equal(result.status, 0);
@@ -4545,9 +4397,9 @@ test('review gate: BLOCKED in second json fence + stray pass text → passed=fal
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: output,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: output },
     },
   });
   assert.equal(result.status, 0);
@@ -4563,9 +4415,9 @@ test('review gate: READY json fence + matching pass text → passed=true', () =>
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: output,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: output },
     },
   });
   assert.equal(result.status, 0);
@@ -4590,9 +4442,9 @@ test('review gate: BLOCKED quoted in PROSE + real READY json fence + pass text �
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: output,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: output },
     },
   });
   assert.equal(result.status, 0);
@@ -4615,9 +4467,9 @@ test('review gate: BLOCKED in fence still wins even when READY quoted in prose (
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: output,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: output },
     },
   });
   assert.equal(result.status, 0);
@@ -4639,9 +4491,9 @@ test('review gate: stray READY example without pass text → passed=false (confl
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: output,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: output },
     },
   });
   assert.equal(result.status, 0);
@@ -4651,29 +4503,32 @@ test('review gate: stray READY example without pass text → passed=false (confl
 
 // === deep-explore regressions: Skill launch placeholder must not write state ===
 
-test('Skill launch placeholder (code review) → no state write, no iteration bump', () => {
-  const workDir = makeTempDir('sd0x-skill-placeholder-');
-  const binDir = setupStubBin();
+test('a Skill review event records nothing — placeholder or verdict alike (WB5b)', () => {
+  // The Skill launch event was only ever a placeholder, and the Skill-route verdict recognition
+  // is retired with the command-name route — so BOTH shapes must leave the state untouched.
   const seeded = {
     schema_version: 3,
     code_review: { executed: false, passed: false },
     iteration_history: { current_round: 0, max_rounds: 10, findings_by_round: [], total_rounds_session: 0 },
   };
-  writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'codex-review-fast' },
-      tool_response: 'Launching skill: codex-review-fast',
-    },
-  });
-  assert.equal(result.status, 0);
-  assert.ok(result.stderr.includes('placeholder'), `stderr should note the placeholder skip, got: ${result.stderr}`);
-  const state = readState(workDir);
-  assert.equal(state.code_review.executed, false, 'launch ack must not mark review executed');
-  assert.equal(state.iteration_history.current_round, 0, 'launch ack must not consume a review round');
+  for (const response of ['Launching skill: codex-review-fast', '## Gate: ✅ Ready']) {
+    const workDir = makeTempDir('sd0x-skill-placeholder-');
+    const binDir = setupStubBin();
+    writeFileSync(join(workDir, '.claude_review_state.json'), JSON.stringify(seeded));
+    const result = runHook({
+      cwd: workDir,
+      binDir,
+      input: {
+        tool_name: 'Skill',
+        tool_input: { skill: 'codex-review-fast' },
+        tool_response: response,
+      },
+    });
+    assert.equal(result.status, 0);
+    const state = readState(workDir);
+    assert.equal(state.code_review.executed, false, `"${response}": must not mark review executed`);
+    assert.equal(state.iteration_history.current_round, 0, `"${response}": must not consume a round`);
+  }
 });
 
 test('Skill launch placeholder (precommit) → no state write', () => {
@@ -4692,22 +4547,6 @@ test('Skill launch placeholder (precommit) → no state write', () => {
   assert.equal(readState(workDir), null, 'placeholder must not create state');
 });
 
-test('Skill with real verdict markers still captures gate (pinned behavior preserved)', () => {
-  const workDir = makeTempDir('sd0x-skill-verdict-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'codex-review-fast' },
-      tool_response: '## Gate: ✅ Ready',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true);
-});
 
 // === deep-explore regressions: contention skips instead of unlocked fallback ===
 
@@ -4724,9 +4563,9 @@ test('code_review update under held lock → skipped, state not mutated (fail-cl
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     },
     env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
@@ -4759,9 +4598,9 @@ test('malformed REVIEW_STATE_LOCK_TIMEOUT ("5s") does NOT wedge _lock with "inte
   const result = spawnSync('bash', [hookPath], {
     cwd: workDir,
     input: JSON.stringify({
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
     }),
     encoding: 'utf8',
     timeout: 1500,
@@ -4782,18 +4621,16 @@ test('malformed REVIEW_STATE_LOCK_TIMEOUT ("5s") does NOT wedge _lock with "inte
   );
 });
 
-test('a failed verdict write ADDS its marker beside an edit-plane one instead of clobbering it', () => {
-  // The fail-open the secondary review reproduced end-to-end. The sidecar used to hold ONE reason
-  // and every writer overwrote it. With `edit_lock_contention` on file — a lost edit whose
-  // `has_code_change` write never landed, so the marker is the only thing holding the gate — a
-  // failed verdict write replaced it with `verdict_write_failed:code_review`, and the NEXT verdict
-  // write that succeeded cleared that as its own. Net: an edit-plane marker deleted from a file
-  // whose ownership table forbids exactly that, and a Stop allowed in STRICT mode.
+test('a failed verdict write leaves the sidecar exactly as found (WB5b)', () => {
+  // Formerly this pinned marker ACCUMULATION (`verdict_write_failed` beside the edit plane's
+  // line). The verdict-plane setter is retired: a lost mirror write is a stderr diagnostic, and
+  // the edit plane's marker must come through byte-identical — neither joined, cleared, nor
+  // reported as this call's failure.
   const workDir = makeTempDir('sd0x-post-tool-sidecar-accum-');
   const binDir = setupStubBin();
   writeFileSync(
     join(workDir, '.claude_review_state.json'),
-    JSON.stringify({ has_code_change: false, code_review: { executed: true, passed: true } })
+    JSON.stringify({ code_review: { executed: true, passed: true } })
   );
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
   // No trailing newline — the shape every pre-existing sidecar on disk has.
@@ -4803,24 +4640,27 @@ test('a failed verdict write ADDS its marker beside an edit-plane one instead of
   const result = runHook({
     cwd: workDir,
     binDir,
-    input: { tool_name: 'Bash', tool_input: { command: '/codex-review-fast' }, tool_output: '## Gate: ⛔ Blocked' },
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked' },
+    },
   });
 
   assert.equal(result.status, 0);
-  const lines = readFileSync(sidecar, 'utf8').split('\n').filter(Boolean);
-  // Both, on SEPARATE lines. Appending to a newline-less file used to fuse them into one
-  // unmatchable token, which latched the marker permanently instead of losing it — a different
-  // bug, not a fix.
-  assert.deepEqual(
-    lines.sort(),
-    ['edit_lock_contention', 'verdict_write_failed:code_review'],
-    'each plane keeps its own reason on its own line'
+  assert.match(result.stderr, /mirror verdict NOT recorded \(mktemp\).*advisory only/);
+  assert.equal(
+    readFileSync(sidecar, 'utf8'),
+    'edit_lock_contention',
+    'the edit plane\'s evidence survives untouched — no verdict marker is appended beside it'
   );
 });
 
-test('a committed verdict write retires ONLY its own line, leaving other planes intact', () => {
-  // The second half of the same repro: without line-wise clearing, the successful write deletes
-  // the whole file and takes the edit-plane evidence with it.
+test('a committed verdict write leaves legacy sidecar lines untouched (WB5b)', () => {
+  // The second half of the retirement: with no setter there is also no clearer. A sidecar
+  // carrying BOTH a legacy verdict marker and the edit plane's line survives a committed
+  // verdict write whole — retiring lines this hook can no longer write is session-init's
+  // orphan sweep's job, not the verdict path's.
   const workDir = makeTempDir('sd0x-post-tool-sidecar-partial-');
   const binDir = setupStubBin();
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
@@ -4829,14 +4669,18 @@ test('a committed verdict write retires ONLY its own line, leaving other planes 
   runHook({
     cwd: workDir,
     binDir,
-    input: { tool_name: 'Bash', tool_input: { command: '/codex-review-fast' }, tool_output: '## Gate: ✅ Ready' },
+    input: {
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
+    },
   });
 
-  assert.ok(existsSync(sidecar), 'the file must survive while another plane still holds a marker');
+  assert.ok(existsSync(sidecar), 'the file survives — the verdict path owns no clearing site');
   assert.deepEqual(
     readFileSync(sidecar, 'utf8').split('\n').filter(Boolean),
-    ['edit_lock_contention'],
-    'only the verdict plane\'s own line is retired'
+    ['edit_lock_contention', 'verdict_write_failed:code_review'],
+    'both lines intact: no setter, no clearer'
   );
 });
 
@@ -4869,26 +4713,30 @@ function installFailingKeepListGrep(binDir) {
 }
 
 test('a FAILED keep-list filter retains the whole sidecar instead of deleting it', () => {
+  // Post-WB5b the aggregate plane (emit-review-gate) is the only caller of `_clear_own_sidecar`,
+  // so the rc>1 retention is exercised through it: `aggregate_write_failed` is this plane's own
+  // marker, `edit_lock_contention` is the collateral a flattened `|| true` used to delete.
   const workDir = makeTempDir('sd0x-post-tool-sidecar-grepfail-');
   const binDir = setupStubBin();
   installFailingKeepListGrep(binDir);
   const sidecar = join(workDir, '.claude_review_state.json.blocked');
-  // This plane's own marker is present, so the ownership `-qxF` test passes and the clear really
-  // does proceed to the keep-list. The second line is the collateral: under `|| true` the whole
-  // file went, taking the edit plane's evidence of a lost state write with it.
-  writeFileSync(sidecar, 'edit_lock_contention\nverdict_write_failed:code_review\n');
+  writeFileSync(sidecar, 'edit_lock_contention\naggregate_write_failed\n');
 
   const result = runHook({
     cwd: workDir,
     binDir,
-    input: { tool_name: 'Bash', tool_input: { command: '/codex-review-fast' }, tool_output: '## Gate: ✅ Ready' },
+    input: {
+      tool_name: 'Bash',
+      tool_input: { command: 'bash scripts/emit-review-gate.sh READY' },
+      tool_output: 'REVIEW_GATE=READY',
+    },
   });
 
   assert.equal(result.status, 0, `a grep failure must never fail the hook; stderr: ${result.stderr}`);
   assert.ok(existsSync(sidecar), 'a keep-list that was never computed is not evidence that nothing is left');
   assert.deepEqual(
     readFileSync(sidecar, 'utf8').split('\n').filter(Boolean).sort(),
-    ['edit_lock_contention', 'verdict_write_failed:code_review'],
+    ['aggregate_write_failed', 'edit_lock_contention'],
     'retain the FULL set — including this plane\'s own line, which the filter never proved superseded'
   );
   // Non-vacuity: the retention must be the deliberate rc>1 branch, not a hook that happened to
@@ -5009,9 +4857,9 @@ test('passing code_review under held lock skips changed_files reset (no unlocked
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
@@ -5041,7 +4889,7 @@ test('passing precommit under held lock skips review_phase reset (no unlocked wr
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ✅ PASS',
     },
     env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
@@ -5055,22 +4903,6 @@ test('passing precommit under held lock skips review_phase reset (no unlocked wr
   );
 });
 
-test('Skill launch placeholder (doc review) → no state write', () => {
-  const workDir = makeTempDir('sd0x-skill-placeholder-doc-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'codex-review-doc' },
-      tool_response: 'Launching skill: codex-review-doc',
-    },
-  });
-  assert.equal(result.status, 0);
-  assert.match(result.stderr, /placeholder/);
-  assert.equal(readState(workDir), null, 'doc-review placeholder must not create state');
-});
 
 // --- Convergence reset (max_rounds cap reachability, paired with post-edit-format) ---
 // post-edit-format.sh no longer zeroes current_round on every edit, so the reset has
@@ -5110,7 +4942,7 @@ test('precommit pass resets the iteration cycle (convergence, not every edit)', 
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ✅ PASS',
     },
   });
@@ -5137,7 +4969,7 @@ test('precommit FAIL does not reset the iteration cycle', () => {
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ⛔ FAIL',
     },
   });
@@ -5158,9 +4990,9 @@ test('code_review pass alone does not reset the cycle (precommit is still pendin
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
 
@@ -5190,9 +5022,9 @@ test('doc_review pass does NOT reset the CODE convergence budget (no cross-plane
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-doc' },
-      tool_output: '✅ Mergeable',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\n\n✅ Mergeable' },
     },
   });
 
@@ -5225,7 +5057,7 @@ test('doc_review pass repeated near the cap cannot keep a failing code loop aliv
     const r = runHook({
       cwd: workDir,
       binDir,
-      input: { tool_name: 'Bash', tool_input: { command: '/codex-review-doc' }, tool_output: '✅ All Pass' },
+      input: { tool_name: 'mcp__codex__codex', tool_input: { prompt: DOC_REVIEW_PROMPT }, tool_output: { content: '## Document Review\n\n✅ Mergeable' } },
     });
     assert.equal(r.status, 0);
   }
@@ -5251,9 +5083,9 @@ test('findings_by_round is capped at 50 entries (unbounded growth guard)', () =>
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔\n- [P1] something',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n- [P1] something' },
     },
   });
 
@@ -5398,46 +5230,11 @@ test('Merge Gate lookalikes and prose mentions still record nothing (decoration 
 // precommit.mode — WHICH gate produced the verdict, not merely THAT one did
 // ---------------------------------------------------------------------------
 
-test('Skill /precommit-fast records precommit.mode=fast (the reduced gate is not the full one)', () => {
-  // precommit-runner.js runs the build/typecheck step only when mode === 'full' (:167). Recording
-  // a fast run as an indistinguishable `precommit.passed = true` makes the state claim the full
-  // gate passed with the typecheck never executed. Non-tautology: the stub only writes .mode when
-  // the hook's own jq filter carries `.[$key].mode = $mode`.
-  const workDir = makeTempDir('sd0x-post-tool-mode-fast-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'precommit-fast' },
-      tool_output: '## Overall: ✅ PASS',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.precommit.passed, true, 'a passing fast run is still a recorded pass');
-  assert.equal(state.precommit.mode, 'fast', 'the fast variant must be distinguishable in state');
-});
+// WB5b: the Skill-route precommit producer is retired; `precommit.mode` provenance now rides
+// the runner form only — `--mode fast` is pinned below, `--mode full` on the runner-form
+// positive near the top of this file.
 
-test('Skill /precommit records precommit.mode=full', () => {
-  // `precommit` is a strict prefix of `precommit-fast`, so the mode detector must test the longer
-  // name first; a prefix-order slip would label every full run "fast".
-  const workDir = makeTempDir('sd0x-post-tool-mode-full-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Skill',
-      tool_input: { skill: 'precommit' },
-      tool_output: '## Overall: ✅ PASS',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.precommit.mode, 'full');
-});
+
 
 test('precommit-runner.js --mode fast records precommit.mode=fast (runner form)', () => {
   // The runner is a separate Bash tool call whose skill name is absent, so the mode must come from
@@ -5902,9 +5699,9 @@ test('a single-mode review verdict does NOT clear a lock_failure sidecar (differ
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
 
@@ -5933,9 +5730,9 @@ test('a poisoned lock ts does not execute: `$(( ))` treats lock metadata as arit
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { REVIEW_STATE_LOCK_TIMEOUT: '0' },
   });
@@ -5980,9 +5777,9 @@ test('content-gated migration repairs a session-init v2 state missing iteration_
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔\n- [P1] something',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n- [P1] something' },
     },
   });
 
@@ -6006,9 +5803,9 @@ test('content-gated migration does not downgrade a v3 state missing iteration_hi
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔\n- [P1] something',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n- [P1] something' },
     },
   });
 
@@ -6036,9 +5833,9 @@ test('a state already carrying iteration_history is left untouched by the conten
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔\n- [P1] something',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n- [P1] something' },
     },
   });
 
@@ -6135,8 +5932,8 @@ test('a BLOCKED code review that quotes the precommit template line records pass
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
       tool_output: [
         '## Merge Gate',
         '⛔ Blocked',
@@ -6165,9 +5962,9 @@ test('the precommit template line ALONE records no review pass', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Merge Gate\n## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN\n',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '## Merge Gate\n## Overall: ✅ PASS / ❌ FAIL / ⚠️ NO CHECKS RUN\n' },
     },
   });
   assert.equal(result.status, 0);
@@ -6177,22 +5974,24 @@ test('the precommit template line ALONE records no review pass', () => {
 
 test('✅ All Pass is behavior-layer prose, not a doc_review sentinel', () => {
   // rules/auto-loop.md: "The bare phrase `✅ All Pass` … is *not* the precommit sentinel and no
-  // hook reads it as one." The hook read it as a DOC one, contradicting its own governing spec.
-  // The doc plane's sentinels are `✅ Mergeable` / `## Gate: ✅` (review-loop-doc.md:34).
+  // hook reads it as one." On the MCP doc route the output owns the namespace but carries no doc
+  // sentinel, so no verdict may be recorded at all.
   const workDir = makeTempDir('sd0x-post-tool-allpass-doc-');
   const binDir = setupStubBin();
   const result = runHook({
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-doc' },
-      tool_output: '✅ All Pass',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: DOC_REVIEW_PROMPT },
+      tool_output: { content: '## Document Review\n\n✅ All Pass' },
     },
   });
   assert.equal(result.status, 0);
   const state = readState(workDir);
-  assert.equal(state.doc_review.passed, false, 'no recognised doc sentinel → no pass');
+  assert.ok(!state || !state.doc_review || state.doc_review.passed !== true,
+    'no recognised doc sentinel → no pass');
+  assert.match(result.stderr, /no verdict sentinel/, 'and the drop is reported, not silent');
 });
 
 test('a quoted TEMPLATE alternation carrying both markers fails closed', () => {
@@ -6205,9 +6004,9 @@ test('a quoted TEMPLATE alternation carrying both markers fails closed', () => {
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Merge Gate\n## Gate: ✅ All Pass / ⛔ N issues need fixing\n',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '## Merge Gate\n## Gate: ✅ All Pass / ⛔ N issues need fixing\n' },
     },
   });
   assert.equal(result.status, 0);
@@ -6215,22 +6014,10 @@ test('a quoted TEMPLATE alternation carrying both markers fails closed', () => {
   assert.equal(state.code_review.passed, false);
 });
 
-test('prose mentioning a sentinel is not a verdict', () => {
-  const workDir = makeTempDir('sd0x-post-tool-prose-sentinel-');
-  const binDir = setupStubBin();
-  const result = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Merge Gate\nThe gate prints ✅ Ready when the diff is clean.\n',
-    },
-  });
-  assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, false, 'a sentence about the sentinel is not the sentinel');
-});
+// WB5b: "prose mentioning a sentinel" was a property of the retired Bash text gate. The MCP
+// route guards the same class with two-sided provenance (namespace header + request-side
+// phrase) rather than prose-shape parsing — pinned by the spoofing suite above.
+
 
 test('real reviewer decoration around a sentinel is still recognised', () => {
   // The tightening must not swing into over-rejection. `- ⛔ Needs revision: Has 🔴 items.` is
@@ -6243,15 +6030,14 @@ test('real reviewer decoration around a sentinel is still recognised', () => {
     ['bold pass', '## Document Review\n**✅ Mergeable**', true],
     ['heading pass', '## Document Review\n### ✅ Mergeable', true],
     ['quoted pass', '## Document Review\n> ✅ Mergeable', true],
-    ['structured pass', '## Document Review\n## Gate: ✅', true],
   ]) {
     const workDir = makeTempDir('sd0x-post-tool-decor-');
     const result = runHook({
       cwd: workDir,
       binDir,
       input: {
-        tool_name: 'Bash',
-        tool_input: { command: '/codex-review-doc' },
+        tool_name: 'mcp__codex__codex',
+        tool_input: { prompt: DOC_REVIEW_PROMPT },
         tool_output: output,
       },
     });
@@ -6661,13 +6447,15 @@ function seedStateWithMaxRounds(workDir, maxRounds) {
 }
 
 function runReviewVerdict(workDir, binDir) {
+  // WB5b: the legacy Bash `/codex-review-fast` route is retired — MCP is the verdict route,
+  // and it drives the same update_state/_reconcile_max_rounds machinery these tests pin.
   return runHook({
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
   });
 }
@@ -6952,13 +6740,14 @@ function seedCheckpointState(workDir, iteration) {
 }
 
 function runReviewRound(workDir, binDir, env = {}) {
+  // WB5b: MCP-shaped review round (the legacy Bash route no longer records or counts).
   return runHook({
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked\n- [P1] Still wrong',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n- [P1] Still wrong' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir, ...env },
   });
@@ -7043,7 +6832,7 @@ test('a passing precommit clears strategic_reset_fired for the next change', () 
     binDir,
     input: {
       tool_name: 'Bash',
-      tool_input: { command: '/precommit' },
+      tool_input: { command: 'node .claude/scripts/precommit-runner.js --mode full' },
       tool_output: '## Overall: ✅ PASS',
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
@@ -7057,13 +6846,14 @@ test('a passing precommit clears strategic_reset_fired for the next change', () 
 // --- Progress ledger ---
 
 function runReviewWithFindings(workDir, binDir, findings) {
+  // WB5b: MCP-shaped review round carrying the findings list the ledger parses.
   return runHook({
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: `## Gate: ⛔ Blocked\n${findings.join('\n')}`,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: `### Merge Gate\n\n⛔ Blocked\n${findings.join('\n')}` },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -7171,9 +6961,9 @@ test('progress ledger: a clean round closes everything and reports zero findings
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -7210,9 +7000,9 @@ test('progress ledger: the section report shape is counted but not tracked', () 
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ⛔ Blocked\n#### P1\nlock released before the rename\n#### P2\nduplicated glob list',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n⛔ Blocked\n#### P1\nlock released before the rename\n#### P2\nduplicated glob list' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -7308,13 +7098,14 @@ test('progress ledger: location numbers are stripped to any depth', () => {
 // --- Stall detection: [LOOP_STALL] (rules/auto-loop.md § Stall Detection) --------------------
 
 function runReviewWithFindingsEnv(workDir, binDir, findings, env = {}) {
+  // WB5b: MCP-shaped twin of runReviewWithFindings, with an env override.
   return runHook({
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: `## Gate: ⛔ Blocked\n${findings.join('\n')}`,
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: `### Merge Gate\n\n⛔ Blocked\n${findings.join('\n')}` },
     },
     env: { CLAUDE_PROJECT_DIR: workDir, ...env },
   });
@@ -7388,9 +7179,9 @@ test('stall detection: a clean round resets the streak even though it closes not
     cwd: workDir,
     binDir,
     input: {
-      tool_name: 'Bash',
-      tool_input: { command: '/codex-review-fast' },
-      tool_output: '## Gate: ✅ Ready',
+      tool_name: 'mcp__codex__codex',
+      tool_input: { prompt: REVIEW_PROMPT },
+      tool_output: { content: '### Merge Gate\n\n✅ Ready' },
     },
     env: { CLAUDE_PROJECT_DIR: workDir },
   });
@@ -7710,42 +7501,35 @@ function runBackgroundHandoff(workDir, binDir, { prompt, output = BACKGROUND_PLA
   });
 }
 
-test('#10: backgrounded doc review records a marker and leaves the doc gate SHUT', () => {
+test('#10: a backgrounded doc review emits the fact line and persists nothing (WB5b)', () => {
+  // The `background_reviews` state marker is retired: the dispatch log's task ownership
+  // (dispatch-cli `own`) carries the pairing now, and the in-session fact line is the
+  // explanation the model reads. No state is written at all.
   const workDir = makeTempDir('sd0x-post-tool-bg-doc-');
   const binDir = setupStubBin();
   const result = runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT });
 
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.deepEqual(
-    (state.background_reviews || []).map((e) => `${e.plane}:${e.task}`),
-    ['doc:kimyfg23u'],
-    'the marker names the plane and the task id the placeholder carries',
-  );
-  // The point of the whole fix: it explains the shut gate, it never opens it. A marker that also
-  // banked a receipt would be a worse bug than the one being fixed.
-  assert.equal(state.doc_review.executed, false, 'no verdict was observed, so no receipt is written');
-  assert.equal(state.doc_review.passed, false);
+  assert.equal(readState(workDir), null, 'no marker, no receipt — nothing persists in the state file');
   assert.match(
     result.stderr,
     /event=review_verdict_unrecordable change=doc reason=backgrounded task=kimyfg23u/,
     'the fact block states the reason so the reader is not left inferring a forgotten review',
   );
+  assert.match(result.stderr, /pending=doc_review/, 'and the gate is stated as still open');
 });
 
-test('#10: backgrounded code review records a code-plane marker', () => {
+test('#10: a backgrounded code review emits the code-plane fact line, persists nothing (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-bg-code-');
   const binDir = setupStubBin();
   const result = runBackgroundHandoff(workDir, binDir, { prompt: REVIEW_PROMPT });
 
   assert.equal(result.status, 0);
-  const state = readState(workDir);
-  assert.deepEqual((state.background_reviews || []).map((e) => e.plane), ['code']);
-  assert.equal(state.code_review.executed, false, 'the code gate stays shut too');
-  assert.match(result.stderr, /event=review_verdict_unrecordable change=code/);
+  assert.equal(readState(workDir), null, 'the code gate stays shut with nothing persisted');
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=code reason=backgrounded task=kimyfg23u/);
 });
 
-test('#10: a prompt asking for both planes records one marker per plane', () => {
+test('#10: a prompt asking for both planes emits one fact line per plane (WB5b)', () => {
   const workDir = makeTempDir('sd0x-post-tool-bg-both-');
   const binDir = setupStubBin();
   const result = runBackgroundHandoff(workDir, binDir, {
@@ -7753,11 +7537,9 @@ test('#10: a prompt asking for both planes records one marker per plane', () => 
   });
 
   assert.equal(result.status, 0);
-  assert.deepEqual(
-    (readState(workDir).background_reviews || []).map((e) => e.plane),
-    ['doc', 'code'],
-    'both gates are open, so both are explained',
-  );
+  assert.equal(readState(workDir), null);
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=doc reason=backgrounded/);
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=code reason=backgrounded/);
 });
 
 // The plan plane is deliberately asymmetric, and this pins both halves of that asymmetry so
@@ -7792,7 +7574,10 @@ test('#10: a backgrounded plan review emits the fact but persists no marker', ()
 // prompt that merely contains it records a marker. This pins the second half so it is a documented
 // property rather than a surprise — the marker grants nothing, and the wording at the consuming end
 // is what keeps it honest.
-test('#10: a backgrounded NON-review prompt containing the marker phrase still records one', () => {
+test('#10: a backgrounded NON-review prompt containing the marker phrase still emits the fact', () => {
+  // Provenance is a REQUEST-side substring, so it cuts both ways: a prompt that merely contains
+  // `Merge Gate` emits the fact line when backgrounded. The residual stays bounded post-WB5b:
+  // the line grants nothing and nothing persists.
   const workDir = makeTempDir('sd0x-post-tool-bg-phrase-only-');
   const binDir = setupStubBin();
   const result = runBackgroundHandoff(workDir, binDir, {
@@ -7800,16 +7585,9 @@ test('#10: a backgrounded NON-review prompt containing the marker phrase still r
   });
 
   assert.equal(result.status, 0);
-  assert.deepEqual(
-    (readState(workDir).background_reviews || []).map((e) => e.plane),
-    ['code'],
-    'the request-side substring cannot tell a review from a discussion of one — a known, bounded residual',
-  );
-  assert.equal(
-    readState(workDir).code_review.executed,
-    false,
-    'and it grants nothing: the gate is untouched, which is what makes the residual tolerable',
-  );
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=code/,
+    'the request-side substring cannot tell a review from a discussion of one — known, bounded');
+  assert.equal(readState(workDir), null, 'and it grants nothing: no state is written');
 });
 
 // Negative control #1. Without it the two positive tests above are satisfied by a hook that
@@ -7857,22 +7635,6 @@ test('#10: NEG — a real review QUOTING the placeholder still records its own v
   assert.deepEqual(state.background_reviews || [], [], 'and is not mistaken for a handoff');
 });
 
-test('#10: the marker list is capped at the 5 most recent, newest last', () => {
-  const workDir = makeTempDir('sd0x-post-tool-bg-cap-');
-  const binDir = setupStubBin();
-  for (let i = 1; i <= 7; i++) {
-    const placeholder = BACKGROUND_PLACEHOLDER.replace(/kimyfg23u/g, `task${i}`);
-    assert.equal(
-      runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT, output: placeholder }).status,
-      0,
-    );
-  }
-  // Every hook re-reads this file, so an unbounded list taxes every later read.
-  assert.deepEqual(
-    readState(workDir).background_reviews.map((e) => e.task),
-    ['task3', 'task4', 'task5', 'task6', 'task7'],
-  );
-});
 
 // === Issue #11 — a tool_response that is a STRING of serialized JSON ===
 //
@@ -8031,10 +7793,8 @@ test('#10: a BARE content-block array is normalized, so the handoff branch fires
   });
 
   assert.equal(result.status, 0);
-  assert.deepEqual(
-    (readState(workDir).background_reviews || []).map((e) => `${e.plane}:${e.task}`),
-    ['code:kimyfg23u'],
-  );
+  assert.match(result.stderr, /event=review_verdict_unrecordable change=code reason=backgrounded task=kimyfg23u/,
+    'the handoff branch must fire on the bare-array shape');
   assert.doesNotMatch(result.stderr, /empty output/, 'the payload must not be read as no output at all');
 });
 
@@ -8061,84 +7821,16 @@ test('#10: a bare array carrying an ordinary verdict records the receipt', () =>
 // the reader that a freshly-reopened gate is waiting on a task that finished long ago — and
 // pointing them at a thread that no longer exists. Retiring it on verdict is what keeps "the gate
 // is open" and "THIS marker explains it" the same question.
-test('#10: a foreground verdict retires that plane\'s marker', () => {
-  const workDir = makeTempDir('sd0x-post-tool-bg-retire-');
-  const binDir = setupStubBin();
+// WB5b: the three marker-lifecycle tests (foreground verdict retires its plane's marker;
+// cross-plane markers survive) are retired with `background_reviews` itself — there is no
+// persisted marker left to retire. Task settlement lives in the dispatch log
+// (test/scripts/dispatch-log.test.js).
 
-  assert.equal(runBackgroundHandoff(workDir, binDir, { prompt: DOC_REVIEW_PROMPT }).status, 0);
-  assert.equal((readState(workDir).background_reviews || []).length, 1, 'marker recorded');
-
-  const verdict = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'mcp__codex__codex',
-      tool_input: { prompt: DOC_REVIEW_PROMPT },
-      tool_response: { content: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' },
-    },
-  });
-
-  assert.equal(verdict.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.doc_review.passed, true);
-  assert.deepEqual(state.background_reviews, [], 'the marker does not outlive the review it described');
-});
 
 // The code-plane twin of the test above. The cross-plane control below proves a DOC verdict leaves
 // the code marker standing — which is the same evidence read from the other side, and says nothing
 // about whether a code verdict retires its own. Delete the code plane from update_state's own
 // plane-wide sweep and only this test notices.
-test('#10: a foreground CODE verdict retires the code marker', () => {
-  const workDir = makeTempDir('sd0x-post-tool-bg-retire-code-');
-  const binDir = setupStubBin();
-
-  assert.equal(runBackgroundHandoff(workDir, binDir, { prompt: REVIEW_PROMPT }).status, 0);
-  assert.equal((readState(workDir).background_reviews || []).length, 1, 'marker recorded');
-
-  const verdict = runHook({
-    cwd: workDir,
-    binDir,
-    input: {
-      tool_name: 'mcp__codex__codex',
-      tool_input: { prompt: REVIEW_PROMPT },
-      tool_response: { content: '## Merge Gate\n\nNo blocking findings.\n\n✅ Ready' },
-    },
-  });
-
-  assert.equal(verdict.status, 0);
-  const state = readState(workDir);
-  assert.equal(state.code_review.passed, true);
-  assert.deepEqual(state.background_reviews, [], 'the marker does not outlive the review it described');
-});
 
 // The other plane must be untouched — clearing on any verdict would silently drop an explanation
 // that is still true.
-test('#10: retiring one plane\'s marker leaves the other plane\'s standing', () => {
-  const workDir = makeTempDir('sd0x-post-tool-bg-retire-scoped-');
-  const binDir = setupStubBin();
-
-  assert.equal(
-    runBackgroundHandoff(workDir, binDir, { prompt: `${DOC_REVIEW_PROMPT}\n\n${REVIEW_PROMPT}` }).status,
-    0,
-  );
-  assert.equal((readState(workDir).background_reviews || []).length, 2);
-
-  assert.equal(
-    runHook({
-      cwd: workDir,
-      binDir,
-      input: {
-        tool_name: 'mcp__codex__codex',
-        tool_input: { prompt: DOC_REVIEW_PROMPT },
-        tool_response: { content: '## Document Review\n\nFindings: None.\n\n✅ Mergeable' },
-      },
-    }).status,
-    0,
-  );
-
-  assert.deepEqual(
-    (readState(workDir).background_reviews || []).map((e) => e.plane),
-    ['code'],
-    'the code review is still backgrounded and still needs explaining',
-  );
-});

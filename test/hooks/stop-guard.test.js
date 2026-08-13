@@ -6113,13 +6113,14 @@ test('transcript mode: an unpaired PASS still reads as no verdict (control for t
   assert.match(parseJson(result.stdout).description, /\/precommit\(invoked, no verdict\)/);
 });
 
-// === Issue #10 — surfacing a backgrounded review at the gate ===
+// === Issue #10 — WB5b retirement of the background-marker advisory note ===
 //
-// post-tool-review-state.sh records a `background_reviews` marker when an MCP review is handed off
-// to the background, because its verdict can never reach a hook. This end of the fix is what makes
-// the marker worth writing: without it the reader sees only `Missing steps: /codex-review-doc`,
-// which is indistinguishable from never having run a review — and the rational response to THAT
-// reading is to re-run, the one action guaranteed to hit the same timeout again.
+// The `background_reviews` state markers and the stop-guard note built on them are retired: a
+// backgrounded review is task-owned in the dispatch log (WB3), and the pairing sweep reports an
+// unsettled dispatch from evidence that survives compaction. What remains to pin is the negative:
+// a stale legacy key in the state file must produce NO note — repeating a claim whose writer is
+// gone would send the reader to a task that cannot exist — while the open gate itself is still
+// reported exactly as before.
 function runWithBackgroundMarker(prefix, { docPassed, markers, mode = 'warn' }) {
   const workDir = makeTempDir(prefix);
   const binDir = setupStubBin();
@@ -6142,78 +6143,20 @@ function runWithBackgroundMarker(prefix, { docPassed, markers, mode = 'warn' }) 
 
 const BG_DOC_MARKER = [{ plane: 'doc', task: 'kimyfg23u', at: '2026-08-08T02:00:00Z' }];
 
-test('#10: an open doc gate with a background marker surfaces the handoff beside it', () => {
-  const result = runWithBackgroundMarker('sd0x-stop-guard-bg-open-', {
+test('#10 retired: a stale background marker produces no note, and the gate still reports open', () => {
+  const result = runWithBackgroundMarker('sd0x-stop-guard-bg-retired-', {
     docPassed: false,
-    markers: BG_DOC_MARKER,
-  });
-
-  assert.match(result.stderr, /moved to the background/, 'the handoff is surfaced, cause unattributed');
-  assert.match(result.stderr, /task kimyfg23u/, 'and names the task, so the report can be found');
-  // The note sits beside the gate; it must never be mistaken for discharging it.
-  assert.match(result.stderr, /Missing steps: \/codex-review-doc/, 'the gate is still reported as open');
-});
-
-// What the marker can prove, and what it cannot — two separate overclaims, both fixed by wording.
-//
-// The first is about CAUSE. An edit retires this plane's markers in the write that re-opens the
-// gate, so a surviving marker normally IS the whole reason — but a review dispatched before a
-// concurrent edit can time out after it, and `{plane, task, at}` cannot tell that ordering apart
-// (`at` is stamped at handoff, later than the edit either way, and the dispatch time is not visible
-// from PostToolUse).
-//
-// The second is about the MARKER ITSELF. It is minted from a request-side substring — `Merge Gate`
-// or `Document Review` in the raw prompt — so a backgrounded call that merely discusses those
-// phrases mints one too. The line therefore may not say a review ran; only that a task whose
-// request looked like one was handed off. Claiming more sends the reader to an unrelated thread
-// instead of to the review the gate is waiting on.
-test('#10: the note claims only what the marker witnesses', () => {
-  const result = runWithBackgroundMarker('sd0x-stop-guard-bg-nonexclusive-', {
-    docPassed: false,
-    markers: BG_DOC_MARKER,
-  });
-
-  assert.match(
-    result.stderr,
-    /request looked like a review/,
-    'the evidence is request-side, and the wording has to say so',
-  );
-  assert.match(
-    result.stderr,
-    /does not prove a review of this plane ran/,
-    'so the reader is told to read the report rather than trust the marker',
-  );
-  assert.match(
-    result.stderr,
-    /an edit made after the task was dispatched/,
-    'the other cause is named against the DISPATCH, which is the ordering retirement cannot reach',
-  );
-  assert.match(
-    result.stderr,
-    /before this marker was written/,
-    'and says so explicitly, since an edit after the handoff would have retired the marker instead',
-  );
-  assert.match(
-    result.stderr,
-    /never having completed a review of this plane/,
-    'and the third cause leaves the gate open rather than re-opening it',
-  );
-});
-
-// The negative control, and the reason no sweep step is needed anywhere: a marker outlives the
-// timeout that produced it, so without this filter every later stop would repeat a stale claim.
-// Delete the `$doc != "true"` selector and this is the only test that notices.
-test('#10: the note falls silent once that plane\'s gate passes', () => {
-  const result = runWithBackgroundMarker('sd0x-stop-guard-bg-closed-', {
-    docPassed: true,
     markers: BG_DOC_MARKER,
   });
 
   assert.doesNotMatch(result.stderr, /moved to the background/,
-    'a marker left by a review that later succeeded makes no claim');
+    'the retired note must not be resurrected from a legacy key with no living writer');
+  assert.doesNotMatch(result.stderr, /kimyfg23u/,
+    'no line may point the reader at a task from a previous machine era');
+  assert.match(result.stderr, /Missing steps: \/codex-review-doc/, 'the gate itself is unchanged');
 });
 
-test('#10: no marker means no note (the ordinary open gate is unchanged)', () => {
+test('#10 retired: no marker behaves identically (the key is inert either way)', () => {
   const result = runWithBackgroundMarker('sd0x-stop-guard-bg-none-', {
     docPassed: false,
     markers: [],
@@ -6221,15 +6164,4 @@ test('#10: no marker means no note (the ordinary open gate is unchanged)', () =>
 
   assert.doesNotMatch(result.stderr, /moved to the background/);
   assert.match(result.stderr, /Missing steps: \/codex-review-doc/, 'and the normal message still prints');
-});
-
-test('#10: the note also prints in strict mode, where the stop is blocked', () => {
-  const result = runWithBackgroundMarker('sd0x-stop-guard-bg-strict-', {
-    docPassed: false,
-    markers: BG_DOC_MARKER,
-    mode: 'strict',
-  });
-
-  assert.equal(result.status, 2, 'strict still blocks — the note informs, it does not authorize');
-  assert.match(result.stderr, /moved to the background/);
 });

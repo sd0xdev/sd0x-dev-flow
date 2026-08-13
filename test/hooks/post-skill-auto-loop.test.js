@@ -461,3 +461,85 @@ test('reconciliation: a NON-C-locale directory-omission warning does NOT downgra
     'the hook must force LC_ALL=C so git\'s omission warning is the English form its regex matches → hold → emit, regardless of ambient locale'
   );
 });
+
+// === WB5a: derived reads (dual-read merge via resolveAdvisory) ===
+// Real git + real jq (no stubs): reconciliation only ever DOWNGRADES a stored
+// flag, so an injection while the mirror says has_code_change=false can only
+// come from the derivation raising the flag off tree content.
+test('WB5a: derivation raises a false mirror flag off tree content → inject with source=digest', () => {
+  const cwd = makeTempDir('sd0x-ps-wb5a-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  // Production repos gitignore the state file; without this the untracked
+  // state file is itself code-plane dirt and the assertion goes vacuous.
+  writeFileSync(join(cwd, '.git', 'info', 'exclude'), '.claude_review_state.json*\n');
+  writeStateFile(cwd, {
+    has_code_change: false,
+    has_doc_change: false,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+  writeFileSync(join(cwd, 'app.js'), '// edited after the state write');
+
+  const result = runHook({ cwd });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `derived obligation must inject despite mirror-false flags; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+  assert.match(line, /suggested=\/codex-review-fast/);
+});
+
+test('WB5a: clean tree lowers a true mirror flag → silent, no porcelain downgrade needed', () => {
+  const cwd = makeTempDir('sd0x-ps-wb5a-clean-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  writeFileSync(join(cwd, '.git', 'info', 'exclude'), '.claude_review_state.json*\n');
+  writeStateFile(cwd, {
+    has_code_change: true,
+    has_doc_change: true,
+    code_review: { passed: false },
+    doc_review: { passed: false },
+    precommit: { passed: false },
+  });
+
+  const result = runHook({ cwd });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), '', 'derived owed=false must silence stale stored flags');
+});
+
+test('WB5a: missing state file no longer silences a dirty tree — derivation answers alone', () => {
+  const cwd = makeTempDir('sd0x-ps-wb5a-nostate-');
+  const sh = (args) => spawnSync('git', args, { cwd });
+  sh(['init', '--initial-branch=main']);
+  sh(['config', 'user.email', 'test@test.com']);
+  sh(['config', 'user.name', 'test']);
+  writeFileSync(join(cwd, 'app.js'), '// placeholder');
+  sh(['add', '.']);
+  sh(['-c', 'commit.gpgsign=false', 'commit', '-m', 'init']);
+  writeFileSync(join(cwd, 'app.js'), '// dirty with no mirror at all');
+
+  const result = runHook({ cwd });
+  assert.equal(result.status, 0);
+  const line = result.stdout.split('\n').find((l) => l.startsWith('[AUTO_LOOP_STATE]'));
+  assert.ok(line, `a failed/deleted state write must not hide a dirty tree; got: ${JSON.stringify(result.stdout)}`);
+  assert.match(line, /\bchange=code\b/);
+  // WB5c: on a derivable tree a plane the digest cannot close reads false —
+  // no mirror fallback, so the fact line carries no mirror_planes token.
+  assert.match(line, / source=digest /);
+  assert.doesNotMatch(line, /mirror_planes=/);
+});
