@@ -203,9 +203,10 @@ test('record-diff is documented as carrying no code-alignment obligation', () =>
 
 // ── Sub-threshold handling stays intact ────────────────────────────────────
 
-test('deferred doc findings keep the hook-parsed tag and field order', () => {
+test('deferred doc findings keep the reporting-convention tag and field order', () => {
   assert.match(SKILL, /\[NIT_DEFERRED\] file:line \| issue \| reason: sub-threshold-doc \| <ISO8601>/,
-    'post-tool-review-state.sh matches this shape at column 0 — reworded, it persists nothing');
+    'the tag and field order are the greppable convention (hook-lightweighting: nothing parses '
+    + 'it) — reworded, every report/transcript grep that relies on the shape breaks');
   assert.match(SKILL, /Do not batch-fix 🟡\/⚪ and re-review/,
     'a re-review of non-blocking findings is the round the gate already said was unnecessary');
 });

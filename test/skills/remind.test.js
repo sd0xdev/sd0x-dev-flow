@@ -8,10 +8,10 @@ const skillPath = resolve(root, 'skills/remind/SKILL.md');
 
 // --- SKILL.md content assertions ---
 
-test('remind SKILL.md has smart detection with state file', () => {
+test('remind SKILL.md has smart detection reading reminder state', () => {
   const content = readFileSync(skillPath, 'utf8');
   assert.match(content, /detection/i, 'should mention detection');
-  assert.match(content, /state/i, 'should reference state file');
+  assert.match(content, /state/i, 'should reference the reminder state');
 });
 
 test('remind SKILL.md has rule loading via Read tool', () => {
@@ -76,13 +76,14 @@ test('detection-rules.md exists with auto-loop mapping', () => {
   assert.match(content, /auto-loop/i, 'should reference auto-loop rule');
 });
 
-// --- WB5c: the stored change flags are deleted, so /remind must not read them ---
+// --- Hook-lightweighting: the verdict source is review-state.js, and the state slot is
+// --- never read directly ---
 //
 // These execute the skill's own Step 1 block rather than pattern-matching it: a
 // grep over instruction text stays green when the executable lines are deleted.
 
 const { execFileSync } = require('node:child_process');
-const { mkdtempSync, mkdirSync, writeFileSync, rmSync, cpSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, writeFileSync, rmSync, cpSync, readdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 
 function step1Block() {
@@ -93,8 +94,8 @@ function step1Block() {
 }
 
 // Hermetic: every child gets its own HOME, cache and TMPDIR, and inherits no
-// GIT_* variable. Without this the resolver writes receipt directories into the
-// developer's real cache, and an ambient core.hooksPath / commit.gpgSign / a
+// GIT_* variable. Without this the checker writes state slots into the
+// developer's real ~/.cache, and an ambient core.hooksPath / commit.gpgSign / a
 // GIT_DIR left over from a hook run decides what the assertions below see.
 function harnessEnv(rootDir, extra = {}) {
   const env = {};
@@ -116,7 +117,12 @@ function harnessEnv(rootDir, extra = {}) {
   };
 }
 
-function runStep1(build, { subdir = '', env: extraEnv = {}, shellPrelude = '' } = {}) {
+// `shell` defaults to bash because that is what every case below was written against.
+// It is a parameter rather than a constant so the portability case can re-run the same
+// fixture under zsh — the shell the session actually pastes this block into. Nothing
+// in the probe line may be bash-only either: `type -t` was, so it is `typeset -f`,
+// which reports function existence identically in both.
+function runStep1(build, { subdir = '', env: extraEnv = {}, shellPrelude = '', shell = 'bash' } = {}) {
   const rootDir = mkdtempSync(resolve(tmpdir(), 'remind-harness-'));
   try {
     for (const d of ['repo', 'home', 'cache', 'tmp', 'bin']) mkdirSync(resolve(rootDir, d));
@@ -128,98 +134,109 @@ function runStep1(build, { subdir = '', env: extraEnv = {}, shellPrelude = '' } 
     git('config', 'user.name', 'harness');
     build(repo, git, rootDir);
 
-    const script = `${shellPrelude}${step1Block()}\nprintf '%s %s %s %s %s %s %s %s %s\\n' "$HAS_CODE" "$HAS_DOC" "$CODE_REVIEW" "$DOC_REVIEW" "$PRECOMMIT" "\${BRANCH:-none}" "\${DIRTY:+dirty}" "$STATE_FILE_EXISTS" "$(for f in _remind_git _remind_bool; do type -t "$f" >/dev/null 2>&1 && printf '%s,' "$f"; done || true)"\n`;
+    const script = `${shellPrelude}${step1Block()}\nprintf '%s %s %s %s %s %s %s %s %s %s\\n' "$HAS_CODE" "$HAS_DOC" "$CODE_REVIEW" "$DOC_REVIEW" "$PRECOMMIT" "$CODE_NOTED" "$DOC_NOTED" "\${BRANCH:-none}" "\${DIRTY:+dirty}" "$(for f in _remind_git _remind_bool; do typeset -f "$f" >/dev/null 2>&1 && printf '%s,' "$f"; done || true)"\n`;
     const started = Date.now();
-    const out = execFileSync('bash', ['-c', script], {
+    const out = execFileSync(shell, ['-c', script], {
       cwd: resolve(repo, subdir),
       encoding: 'utf8',
       env: harnessEnv(rootDir, typeof extraEnv === 'function' ? extraEnv(repo) : extraEnv),
     }).trim().split('\n').pop();
-    const [hasCode, hasDoc, codeReview, docReview, precommit, branch, dirty, stateFile, fnLeft] = out.split(' ');
+    const [hasCode, hasDoc, codeReview, docReview, precommit, codeNoted, docNoted, branch, dirty, fnLeft] = out.split(' ');
     return {
-      hasCode, hasDoc, codeReview, docReview, precommit, branch,
-      dirty: dirty || '', stateFile, fnLeft: fnLeft || '', elapsedMs: Date.now() - started,
+      hasCode, hasDoc, codeReview, docReview, precommit, codeNoted, docNoted, branch,
+      dirty: dirty || '', fnLeft: fnLeft || '', elapsedMs: Date.now() - started,
     };
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }
 }
 
-function installResolver(repo) {
+// The layout /install-scripts produces: the checker at `.claude/scripts/`, with its
+// one library dependency beside it. `review-state.js` requires `./lib/tree-digest.js`
+// relative to its own directory, so the pair travels together.
+function installChecker(repo) {
   mkdirSync(resolve(repo, '.claude/scripts/lib'), { recursive: true });
-  cpSync(resolve(root, 'scripts/lib'), resolve(repo, '.claude/scripts/lib'), { recursive: true });
+  cpSync(resolve(root, 'scripts/review-state.js'), resolve(repo, '.claude/scripts/review-state.js'));
+  cpSync(resolve(root, 'scripts/lib/tree-digest.js'), resolve(repo, '.claude/scripts/lib/tree-digest.js'));
 }
 
-function fakeResolver(repo, body) {
-  mkdirSync(resolve(repo, '.claude/scripts/lib'), { recursive: true });
-  writeFileSync(resolve(repo, '.claude/scripts/lib/gate-derive.js'), body);
+function fakeChecker(repo, body) {
+  mkdirSync(resolve(repo, '.claude/scripts'), { recursive: true });
+  writeFileSync(resolve(repo, '.claude/scripts/review-state.js'), body);
+}
+
+// Record a real note the way a producer would: the repo's own checker, run against
+// the fixture repository, writing into the harness HOME. The slot lands under the
+// non-contractual repo key — which is exactly why every read below must go through
+// the checker rather than the filesystem.
+function noteGate(repo, rootDir, plane, verdict) {
+  execFileSync(process.execPath, [resolve(root, 'scripts/review-state.js'), 'note', plane, verdict], {
+    cwd: repo, env: harnessEnv(rootDir), stdio: 'ignore',
+  });
 }
 
 function commitBase(repo, git) {
   writeFileSync(resolve(repo, 'app.js'), 'module.exports = 1;\n');
   writeFileSync(resolve(repo, 'guide.md'), '# Guide\n');
-  // As real projects do — otherwise the mirror and the installed libraries are
-  // themselves untracked content, and "clean tree, with verdicts recorded and a
-  // resolver installed" is a state no fixture could build.
-  writeFileSync(resolve(repo, '.gitignore'), '.claude_review_state.json\n.claude/\n');
+  // As real projects do — otherwise the installed checker is itself untracked
+  // content, and "clean tree, with notes recorded and a checker installed" is a
+  // state no fixture could build.
+  writeFileSync(resolve(repo, '.gitignore'), '.claude/\n');
   git('add', '-A');
   git('commit', '-qm', 'base');
 }
 
-// A mirror claiming three passing gates with no receipt log behind it. Since round
-// 18 no degraded path reads it at all, so this fixture's job is the opposite of what
-// it once was: it is the state in which a verdict is available to be borrowed, and
-// every assertion over it checks that nothing borrowed one. On a derivable tree the
-// resolver still derives `false` from the absent receipts.
-function cleanMirror(repo, git) {
+function dirtyTree(repo, git) {
   commitBase(repo, git);
-  writeFileSync(resolve(repo, '.claude_review_state.json'), JSON.stringify({
-    code_review: { passed: true }, doc_review: { passed: true }, precommit: { passed: true },
-  }));
-}
-
-function staleMirror(repo, git) {
-  commitBase(repo, git);
-  writeFileSync(resolve(repo, '.claude_review_state.json'), JSON.stringify({ precommit: { passed: true } }));
   writeFileSync(resolve(repo, 'app.js'), 'module.exports = 2;\n');
 }
 
-test('remind Step 1 in a consuming project resolves through the INSTALLED library path', () => {
-  // Arrange: only `.claude/scripts/lib/` exists — the layout /install-scripts produces.
-  const seen = runStep1((repo, git) => {
-    staleMirror(repo, git);
-    installResolver(repo);
+test('remind Step 1 in a consuming project resolves through the INSTALLED checker path', () => {
+  // Arrange: only `.claude/scripts/` exists — the layout /install-scripts produces.
+  // A precommit PASS noted on the clean tree, then a code edit under it.
+  const seen = runStep1((repo, git, rootDir) => {
+    commitBase(repo, git);
+    installChecker(repo);
+    noteGate(repo, rootDir, 'precommit', 'pass');
+    writeFileSync(resolve(repo, 'app.js'), 'module.exports = 2;\n');
   });
 
-  // Assert: the derived verdict won over the stale mirror, which only happens if
-  // the installed path resolved. Plane classification alone would not prove it —
-  // the fallback classifies this same tree identically.
-  assert.equal(seen.precommit, 'false', 'a mirror PASS with no receipt behind it must not survive derivation');
+  // Assert: per-plane classification is the proof the installed checker answered —
+  // the git fallback opens both planes on this same tree. And the stale note must
+  // not survive the digest comparison.
   assert.equal(seen.hasCode, 'true', 'a modified .js must open the code plane');
-  assert.equal(seen.hasDoc, 'false', 'no doc-plane file changed');
+  assert.equal(seen.hasDoc, 'false', 'no doc-plane file changed — only the checker can say so');
+  assert.equal(seen.precommit, 'false', 'a PASS noted on the pre-edit digest must not survive the edit');
 });
 
-test('remind Step 1 with no resolver installed reads no verdict at all, clean tree included', () => {
-  // Round 18: a clean `git status` does not bind a stored verdict to the tree in
-  // front of it. It says nothing is uncommitted *now* — equally true one checkout
-  // later — so trusting the mirror here let a PASS earned on one commit close a gate
-  // on another. The degraded run answers the change question and stops there.
-  const seen = runStep1(cleanMirror);
+test('remind Step 1 with no checker installed reads no verdict at all, clean tree included', () => {
+  // The slots exist in HOME with three PASSes in them — available to be borrowed.
+  // But they are keyed by a non-contractual hash and carry no binding a degraded
+  // run can verify: a clean `git status` says nothing is uncommitted *now*, which
+  // is equally true one checkout later. The degraded run answers the change
+  // question and stops there.
+  const seen = runStep1((repo, git, rootDir) => {
+    commitBase(repo, git);
+    for (const plane of ['code_review', 'doc_review', 'precommit']) noteGate(repo, rootDir, plane, 'pass');
+  });
 
-  assert.equal(seen.precommit, 'false', 'an unbound PASS is not a verdict, however clean the tree');
+  assert.equal(seen.precommit, 'false', 'an unreachable PASS is not a verdict, however clean the tree');
   assert.equal(seen.codeReview, 'false', 'the same for the code gate');
   assert.equal(seen.docReview, 'false', 'and the doc gate');
-  assert.equal(seen.stateFile, 'true', 'the file was there to be read — the block chose not to');
+  assert.equal(seen.codeNoted, 'false', 'the noted flags have no source either — detection 5 stays quiet');
   assert.equal(seen.hasCode, 'false', 'the change question is still answered, and this tree is clean');
 });
 
-test('remind Step 1 refuses a mirror PASS recorded against a different commit', () => {
-  // The exact scenario: three PASSes recorded on commit A, then a commit B whose
-  // tree is just as clean. Every local signal available to a degraded run is
-  // identical in both states, which is why no local signal can be the binding.
-  const seen = runStep1((repo, git) => {
-    cleanMirror(repo, git);
+test('remind Step 1 refuses a PASS noted against a different commit', () => {
+  // The exact scenario content addressing exists for: three PASSes noted on commit
+  // A, then a commit B whose tree is just as clean. Every cheap local signal is
+  // identical in both states; the digest is not.
+  const seen = runStep1((repo, git, rootDir) => {
+    commitBase(repo, git);
+    installChecker(repo);
+    for (const plane of ['code_review', 'doc_review', 'precommit']) noteGate(repo, rootDir, plane, 'pass');
     writeFileSync(resolve(repo, 'app.js'), 'module.exports = 2;\n');
+    writeFileSync(resolve(repo, 'guide.md'), '# Guide, revised\n');
     git('add', '-A');
     git('commit', '-qm', 'B: unrelated work, committed — tree clean again');
   });
@@ -228,25 +245,46 @@ test('remind Step 1 refuses a mirror PASS recorded against a different commit', 
   assert.equal(seen.codeReview, 'false', 'a PASS from commit A cannot close commit B\'s code gate');
   assert.equal(seen.docReview, 'false', 'nor its doc gate');
   assert.equal(seen.precommit, 'false', 'nor its precommit gate');
+  assert.equal(seen.codeNoted, 'true', 'the note is still there — stale, which is not the same as absent');
 });
 
-test('remind Step 1 refuses stale mirror verdicts on a tree that moved under them', () => {
-  // The All Clear this skill must never produce: resolver gone, every verdict in the
-  // mirror a PASS, and a dirty tree. The mirror records that a gate passed, not which
-  // tree passed it — that binding is the resolver's whole job, and it is what is
-  // missing here. Read as-is, three stale PASSes and a dirty worktree add up to
-  // "nothing owed" while a real review is outstanding.
-  const seen = runStep1((repo, git) => {
-    cleanMirror(repo, git);
+test('remind Step 1 keeps per-plane freshness: a code edit does not stale the doc note', () => {
+  // The digest is per plane. A doc_review PASS noted on this tree stays bound to
+  // the doc plane's content, which a code-only edit does not move — so the doc
+  // gate stays closed while the code plane opens. The old repo-local mirror could
+  // not make this distinction; the checker's whole point is that it can.
+  const seen = runStep1((repo, git, rootDir) => {
+    commitBase(repo, git);
+    installChecker(repo);
+    noteGate(repo, rootDir, 'doc_review', 'pass');
+    writeFileSync(resolve(repo, 'app.js'), 'module.exports = 2;\n');
+  });
+
+  assert.equal(seen.hasCode, 'true', 'the code plane is dirty');
+  assert.equal(seen.hasDoc, 'false', 'the doc plane is not');
+  assert.equal(seen.docReview, 'true', 'the doc-plane digest did not move, so its PASS still binds');
+  assert.equal(seen.codeReview, 'false', 'the code plane has no note at all');
+});
+
+test('remind Step 1 refuses stale notes on a tree that moved under them', () => {
+  // The All Clear this skill must never produce: every slot a PASS, and a dirty
+  // tree. A slot records that a gate was noted, not which tree earned it — the
+  // digest comparison is the binding, and it fails here.
+  const seen = runStep1((repo, git, rootDir) => {
+    commitBase(repo, git);
+    installChecker(repo);
+    for (const plane of ['code_review', 'doc_review', 'precommit']) noteGate(repo, rootDir, plane, 'pass');
     writeFileSync(resolve(repo, 'app.js'), 'module.exports = 2;\n');
     writeFileSync(resolve(repo, 'guide.md'), '# Guide, revised\n');
   });
 
-  assert.equal(seen.hasCode, 'true', 'the dirty tree owes both planes');
-  assert.equal(seen.hasDoc, 'true', 'the dirty tree owes both planes');
-  assert.equal(seen.codeReview, 'false', 'an unbound PASS cannot close the code gate');
-  assert.equal(seen.docReview, 'false', 'an unbound PASS cannot close the doc gate');
-  assert.equal(seen.precommit, 'false', 'nor the precommit gate — this is the row that would mint All Clear');
+  assert.equal(seen.hasCode, 'true', 'the dirty tree owes the code plane');
+  assert.equal(seen.hasDoc, 'true', 'and the doc plane');
+  assert.equal(seen.codeReview, 'false', 'a stale PASS cannot close the code gate');
+  assert.equal(seen.docReview, 'false', 'nor the doc gate');
+  assert.equal(seen.precommit, 'false', 'nor precommit — this is the row that would mint All Clear');
+  assert.equal(seen.codeNoted, 'true', 'noted-but-stale is visible, so detection 5 does not misfire');
+  assert.equal(seen.docNoted, 'true', 'both planes carry their note');
 });
 
 // The tree is asked once, and everything downstream reads that one answer. Two
@@ -283,14 +321,14 @@ for (const [name, answers, expectDirty] of [
   ['a probe that fails outright', [BROKEN], true],
 ]) {
   test(`remind Step 1 asks the tree once — ${name}`, () => {
-    // Arrange: a resolver-less run over a git whose
-    // successive status answers contradict each other. The counter lives outside the
-    // harness directory, which the run deletes on its way out.
+    // Arrange: a checker-less run over a git whose successive status answers
+    // contradict each other. The counter lives outside the harness directory,
+    // which the run deletes on its way out.
     const probeDir = mkdtempSync(resolve(tmpdir(), 'remind-probe-'));
     const counter = resolve(probeDir, 'status-count');
     try {
       const seen = runStep1((repo, git, rootDir) => {
-        cleanMirror(repo, git);
+        commitBase(repo, git);
         gitShim(rootDir, answers, counter);
       });
 
@@ -302,9 +340,9 @@ for (const [name, answers, expectDirty] of [
       assert.equal(seen.dirty === 'dirty', expectDirty, 'DIRTY reports the same answer the classification used');
       if (expectDirty) {
         assert.equal(seen.hasCode, 'true', 'a dirty or unverifiable tree owes both planes');
-        assert.equal(seen.codeReview, 'false', 'and carries no mirror verdict');
-        assert.equal(seen.docReview, 'false', 'and carries no mirror verdict');
-        assert.equal(seen.precommit, 'false', 'and carries no mirror verdict');
+        assert.equal(seen.codeReview, 'false', 'and carries no verdict');
+        assert.equal(seen.docReview, 'false', 'and carries no verdict');
+        assert.equal(seen.precommit, 'false', 'and carries no verdict');
       } else {
         assert.equal(seen.hasCode, 'false', 'a clean answer classifies the tree as clean — the negative control');
         assert.equal(seen.hasDoc, 'false', 'both planes, from the same one answer');
@@ -315,15 +353,15 @@ for (const [name, answers, expectDirty] of [
   });
 }
 
-test('remind Step 1 abandons a resolver that outruns AUTO_LOOP_DERIVE_TIMEOUT', () => {
-  // Arrange: a resolver that would answer correctly, eventually. /remind is
+test('remind Step 1 abandons a checker that outruns AUTO_LOOP_DERIVE_TIMEOUT', () => {
+  // Arrange: a checker that would answer correctly, eventually. /remind is
   // interactive, so the bound matters more than the answer. A harness-local
   // `timeout` shim pins which ladder arm runs, instead of leaving that to whatever
   // the host happens to have installed.
   const seen = runStep1(
     (repo, git, rootDir) => {
-      staleMirror(repo, git);
-      fakeResolver(repo, 'setTimeout(() => process.stdout.write("{}"), 9000);\n');
+      dirtyTree(repo, git);
+      fakeChecker(repo, 'setTimeout(() => process.stdout.write("{}"), 9000);\n');
       const shim = resolve(rootDir, 'bin/timeout');
       writeFileSync(shim, '#!/bin/sh\nsecs="$1"; shift\n"$@" &\np=$!\n(sleep "$secs"; kill -9 $p 2>/dev/null) &\nw=$!\nwait $p; rc=$?\nkill $w 2>/dev/null\nexit $rc\n');
       execFileSync('chmod', ['+x', shim]);
@@ -331,7 +369,7 @@ test('remind Step 1 abandons a resolver that outruns AUTO_LOOP_DERIVE_TIMEOUT', 
     { env: { AUTO_LOOP_DERIVE_TIMEOUT: '1' } },
   );
 
-  assert.equal(seen.hasCode, 'true', 'the timed-out resolver must land in the git fallback, which sees the dirty tree');
+  assert.equal(seen.hasCode, 'true', 'the timed-out checker must land in the git fallback, which sees the dirty tree');
   assert.ok(seen.elapsedMs < 6000, `Step 1 took ${seen.elapsedMs}ms; the timeout ladder is not bounding it`);
 });
 
@@ -359,113 +397,106 @@ function tableRows(body, header) {
     .filter(Boolean);
 }
 
-const RESOLVER_FIELDS = [
-  'has_code_change', 'has_doc_change', 'code_review_passed', 'doc_review_passed', 'precommit_passed',
+// The seven fields Step 1 reads out of `review-state.js check --format=json`:
+// per plane, the change flag, the verdict, and (for the two review planes) the
+// noted flag. The answer is accepted all-or-none.
+const CHECKER_FIELDS = [
+  ['code_review', 'dirty'], ['doc_review', 'dirty'],
+  ['code_review', 'passed'], ['doc_review', 'passed'], ['precommit', 'passed'],
+  ['code_review', 'noted'], ['doc_review', 'noted'],
 ];
 
-for (const omitted of RESOLVER_FIELDS) {
-  test(`remind Step 1 refuses a resolver answer missing ${omitted} rather than mixing policies`, () => {
-    // Arrange: valid JSON, correct provenance, four of the five fields. Accepting it
-    // would leave one empty and silently mix a derived answer with the fallback's —
-    // so each field is dropped in turn, since a condition that forgot one term still
+// Every read field `true`-shaped where visible, so a half-accepted answer shows:
+// the git fallback on a dirty tree reports every verdict `false` and both planes
+// open, while this answer closes everything.
+function fullAnswer() {
+  const plane = () => ({ noted: true, dirty: false, digest_match: true, verdict: 'pass', rounds: 0, passed: true, owed: false });
+  return { code_review: plane(), doc_review: plane(), precommit: plane() };
+}
+
+for (const [plane, field] of CHECKER_FIELDS) {
+  test(`remind Step 1 refuses a checker answer missing ${plane}.${field} rather than mixing policies`, () => {
+    // Arrange: valid JSON, six of the seven fields. Accepting it would leave one
+    // empty and silently mix the checker's answer with the fallback's — so each
+    // field is dropped in turn, since a condition that forgot one term still
     // rejects the rest.
-    // Every present field is `true`, so a half-accepted answer would be visible:
-    // the fallback on this dirty tree reports every verdict `false`.
-    const answer = {
-      treeState: 'ok',
-      mirror_planes: [],
-      ...Object.fromEntries(RESOLVER_FIELDS.filter((f) => f !== omitted).map((f) => [f, true])),
-    };
+    const answer = fullAnswer();
+    delete answer[plane][field];
     const seen = runStep1((repo, git) => {
-      staleMirror(repo, git);
-      fakeResolver(repo, `process.stdout.write(JSON.stringify(${JSON.stringify(answer)}));\n`);
+      dirtyTree(repo, git);
+      fakeChecker(repo, `process.stdout.write(JSON.stringify(${JSON.stringify(answer)}));\n`);
     });
 
     assert.equal(seen.codeReview, 'false', 'a partial answer must be discarded whole, not read field by field');
     assert.equal(seen.hasCode, 'true', 'the git fallback, not the half-accepted answer, classified the tree');
   });
-}
 
-test('remind Step 1 accepts a complete resolver answer', () => {
-  // Positive control for the partial-answer guard: same fake-resolver mechanism,
-  // all five fields present, so the guard cannot pass by rejecting everything.
-  const seen = runStep1((repo, git) => {
-    staleMirror(repo, git);
-    fakeResolver(repo, `process.stdout.write(JSON.stringify({
-      treeState: 'ok', mirror_planes: [],
-      has_code_change: false, has_doc_change: true,
-      code_review_passed: true, doc_review_passed: false, precommit_passed: false,
-    }));\n`);
-  });
-
-  assert.equal(seen.hasDoc, 'true', 'the resolver answer must win over the git fallback');
-  assert.equal(seen.codeReview, 'true', 'a derived verdict is the one thing that can close a gate here');
-});
-
-// The resolver serves several callers and deliberately keeps the mirror
-// authoritative where a digest receipt has no tree to bind to. Those are the same
-// stored verdicts Step 1 refuses to read itself, so an answer carrying them is
-// refused whatever route it arrived by.
-for (const [name, provenance] of [
-  ['treeState is not-a-repo', "treeState: 'not-a-repo', mirror_planes: ['code_review', 'doc_review', 'precommit']"],
-  ['a single plane fell back to the mirror', "treeState: 'ok', mirror_planes: ['precommit']"],
-  ['provenance fields are absent altogether', ''],
-  // Each clause of the contract gets a case only it can reject: a `not-a-repo`
-  // answer that names no fallback plane, and an `ok` answer with the field missing.
-  // Without these, either clause could be deleted and the other would cover for it.
-  ['treeState is not-a-repo with no plane named', "treeState: 'not-a-repo', mirror_planes: []"],
-  ['mirror_planes is missing from an otherwise ok answer', "treeState: 'ok'"],
-  // jq measures length, not shape: `"" | length` and `{} | length` are both 0, so a
-  // length test alone reads a malformed answer as derived and lets its verdicts
-  // through (round 20). The clause checks the type, and these are the cases only the
-  // type check can reject.
-  ['mirror_planes is an empty string', "treeState: 'ok', mirror_planes: ''"],
-  ['mirror_planes is an empty object', "treeState: 'ok', mirror_planes: {}"],
-  ['mirror_planes is a boolean', "treeState: 'ok', mirror_planes: true"],
-  ['mirror_planes is null', "treeState: 'ok', mirror_planes: null"],
-  // The `treeState` half needs its own killers too: with only the cases above, the
-  // clause could be relaxed to `treeState != "not-a-repo"` and every one of them
-  // would still behave (round 21). These two are accepted by that mutant and
-  // refused by the real clause.
-  ['treeState is unverifiable with an empty plane list', "treeState: 'unverifiable', mirror_planes: []"],
-  ['treeState is missing from an otherwise derived answer', 'mirror_planes: []'],
-]) {
-  test(`remind Step 1 refuses a mirror-backed resolver answer — ${name}`, () => {
+  test(`remind Step 1 refuses a checker answer whose ${plane}.${field} is a string, not a boolean`, () => {
+    // jq's type check is the clause under test: `"true"` stringifies to the same
+    // four characters a boolean does, so a shape-blind read accepts it — and with
+    // it any malformed producer.
+    const answer = fullAnswer();
+    answer[plane][field] = String(answer[plane][field]);
     const seen = runStep1((repo, git) => {
-      staleMirror(repo, git);
-      fakeResolver(repo, `process.stdout.write(JSON.stringify({
-        ${provenance}${provenance ? ',' : ''}
-        has_code_change: false, has_doc_change: false,
-        code_review_passed: true, doc_review_passed: true, precommit_passed: true,
-      }));\n`);
+      dirtyTree(repo, git);
+      fakeChecker(repo, `process.stdout.write(JSON.stringify(${JSON.stringify(answer)}));\n`);
     });
 
-    assert.equal(seen.codeReview, 'false', 'a mirror-backed PASS closes nothing, whatever carried it');
-    assert.equal(seen.precommit, 'false', 'nor the precommit gate');
+    assert.equal(seen.codeReview, 'false', 'a non-boolean field rejects the whole answer');
     assert.equal(seen.hasCode, 'true', 'and the run falls back to git, which sees the dirty tree');
   });
 }
 
-test('remind Step 1 refuses the real resolver answer built from a forged mirror outside a repository', () => {
-  // Codex's round-19 scenario, run against the INSTALLED resolver rather than a
-  // fake: outside a repository `resolveAdvisory()` names its mirror-backed planes
-  // and hands back the stored values. With a forged all-PASS state file and no
-  // change flags, accepting that answer would report nothing owed — and the state
-  // file's existence would suppress detection 5 as well, leaving no finding at all.
+for (const plane of ['code_review', 'doc_review', 'precommit']) {
+  test(`remind Step 1 refuses a checker answer with the ${plane} plane missing entirely`, () => {
+    const answer = fullAnswer();
+    delete answer[plane];
+    const seen = runStep1((repo, git) => {
+      dirtyTree(repo, git);
+      fakeChecker(repo, `process.stdout.write(JSON.stringify(${JSON.stringify(answer)}));\n`);
+    });
+
+    assert.equal(seen.precommit, 'false', 'a missing plane rejects the whole answer');
+    assert.equal(seen.hasCode, 'true', 'and the git fallback classified the tree');
+  });
+}
+
+test('remind Step 1 accepts a complete checker answer', () => {
+  // Positive control for the malformed-answer guards: same fake-checker mechanism,
+  // all seven fields boolean, so the guards cannot pass by rejecting everything.
+  const answer = fullAnswer();
+  answer.doc_review.dirty = true;
+  answer.doc_review.passed = false;
+  answer.doc_review.noted = false;
+  answer.precommit.passed = false;
   const seen = runStep1((repo, git) => {
+    dirtyTree(repo, git);
+    fakeChecker(repo, `process.stdout.write(JSON.stringify(${JSON.stringify(answer)}));\n`);
+  });
+
+  assert.equal(seen.hasCode, 'false', 'the checker answer must win over the git fallback on this dirty tree');
+  assert.equal(seen.hasDoc, 'true', 'per-plane change flags come from the answer');
+  assert.equal(seen.codeReview, 'true', 'a checker verdict is the one thing that can close a gate here');
+  assert.equal(seen.docNoted, 'false', 'the noted flags ride the same answer');
+});
+
+test('remind Step 1 degrades when the real checker has no repository to answer about', () => {
+  // The installed checker dies outside a repository — its digest has no tree to
+  // bind to — and the run must degrade rather than borrow the three PASSes
+  // sitting in the slots. An unverifiable tree plus unreachable state is the
+  // both-planes-owed case, which is what leaves a finding.
+  const seen = runStep1((repo, git, rootDir) => {
     commitBase(repo, git);
-    installResolver(repo);
-    writeFileSync(resolve(repo, '.claude_review_state.json'), JSON.stringify({
-      code_review: { passed: true }, doc_review: { passed: true }, precommit: { passed: true },
-    }));
+    installChecker(repo);
+    for (const plane of ['code_review', 'doc_review', 'precommit']) noteGate(repo, rootDir, plane, 'pass');
     rmSync(resolve(repo, '.git'), { recursive: true, force: true });
   });
 
-  assert.equal(seen.stateFile, 'true', 'the forged file is there, and its existence still suppresses detection 5');
-  assert.equal(seen.codeReview, 'false', 'so the verdicts are what must not be borrowed from it');
+  assert.equal(seen.codeReview, 'false', 'the slots hold PASSes, and none of them was borrowed');
   assert.equal(seen.docReview, 'false', 'none of the three');
   assert.equal(seen.precommit, 'false', 'none of the three');
-  assert.equal(seen.hasCode, 'true', 'an unverifiable tree owes both planes, which is what leaves a finding');
+  assert.equal(seen.codeNoted, 'false', 'no noted flag either — the degraded path has no source for it');
+  assert.equal(seen.hasCode, 'true', 'an unverifiable tree owes both planes');
   assert.equal(seen.hasDoc, 'true', 'both planes');
 });
 
@@ -505,9 +536,60 @@ test('remind Step 1 pins the fence to a dynamic GIT_* enumeration, not a named l
   // has no reason to vary, so the contract is the text itself.
   assert.equal(
     fence.replace(/\s+/g, ' ').trim(),
-    '_remind_git() ( for v in ${!GIT_*}; do unset "$v"; done; git -C "$PWD" "$@" )',
+    `_remind_git() ( for v in $(env | sed -n 's/^\\(GIT_[A-Za-z0-9_]*\\)=.*/\\1/p'); do unset "$v"; done; git -C "$PWD" "$@" )`,
     'the fence must unset every enumerated name unconditionally, in a subshell, with -C "$PWD"',
   );
+
+  // And the enumeration must stay portable. `${!GIT_*}` reads as the obvious spelling of
+  // "every GIT_ name" and is what this fence used to say, but it is a bash extension:
+  // under zsh it is a hard `bad substitution` that takes out every read in the block at
+  // once. Scoped to executable lines — the comment above the fence names the expansion
+  // in order to explain why it is banned, and a check that cannot tell prose from code
+  // would forbid documenting the ban.
+  const code = block
+    .split('\n')
+    .filter((l) => !l.trimStart().startsWith('#'))
+    .join('\n');
+  assert.doesNotMatch(
+    code,
+    /\$\{!\w+\*\}/,
+    'prefix-name expansion is bash-only — the block runs under the session shell, which is zsh',
+  );
+});
+
+const HAVE_ZSH = (() => {
+  try {
+    execFileSync('zsh', ['-c', 'exit 0'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+test('remind Step 1 resolves identically under zsh and bash', { skip: !HAVE_ZSH }, () => {
+  // The block is not a script with a shebang — it is a fenced snippet the model pastes
+  // into a Bash tool call, so the shell that runs it is whatever the session provides.
+  // Every other case here runs it under bash, which is why a bash-only expansion sat in
+  // the fence undetected: under zsh `${!GIT_*}` is a hard `bad substitution` that fails
+  // the fence subshell, and with it every read in the block — a provably clean tree then
+  // reports dirty (the error text lands in TREE through its own `2>&1`), BRANCH empties,
+  // and detection 4 can never fire again. Both directions are asserted below: the clean
+  // tree must read clean under zsh, and the branch must still resolve.
+  const fixture = (repo, git) => commitBase(repo, git);
+  const underBash = runStep1(fixture, { shell: 'bash' });
+  const underZsh = runStep1(fixture, { shell: 'zsh' });
+
+  assert.deepEqual(
+    { hasCode: underZsh.hasCode, hasDoc: underZsh.hasDoc, branch: underZsh.branch, dirty: underZsh.dirty },
+    { hasCode: underBash.hasCode, hasDoc: underBash.hasDoc, branch: underBash.branch, dirty: underBash.dirty },
+    'the block must resolve the same four facts under either shell',
+  );
+  // Pinned absolutely as well, so the case cannot pass by both shells failing alike:
+  // a broken fence degrades to hasCode/hasDoc true, branch "none" and dirty "dirty",
+  // which is self-consistent across two broken runs and would satisfy the compare above.
+  assert.equal(underZsh.branch, 'main', 'zsh: the fenced rev-parse must resolve the real branch');
+  assert.equal(underZsh.dirty, '', 'zsh: a committed tree must read clean, not error-text-as-dirty');
+  assert.equal(underZsh.hasCode, 'false', 'zsh: a clean tree opens no plane');
 });
 
 test('remind Step 1 fences the reads that report the branch and the dirty flag', () => {
@@ -569,40 +651,25 @@ test('remind Step 1 sees a dirty submodule that is configured to hide itself', (
   assert.equal(seen.hasDoc, 'true', 'and the degraded path owes both planes');
 });
 
-test('remind Step 1 run from a subdirectory reads the state file at the repository root', () => {
-  // Arrange: the mirror lives at the root, as it always does, and the run happens in
-  // `sub/`. Resolved relative to the CWD there is no state file at all, so the run
-  // would report no verdicts and no state — over a root that holds them.
+test('remind Step 1 run from a subdirectory resolves the checker at the repository root', () => {
+  // Anchoring: the checker is installed at the root and the run happens in `sub/`.
+  // Resolved relative to the CWD there is no checker at all, so the run would
+  // degrade and read no verdict — over a root whose checker answers PASS. The
+  // passing verdict is therefore the whole evidence of anchoring, and it also
+  // proves the `cd "$ROOT"` on the invocation: run from `sub/`, the checker would
+  // otherwise answer about whatever repository the CWD resolves to.
   const seen = runStep1(
-    (repo, git) => {
-      cleanMirror(repo, git);
+    (repo, git, rootDir) => {
+      commitBase(repo, git);
+      installChecker(repo);
+      noteGate(repo, rootDir, 'precommit', 'pass');
       mkdirSync(resolve(repo, 'sub'));
     },
     { subdir: 'sub' },
   );
 
-  // Resolved relative to `sub/` there is no state file, so this boolean is the whole
-  // evidence of anchoring — and it is detection 5's input, not a cosmetic field.
-  assert.equal(seen.stateFile, 'true', 'the root state file is the one this run is about');
-});
-
-test('remind Step 1 run from a subdirectory resolves the library at the repository root', () => {
-  // Same anchoring question for the resolver: installed at the root, run from `sub/`.
-  // The derived answer differs from the mirror's, which is what makes it visible —
-  // a cwd-relative path finds nothing and falls back to the stale `true`.
-  const seen = runStep1(
-    (repo, git) => {
-      cleanMirror(repo, git);
-      installResolver(repo);
-      mkdirSync(resolve(repo, 'sub'));
-    },
-    { subdir: 'sub' },
-  );
-
-  // Clean tree, mirror says PASS, no receipt behind it. Anchored, the resolver
-  // answers `false`; unanchored, the library is not found and the fallback reads the
-  // mirror's `true` — the tree being clean is what keeps that difference visible.
-  assert.equal(seen.precommit, 'false', 'the root-installed resolver answered, overriding the mirror');
+  assert.equal(seen.precommit, 'true', 'the root-installed checker answered, binding the note to the clean tree');
+  assert.equal(seen.hasCode, 'false', 'and classified the clean tree per plane');
 });
 
 test('remind Step 1 clears every dangerous GIT_* channel, not just the first one', () => {
@@ -671,14 +738,14 @@ test('remind Step 1 completes its own cleanup under a caller that set -e', () =>
   assert.equal(seen.fnLeft, '', 'the cleanup line ran, so the caller keeps no function it never defined');
 });
 
-test('remind Step 1 survives a malformed resolver answer under set -e', () => {
+test('remind Step 1 survives a malformed checker answer under set -e', () => {
   // Nonempty but unparseable: `jq` exits nonzero inside the helper, and an
   // unguarded command substitution would abort the caller's shell before the
-  // fallback — the branch whose whole job is to answer when the resolver cannot.
+  // fallback — the branch whose whole job is to answer when the checker cannot.
   const seen = runStep1(
     (repo, git) => {
-      staleMirror(repo, git);
-      fakeResolver(repo, 'process.stdout.write("{not json at all");\n');
+      dirtyTree(repo, git);
+      fakeChecker(repo, 'process.stdout.write("{not json at all");\n');
     },
     { shellPrelude: 'set -e\n' },
   );
@@ -692,41 +759,30 @@ test('remind Step 1 survives a malformed resolver answer under set -e', () => {
 
 // Default bash 5 does not carry errexit into a command substitution; `shopt -s
 // inherit_errexit` and `--posix` do. A guard that only holds in the first mode is
-// not a guard, so the corrupt-state case runs in both.
+// not a guard, so the corrupt-slot case runs in both.
 for (const [mode, prelude] of [['set -e', 'set -e\n'], ['set -e + inherit_errexit', 'set -e\nshopt -s inherit_errexit\n']]) {
-  test(`remind Step 1 is inert to a corrupt state file under ${mode}`, () => {
+  test(`remind Step 1 is inert to a corrupt state slot under ${mode}`, () => {
     const seen = runStep1(
-      (repo, git) => {
+      (repo, git, rootDir) => {
         // Clean tree, so nothing else can be the reason the run survives.
         commitBase(repo, git);
-        writeFileSync(resolve(repo, '.claude_review_state.json'), '{"precommit": {"passed": tru');
+        installChecker(repo);
+        noteGate(repo, rootDir, 'precommit', 'pass');
+        // Tear the slot mid-write, the way a concurrent producer would. The
+        // checker decodes it as not-noted; nothing here parses it at all.
+        const stateRoot = resolve(rootDir, 'home', '.cache', 'sd0x-dev-flow', 'state');
+        const keys = readdirSync(stateRoot);
+        assert.equal(keys.length, 1, 'exactly one repo key expected under the harness HOME');
+        writeFileSync(resolve(stateRoot, keys[0], 'precommit.json'), '{"verdict": "pa');
       },
       { shellPrelude: prelude },
     );
 
-    assert.equal(seen.precommit, 'false', 'an unparseable verdict is no verdict');
-    assert.equal(seen.stateFile, 'true', 'the file exists — detection 5 reads that, and nothing else reads further');
-    assert.equal(seen.fnLeft, '', 'a file the step never parses cannot abort it: cleanup still ran');
+    assert.equal(seen.precommit, 'false', 'an undecodable slot is no verdict');
+    assert.equal(seen.hasCode, 'false', 'the checker still answered — a torn slot degrades that slot, not the run');
+    assert.equal(seen.fnLeft, '', 'a slot the step never parses cannot abort it: cleanup still ran');
   });
 }
-
-test('remind Step 1 outside a repository still reads the state file beside it', () => {
-  // ROOT falls back to $PWD when `rev-parse --show-toplevel` refuses. Without that
-  // fallback ROOT is empty and every anchored path becomes absolute from the
-  // filesystem root — `/.claude_review_state.json` — so a run outside a repository
-  // loses the verdicts sitting right next to it and re-reports settled gates.
-  const seen = runStep1((repo, git) => {
-    commitBase(repo, git);
-    rmSync(resolve(repo, '.git'), { recursive: true, force: true });
-    writeFileSync(resolve(repo, '.claude_review_state.json'), JSON.stringify({
-      code_review: { passed: true }, precommit: { passed: true },
-    }));
-  });
-
-  assert.equal(seen.stateFile, 'true', 'the state file beside the CWD is the one this run is about');
-  assert.equal(seen.hasCode, 'true', 'the tree itself is unprovable, so both planes stay owed');
-  assert.equal(seen.codeReview, 'false', 'and an unprovable tree cannot be closed by an unbound verdict');
-});
 
 test('remind Step 1 on a clean tree opens neither plane', () => {
   // Negative control for every classification case above: without it they would
@@ -744,11 +800,10 @@ test('remind Step 1 treats a chatty-but-successful git as a dirty plane, never a
   // (`2>&1`), so the warning reads as output and both planes are owed. That is the
   // fail-closed direction and the point of the test: the alternative reading of a
   // successful-but-noisy git is "clean tree", which would hide unreviewed work.
-  const realGit = execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
   const seen = runStep1((repo, git, rootDir) => {
     commitBase(repo, git);
     const shim = resolve(rootDir, 'bin/git');
-    writeFileSync(shim, `#!/bin/sh\nprintf '%s\\n' "warning: stale index extension, ignoring" >&2\nexec ${realGit} "$@"\n`);
+    writeFileSync(shim, `#!/bin/sh\nprintf '%s\\n' "warning: stale index extension, ignoring" >&2\nexec ${REAL_GIT} "$@"\n`);
     execFileSync('chmod', ['+x', shim]);
   });
 
@@ -756,8 +811,8 @@ test('remind Step 1 treats a chatty-but-successful git as a dirty plane, never a
   assert.equal(seen.hasDoc, 'true', 'both planes are owed when the answer cannot be trusted to be empty');
 });
 
-test('remind Step 1 without the resolver owes BOTH planes for a doc-only change', () => {
-  // The degraded path does not classify — only the resolver does, by full-path
+test('remind Step 1 without the checker owes BOTH planes for a doc-only change', () => {
+  // The degraded path does not classify — only the checker does, by full-path
   // suffix over the whole repository. An untracked file also proves `-uall` is
   // load-bearing: with untracked files suppressed this tree reads as clean.
   const seen = runStep1((repo, git) => {
@@ -769,7 +824,7 @@ test('remind Step 1 without the resolver owes BOTH planes for a doc-only change'
   assert.equal(seen.hasCode, 'true', 'the degraded path over-reminds rather than guessing a plane');
 });
 
-test('remind Step 1 without the resolver is not fooled by a directory whose name ends in .md', () => {
+test('remind Step 1 without the checker is not fooled by a directory whose name ends in .md', () => {
   // A pathspec-based classifier reads `notes.md/app.js` by the pattern that matched,
   // not by the leaf suffix. The whole-tree probe has no pattern to be fooled by, and
   // this case pins that it stays that way.
@@ -804,7 +859,7 @@ test('remind Step 1 run from a subdirectory still sees a change at the repositor
   assert.equal(seen.hasCode, 'true', 'and it is never reported as a code-only change');
 });
 
-test('remind Step 1 without the resolver reports BOTH planes for a cross-plane rename', () => {
+test('remind Step 1 without the checker reports BOTH planes for a cross-plane rename', () => {
   // A staged rename whose two sides sit on different planes — the case a per-plane
   // classifier had to get right in two places at once, and the one the whole-tree
   // probe answers without looking at either side.
@@ -819,7 +874,7 @@ test('remind Step 1 without the resolver reports BOTH planes for a cross-plane r
   assert.equal(seen.hasDoc, 'true', 'the deleted .md side owes the doc plane');
 });
 
-test('remind Step 1 without the resolver classifies a path containing quotes and spaces', () => {
+test('remind Step 1 without the checker classifies a path containing quotes and spaces', () => {
   const seen = runStep1((repo, git) => {
     commitBase(repo, git);
     writeFileSync(resolve(repo, 'odd "release" notes.md'), '# Notes\n');
@@ -829,24 +884,26 @@ test('remind Step 1 without the resolver classifies a path containing quotes and
   assert.equal(seen.hasCode, 'true', 'the degraded path owes both planes');
 });
 
-test('remind Step 1 executable lines never read the state file for anything but its existence', () => {
-  // Arrange: strip comments so an explanatory mention of a field cannot satisfy —
-  // or trip — this guard.
+test('remind Step 1 executable lines reach the state only through the checker', () => {
+  // Arrange: strip comments so an explanatory mention of a path or field cannot
+  // satisfy — or trip — this guard.
   const code = step1Block().split('\n').filter((l) => !/^\s*#/.test(l)).join('\n');
 
-  // Assert (negative): the retired change flags are gone, and so is every read of a
-  // verdict — round 18 removed the last one, because no local check can bind a
-  // stored verdict to the tree in front of it.
-  assert.ok(!/\$STATE\b/.test(code), 'the state file contents are read into a variable again');
-  assert.ok(!/(code_review|doc_review|precommit)\.passed/.test(code), 'a verdict is still parsed out of the mirror');
-  assert.ok(!/\bcat\b[^\n]*STATE_FILE|\$\(<\s*"?\$STATE_FILE/.test(code), 'the state file contents are still being read');
-  assert.ok(!/STATE_FILE[^\n]*\bjq\b|\bjq\b[^\n]*STATE_FILE/.test(code), 'the mirror is being parsed again');
+  // Assert (negative): the slot is never located or parsed by hand. Its directory
+  // is keyed by a non-contractual hash, so any line that reconstructs the path or
+  // reads a slot file is reading state the contract says only the checker binds.
+  assert.ok(!/\.cache\/sd0x-dev-flow|sd0x-dev-flow\/state/.test(code), 'the state directory is being located by hand — its key is non-contractual');
+  assert.ok(!/sha256|createHash|shasum/.test(code), 'the repo key is being re-derived — it is non-contractual by design');
+  assert.ok(!/(code_review|doc_review|precommit)\.json/.test(code), 'a slot file is read directly instead of through the checker');
+  assert.ok(!/\.claude_review_state\.json/.test(code), 'the retired repo-local state file is back');
 
-  // Assert (positive control): the path is still built and its existence still
-  // tested, so the guards above cannot pass by deleting the state file entirely —
-  // the resolver is handed that path, and detection 5 reads that boolean.
-  assert.match(code, /STATE_FILE="\$ROOT\/\.claude_review_state\.json"/, 'the state-file path is still resolved for the resolver');
-  assert.match(code, /STATE_FILE_EXISTS=.*test -f "\$STATE_FILE"/, 'and its existence is still detection 5\'s input');
+  // Assert (positive control): the checker is still resolved (installed copy
+  // first) and still invoked from the repository root — the guards above cannot
+  // pass by deleting the state read entirely.
+  assert.match(code, /CHECKER="\$ROOT\/\.claude\/scripts\/review-state\.js"/, 'the installed checker path is resolved first');
+  assert.match(code, /\[ -f "\$CHECKER" \] \|\| CHECKER="\$ROOT\/scripts\/review-state\.js"/, 'with the repo copy as the fallback');
+  assert.match(code, /check --format=json/, 'and asked for the JSON rendering Step 1 parses');
+  assert.match(code, /cd "\$ROOT" &&/, 'from the repository root, so the checker answers about the anchored tree');
 });
 
 // The three surfaces that publish the detection set: the skill the model executes,
@@ -859,15 +916,15 @@ test('remind Step 1 executable lines never read the state file for anything but 
 const LIVE_DETECTIONS = [
   {
     label: /code[- ](changed|no)/i, id: 'code-no-review', conjunction: true,
-    condition: [/has_code\w*\s*=\s*true/i, /code_review\w*\s*=\s*false/i],
+    condition: [/has_code\s*=\s*true/i, /code_review\s*=\s*false/i],
   },
   {
     label: /doc[- ](changed|no)/i, id: 'doc-no-review', conjunction: true,
-    condition: [/has_doc\w*\s*=\s*true/i, /doc_review\w*\s*=\s*false/i],
+    condition: [/has_doc\s*=\s*true/i, /doc_review\s*=\s*false/i],
   },
   {
     label: /precommit/i, id: 'review-no-precommit', conjunction: true,
-    condition: [/code_review\w*\s*=\s*true/i, /precommit\w*\s*=\s*false/i],
+    condition: [/code_review\s*=\s*true/i, /precommit\s*=\s*false/i],
   },
   {
     // The one row whose polarity is an equality rather than a `=true`/`=false`: the
@@ -877,48 +934,53 @@ const LIVE_DETECTIONS = [
     condition: [/branch/i, /(is|=)\s*`?main`?\s*(or|\/)\s*`?master`?/i],
   },
   {
-    label: /dirty/i, id: 'dirty-no-state', conjunction: true,
-    condition: [/dirty/i, /no state file|state_file_exists\s*=\s*false/i],
+    // Row 5's `or` is a genuine disjunction over the two planes — the finding is
+    // aggregated, firing once and naming every never-noted dirty plane — while
+    // each side stays a conjunction of its two facts.
+    label: /dirty|never[- ]noted/i, id: 'dirty-never-noted', conjunction: true, disjunction: true,
+    condition: [/has_code\s*=\s*true/i, /code_noted\s*=\s*false/i, /has_doc\s*=\s*true/i, /doc_noted\s*=\s*false/i],
   },
 ];
 
-// The retired detection is recognizable by its condition, not only by its name. Any
-// row saying the stored state "says changes" has resurrected it, whatever it is
-// called and whichever position it occupies.
-const RETIRED_CONDITIONS = [/says? changes/i, /state[- ]drift/i, /mirror.{0,3}tree/i];
+// The retired detections are recognizable by their conditions, not only by their
+// names. Any row saying the stored state "says changes" has resurrected state-drift,
+// and any row keyed on a repo-local state file's existence has resurrected
+// dirty-no-state — whatever either is called and whichever position it occupies.
+const RETIRED_CONDITIONS = [/says? changes/i, /state[- ]drift/i, /mirror/i, /no state file/i, /state_file_exists/i];
 
 // A detection states when it fires. Every live condition is written in the positive,
 // and a negation inside one inverts what the model looks for while every field name
 // the row mentions stays put — the failure a token-presence pin cannot see.
 const NEGATED_CONDITION = /\b(not|never|unless|isn'?t|aren'?t)\b|≠|!==?/i;
 
-// Four of the five rows fire on two facts holding *together*. Naming both facts is
-// not enough: "`HAS_CODE=true` or `CODE_REVIEW=false`" mentions the same two and
-// fires on a reviewed tree with an unreviewed sibling plane, or on nothing at all.
-// Row 4 is the exception — its `main` **or** `master` is a genuine disjunction over
-// one fact — so the pin is per-row, not global.
+// Rows 1-3 fire on two facts holding *together*; row 5 on either plane's pair.
+// Naming the facts is not enough: "`HAS_CODE=true` or `CODE_REVIEW=false`" mentions
+// the same two and fires on a reviewed tree with an unreviewed sibling plane, or on
+// nothing at all. Row 4's `main` **or** `master` is a genuine disjunction over one
+// fact, and row 5's `or` spans its two plane-pairs — so the pin is per-row.
 const CONJUNCTION = /\+|\band\b/i;
 const DISJUNCTION = /\bor\b|\|\|/i;
 
-// Each surface names the same facts in its own vocabulary — SKILL.md uses the shell
-// variables the block sets, the other two use the resolver's field names — so the
-// expected set is per surface. It is an EXACT set: a row that adds a fact is as
-// wrong as one that drops it, and `HAS_CODE=true + CODE_REVIEW=false + PRECOMMIT=true`
-// (which asks for a review only after precommit already passed) satisfies every
-// presence, polarity and conjunction pin while inverting when the row fires.
-const SKILL_FACTS = [
+// All three surfaces now speak the same vocabulary — the shell variables Step 1
+// sets from the checker's per-plane booleans. It is an EXACT set: a row that adds
+// a fact is as wrong as one that drops it, and `HAS_CODE=true + CODE_REVIEW=false
+// + PRECOMMIT=true` (which asks for a review only after precommit already passed)
+// satisfies every presence, polarity and conjunction pin while inverting when the
+// row fires.
+const FACTS = [
   ['has_code=true', 'code_review=false'],
   ['has_doc=true', 'doc_review=false'],
   ['code_review=true', 'precommit=false'],
   [],
-  ['state_file_exists=false'],
+  ['code_noted=false', 'doc_noted=false', 'has_code=true', 'has_doc=true'],
 ];
-const RESOLVER_FACTS = [
-  ['has_code_change=true', 'code_review_passed=false'],
-  ['has_doc_change=true', 'doc_review_passed=false'],
-  ['code_review_passed=true', 'precommit_passed=false'],
-  [],
-  ['state_file_exists=false'],
+
+const IDENTS = [
+  ['code_review', 'has_code'],
+  ['doc_review', 'has_doc'],
+  ['code_review', 'precommit'],
+  ['branch'],
+  ['code_noted', 'doc_noted', 'has_code', 'has_doc'],
 ];
 
 // `rules/auto-loop-project.md` also contains "auto-loop", and it is a different file
@@ -935,14 +997,12 @@ function factsIn(cell) {
 // Equality tokens are not the whole condition. "`HAS_CODE=true` + `CODE_REVIEW=false`
 // + `PRECOMMIT` already passed" adds a third predicate in prose, leaves the extracted
 // pairs untouched, and asks for a code review only once precommit has passed — the
-// owed-review state inverted. So the identifiers a row MENTIONS are compared too,
-// canonicalized across the two vocabularies (`HAS_CODE` and `has_code_change` are the
-// same fact under different names).
-const GATE_IDENTIFIERS = /\b(has_code(_change)?|has_doc(_change)?|code_review(_passed)?|doc_review(_passed)?|precommit(_passed)?|branch|dirty|state_file_exists)\b/gi;
+// owed-review state inverted. So the identifiers a row MENTIONS are compared too.
+const GATE_IDENTIFIERS = /\b(has_code|has_doc|code_review|doc_review|precommit|code_noted|doc_noted|branch|dirty)\b/gi;
 
 function identsIn(cell) {
   return [...new Set(
-    [...cell.matchAll(GATE_IDENTIFIERS)].map((m) => m[0].toLowerCase().replace(/_(change|passed)$/, '')),
+    [...cell.matchAll(GATE_IDENTIFIERS)].map((m) => m[0].toLowerCase()),
   )].sort();
 }
 
@@ -962,14 +1022,12 @@ const DETECTION_SURFACES = [
     path: 'skills/remind/SKILL.md',
     heading: '### Step 2: Detection → Rule Mapping',
     labelCol: 1, conditionCol: 2, actionCol: 3,
-    facts: SKILL_FACTS,
-    idents: [['code_review', 'has_code'], ['doc_review', 'has_doc'], ['code_review', 'precommit'], ['branch'], ['dirty', 'state_file_exists']],
     exact: [
       'HAS_CODE=true + CODE_REVIEW=false',
       'HAS_DOC=true + DOC_REVIEW=false',
       'CODE_REVIEW=true + PRECOMMIT=false',
       'BRANCH is main or master',
-      'DIRTY non-empty + STATE_FILE_EXISTS=false',
+      '(HAS_CODE=true + CODE_NOTED=false) or (HAS_DOC=true + DOC_NOTED=false)',
     ],
     targets: RULE_TARGETS,
   },
@@ -977,14 +1035,12 @@ const DETECTION_SURFACES = [
     path: 'skills/remind/references/detection-rules.md',
     heading: '## Detection → Rule Mapping',
     labelCol: 1, conditionCol: 3, actionCol: 4,
-    facts: RESOLVER_FACTS,
-    idents: [['code_review', 'has_code'], ['doc_review', 'has_doc'], ['code_review', 'precommit'], ['branch'], ['dirty', 'state_file_exists']],
     exact: [
-      'has_code_change=true + code_review_passed=false',
-      'has_doc_change=true + doc_review_passed=false',
-      'code_review_passed=true + precommit_passed=false',
+      'HAS_CODE=true + CODE_REVIEW=false',
+      'HAS_DOC=true + DOC_REVIEW=false',
+      'CODE_REVIEW=true + PRECOMMIT=false',
       "BRANCH (Step 1's fenced git rev-parse --abbrev-ref HEAD) = main or master — a detached HEAD reads HEAD and matches neither",
-      'DIRTY non-empty + STATE_FILE_EXISTS=false',
+      '(HAS_CODE=true + CODE_NOTED=false) or (HAS_DOC=true + DOC_NOTED=false) — **one aggregated finding** naming every such plane',
     ],
     targets: RULE_TARGETS,
   },
@@ -992,16 +1048,12 @@ const DETECTION_SURFACES = [
     path: 'docs/features/remind/2-tech-spec.md',
     heading: '#### Detection Rules',
     labelCol: 1, conditionCol: 3, actionCol: 4,
-    // Row 5 states its second fact in prose ("no state file"), and row 4 has no
-    // boolean fact at all — both are covered by the condition regexes above.
-    facts: [...RESOLVER_FACTS.slice(0, 4), []],
-    idents: [['code_review', 'has_code'], ['doc_review', 'has_doc'], ['code_review', 'precommit'], ['branch'], ['dirty']],
     exact: [
-      'has_code_change=true + code_review_passed=false',
-      'has_doc_change=true + doc_review_passed=false',
-      'code_review_passed=true + precommit_passed=false',
+      'HAS_CODE=true + CODE_REVIEW=false',
+      'HAS_DOC=true + DOC_REVIEW=false',
+      'CODE_REVIEW=true + PRECOMMIT=false',
       'BRANCH = main/master',
-      'DIRTY non-empty + no state file',
+      '(HAS_CODE=true + CODE_NOTED=false) or (HAS_DOC=true + DOC_NOTED=false)',
     ],
     // The correction column, not a rule path: each row's dispatch, anchored so a
     // swapped command cannot hide inside surrounding prose.
@@ -1010,7 +1062,7 @@ const DETECTION_SURFACES = [
 ];
 
 for (const surface of DETECTION_SURFACES) {
-  const { path, heading, labelCol, conditionCol, actionCol, facts, idents, exact, targets } = surface;
+  const { path, heading, labelCol, conditionCol, actionCol, exact, targets } = surface;
 
   test(`${path} publishes exactly the five live detections, by meaning`, () => {
     // Arrange: the numbered rows of THIS file's detection table — scoped to the
@@ -1029,7 +1081,7 @@ for (const surface of DETECTION_SURFACES) {
 
     for (const row of rows) {
       for (const retired of RETIRED_CONDITIONS) {
-        assert.ok(!retired.test(row.join(' ')), `a row of ${path} carries the retired state-drift condition`);
+        assert.ok(!retired.test(row[conditionCol]), `a row of ${path} carries a retired detection condition (${retired})`);
       }
     }
 
@@ -1039,13 +1091,13 @@ for (const surface of DETECTION_SURFACES) {
     // names the rule or correction it dispatches. Token presence alone let a
     // condition be inverted and a correction be swapped while the test stayed green.
     rows.forEach((row, i) => {
-      const { label, condition, conjunction } = LIVE_DETECTIONS[i];
+      const { label, condition, conjunction, disjunction } = LIVE_DETECTIONS[i];
       assert.deepEqual(
-        factsIn(row[conditionCol]), [...facts[i]].sort(),
+        factsIn(row[conditionCol]), [...FACTS[i]].sort(),
         `row ${i + 1} of ${path} fires on a different set of facts than the other surfaces`,
       );
       assert.deepEqual(
-        identsIn(row[conditionCol]), [...idents[i]].sort(),
+        identsIn(row[conditionCol]), [...IDENTS[i]].sort(),
         `row ${i + 1} of ${path} names a gate its condition should not mention`,
       );
       assert.equal(
@@ -1061,11 +1113,13 @@ for (const surface of DETECTION_SURFACES) {
         assert.match(row[conditionCol], c, `row ${i + 1} of ${path} states a different condition`);
       }
       if (conjunction) {
-        assert.match(row[conditionCol], CONJUNCTION, `row ${i + 1} of ${path} no longer joins its two facts`);
-        assert.ok(
-          !DISJUNCTION.test(row[conditionCol]),
-          `row ${i + 1} of ${path} fires on either fact alone, not on both together`,
-        );
+        assert.match(row[conditionCol], CONJUNCTION, `row ${i + 1} of ${path} no longer joins its facts`);
+        if (!disjunction) {
+          assert.ok(
+            !DISJUNCTION.test(row[conditionCol]),
+            `row ${i + 1} of ${path} fires on either fact alone, not on both together`,
+          );
+        }
       }
       const target = targets[i];
       if (typeof target === 'string') {
@@ -1088,7 +1142,7 @@ test('every remind surface that describes a run ends at execution, not at output
 
   // The graph must continue past output, and must NOT redraw the lifecycle: round 22
   // drew the terminal outcomes here and round 23 found the drawing already diverged
-  // from Step 4 (no edge for a lone detection 4 on a run the resolver answered). A
+  // from Step 4 (no edge for a lone detection 4 on a run the checker answered). A
   // diagram of a contract is a copy of the contract, so this one delegates instead.
   const graph = spec.slice(spec.indexOf('flowchart TD'), spec.indexOf('```', spec.indexOf('flowchart TD')));
   // Anchored as a whole line: mermaid chains links, so
@@ -1154,21 +1208,21 @@ test('remind detection IDs are published once, in the reference surface', () => 
   // Doc round 6 counted the surfaces that assign a terminal outcome and found this one
   // the only one not closed: SKILL.md's Step 2 and Graceful Degradation tables and the
   // spec's degraded paragraph and output row are each exact-pinned, while the reference
-  // carried its own \u201cends at Degraded\u201d cell with only its detection IDs pinned. Round 31
-  // then showed a prefix filter is not a table pin \u2014 a row keyed on anything but `Tree `
+  // carried its own “ends at Degraded” cell with only its detection IDs pinned. Round 31
+  // then showed a prefix filter is not a table pin — a row keyed on anything but `Tree `
   // was simply not selected, so a contradicting row could be added beside the pinned two.
   // The table is sliced at its own boundaries and every data row is compared in order.
   const DEGRADED_TABLE_EXACT = [
     [
-      "| Tree provably clean | All `false` | No **gate** row \u2014 no change flag, no verdict, no ",
-      "`DIRTY` |",
+      '| Tree provably clean | All `false` | No **gate** row — no change flag, no verdict, no ',
+      'noted flag |',
     ].join(''),
     [
-      "| Tree dirty or unverifiable | All `false` | Rows 1 and 2 (plus row 5 with no state file); ",
-      "**row 3 cannot**, its trigger being `code_review_passed=true` |",
+      '| Tree dirty or unverifiable | All `false` | Rows 1 and 2; **rows 3 and 5 cannot** — 3 ',
+      'triggers on `code_review.passed=true`, 5 on a noted flag, and the degraded path has neither |',
     ].join(''),
   ];
-  const degradedRows = tableRows(detection, '| Degraded run | The three verdicts | What can fire |');
+  const degradedRows = tableRows(detection, '| Degraded run | Verdicts and noted flags | What can fire |');
 
   // Doc round 8: moving detection 4's independence above the table moved its terminal
   // outcome OUT of the table pin, and the cross-surface loop below deliberately exempts
@@ -1177,22 +1231,22 @@ test('remind detection IDs are published once, in the reference surface', () => 
   // so it gets the same remedy: compared whole, not searched for a phrase.
   const ROW4_PARA_EXACT = [
     "**Detection 4 sits outside this table's reasoning, and row 4 still can fire on either row ",
-    "below.** That is because detection 4 reads `BRANCH`, not the resolver and not the tree, so a ",
-    "dirty degraded run on `main` fires it exactly as a clean one does. It names no correction ",
-    "Skill, so a run where it is the only detection reaches the end with no invocation, and ",
-    "`skills/remind/SKILL.md` \u00a7 Step 4 names the outcome that terminates it. The rows below are ",
-    "about **gate** rows only.",
+    'below.** That is because detection 4 reads `BRANCH`, not the checker and not the tree, so a ',
+    'dirty degraded run on `main` fires it exactly as a clean one does. It names no correction ',
+    'Skill, so a run where it is the only detection reaches the end with no invocation, and ',
+    '`skills/remind/SKILL.md` § Step 4 names the outcome that terminates it. The rows below are ',
+    'about **gate** rows only.',
   ].join('');
   const row4At = detection.indexOf('**Detection 4 sits outside');
   assert.notEqual(row4At, -1, 'the reference no longer opens its detection-4 paragraph with the pinned lead-in');
   assert.equal(
     detection.slice(row4At).split('\n\n')[0].replace(/\s+/g, ' ').trim(), ROW4_PARA_EXACT,
-    'the detection-4 paragraph changed \u2014 re-derive ROW4_PARA_EXACT and check row 4 is still '
-      + 'independent of the resolver and the tree, and still defers the outcome to \u00a7 Step 4',
+    'the detection-4 paragraph changed — re-derive ROW4_PARA_EXACT and check row 4 is still '
+      + 'independent of the checker and the tree, and still defers the outcome to § Step 4',
   );
   assert.deepEqual(
     degradedRows, DEGRADED_TABLE_EXACT,
-    'the reference degraded table changed \u2014 re-derive DEGRADED_TABLE_EXACT and check it still agrees with \u00a7 Step 4',
+    'the reference degraded table changed — re-derive DEGRADED_TABLE_EXACT and check it still agrees with § Step 4',
   );
 });
 
@@ -1218,11 +1272,7 @@ test('the terminal outcome tokens exist only where the contract defines them', (
   const spec = readFileSync(resolve(root, 'docs/features/remind/2-tech-spec.md'), 'utf8');
 
   // Two spans, and each licenses the token only because it is independently compared
-  // whole: § Step 4 by STEP4_EXACT, § 3.4 by SECTION_34_EXACT. There was briefly a
-  // third — the tree-probe rationale in § 3.3's implementation table, which recorded
-  // that a bug once "minted All Clear". It defines no outcome, so the sentence was
-  // reworded to "minted a false clearance" and the licence dropped rather than
-  // documented (round 34 / doc 10).
+  // whole: § Step 4 by STEP4_EXACT, § 3.4 by SECTION_34_EXACT.
   // Only the opening delimiter is asserted unique; that is what fixes which span the
   // slice starts at, and the closing one is the heading the exact comparison ends at.
   const spanOf = (body, label, from, to) => {
@@ -1249,25 +1299,22 @@ test('the terminal outcome tokens exist only where the contract defines them', (
     }
   }
 
-  // The mirror-authority refusal is the one that matters most, because a document
-  // telling a model the mirror may close a gate defeats the whole point of content
-  // addressing. Round 34 got past the first version of it with "treat advisory-mirror
-  // PASS entries as authoritative", so a second and third spelling were added. They are
-  // still spelling guards, not a decision procedure over the claim: they miss forms these
-  // three patterns do not name ("use mirror PASS records to close the review gate") and
-  // they would fire on a negated one ("the mirror is not authoritative for gate closure"),
-  // which is why enumerating further synonyms is not the fix — that is the arms race the
-  // confinement design above exists to leave.
+  // The stored-verdict refusal is the one that matters most, because a document
+  // telling a model a stored slot may close a gate defeats the whole point of the
+  // digest binding. These are spelling guards, not a decision procedure over the
+  // claim: they miss forms the patterns do not name and would fire on a negated
+  // one, which is why enumerating further synonyms is not the fix — that is the
+  // arms race the confinement design above exists to leave.
   for (const [label, body] of [['the spec', spec], ['the reference', detection], ['SKILL.md', skill]]) {
     for (const claim of [
       /stored (PASS|verdict)[^.\n]{0,80}(remain|are|is|stays?) (eligible|read|used)/i,
-      /(mirror|stored)[^.\n]{0,60}(authoritative|sufficient|enough)[^.\n]{0,60}(closure|closing|gate|review|precommit)/i,
-      /treat[^.\n]{0,40}(mirror|stored)[^.\n]{0,60}as (authoritative|current|valid|binding)/i,
+      /(slot|stored)[^.\n]{0,60}(authoritative|sufficient|enough)[^.\n]{0,60}(closure|closing|gate|review|precommit)/i,
+      /treat[^.\n]{0,40}(slot|stored)[^.\n]{0,60}as (authoritative|current|valid|binding)/i,
     ]) {
       assert.ok(
         !claim.test(body),
-        `${label} lets a stored or mirrored verdict close a gate (matched ${claim}); `
-          + 'the mirror records that a gate passed, never which tree passed it',
+        `${label} lets a stored verdict close a gate (matched ${claim}); `
+          + 'a slot records that a gate was noted, never which tree earned it',
       );
     }
   }
@@ -1331,39 +1378,39 @@ test('remind SKILL.md cannot be satisfied by printing a correction without runni
   // Editing Step 4 means editing this constant; that cost is the point, because this
   // is the section three review rounds have found a defect in.
 const STEP4_EXACT = [
-  "### Step 4: Execute the correction — in the same reply The output above is the traceability ",
-  "record, not the deliverable. Immediately after printing it, invoke the correction through ",
-  "the Skill tool (`Skill: /codex-review-fast`) and report what it returned. A findings table ",
-  "followed by a stop is the exact failure this skill exists to correct — see § Execution ",
-  "Contract, which this step is the operational half of. **Every owed correction, not the first ",
-  "one.** Two rows can fire at once — a degraded dirty tree owes both `/codex-review-fast` and ",
-  "`/codex-review-doc` — and stopping after one leaves the other plane open, which is the same ",
-  "defect in a smaller shape. Run them one at a time and **re-read Step 1 after each**: a ",
-  "review that edits files moves the tree, so the remaining plan computed before it may no ",
-  "longer be the right one. **Detection 4 is advisory and has no correction Skill.** Being on ",
-  "`main` is corrected by creating a branch, and `@rules/git-workflow.md` does not authorize ",
-  "this skill to run `git checkout`/`switch` — nor is there a branch name to choose. State the ",
-  "finding and the command the human can run; that is the whole of it. If detection 4 is the ",
-  "*only* finding, this step ends without an invocation. **A degraded run terminates too, and ",
-  "not by claiming All Clear.** Without the resolver there is no verdict, so re-reading Step 1 ",
-  "after a correction returns the *same* rows it returned before — `/codex-review-fast` cannot ",
-  "make `CODE_REVIEW` true when nothing can read a verdict. **Degradation dominates the ",
-  "terminal status**: whenever `ADV_OK` is false the reply ends at `### Degraded ⚠️`, whether ",
-  "or not detection 4 also fired and whether or not a correction ran. Two rules keep that from ",
-  "becoming a loop or a false clearance: | Degraded run | What terminates it | ",
-  "|--------------|--------------------| | An executable correction fired | Invoke **each ",
-  "distinct correction at most once**. When the re-read returns rows already corrected in this ",
-  "reply and the resolver is still unavailable, stop and report `### Degraded ⚠️` — the ",
-  "corrections ran, closure is unverifiable until the resolver answers | | No executable ",
-  "correction fired | Report `### Degraded ⚠️` as well, naming the resolver as the missing ",
-  "input. **Not `### All Clear ✅`**, and **not the lone-detection-4 exception either**: ",
-  "detection 4 fires on a degraded clean run on `main` and names no Skill, so that run reaches ",
-  "the end with no invocation and must still not claim a clearance nothing verified | So the ",
-  "complete list of outcomes that end this step without an invocation is **three**: `### All ",
-  "Clear ✅` (the resolver answered and nothing is owed), a lone detection 4 on a run the ",
-  "resolver answered, and `### Degraded ⚠️` where no executable correction fired. A degraded ",
-  "run that *did* invoke corrections ends at `### Degraded ⚠️` too — that one is a termination, ",
-  "not an exception.",
+  '### Step 4: Execute the correction — in the same reply The output above is the traceability ',
+  'record, not the deliverable. Immediately after printing it, invoke the correction through ',
+  'the Skill tool (`Skill: /codex-review-fast`) and report what it returned. A findings table ',
+  'followed by a stop is the exact failure this skill exists to correct — see § Execution ',
+  'Contract, which this step is the operational half of. **Every owed correction, not the first ',
+  'one.** Two rows can fire at once — a degraded dirty tree owes both `/codex-review-fast` and ',
+  '`/codex-review-doc` — and stopping after one leaves the other plane open, which is the same ',
+  'defect in a smaller shape. Run them one at a time and **re-read Step 1 after each**: a ',
+  'review that edits files moves the tree, so the remaining plan computed before it may no ',
+  'longer be the right one. **Detection 4 is advisory and has no correction Skill.** Being on ',
+  '`main` is corrected by creating a branch, and `@rules/git-workflow.md` does not authorize ',
+  'this skill to run `git checkout`/`switch` — nor is there a branch name to choose. State the ',
+  'finding and the command the human can run; that is the whole of it. If detection 4 is the ',
+  '*only* finding, this step ends without an invocation. **A degraded run terminates too, and ',
+  'not by claiming All Clear.** Without the checker there is no verdict, so re-reading Step 1 ',
+  'after a correction returns the *same* rows it returned before — `/codex-review-fast` cannot ',
+  'make `CODE_REVIEW` true when nothing can read a verdict. **Degradation dominates the ',
+  'terminal status**: whenever `ADV_OK` is false the reply ends at `### Degraded ⚠️`, whether ',
+  'or not detection 4 also fired and whether or not a correction ran. Two rules keep that from ',
+  'becoming a loop or a false clearance: | Degraded run | What terminates it | ',
+  '|--------------|--------------------| | An executable correction fired | Invoke **each ',
+  'distinct correction at most once**. When the re-read returns rows already corrected in this ',
+  'reply and the checker is still unavailable, stop and report `### Degraded ⚠️` — the ',
+  'corrections ran, closure is unverifiable until the checker answers | | No executable ',
+  'correction fired | Report `### Degraded ⚠️` as well, naming the checker as the missing ',
+  'input. **Not `### All Clear ✅`**, and **not the lone-detection-4 exception either**: ',
+  'detection 4 fires on a degraded clean run on `main` and names no Skill, so that run reaches ',
+  'the end with no invocation and must still not claim a clearance nothing verified | So the ',
+  'complete list of outcomes that end this step without an invocation is **three**: `### All ',
+  'Clear ✅` (the checker answered and nothing is owed), a lone detection 4 on a run the ',
+  'checker answered, and `### Degraded ⚠️` where no executable correction fired. A degraded ',
+  'run that *did* invoke corrections ends at `### Degraded ⚠️` too — that one is a ',
+  'termination, not an exception.',
 ].join('');
   assert.equal(
     flat.trim(), STEP4_EXACT,
@@ -1376,11 +1423,11 @@ const STEP4_EXACT = [
   // why the enumeration was removed from it entirely: what is pinned below is the
   // deferral that replaced the copy, and the one clause § Step 4 does not carry.
   const CRITICAL_EXACT = [
-    "**There are exactly three exceptions, and \u00a7 Step 4 defines them.** They are not ",
-    "enumerated here: this file already learned that a second copy of the lifecycle diverges ",
-    "from the first within a round, so the copies were removed rather than kept in sync. What ",
-    "belongs here is the part \u00a7 Step 4 does not carry \u2014 every executable owed correction is ",
-    "invoked, and \"owed\" is plural: two findings means two invocations.",
+    '**There are exactly three exceptions, and § Step 4 defines them.** They are not ',
+    'enumerated here: this file already learned that a second copy of the lifecycle diverges ',
+    'from the first within a round, so the copies were removed rather than kept in sync. What ',
+    'belongs here is the part § Step 4 does not carry — every executable owed correction is ',
+    'invoked, and "owed" is plural: two findings means two invocations.',
   ].join('');
   // Two more surfaces state the same contract further down the file, and round 21
   // showed each can be inverted alone: the Execution Contract's item 1 ("corrections
@@ -1388,22 +1435,22 @@ const STEP4_EXACT = [
   // plane"). Both kept every file-wide regex green while contradicting the blocks
   // above, so both are pinned as normalized closed clauses too.
   // Step 2's degraded table is the last surface that still states a terminal outcome
-  // in its own words, and round 22 inverted it alone — "Only row 1 fires" — with all 65
+  // in its own words, and round 22 inverted it alone — "Only row 1 fires" — with all
   // tests green. It is small and normative, so it is pinned; the checklist, being pure
   // restatement, was deleted instead. The correct-flow block was pinned here for the
   // same reason until doc round 5, which removed its terminal lines: it now defers to
   // § Step 4, so CORRECT_FLOW_EXACT pins a deferral rather than a copy.
   const STEP2_DEGRADED_EXACT = [
     [
-      "| Tree provably clean | All three `false` \u2014 no source for them | No **gate** row: rows ",
-      "1 and 2 need a change flag, row 3 needs `CODE_REVIEW=true`, row 5 needs `DIRTY`. Row 4 ",
-      "is unaffected \u2014 it reads `BRANCH`, not the resolver, so a degraded clean run on `main` ",
-      "still reports it, and the run still terminates under \u00a7 Step 4 |",
+      '| Tree provably clean | All three `false` — no source for them | No **gate** row: rows 1 ',
+      'and 2 need a change flag, row 3 needs `CODE_REVIEW=true`, row 5 needs a noted flag this ',
+      'path does not have. Row 4 is unaffected — it reads `BRANCH`, not the checker, so a ',
+      'degraded clean run on `main` still reports it, and the run still terminates under § Step 4 |',
     ].join(''),
     [
-      "| Tree dirty or unverifiable | All three `false` \u2014 no source for them | Rows 1 and 2 ",
-      "both fire; row 5 too when no state file exists. Row 3 cannot, because `CODE_REVIEW` is ",
-      "`false` |",
+      '| Tree dirty or unverifiable | All three `false` — no source for them | Rows 1 and 2 both ',
+      'fire. Rows 3 and 5 cannot: 3 triggers on `CODE_REVIEW=true`, 5 on a noted flag, and the ',
+      'degraded path has neither |',
     ].join(''),
   ];
   const step2Rows = tableRows(skill, '| Degraded run | Verdicts | What fires |');
@@ -1413,9 +1460,9 @@ const STEP4_EXACT = [
   );
 
   const CORRECT_FLOW_EXACT = [
-    "/remind \u2192 detect doc-no-review \u2192 output findings table \u2192 invoke Skill(/codex-review-doc) \u2192 report result",
-    "/remind \u2192 detect code-no-review \u2192 output findings table \u2192 invoke Skill(/codex-review-fast) \u2192 report result",
-    "/remind \u2192 nothing to invoke \u2192 the outcome that terminates the run is \u00a7 Step 4's to name",
+    '/remind → detect doc-no-review → output findings table → invoke Skill(/codex-review-doc) → report result',
+    '/remind → detect code-no-review → output findings table → invoke Skill(/codex-review-fast) → report result',
+    "/remind → nothing to invoke → the outcome that terminates the run is § Step 4's to name",
   ];
   assert.deepEqual(
     skill.slice(skill.indexOf('**Correct flow**:')).split('```')[1].trim().split('\n').map((l) => l.trim()),
@@ -1424,11 +1471,11 @@ const STEP4_EXACT = [
   );
 
   const EC_ITEM1_EXACT = [
-    "1. **Invoke the correction Skill for every executable owed finding, immediately** in the ",
-    "same reply \u2014 do not ask for permission, do not output a summary and stop. Two findings ",
-    "means two invocations, Step 1 re-read between them. Which runs end without an ",
-    "invocation, and how a degraded run terminates, are \u00a7 Step 4's to state \u2014 there are three ",
-    "exceptions and this list is not a fourth copy of them",
+    '1. **Invoke the correction Skill for every executable owed finding, immediately** in the ',
+    'same reply — do not ask for permission, do not output a summary and stop. Two findings ',
+    'means two invocations, Step 1 re-read between them. Which runs end without an ',
+    "invocation, and how a degraded run terminates, are § Step 4's to state — there are three ",
+    'exceptions and this list is not a fourth copy of them',
   ].join('');
   const ecItem1 = skill.slice(skill.indexOf('1. **Invoke the correction Skill')).split('\n2. **Re-read')[0];
   assert.equal(
@@ -1438,41 +1485,39 @@ const STEP4_EXACT = [
 
   const GD_ROWS_EXACT = [
     [
-      "| jq unavailable | The resolver's answer cannot be parsed, so the run degrades to the two rows ",
-      "below \u2014 fail-closed, never silently clean |",
+      "| jq unavailable | The checker's answer cannot be parsed, so the run degrades to the rows ",
+      'below — fail-closed, never silently clean |',
     ].join(''),
     [
-      "| Resolver unavailable, tree provably clean | Change flags read `false`, verdicts read `false` ",
-      "(the mirror is never read \u2014 a clean tree does not bind a stored verdict to itself), so no gate ",
-      "row fires; detection 4 still can, reading `BRANCH`. The run terminates under \u00a7 Step 4, ",
-      "which refuses a clearance for a run that verified nothing |",
+      '| Checker unavailable, tree provably clean | Change flags read `false`, verdicts and noted ',
+      'flags read `false` (the state slot is never read directly — a clean tree does not bind a ',
+      'stored verdict to itself), so no gate row fires; detection 4 still can, reading `BRANCH`. ',
+      'The run terminates under § Step 4, which refuses a clearance for a run that verified nothing |',
     ].join(''),
     [
-      "| Resolver answered from anything but a derived read (`treeState` other than `ok`, or a ",
-      "`mirror_planes` that is not an **empty array** \u2014 a non-empty array, a missing field, `null`, ",
-      "`\"\"` and `{}` are all rejected, since jq gives the last two length zero) | Rejected exactly ",
-      "like no answer at all \u2014 it carries the stored verdicts this step refuses to read directly. The ",
-      "rows below apply |",
+      '| Checker answered with a malformed or partial object (a plane missing, a field ',
+      'non-boolean) | Rejected exactly like no answer at all — all seven fields or none. The rows ',
+      'below apply |',
     ].join(''),
     [
-      "| Resolver unavailable, tree dirty or unverifiable | **Both** planes open and all three ",
-      "verdicts read `false`. Rows 1 and 2 fire, row 5 when no state file exists; **row 3 cannot ",
-      "fire** \u2014 its trigger is `CODE_REVIEW=true`. Disclose the shared cause once |",
+      '| Checker unavailable, tree dirty or unverifiable | **Both** planes open; verdicts and ',
+      'noted flags all read `false`. Rows 1 and 2 fire; **rows 3 and 5 cannot** — 3 triggers on ',
+      '`CODE_REVIEW=true` and 5 on a noted flag, and the degraded path has neither. Disclose the ',
+      'shared cause once |',
     ].join(''),
     [
-      "| State file missing | Not a degradation: the resolver derives from tree content and ",
-      "content-addressed receipts, so gates can still close. It only sets `STATE_FILE_EXISTS=false`, ",
-      "which is detection 5's input |",
+      '| State slot missing | Not a degradation: the checker answers `noted:false` for that ',
+      "plane, which is exactly detection 5's input — a dirty plane that was never noted |",
     ].join(''),
-    "| Rule file not found | List available rules via `Glob(\"rules/*.md\")` |",
+    '| Rule file not found | List available rules via `Glob("rules/*.md")` |',
   ];
   const gdRows = tableRows(skill, '| Failure | Behavior |');
   assert.deepEqual(
     gdRows, GD_ROWS_EXACT,
-    'the Graceful Degradation resolver rows changed — re-derive GD_ROWS_EXACT and check both planes still open',
+    'the Graceful Degradation checker rows changed — re-derive GD_ROWS_EXACT and check both planes still open',
   );
 
-  // Doc review round 5: the resolver comment claimed the ladder bounds the call the
+  // Doc review round 5: the checker comment claimed the ladder bounds the call the
   // way the advisory hooks bound theirs. The last rung runs node with no bounding tool
   // at all, so on a host without timeout/gtimeout/perl nothing is bounded — and the
   // git probe never was. The comment is what a reader trusts before reading the shell.
@@ -1481,15 +1526,15 @@ const STEP4_EXACT = [
   // a sentence that carries its own negation. So the whole comment block is closed and
   // compared, the way the spec rows are — nothing can be appended to it unnoticed.
   const BOUND_COMMENT_EXACT = [
-    "# Bounded like the advisory hooks *when a bounding tool exists*: the derivation ",
-    "# hashes dirty and untracked content, which is unbounded on a pathological tree, ",
-    "# and /remind runs interactively. A kill lands in the fallback below. With none of ",
-    "# timeout/gtimeout/perl present the last branch runs node unbounded \u2014 the ladder ",
-    "# has no pure-shell rung, and claiming otherwise is the overstatement doc review ",
-    "# round 5 caught. The `git status` probe above is unbounded for the same reason.",
+    '# Bounded *when a bounding tool exists*: the digest hashes dirty and untracked ',
+    '# content, which is unbounded on a pathological tree, and /remind runs ',
+    '# interactively. A kill lands in the fallback below. With none of ',
+    '# timeout/gtimeout/perl present the last branch runs node unbounded — the ',
+    '# ladder has no pure-shell rung. The `git status` probe above is unbounded for ',
+    '# the same reason.',
   ].join('');
   const boundAt = skill.indexOf('# Bounded');
-  assert.notEqual(boundAt, -1, 'the resolver comment no longer opens with the pinned lead-in');
+  assert.notEqual(boundAt, -1, 'the checker comment no longer opens with the pinned lead-in');
   const boundComment = [];
   for (const line of skill.slice(boundAt).split('\n')) {
     if (!line.trim().startsWith('#')) break;
@@ -1497,7 +1542,7 @@ const STEP4_EXACT = [
   }
   assert.equal(
     boundComment.join(' '), BOUND_COMMENT_EXACT,
-    'the resolver boundedness comment changed — re-derive BOUND_COMMENT_EXACT and re-read the ladder below it',
+    'the checker boundedness comment changed — re-derive BOUND_COMMENT_EXACT and re-read the ladder below it',
   );
 
   const critAt = skill.indexOf('**There are exactly three exceptions');
@@ -1514,8 +1559,8 @@ const STEP4_EXACT = [
   // are gone, and what is asserted here is now the opposite of what it was — each
   // section says how many exceptions there are, defers, and carries no copy to drift.
   // The correct-flow block is the third slice, and it was the copy the first version
-  // of this loop missed: it mapped resolver-answered to All Clear and
-  // resolver-unavailable to Degraded on its own, so a Step 4 change needed syncing
+  // of this loop missed: it mapped checker-answered to All Clear and
+  // checker-unavailable to Degraded on its own, so a Step 4 change needed syncing
   // there too. Its terminal lines are gone; the loop now covers it.
   for (const [label, section, prose] of [
     ['the CRITICAL section', skill.slice(0, skill.indexOf('## Trigger')), true],
@@ -1539,11 +1584,11 @@ const STEP4_EXACT = [
 });
 
 test('remind instruction surfaces describe the degraded path the block actually takes', () => {
-  // Round-17 finding: the shell discarded every mirror verdict on a moved tree while
-  // three prose surfaces still said the verdicts are read whenever the resolver is
-  // unavailable, and that rows 1 and 2 stay separable there. A model reading those
-  // discloses `source=mirror` for a value that was never used. The split is one
-  // sentence in each surface, so pin the split, not the sentence.
+  // Round-17 finding, carried into the checker contract: the shell reads no verdict
+  // and no noted flag on a degraded run, and every prose surface must say so — a
+  // model reading a surface that still promises a verdict source discloses
+  // `source=state` for a value that was never used. The split is one sentence in
+  // each surface, so pin the split, not the sentence.
   const surfaces = [
     ['SKILL.md', readFileSync(skillPath, 'utf8')],
     ['detection-rules.md', readFileSync(resolve(root, 'skills/remind/references/detection-rules.md'), 'utf8')],
@@ -1553,74 +1598,65 @@ test('remind instruction surfaces describe the degraded path the block actually 
   for (const [label, body] of surfaces) {
     assert.match(
       body,
-      /mirror is \*{0,2}(never|not)\*{0,2} read|(never|not) read (on any|on a) degraded run|no verdicts? at all/i,
-      `${label} must state that a degraded run reads no verdict from the mirror`,
+      /state slot is (never|not)\s+read/i,
+      `${label} must state that the state slot is never read directly`,
     );
     assert.match(
       body,
-      /clean tree included|however clean|clean `?git status`? (does not|cannot)|equally clean commit|commit A/i,
+      /binds? the \*?current\*? tree|does not bind a stored verdict|equally clean|commit A/i,
       `${label} must say why a clean tree is not the binding either`,
     );
     assert.match(
       body,
-      /(detection|row) ?3 cannot|cannot fire/i,
-      `${label} must state the cost: detection 3 cannot fire on a degraded run`,
+      /(rows?|detections?) 3 and 5 cannot/i,
+      `${label} must state the cost: detections 3 and 5 cannot fire on a degraded run`,
     );
-    // Detection 4 reads `BRANCH`, never the resolver, so "nothing fires on a clean
+    // Detection 4 reads `BRANCH`, never the checker, so "nothing fires on a clean
     // degraded run" is false on `main` — and it is the sentence that lets a reader
     // treat such a run as the lone-detection-4 exception instead of Degraded.
     assert.match(
       body,
       /[Rr]ow 4 (is unaffected|still can)|detection 4 (reads|fires|can)/,
-      `${label} must say detection 4 is unaffected by the resolver being unavailable`,
+      `${label} must say detection 4 is unaffected by the checker being unavailable`,
     );
     assert.ok(
       !/Nothing — no change flag/.test(body),
       `${label} still claims a degraded clean run fires nothing at all`,
     );
+
     // A surface can carry the right sentence and a contradicting one at the same
     // time, and the model obeys whichever it reads last — so the correct claims
-    // above are paired with a refusal of every wrong one. Both survivors of this
-    // round's mutation pass were exactly that shape.
-    // The two rules a reader most needs and cannot re-derive: which answers the
-    // step accepts, and how a degraded run ends. The reference file describes the
-    // detection table only, so it is exempt from both.
-    // The reference is where a reader looks up what the verdict fields mean, so it
-    // is the surface most likely to describe the resolver's raw merge and leave the
-    // consumer-side refusal implicit — which is how round 21's mutant deleted the
-    // whole sentence without failing anything.
+    // above are paired with a refusal of every wrong one.
     if (label === 'detection-rules.md') {
       assert.match(
         body,
-        /not what this consumer accepts[\s\S]{0,240}`mirror_planes` is an empty\narray\)\. Any mirror-backed answer is refused like no answer at all and the run degrades\./,
-        'the reference must say Step 1 accepts verdicts only from a derived read, and refuses the rest',
+        /malformed or partial answer[\s\S]{0,80}refused like no answer at all/,
+        'the reference must say Step 1 refuses a malformed or partial checker answer whole',
       );
     }
 
     if (label !== 'detection-rules.md') {
-      assert.match(body, /mirror_planes/, `${label} must record the provenance clause the resolver answer is checked against`);
-      assert.match(body, /treeState/, `${label} must name the other half of that clause`);
+      assert.match(body, /all seven/i, `${label} must state the all-or-none acceptance clause`);
       assert.match(body, /at most once/i, `${label} must state that a degraded run invokes each correction once`);
       assert.match(body, /### Degraded ⚠️|`?Degraded ⚠️`?/, `${label} must name the outcome that terminates a degraded run`);
     }
 
-    // Token presence is not the claim. Round 20 rewrote the provenance row to
-    // "accept when `treeState=not-a-repo` or `mirror_planes` is non-empty" and
+    // Token presence is not the claim. Round 20 rewrote an acceptance clause and
     // inverted the degraded paragraph — both kept every token above, and both
     // passed. SKILL.md's Step 4 is pinned verbatim in its own test; the spec's two
     // operative passages are pinned verbatim here for the same reason.
     if (label === '2-tech-spec.md') {
       const SPEC_PARA = [
-        "**Degraded runs terminate explicitly.** Without a verdict source, re-reading Step 1 ",
-        "after a correction returns the same rows, so `/remind` invokes each distinct correction ",
-        "**at most once** and the run then terminates whether or not a correction fired \u2014 a clean ",
-        "tree with no readable verdict verified nothing, so no clearance is available to it. ",
-        "**Degradation dominates the terminal status**, which is what keeps the lone-detection-4 ",
-        "exception from swallowing it: detection 4 reads `BRANCH`, not the resolver, so a degraded ",
-        "clean run on `main` does fire a row and still has no Skill to invoke, and it terminates ",
-        "the same way. Which outcomes end a run without an invocation is enumerated in ",
-        "`skills/remind/SKILL.md` \u00a7 Step 4 and deliberately not repeated here \u2014 the same reason ",
-        "\u00a7 3.1's graph stops at the delegation node.",
+        '**Degraded runs terminate explicitly.** Without a verdict source, re-reading Step 1 ',
+        'after a correction returns the same rows, so `/remind` invokes each distinct correction ',
+        '**at most once** and the run then terminates whether or not a correction fired — a clean ',
+        'tree with no readable verdict verified nothing, so no clearance is available to it. ',
+        '**Degradation dominates the terminal status**, which is what keeps the lone-detection-4 ',
+        'exception from swallowing it: detection 4 reads `BRANCH`, not the checker, so a degraded ',
+        'clean run on `main` does fire a row and still has no Skill to invoke, and it terminates ',
+        'the same way. Which outcomes end a run without an invocation is enumerated in ',
+        '`skills/remind/SKILL.md` § Step 4 and deliberately not repeated here — the same reason ',
+        "§ 3.1's graph stops at the delegation node.",
       ].join('');
       // Two claims the spec made about the executable contract and got wrong (doc
       // review round 4): what bounds the detection path, and how a missing rule is
@@ -1645,58 +1681,59 @@ test('remind instruction surfaces describe the degraded path the block actually 
       // cannot close a table. The whole table is compared, in order.
       const IMPL_TABLE_EXACT = [
         [
-          "| `_remind_git()` fence | Unsets the whole `GIT_*` namespace in a subshell, then `git -C ",
-          "\"$PWD\"` | A named subset leaves `GIT_CEILING_DIRECTORIES`, `GIT_DIR`, `GIT_CONFIG*` able to ",
-          "redirect or blind the read \u2014 and a blinded read looks exactly like a clean repository |",
+          '| `_remind_git()` fence | Unsets the whole `GIT_*` namespace in a subshell — enumerated ',
+          'through `env`, never `${!GIT_*}` — then `git -C "$PWD"` | A named subset leaves ',
+          '`GIT_CEILING_DIRECTORIES`, `GIT_DIR`, `GIT_CONFIG*` able to redirect or blind the read — ',
+          'and a blinded read looks exactly like a clean repository |',
         ].join(''),
         [
-          "| `ROOT` | `rev-parse --show-toplevel`, else `$PWD` | `/remind` runs from wherever the ",
-          "session is; a cwd-relative state file or library path degrades an answerable run in ",
-          "`packages/app/` |",
+          '| `ROOT` | `rev-parse --show-toplevel`, else `$PWD` | `/remind` runs from wherever the ',
+          'session is; a cwd-relative checker path degrades an answerable run in `packages/app/` |',
         ].join(''),
         [
-          "| Resolver call | `gate-derive.js --advisory`, installed copy first, bounded by a timeout ",
-          "ladder **when one of `timeout`/`gtimeout`/`perl` exists** \u2014 the last rung runs node ",
-          "unbounded | The stored change flags were deleted in WB5c; reading them would report \"no ",
-          "change\" on a dirty tree. All five fields or none \u2014 a partial answer must not mix two ",
-          "policies |",
+          '| Checker call | `review-state.js check --format=json`, installed copy first ',
+          '(`.claude/scripts/`), run with `cd "$ROOT"`, bounded by a timeout ladder **when one of ',
+          '`timeout`/`gtimeout`/`perl` exists** — the last rung runs node unbounded | The slot is ',
+          'keyed by a non-contractual repo hash, so only the checker can locate it and bind it to ',
+          'the tree. All seven fields or none — a partial answer must not mix two policies |',
         ].join(''),
         [
-          "| Answer provenance | Accepted only when `treeState` is `ok` **and** `mirror_planes` is an ",
-          "empty **array** (the type is checked: jq gives `\"\"` and `{}` length zero too, round 20); ",
-          "anything else is rejected like no answer at all | `resolveAdvisory()` keeps the mirror ",
-          "authoritative outside a repository (`treeState=not-a-repo`), where no digest receipt has a ",
-          "tree to bind to. Those are the same stored verdicts Step 1 refuses to read directly, so ",
-          "accepting them here would readmit a forged state file by a longer route (round 19) |",
+          '| Answer validation | Each field is read with a jq **type check** — only a JSON boolean ',
+          'passes; a missing plane, a string `"true"`, `null` or any other shape empties the read, ',
+          'and one empty field rejects the whole answer like no answer at all | The checker\'s ',
+          '`passed` already carries the digest binding, so there is no separate provenance field to ',
+          'verify — validation is that the answer has the checker\'s exact shape. A half-parsed ',
+          'answer would silently mix checker policy with fallback policy |',
         ].join(''),
         [
-          "| The tree probe | **One** whole-tree `status --porcelain=v1 -uall ",
-          "--ignore-submodules=none`, run unconditionally. Anything but a clean, quiet, zero-exit ",
-          "answer sets `DIRTY` \u2014 to the captured output whenever that capture is non-empty (the probe ",
-          "runs under `2>&1`, so stdout and stderr arrive merged and `DIRTY` can carry either or both), ",
-          "and to the literal `unverifiable` only when the capture is empty, the ",
-          "nonzero-exit-with-no-output case. It opens **both** planes only on the branch that cannot ",
-          "classify \u2014 a rejected or unavailable resolver answer; a derived answer keeps its own ",
-          "per-plane verdict, dirty tree included | It does not classify: an ordinary pathspec is ",
-          "cwd-relative, and a per-plane guess that is wrong hides a gate. It is asked once because two ",
-          "probes can disagree \u2014 a concurrent editor, a racy wrapper \u2014 and classifying from one while ",
-          "reporting `DIRTY` from the other minted a false clearance over a moved tree (round 17) |",
+          '| The tree probe | **One** whole-tree `status --porcelain=v1 -uall ',
+          '--ignore-submodules=none`, run unconditionally. Anything but a clean, quiet, zero-exit ',
+          'answer sets `DIRTY` — to the captured output whenever that capture is non-empty (the probe ',
+          'runs under `2>&1`, so stdout and stderr arrive merged and `DIRTY` can carry either or both), ',
+          'and to the literal `unverifiable` only when the capture is empty, the ',
+          'nonzero-exit-with-no-output case. It opens **both** planes only on the branch that cannot ',
+          'classify — a rejected or unavailable checker answer; a checker answer keeps its own ',
+          'per-plane verdict, dirty tree included | It does not classify: an ordinary pathspec is ',
+          'cwd-relative, and a per-plane guess that is wrong hides a gate. It is asked once because two ',
+          'probes can disagree — a concurrent editor, a racy wrapper — and classifying from one while ',
+          'reporting `DIRTY` from the other minted a false clearance over a moved tree (round 17) |',
         ].join(''),
         [
-          "| The verdicts, degraded | Not read from anywhere: `CODE_REVIEW`/`DOC_REVIEW`/`PRECOMMIT` ",
-          "are `false` whenever the resolver did not answer | The state file's contents are never read ",
-          "here \u2014 only its existence, for detection 5. A clean tree does not bind a stored verdict to ",
-          "itself, so trusting one there let a commit-A PASS close a gate on commit B (round 18) |",
+          '| The verdicts, degraded | Not read from anywhere: `CODE_REVIEW`/`DOC_REVIEW`/`PRECOMMIT` ',
+          'are `false` whenever the checker did not answer, and `CODE_NOTED`/`DOC_NOTED` with them | ',
+          'The state slot is never read directly, on any run — it lives outside the repo under a ',
+          'non-contractual key, and a clean tree does not bind a stored verdict to itself: trusting ',
+          'one there let a commit-A PASS close a gate on commit B (round 18) |',
         ].join(''),
         [
-          "| `BRANCH` | Same fence, `\\|\\| BRANCH=\"\"` | A different question, so a separate read; a ",
-          "redirected environment must not report a feature branch as `main`, and the guard keeps a ",
-          "`set -e` caller alive to reach the cleanup line |",
+          '| `BRANCH` | Same fence, `\\|\\| BRANCH=""` | A different question, so a separate read; a ',
+          'redirected environment must not report a feature branch as `main`, and the guard keeps a ',
+          '`set -e` caller alive to reach the cleanup line |',
         ].join(''),
       ];
       assert.deepEqual(
         tableRows(body, '| Part | What it does | Why |'), IMPL_TABLE_EXACT,
-        'the \u00a7 3.3 implementation table changed \u2014 re-derive IMPL_TABLE_EXACT and read each row against SKILL.md Step 1',
+        'the § 3.3 implementation table changed — re-derive IMPL_TABLE_EXACT and read each row against SKILL.md Step 1',
       );
       assert.match(
         body,
@@ -1723,29 +1760,35 @@ test('remind instruction surfaces describe the degraded path the block actually 
       // run. Correct prose earlier in the spec does not repair a template that
       // reintroduces the false clearance (round 20). Doc round 7 then showed that
       // requiring the two correct forms is not the same as pinning the block: a line
-      // reading "On a resolver failure, print `### All Clear ✅`" injected beside them
+      // reading "On a checker failure, print `### All Clear ✅`" injected beside them
       // left all three assertions green. The fenced block is compared whole.
-      const OUTPUT_BLOCK_EXACT = [
-        "markdown", "## Reminder", "", "### Findings", "",
-        "| # | Priority | Rule | Issue | Correction |",
-        "|---|----------|------|-------|------------|",
-        "| 1 | P0 | auto-loop | Code changed but review not passed | Run `/codex-review-fast` |",
-        "| 2 | P1 | git-workflow | Working on main branch | Create feature branch |", "",
-        "### Corrections (copy-pasteable)",
-        "1. `/codex-review-fast`",
-        "2. `git checkout -b feat/my-feature`", "",
-        "### All Clear \u2705",
-        "(the resolver answered **and** there are no findings \u2014 never on a degraded run)", "",
-        "### Degraded \u26a0\ufe0f",
-        "(the resolver did not answer: nothing was verified, so no clearance is claimed)",
-      ];
       // Round 32: closing the fence is not closing the section. A sentence placed after
-      // the fence and before \u00a7 3.5 \u2014 "a resolver failure with no listed finding reports
-      // `### All Clear \u2705`" \u2014 left the fence byte-identical. The section is compared whole,
-      // so the fence and every line around it are one closed unit.
-      const SECTION_34_EXACT = ['### 3.4 Output Format', '', '```markdown']
-        .concat(OUTPUT_BLOCK_EXACT.slice(1))
-        .concat(['```']);
+      // the fence and before § 3.5 left the fence byte-identical. The section is
+      // compared whole, so the fence and every line around it are one closed unit.
+      const SECTION_34_EXACT = [
+        '### 3.4 Output Format',
+        '',
+        '```markdown',
+        '## Reminder',
+        '',
+        '### Findings',
+        '',
+        '| # | Priority | Rule | Issue | Correction |',
+        '|---|----------|------|-------|------------|',
+        '| 1 | P0 | auto-loop | Code changed but review not passed | Run `/codex-review-fast` |',
+        '| 2 | P1 | git-workflow | Working on main branch | Create feature branch |',
+        '',
+        '### Corrections (copy-pasteable)',
+        '1. `/codex-review-fast`',
+        '2. `git checkout -b feat/my-feature`',
+        '',
+        '### All Clear ✅',
+        '(the checker answered **and** there are no findings — never on a degraded run)',
+        '',
+        '### Degraded ⚠️',
+        '(the checker did not answer: nothing was verified, so no clearance is claimed)',
+        '```',
+      ];
       const sec34 = body
         .slice(body.indexOf('### 3.4'), body.indexOf('### 3.5'))
         .split('\n')
@@ -1753,7 +1796,7 @@ test('remind instruction surfaces describe the degraded path the block actually 
       while (sec34.length && sec34[sec34.length - 1] === '') sec34.pop();
       assert.deepEqual(
         sec34, SECTION_34_EXACT,
-        'the \u00a7 3.4 output section changed \u2014 re-derive SECTION_34_EXACT and check All Clear is still refused on a degraded run',
+        'the § 3.4 output section changed — re-derive SECTION_34_EXACT and check All Clear is still refused on a degraded run',
       );
     }
 
@@ -1764,19 +1807,23 @@ test('remind instruction surfaces describe the degraded path the block actually 
       /rows? 1, 2 and 3 all fire/i,
       /row 3 fires/i,
       /\bmirror is read\b/i,
-      /read (from )?the mirror (on|whenever|if)[^.\n]{0,30}clean/i,
+      /read (from )?the (mirror|slot) (on|whenever|if)[^.\n]{0,30}clean/i,
+      // The retired resolver contract must not resurface in any of the three:
+      // its vocabulary is how a reader would be steered back to the deleted path.
+      /mirror_planes/,
+      /treeState/,
+      /gate-derive/,
     ]) {
-      assert.ok(!stale.test(body), `${label} still describes a superseded fallback`);
+      assert.ok(!stale.test(body), `${label} still describes the superseded resolver contract (${stale})`);
     }
   }
 });
 
-test('remind rule and nuclear modes read the resolver, not the state file directly', () => {
+test('remind rule and nuclear modes read the checker, not the state slot directly', () => {
   // A stored verdict is not bound to the tree that earned it: `/remind auto-loop`
-  // reading `code_review.passed` off the mirror reports compliance over an edit made
-  // after the receipt. Both modes must go through Step 1, and say why — a bare
-  // mention of "Step 1" survives a rewrite that mentions it and then reads the
-  // mirror anyway.
+  // reading a raw slot reports compliance over an edit made after the note. Both
+  // modes must go through Step 1, and say why — a bare mention of "Step 1"
+  // survives a rewrite that mentions it and then reads the slot anyway.
   const skill = readFileSync(skillPath, 'utf8');
   const modes = skill.slice(skill.indexOf('## Specific Rule Mode'), skill.indexOf('## Arguments'));
   const specific = modes.slice(0, modes.indexOf('## Nuclear Mode'));
@@ -1784,12 +1831,12 @@ test('remind rule and nuclear modes read the resolver, not the state file direct
 
   assert.ok(!/state file \+ git/i.test(modes), 'a mode still names the state file as its detection source');
   assert.match(specific, /Step 1/, 'specific-rule mode must route its check through Step 1');
-  assert.match(specific, /Not the state file directly/, 'and say so, rather than leaving Step 1 a decorative mention');
+  assert.match(specific, /Not the state slot directly/, 'and say so, rather than leaving Step 1 a decorative mention');
   assert.match(nuclear, /Step 1/, 'nuclear mode must route its cross-reference through Step 1');
-  assert.match(nuclear, /not a second source of truth|never the state file/i, 'with the same reason stated');
+  assert.match(nuclear, /not a second source of truth|never the state slot/i, 'with the same reason stated');
 });
 
-test('remind detection rules name the resolver fields rather than the retired state keys', () => {
+test('remind detection rules name the checker-derived variables, not the retired resolver fields', () => {
   const detection = readFileSync(resolve(root, 'skills/remind/references/detection-rules.md'), 'utf8');
   const conditions = detection
     .split('\n')
@@ -1797,10 +1844,14 @@ test('remind detection rules name the resolver fields rather than the retired st
     .map((l) => l.split('|')[4].trim());
 
   assert.deepEqual(conditions.slice(0, 3), [
-    '`has_code_change=true` + `code_review_passed=false`',
-    '`has_doc_change=true` + `doc_review_passed=false`',
-    '`code_review_passed=true` + `precommit_passed=false`',
+    '`HAS_CODE=true` + `CODE_REVIEW=false`',
+    '`HAS_DOC=true` + `DOC_REVIEW=false`',
+    '`CODE_REVIEW=true` + `PRECOMMIT=false`',
   ]);
+  // And the reference must say where those variables come from — the checker's
+  // JSON rendering, not the deleted resolver.
+  assert.match(detection, /review-state\.js check --format=json/, 'the field-source paragraph must name the checker call');
+  assert.match(detection, /noted, dirty, digest_match, verdict, rounds, passed, owed/, 'and the per-plane shape it returns');
 });
 
 test('remind pre-authorizes the node invocation its detection step makes', () => {

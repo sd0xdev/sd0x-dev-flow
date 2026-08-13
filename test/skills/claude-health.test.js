@@ -51,21 +51,21 @@ function hasLegacyPrecedenceHeader(content) {
  *  S1-S3 is the boundary the safeguard contract actually has. Fenced examples inside the region are
  *  masked, so an example block is not pinned prose — that is the intended reading. */
 const CANONICAL_SYNC_CHECKS =
-  '> Only runs when `--scope sync` or `--scope all` (default). #### S1: Version Check | # | Check | ' +
-  'Method | Criteria | |---|-------|--------|----------| | S1.1 | Manifest exists | Read ' +
+  '> Only runs when `--scope sync` or `--scope all` (default). #### S1: Version Check | # | Check ' +
+  '| Method | Criteria | |---|-------|--------|----------| | S1.1 | Manifest exists | Read ' +
   '`.sd0x/install-state.json` | Missing → P1 | | S1.2 | Manifest parseable | JSON.parse | Parse ' +
   'error → P1 | | S1.3 | `schema_version` current | `== 1` | Mismatch → P2 | | S1.4 | ' +
-  '`plugin_version` matches | manifest vs `.claude-plugin/plugin.json` or `package.json` | Mismatch ' +
-  '→ P1 | | S1.5 | Manifest completeness | Has `rules` + `hook_scripts` + `scripts` keys | Missing ' +
-  'key → P2 (`MANIFEST_GAP`) | **Plugin version resolution** (priority order): **Plugin source ' +
-  'location** (same as `/install-rules` Phase 1): #### S2: Component Classification For each ' +
-  'managed component (rules, hooks, scripts), compute 3 hashes and classify: **Classification ' +
+  '`plugin_version` matches | manifest vs `.claude-plugin/plugin.json` or `package.json` | ' +
+  'Mismatch → P1 | | S1.5 | Manifest completeness | Has `rules` + `hook_scripts` + `scripts` keys ' +
+  '| Missing key → P2 (`MANIFEST_GAP`) | **Plugin version resolution** (priority order): **Plugin ' +
+  'source location** (same as `/install-rules` Phase 1): #### S2: Component Classification For ' +
+  'each managed component (rules, hooks, scripts), compute 3 hashes and classify: **Classification ' +
   'table** (read-only diagnostic; maps to install-rules states for delegation): | Doctor State | ' +
   'Condition | Severity | install-rules Equivalent | ' +
-  '|-------|-----------|----------|--------------------------| | `OK` | local == manifest == plugin ' +
-  '| ✅ | `SKIP` | | `MISSING` | local_hash is null, plugin exists | P1 | `FRESH_INSTALL` | | ' +
-  '`OUTDATED` | local == manifest, plugin != manifest | P1 | `AUTO_UPDATE` | | `LOCAL_MODIFIED` | ' +
-  'local != manifest, plugin == manifest | ✅ | `KEEP_LOCAL` | | `CONFLICT` | local != manifest, ' +
+  '|-------|-----------|----------|--------------------------| | `OK` | local == manifest == ' +
+  'plugin | ✅ | `SKIP` | | `MISSING` | local_hash is null, plugin exists | P1 | `FRESH_INSTALL` | ' +
+  '| `OUTDATED` | local == manifest, plugin != manifest | P1 | `AUTO_UPDATE` | | `LOCAL_MODIFIED` ' +
+  '| local != manifest, plugin == manifest | ✅ | `KEEP_LOCAL` | | `CONFLICT` | local != manifest, ' +
   'plugin != manifest | P2 | `CONFLICT` | | `LEGACY` | manifest_hash is null, local exists | P2 | ' +
   '`LEGACY` | | `MANIFEST_GAP` | manifest category key missing | P2 | N/A | | `TOMBSTONED` | ' +
   'manifest `deleted: true`, local missing | ✅ | `SKIP_DELETED` | **Managed inventory** ' +
@@ -73,75 +73,75 @@ const CANONICAL_SYNC_CHECKS =
   '|----------|-----------|--------------|-------| | Rules | `.claude/rules/*.md` | `rules/*.md` | ' +
   '`auto-loop.md`, `codex-invocation.md`, `fix-all-issues.md`, `framework.md`, `testing.md`, ' +
   '`security.md`, `git-workflow.md`, `logging.md`, `docs-writing.md`, `docs-numbering.md`, ' +
-  '`self-improvement.md`, `context-management.md` | | Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` | ' +
-  '`pre-edit-guard.sh`, `post-edit-format.sh`, `post-tool-review-state.sh`, `stop-guard.sh`, ' +
-  '`post-compact-auto-loop.sh` | | Scripts | `.claude/scripts/` | `scripts/` | ' +
-  '`precommit-runner.js`, `verify-runner.js`, `dispatch-cli.js`, `dep-audit.sh`, `commit-msg-guard.sh`, ' +
-  '`pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js`, `lib/receipt-log.js`, ' +
-  '`lib/dispatch-log.js`, `lib/gate-derive.js` | #### S2.5: ' +
-  'Override Safeguard Checks 6 checks for project ' +
-  'override files (e.g., `auto-loop-project.md`): | # | Check | Severity | Detection | ' +
-  'Recommendation | |---|-------|----------|-----------|----------------| | 1 | Override drift | P2 ' +
-  '| `based_on` hash comment in project file vs the hash of **the base file that comment names** ' +
-  '(derived, never hard-coded — both `auto-loop-project.md` and `testing-project.md` ship) — **only ' +
-  'when the override file has active content**; a scaffold with every section still commented out ' +
-  'has no overrides to review, so drift is not reported | "Base `<rule>` updated since override ' +
-  'authored; review your overrides" | | 2 | Policy contradiction | P1 | An overridden section omits ' +
-  'a required check command that the **same section** of the base rule contains | "Override ' +
-  'conflicts with stop-guard enforcement" | | 3 | Missing reference or base | P1 | For **each** ' +
-  'shipped override file (`auto-loop-project.md`, `testing-project.md`): `.claude/CLAUDE.md` has ' +
-  '`@rules/<file>` but the file is missing, OR the file exists but is not referenced, OR the file ' +
-  'exists but the base rule its `Based on:` comment names is missing from `.claude/rules/` | ' +
-  '`/install-rules` to recreate the missing file or base, or add the reference | | 4 | Wrong-layer ' +
-  'edit | P2 | Base `auto-loop.md` has `LOCAL_MODIFIED`, `CONFLICT`, or `LEGACY` state while ' +
-  'project override exists | "Move customization to auto-loop-project.md" | | 5 | Duplicate heading ' +
-  '| P2 | Override file has multiple active `## <heading>` with same text | "Keep one, remove ' +
-  'duplicates. Last occurrence takes effect." | | 6 | Legacy precedence header | P2 | Precedence ' +
-  'declaration exists only inside an HTML comment (`<!-- Precedence:` present, no live ' +
-  '`Precedence:` line before the first `##`) — HTML comments are stripped from model context (R8), ' +
-  'so the declaration never reaches its only reader | "Header predates the live-precedence ' +
+  '`self-improvement.md`, `context-management.md` | | Hooks | `.claude/hooks/*.sh` | `hooks/*.sh` ' +
+  '| `pre-edit-guard.sh`, `post-edit-format.sh`, `post-skill-auto-loop.sh`, ' +
+  '`post-compact-auto-loop.sh`, `stop-guard.sh`, `user-prompt-review-guard.sh` | | Scripts | ' +
+  '`.claude/scripts/` | `scripts/` | `precommit-runner.js`, `verify-runner.js`, `review-state.js`, ' +
+  '`dep-audit.sh`, `commit-msg-guard.sh`, `pre-push-gate.sh`, `lib/utils.js`, `lib/tree-digest.js` ' +
+  '| #### S2.5: Override Safeguard Checks 6 checks for project override files (e.g., ' +
+  '`auto-loop-project.md`): | # | Check | Severity | Detection | Recommendation | ' +
+  '|---|-------|----------|-----------|----------------| | 1 | Override drift | P2 | `based_on` ' +
+  'hash comment in project file vs the hash of **the base file that comment names** (derived, ' +
+  'never hard-coded — both `auto-loop-project.md` and `testing-project.md` ship) — **only when the ' +
+  'override file has active content**; a scaffold with every section still commented out has no ' +
+  'overrides to review, so drift is not reported | "Base `<rule>` updated since override authored; ' +
+  'review your overrides" | | 2 | Policy contradiction | P1 | An overridden section omits a ' +
+  'required check command that the **same section** of the base rule contains | "Override drops a ' +
+  'required check command its base section carries" | | 3 | Missing reference or base | P1 | For ' +
+  '**each** shipped override file (`auto-loop-project.md`, `testing-project.md`): ' +
+  '`.claude/CLAUDE.md` has `@rules/<file>` but the file is missing, OR the file exists but is not ' +
+  'referenced, OR the file exists but the base rule its `Based on:` comment names is missing from ' +
+  '`.claude/rules/` | `/install-rules` to recreate the missing file or base, or add the reference ' +
+  '| | 4 | Wrong-layer edit | P2 | Base `auto-loop.md` has `LOCAL_MODIFIED`, `CONFLICT`, or ' +
+  '`LEGACY` state while project override exists | "Move customization to auto-loop-project.md" | | ' +
+  '5 | Duplicate heading | P2 | Override file has multiple active `## <heading>` with same text | ' +
+  '"Keep one, remove duplicates. Last occurrence takes effect." | | 6 | Legacy precedence header | ' +
+  'P2 | Precedence declaration exists only inside an HTML comment (`<!-- Precedence:` present, no ' +
+  'live `Precedence:` line before the first `##`) — HTML comments are stripped from model context ' +
+  '(R8), so the declaration never reaches its only reader | "Header predates the live-precedence ' +
   'contract; migrate the precedence line to live text by hand or regenerate via `/install-rules ' +
-  '--customize <rule> --reset`. This check is **read-only** — it never edits the user-owned file" | ' +
-  '**Policy contradiction detection**: For each `## <heading>` section the override restates, ' +
+  '--customize <rule> --reset`. This check is **read-only** — it never edits the user-owned file" ' +
+  '| **Policy contradiction detection**: For each `## <heading>` section the override restates, ' +
   'extract the backticked check commands (`/codex-review-fast`, `/codex-review-doc`, `/precommit`) ' +
-  'from the **same-heading section of the base `auto-loop.md`** and require the restated section to ' +
-  'keep every one of them. A verbatim copy therefore never flags; only a restatement that *drops* a ' +
-  'command its base section carries is P1. (The base\'s Auto-Trigger table was retired by R3 — ' +
-  'code/doc routing now lives in the unheaded terminal-invariant paragraph, which the ' +
+  'from the **same-heading section of the base `auto-loop.md`** and require the restated section ' +
+  'to keep every one of them. A verbatim copy therefore never flags; only a restatement that ' +
+  '*drops* a command its base section carries is P1. (The base\'s Auto-Trigger table was retired by ' +
+  'R3 — code/doc routing now lives in the unheaded terminal-invariant paragraph, which the ' +
   'exact-`##`-heading override mechanism cannot restate, so routing itself is not overridable and ' +
   'is out of this check\'s scope.) No restated section → check passes vacuously. **Override drift ' +
   'detection**: First check whether the project file has **active content**. Two forms count, and ' +
   'the distinction matters because the scaffold ships its `##` headings live: a non-empty, ' +
   'non-comment **body line** under any heading, or a **heading that carries its own value** (`## ' +
-  'Plan Review: enabled`, `## Git Memory: enabled` — for these settings the heading *is* the value, ' +
-  'so there is no body to look for). A bare scaffold heading with nothing but comments beneath it ' +
-  'is an empty slot, not an override. The live `Precedence:` header is preamble material and never ' +
-  'activation. A scaffold whose sections are all still commented out is skipped: drift means "the ' +
-  'base changed since you wrote your overrides", and there are none, so reporting it on a fresh ' +
-  'install is a false positive rather than a finding. Otherwise read the `<!-- Based on: <base>.md ' +
-  '@ <hash> -->` comment and **derive the base file from the comment\'s own filename** — `git ' +
-  'hash-object --no-filters .claude/rules/<base>.md | cut -c1-7`. The base must not be hard-coded: ' +
-  'R8 distributes `testing-project.md` alongside `auto-loop-project.md`, so a fixed `auto-loop.md` ' +
-  'comparand would check a testing override\'s hash against the wrong rule and report drift that ' +
-  'does not exist. If the derived base file is missing, drift is undefined rather than zero — ' +
-  'report it through check #3\'s **missing base** branch (P1) and do not emit a drift finding. Both ' +
-  'checks must cover every shipped override file, not just `auto-loop-project.md`: an active ' +
-  '`testing-project.md` whose `testing.md` has been deleted would otherwise fall through both. If ' +
-  'the hashes differ, the base has been updated since the override was authored. Uses blob hash for ' +
-  'content-level comparison; accepts legacy commit-style hashes (any 7+ hex chars) during ' +
-  'backward-compat transition. #### S3: Settings Compatibility Check **both** `settings.json` and ' +
-  '`settings.local.json` (precedence: `settings.local.json` > `settings.json`). A hook entry in ' +
-  'either file satisfies the integrity check. | # | Check | Method | Criteria | ' +
-  '|---|-------|--------|----------| | S3.1 | Legacy hook paths | Grep both settings files for bare ' +
-  '`.claude/hooks/` without `$CLAUDE_PROJECT_DIR` | Found → P2 | | S3.2 | `STOP_GUARD_MODE` present ' +
-  '| Read `env.STOP_GUARD_MODE` from either settings file (also check legacy ' +
-  '`hooks_config.stop_guard_mode`) | Missing from both → P2 (info). Legacy `hooks_config` found → ' +
-  'P2 (migration recommended). Install-time default: `strict`; runtime fallback: `warn` | | S3.3 | ' +
-  'Hook entry integrity | Each installed hook script has matching entry in either settings file | ' +
-  'Missing from both → P1 | | S3.4 | Orphan hook entries | Either settings file references script ' +
-  'that doesn\'t exist on disk | Orphan → P2 | **Settings file precedence**: `settings.local.json` ' +
-  'overrides `settings.json` at runtime. When delegating S3 fixes, use `/install-hooks --local` if ' +
-  'the issue is in `settings.local.json`. **Legacy path detection**:';
+  'Plan Review: enabled`, `## Git Memory: enabled` — for these settings the heading *is* the ' +
+  'value, so there is no body to look for). A bare scaffold heading with nothing but comments ' +
+  'beneath it is an empty slot, not an override. The live `Precedence:` header is preamble ' +
+  'material and never activation. A scaffold whose sections are all still commented out is ' +
+  'skipped: drift means "the base changed since you wrote your overrides", and there are none, so ' +
+  'reporting it on a fresh install is a false positive rather than a finding. Otherwise read the ' +
+  '`<!-- Based on: <base>.md @ <hash> -->` comment and **derive the base file from the comment\'s ' +
+  'own filename** — `git hash-object --no-filters .claude/rules/<base>.md | cut -c1-7`. The base ' +
+  'must not be hard-coded: R8 distributes `testing-project.md` alongside `auto-loop-project.md`, ' +
+  'so a fixed `auto-loop.md` comparand would check a testing override\'s hash against the wrong ' +
+  'rule and report drift that does not exist. If the derived base file is missing, drift is ' +
+  'undefined rather than zero — report it through check #3\'s **missing base** branch (P1) and do ' +
+  'not emit a drift finding. Both checks must cover every shipped override file, not just ' +
+  '`auto-loop-project.md`: an active `testing-project.md` whose `testing.md` has been deleted ' +
+  'would otherwise fall through both. If the hashes differ, the base has been updated since the ' +
+  'override was authored. Uses blob hash for content-level comparison; accepts legacy commit-style ' +
+  'hashes (any 7+ hex chars) during backward-compat transition. #### S3: Settings Compatibility ' +
+  'Check **both** `settings.json` and `settings.local.json` (precedence: `settings.local.json` > ' +
+  '`settings.json`). A hook entry in either file satisfies the integrity check. | # | Check | ' +
+  'Method | Criteria | |---|-------|--------|----------| | S3.1 | Legacy hook paths | Grep both ' +
+  'settings files for bare `.claude/hooks/` without `$CLAUDE_PROJECT_DIR` | Found → P2 | | S3.2 | ' +
+  'Retired guard-mode setting | Read `env.STOP_GUARD_MODE` (and legacy ' +
+  '`hooks_config.stop_guard_mode`) from either settings file | Found in either → P2 (retired: the ' +
+  'Stop hook is reminder-only since hook-lightweighting — the setting is dead config, recommend ' +
+  'removing it). Absent → ✅ | | S3.3 | Hook entry integrity | Each installed hook script has ' +
+  'matching entry in either settings file | Missing from both → P1 | | S3.4 | Orphan hook entries ' +
+  '| Either settings file references script that doesn\'t exist on disk | Orphan → P2 | **Settings ' +
+  'file precedence**: `settings.local.json` overrides `settings.json` at runtime. When delegating ' +
+  'S3 fixes, use `/install-hooks --local` if the issue is in `settings.local.json`. **Legacy path ' +
+  'detection**:';
 
 test('the shipped skill when parsed → carries no construct the scanner cannot model', () => {
   assert.deepEqual(structuralViolations(rawSkill), [],

@@ -35,7 +35,7 @@ test('auto-loop.md contains no same-reply imperative (AC1 negative pin)', () => 
 
 test('auto-loop.md keeps the human-escalation exits (AC2: 人工升級)', () => {
   const content = read('rules/auto-loop.md');
-  assert.match(content, /max_rounds.*Need Human|Need Human.*max_rounds/,
+  assert.match(content, /hitting the cap a \*\*second\*\* time → ⚠️ Need Human/,
     'hitting the round cap must route to a human, not loop forever');
   assert.match(content, /Architecture-level changes, feature removal, or the user asking to stop/,
     'the three unconditional human exits must survive any rewrite');
@@ -133,21 +133,18 @@ test('auto-loop.md escalates security and data-integrity changes regardless of c
 
 // --- rules/auto-loop.md: the deferral sentinel is a hook contract ---
 
-test('auto-loop.md pins the hook-parsed NIT_DEFERRED tag and field order', () => {
+test('auto-loop.md pins the NIT_DEFERRED reporting convention and field order', () => {
   const content = read('rules/auto-loop.md');
   assert.ok(
     content.includes('[NIT_DEFERRED] file:line | issue | reason: sub-threshold-<severity> | <ISO8601>'),
-    'the sentinel is parsed at column 0 by post-tool-review-state.sh; a different tag or field '
-    + 'order is silently dropped, so the deferral would not survive the session',
+    'the tag and field order are the greppable contract; a different shape breaks every '
+    + 'report/transcript grep that relies on it',
   );
-  assert.match(content, /hook-parsed at column 0/,
-    'the rule must say WHY the exact shape matters, or the next rewrite will prettify it');
-});
-
-test('post-tool-review-state.sh still parses the tag auto-loop.md tells the model to emit', () => {
-  const hook = read('hooks/post-tool-review-state.sh');
-  assert.match(hook, /grep '\^\\\[NIT_DEFERRED\\\]'/,
-    'producer and parser must agree; this pair is the whole reason the tag was not renamed');
+  assert.match(content, /reporting convention/,
+    'since hook-lightweighting nothing parses the line — the rule must say so, or a reader '
+    + 'will assume persistence that no longer exists');
+  assert.match(content, /nothing parses or persists it/,
+    'the persistence retirement must be explicit, not implied');
 });
 
 // --- rules/auto-loop.md: sub-threshold findings do not re-open the loop ---
@@ -178,11 +175,13 @@ test('auto-loop.md stays small enough to be read rather than skimmed', () => {
   );
 });
 
-test('the hook-internals doc that absorbed the moved prose exists and is linked', () => {
-  const doc = 'docs/features/auto-loop-evolution/4-implementation.md';
+test('the mechanics doc that absorbed the moved prose exists and is linked', () => {
+  // Since hook-lightweighting the mechanics live in the hook-lightweighting spec, not the
+  // retired enforcement implementation doc — the rule must point at the live one.
+  const doc = 'docs/features/hook-lightweighting/2-tech-spec.md';
   assert.ok(existsSync(resolve(root, doc)), `${doc} must exist — auto-loop.md links to it`);
   const content = read('rules/auto-loop.md');
-  assert.match(content, /docs\/features\/auto-loop-evolution\/4-implementation\.md/,
+  assert.match(content, /docs\/features\/hook-lightweighting\/2-tech-spec\.md/,
     'the shrink is only safe if the rule points at where the reasoning went');
 });
 
@@ -203,12 +202,15 @@ test('SKILL.md gates the secondary reviewer behind --dual', () => {
     'the secondary must be skipped, not merely deprioritised, in the default mode');
 });
 
-test('SKILL.md does not emit the aggregate gate in single mode', () => {
+test('SKILL.md carries no aggregate-gate emission — the machinery retired with the enforcement hooks', () => {
+  // Retirement pin: emit-review-gate.sh and the review_mode field are deleted
+  // (hook-lightweighting § 3.3). Dual is now conversation-merged with no state write,
+  // so nothing in the skill may instruct running the emitter or writing a mode.
   const content = read('skills/codex-code-review/SKILL.md');
-  assert.match(content, /Do not run `scripts\/emit-review-gate\.sh`/,
-    'emitting it sets review_mode=dual, which forces stop-guard into strict for the session');
-  assert.match(content, /\*\*`--dual` only\*\* — execute `bash scripts\/emit-review-gate\.sh READY`/,
-    'Step 4.5 must be scoped to --dual');
+  assert.ok(!content.includes('emit-review-gate'), 'the deleted emitter must not be referenced');
+  assert.ok(!content.includes('review_mode'), 'the deleted mode field must not be referenced');
+  assert.match(content, /nothing persists it, nothing blocks on it/,
+    'dual must be stated as ephemeral — the property that replaced the aggregate gate');
 });
 
 test('SKILL.md refuses to substitute a subagent when Codex is unavailable in single mode', () => {
@@ -314,12 +316,13 @@ test('doc review loop does not re-open on sub-threshold findings', () => {
     're-review must not re-surface deferred items — that is how a doc loop buys extra rounds');
 });
 
-// --- review_mode persistence: the docs must describe the lifetime the code actually implements ---
+// --- dual lifetime: ephemeral by construction since hook-lightweighting ---
 //
 // R1 (docs/features/auto-loop-autonomy/requests/2026-07-26-dual-mode-signal-repair-r1.md) found
-// three authoritative places claiming `--dual` forces strict "for the rest of the session". It does
-// not: SessionStart rewrites the receipts but leaves `review_mode` alone, and no downgrade
-// transition exists anywhere, so one `--dual` pins every later session into strict.
+// the old persisted `review_mode=dual` escalation pinning every later session into strict with no
+// downgrade path. Hook-lightweighting resolved it by deletion: there is no mode field, no
+// aggregate plane and no state write — dual is a per-invocation flag merged in conversation.
+// These pins keep the persisted-mode machinery from resurfacing in the docs.
 
 const DUAL_LIFETIME_DOCS = [
   'skills/codex-review-branch/SKILL.md',
@@ -327,116 +330,27 @@ const DUAL_LIFETIME_DOCS = [
   'skills/codex-code-review/references/review-common.md',
 ];
 
-test('no dual-mode doc claims the strict escalation is session-bounded', () => {
-  for (const file of DUAL_LIFETIME_DOCS) {
-    assert.doesNotMatch(read(file), /rest of the session/,
-      `${file}: "for the rest of the session" is false — SessionStart preserves review_mode`);
-  }
-});
-
-test('every dual-mode doc states the real persistence boundary and the absent downgrade', () => {
+test('no dual-mode doc reintroduces persisted-mode vocabulary', () => {
   for (const file of DUAL_LIFETIME_DOCS) {
     const content = read(file);
-    assert.match(content, /until the state file is rebuilt or/,
-      `${file}: must name the boundary that actually ends the escalation`);
-    assert.match(content, /no supported `dual → single` downgrade|there is no supported `dual → single` downgrade/,
-      `${file}: a reader who is told the escalation persists will look for a way out — say there is none`);
+    assert.ok(!content.includes('review_mode'),
+      `${file}: the deleted review_mode field must not be referenced`);
+    assert.ok(!content.includes('emit-review-gate'),
+      `${file}: the deleted aggregate-gate emitter must not be referenced`);
+    assert.ok(!content.includes('aggregate_write_failed'),
+      `${file}: the deleted aggregate-plane marker must not be referenced`);
   }
 });
 
-test('no dual-mode doc claims a default invocation leaves the effective mode single', () => {
-  // Dispatch and effective enforcement state are different facts, and the docs used to conflate
-  // them: "`review_mode` stays at its initialized value" reads as a guarantee about the CURRENT
-  // state when it is only true of a state that never saw `--dual`. That mattered because the same
-  // sentence promised `code_review.passed` governs the gate — a recovery path stop-guard will not
-  // honour while a persisted dual is in force, so a reader following it loops.
-  for (const [file, retracted] of [
-    ['skills/codex-code-review/SKILL.md', /`review_mode` stays at its initialized value/],
-    ['skills/codex-code-review/references/review-common.md', /in which case `review_mode` stays/],
-  ]) {
-    assert.doesNotMatch(read(file), retracted,
-      `${file}: reasserted an unconditional "stays single" claim about the effective mode`);
-  }
+test('the dual-mode docs state that dual is ephemeral and conversation-merged', () => {
   assert.match(read('skills/codex-code-review/SKILL.md'),
-    /Emitting no transition is not the same as returning to single/,
-    'SKILL.md must keep the distinction that makes the default-mode paragraph true');
+    /nothing persists it, nothing blocks on it, and the next invocation starts single again/,
+    'SKILL.md must state the ephemeral lifetime that replaced persisted review_mode');
   const reviewCommon = read('skills/codex-code-review/references/review-common.md');
-  assert.match(reviewCommon, /does not reset (a persisted `review_mode=dual`|it)/,
-    'review-common.md must say the default path cannot discharge an inherited dual gate');
-  assert.match(reviewCommon, /no downgrade exists/,
-    'and that there is no way back — otherwise a reader assumes one exists and waits for it');
-  // The field is not the only trigger, and this is the assertion that says so. A marker can arm the
-  // gate while `review_mode` still reads single, so a reader checking only the field concludes
-  // "single, done" and loops against a gate that will not open. The marker and the mode are written
-  // on independent paths with opposite orderings — see review-common.md § Aggregate-Plane Writes.
-  for (const file of [
-    'skills/codex-code-review/SKILL.md',
-    'skills/codex-code-review/references/review-common.md',
-  ]) {
-    assert.match(read(file), /`aggregate_write_failed`.*`lock_failure`|`lock_failure`.*`aggregate_write_failed`/s,
-      `${file}: must name the marker case, not just the review_mode field`);
-  }
-});
-
-test('the docs call cross-session dual persistence a defect, not a feature', () => {
-  // "That is the point of asking for it" attached to the persistence sentence characterized a
-  // known defect as intended behaviour — the opposite of what the R1 ticket records.
-  assert.match(read('skills/codex-code-review/SKILL.md'), /known defect/i,
-    'SKILL.md must not present persistence beyond the requesting session as a feature to rely on');
-});
-
-test('review_mode writes keep the initialize-single / transition-only-to-dual invariant', () => {
-  // The claim in the docs above is only true while this holds. Pinning "exactly two write sites"
-  // would be the wrong invariant — it breaks on a harmless refactor and says nothing about
-  // direction. What matters is the SHAPE: constructors seed `single`, every write to an existing
-  // state moves to `dual`, and nothing moves back.
-  //
-  // Scanned repo-wide, not over a hard-coded file list: a downgrade added in a new hook, in
-  // `scripts/`, or in a file nobody thought to enumerate is exactly the case a fixed list misses.
-  // `{recursive: true}` without `withFileTypes` yields relative path STRINGS, which sidesteps the
-  // Dirent.parentPath/Dirent.path rename across Node versions — this suite has to run on whatever
-  // the host ships.
-  const shellSources = ['hooks', 'scripts']
-    .flatMap((dir) => readdirSync(resolve(root, dir), { recursive: true })
-      .filter((p) => /\.(sh|js)$/.test(p))
-      .map((p) => `${dir}/${p}`));
-  assert.ok(shellSources.length > 10, 'source enumeration collapsed — the guard would go vacuous');
-
-  // Constructors: the literal sits inside the initial-state JSON template, so it is a seed, not a
-  // transition. WB5b retired post-edit-format.sh's state creation outright (session-init owns
-  // creation; gates re-open by derivation), so the review hook carries the one remaining copy —
-  // and the edit hook must NOT grow one back.
-  assert.match(read('hooks/post-tool-review-state.sh'), /"review_mode":\s*"single",/,
-    'hooks/post-tool-review-state.sh: the initial-state template must still seed review_mode to single');
-  assert.doesNotMatch(read('hooks/post-edit-format.sh'), /"review_mode"/,
-    'hooks/post-edit-format.sh: WB5b retired its state constructor — a review_mode write here is a resurrection');
-
-  // Transitions against an existing state. Three shapes, because a downgrade need not be a literal
-  // assignment: `.review_mode = X` (any value, quoted or a jq variable), `setpath(["review_mode"];…)`
-  // and `del(.review_mode)` — deleting the field is a downgrade, since every reader defaults it to
-  // single. A variable-valued write is unresolvable here, so it fails rather than being waved past:
-  // the invariant is "only ever dual", and a value this guard cannot read is not proof of that.
-  let transitions = 0;
-  for (const file of shellSources) {
-    const src = read(file);
-    for (const m of src.matchAll(/\.review_mode\s*=\s*(?!=)(\$?\w+|"[^"]*")/g)) {
-      transitions += 1;
-      assert.equal(m[1], '"dual"',
-        `${file}: transition writing ${m[1]} — anything but a literal "dual" is a downgrade path, `
-          + 'or a value this guard cannot verify, and the docs promise neither exists');
-    }
-    assert.doesNotMatch(src, /setpath\(\s*\[\s*"review_mode"/,
-      `${file}: setpath into review_mode bypasses the assignment form this guard reads`);
-    assert.doesNotMatch(src, /del\(\s*\.review_mode\s*\)/,
-      `${file}: deleting review_mode is a downgrade — every reader defaults the absent field to single`);
-  }
-  assert.ok(transitions >= 2,
-    `only ${transitions} review_mode transitions found repo-wide; the known writers are `
-      + 'post-tool-review-state.sh PENDING + aggregate-blocked fallback — fewer means the pattern moved');
-
-  // SessionStart preserves the field. Pinned behaviourally in test/hooks/session-init.test.js
-  // ("KNOWN DEFECT — session-init does NOT reset review_mode"); pinned textually here so a reset
-  // added to the jq transaction fails in both places at once.
-  assert.doesNotMatch(read('hooks/session-init.sh'), /\.review_mode\s*=/,
-    'session-init resetting review_mode would invalidate the persistence claim in all three docs');
+  assert.match(reviewCommon, /the merge happens in conversation/,
+    'review-common.md must locate the merge in conversation, not in a state plane');
+  assert.match(reviewCommon, /no aggregate plane, no mode field and no state write/,
+    'review-common.md must state what does NOT exist, so a reader does not go looking for it');
+  assert.match(reviewCommon, /next invocation starts single again unless the flag is passed again/,
+    'the lifetime boundary is the invocation — say so where the merge is defined');
 });

@@ -264,67 +264,63 @@ test('auto-loop terminal gate routes to one precommit variant across rules, trac
     const autoLoop = routedPrecommit(content, /^\| code files \| `\/codex-review-fast` \| `\//);
     assert.equal(autoLoop, canonical, `${label} Auto-Loop Rule row should route to /${canonical}`);
 
-    // The table sits under a heading that claims "Stop Hook enforced". That claim is only true at
-    // the granularity of "some precommit passed": stop-guard.sh accepts a passing `mode: fast`
-    // unless PRECOMMIT_REQUIRE_FULL=1 is set. So a doc that names the FULL variant is advertising
-    // a gate the hook does not enforce out of the box, and a generated project would inherit that
-    // false assurance silently. Require the escape hatch to be named wherever full is declared.
-    if (canonical === 'precommit') {
-      assert.match(
-        content,
-        /PRECOMMIT_REQUIRE_FULL/,
-        `${label} declares the full /precommit gate under a "Stop Hook enforced" heading, so it must `
-          + 'also state that enforcing the variant requires PRECOMMIT_REQUIRE_FULL=1'
-      );
-    }
+    // The table sits under the Required Checks heading. Since hook-lightweighting the Stop hook
+    // is a reminder, not a gate — a doc still claiming enforcement would advertise a backstop
+    // that no longer exists, and a generated project would inherit that false assurance silently.
+    assert.match(content, /Stop Hook reminded/,
+      `${label} must title Required Checks with the reminder posture, not "enforced"`);
+    assert.match(content, /reminder, not a gate/,
+      `${label} must state the Stop hook's reminder semantics where the table lives`);
+    assert.doesNotMatch(content, /PRECOMMIT_REQUIRE_FULL|STOP_GUARD_MODE/,
+      `${label} must not reference retired enforcement settings (dead config since hook-lightweighting)`);
   }
 
-  // The docs are advisory prose; these hooks are the layer that actually EMITS the routing into
-  // the model's context — after a compaction, after a skill run, and on the next user prompt.
-  // They were outside the file set, and the only test touching them asserted `/\/precommit/` —
-  // which `precommit-fast` satisfies too, `precommit` being a strict prefix. So the enforcement
-  // layer's variant was pinned nowhere: flipping every doc to fast left the suite green while the
-  // hooks still said full.
+  // The docs are advisory prose; the reminder layer is what actually EMITS the routing into the
+  // model's context — the git-fallback nudges in stop-guard.sh / post-compact-auto-loop.sh, and
+  // the GATES table in scripts/review-state.js that every state-driven rendering reads
+  // (hook-lightweighting §3.2). A doc flipped to fast while these still said full — or the
+  // reverse — would be the same partial flip 31510e6 committed, one layer updated and the
+  // emitting layer missed.
   //
-  // The list is derived, not hand-maintained: a fourth emitter added later would otherwise sit
-  // unpinned for exactly as long as nobody remembered this test — which is how the third one
-  // (user-prompt-review-guard.sh, the emitter that fires most often of the three) was missed.
-  const emitters = readdirSync(resolve(root, 'hooks'))
+  // The hook list is derived, not hand-maintained: any hook whose source names a precommit
+  // variant is scanned, so a new reminder hook that grows a routing line is pinned the day it
+  // lands.
+  const emitterFiles = readdirSync(resolve(root, 'hooks'))
     .filter((f) => f.endsWith('.sh'))
-    .filter((f) => /NEXT="\/precommit/.test(readFileSync(resolve(root, 'hooks', f), 'utf8')));
+    .map((f) => `hooks/${f}`)
+    .filter((rel) => /\/precommit/.test(readFileSync(resolve(root, rel), 'utf8')))
+    .concat(['scripts/review-state.js']);
 
-  assert.ok(
-    emitters.length >= 3,
-    `expected at least the 3 known precommit-routing hooks, found ${emitters.length}: ${emitters}`
-  );
-  for (const rel of ['post-compact-auto-loop.sh', 'post-skill-auto-loop.sh', 'user-prompt-review-guard.sh']) {
-    assert.ok(emitters.includes(rel), `hooks/${rel} should still route precommit into NEXT`);
+  for (const rel of ['hooks/stop-guard.sh', 'hooks/post-compact-auto-loop.sh']) {
+    assert.ok(
+      emitterFiles.includes(rel),
+      `${rel} should still carry the precommit route in its git-fallback nudge`
+    );
   }
 
-  // EVERY assignment in each emitter, not just the first. A non-global `match` returns one result,
-  // so a hook that later grew a second, divergent `NEXT="/precommit-fast"` branch stayed green —
-  // the same partial coverage this test's own comments criticise two paragraphs up, and the same
-  // shape as the `strayRules` scan that had to be made exhaustive for rules/auto-loop.md.
+  // EVERY variant token in each emitting file, not just the first — a second, divergent
+  // `/precommit-fast` branch added later must turn this red, the same exhaustiveness the
+  // `strayRules` scan above applies to rules/auto-loop.md.
   const strayEmitters = [];
-  let assignments = 0;
-  for (const f of emitters) {
-    const src = readFileSync(resolve(root, 'hooks', f), 'utf8');
+  let emitterRefs = 0;
+  for (const rel of emitterFiles) {
+    const src = readFileSync(resolve(root, rel), 'utf8');
     src.split('\n').forEach((line, i) => {
-      for (const tok of line.match(/NEXT="\/(?:precommit(?:-fast)?)"/g) || []) {
-        assignments += 1;
-        const variant = tok.replace(/NEXT="\/|"/g, '');
-        if (variant !== canonical) strayEmitters.push(`hooks/${f}:${i + 1} -> ${tok}`);
+      for (const tok of line.match(/\/precommit(?:-fast)?\b/g) || []) {
+        emitterRefs += 1;
+        const variant = tok.slice(1);
+        if (variant !== canonical) strayEmitters.push(`${rel}:${i + 1} -> ${tok}`);
       }
     });
   }
   assert.ok(
-    assignments >= emitters.length,
-    `each of the ${emitters.length} emitters should assign the precommit route to NEXT at least once `
-      + `(found ${assignments} assignments)`
+    emitterRefs >= emitterFiles.length,
+    `each of the ${emitterFiles.length} emitting files should name the precommit route at least `
+      + `once (found ${emitterRefs} references)`
   );
   assert.deepEqual(
     strayEmitters, [],
-    `every NEXT= precommit assignment in the emitting hooks must route to /${canonical}, matching `
+    `every precommit reference in the emitting layer must route to /${canonical}, matching `
       + 'rules/auto-loop.md'
   );
 });

@@ -82,15 +82,12 @@ test('project-setup SKILL.md contains Phase 6.5', () => {
 const PHASE_65_SCRIPTS = [
   'precommit-runner.js',
   'verify-runner.js',
-  'dispatch-cli.js',
+  'review-state.js',
   'lib/utils.js',
   'lib/tree-digest.js',
-  'lib/receipt-log.js',
-  'lib/dispatch-log.js',
-  'lib/gate-derive.js',
 ];
 
-test('project-setup Phase 6.5 installs all 8 scripts (copy table, report, checklist)', () => {
+test('project-setup Phase 6.5 installs all 5 scripts (copy table, report, checklist)', () => {
   const phase65Start = skillMd.indexOf('## Phase 6.5');
   const phase7Start = skillMd.indexOf('## Phase 7');
   assert.ok(phase65Start !== -1 && phase7Start > phase65Start, 'Phase 6.5 and Phase 7 sections must exist in order');
@@ -100,7 +97,7 @@ test('project-setup Phase 6.5 installs all 8 scripts (copy table, report, checkl
   const copyEnd = phase65.indexOf('### 6.5.3');
   assert.ok(copyStart !== -1 && copyEnd > copyStart, '6.5.2 copy section must exist');
   const copyTable = phase65.slice(copyStart, copyEnd);
-  assert.ok(copyTable.includes('Copy 8 scripts'), '6.5.2 must state the 8-script count');
+  assert.ok(copyTable.includes('Copy 5 scripts'), '6.5.2 must state the 5-script count');
 
   // The copy table's FIRST column, as an exact set — `includes()` over the whole
   // section is satisfiable from another row's dependency cell, so a deleted copy
@@ -115,7 +112,7 @@ test('project-setup Phase 6.5 installs all 8 scripts (copy table, report, checkl
   assert.deepEqual(
     [...copyRowScripts].sort(),
     [...PHASE_65_SCRIPTS].sort(),
-    '6.5.2 copy table first column must be exactly the 8-script set'
+    '6.5.2 copy table first column must be exactly the 5-script set'
   );
 
   const reportStart = phase65.indexOf('### 6.5.4');
@@ -132,32 +129,39 @@ test('project-setup Phase 6.5 installs all 8 scripts (copy table, report, checkl
   }
 });
 
-test('precommit-fast auto-install copies both receipt libs alongside the runner', () => {
+test('precommit-fast auto-install copies the self-note checker pair alongside the runner', () => {
+  // Retirement pin included: the receipt/dispatch libraries are deleted
+  // (hook-lightweighting § 3.3) — the runner's only remaining dependency pair is
+  // review-state.js + lib/tree-digest.js, its self-note channel.
   const step1Fast = precommitFast.slice(0, precommitFast.indexOf('### Step 2'));
+  assert.ok(
+    step1Fast.includes('review-state.js'),
+    'precommit-fast Step 1 copy list should include review-state.js'
+  );
   assert.ok(
     step1Fast.includes('lib/tree-digest.js'),
     'precommit-fast Step 1 copy list should include lib/tree-digest.js'
   );
   assert.ok(
-    step1Fast.includes('lib/receipt-log.js'),
-    'precommit-fast Step 1 copy list should include lib/receipt-log.js'
+    !step1Fast.includes('lib/receipt-log.js'),
+    'the deleted receipt-log library must not be in the copy list'
   );
 });
 
-test('claude-health managed inventory lists both receipt libs', () => {
+test('claude-health managed inventory matches the post-lightweighting script set', () => {
   const claudeHealth = readFileSync(resolve(ROOT, 'skills/claude-health/SKILL.md'), 'utf8');
   const scriptsRow = claudeHealth
     .split('\n')
     .find(l => l.startsWith('| Scripts |'));
   assert.ok(scriptsRow, 'claude-health should have a Scripts inventory row');
   assert.ok(
-    scriptsRow.includes('lib/tree-digest.js') && scriptsRow.includes('lib/receipt-log.js'),
-    'Scripts inventory row should list lib/tree-digest.js and lib/receipt-log.js'
+    scriptsRow.includes('review-state.js') && scriptsRow.includes('lib/tree-digest.js'),
+    'Scripts inventory row should list the checker pair the local hooks read'
   );
   assert.ok(
-    scriptsRow.includes('dispatch-cli.js') && scriptsRow.includes('lib/dispatch-log.js')
-      && scriptsRow.includes('lib/gate-derive.js'),
-    'Scripts inventory row should list the dispatch/derivation set the local hooks read (WB5a)'
+    !scriptsRow.includes('dispatch-cli.js') && !scriptsRow.includes('lib/dispatch-log.js')
+      && !scriptsRow.includes('lib/gate-derive.js') && !scriptsRow.includes('lib/receipt-log.js'),
+    'the deleted dispatch/derivation/receipt set must not be inventoried (hook-lightweighting § 3.3)'
   );
 });
 

@@ -232,14 +232,20 @@ test('orchestrate skill files (docs + references) contain no hook sentinel liter
   }
 });
 
-test('orchestrate SKILL.md two-plane separation: safety plane is read-only, run-state has no safety fields', () => {
+test('orchestrate SKILL.md plane separation: review state is out-of-repo, run-state has no review fields', () => {
   const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /\.claude_review_state\.json/, 'should name the safety plane file');
-  assert.match(content, /只讀，永不寫/, 'orchestrator must be read-only on the safety plane');
+  // Retirement pin: the in-repo safety plane (.claude_review_state.json) retired with the
+  // enforcement hooks (hook-lightweighting § 3.2) — reminder state lives under ~/.cache and
+  // the orchestrator neither reads nor writes it. The old two-plane vocabulary must not
+  // resurface in the skill.
+  assert.ok(!content.includes('.claude_review_state'), 'retired safety-plane file must not be named');
+  assert.ok(!/safety[ -]plane/i.test(content), 'retired safety-plane vocabulary must not resurface');
+  assert.match(content, /~\/\.cache\/sd0x-dev-flow\//, 'should state where reminder state lives now');
+  assert.match(content, /不讀不寫/, 'orchestrator must declare it neither reads nor writes reminder state');
   const schemaDoc = readFileSync(resolve(skillDir, 'references/plan-schema.md'), 'utf8');
   for (const field of ['code_review', 'doc_review', 'aggregate_gate']) {
-    assert.ok(!content.includes(field), `SKILL.md run-state must not define safety field: ${field}`);
-    assert.ok(!schemaDoc.includes(field), `plan-schema.md must not define safety field: ${field}`);
+    assert.ok(!content.includes(field), `SKILL.md run-state must not define review field: ${field}`);
+    assert.ok(!schemaDoc.includes(field), `plan-schema.md must not define review field: ${field}`);
   }
 });
 

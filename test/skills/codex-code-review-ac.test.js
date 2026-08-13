@@ -44,35 +44,18 @@ test('SKILL.md Step 1.5 has graceful degradation', () => {
   assert.match(content, /SPEC_CHECKLIST = null.*skip silently/i);
 });
 
-// --- Step 1.6: Deferred Finding Context ---
+// --- Step 1.6 (retired): Deferred Finding Context ---
+// Hook-lightweighting § 3.4: the nit-history store was deleted with the hook that
+// owned it, so the preload step that read it is gone. Prior deferred findings reach
+// the reviewer through the review itself. A resurrected read would point the skill
+// at a file nothing writes.
 
-test('SKILL.md has Step 1.6 Deferred Finding Context', () => {
+test('SKILL.md no longer preloads the retired nit-history store', () => {
   const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /Step 1\.6.*Deferred Finding Context/i);
-});
-
-test('SKILL.md Step 1.6 has R4 prerequisite note', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /Prerequisite.*R4.*Nit History/i);
-});
-
-test('SKILL.md Step 1.6 has sanitization contract', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /Sanitize each entry.*mandatory/i);
-  assert.match(content, /120 chars/);
-  assert.match(content, /Strip markdown control chars/);
-  assert.match(content, /No secrets/);
-  assert.match(content, /shell metacharacters/);
-});
-
-test('SKILL.md Step 1.6 has deferred_context XML format', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /<deferred_context>/);
-});
-
-test('SKILL.md Step 1.6 has max 10 entries cap', () => {
-  const content = readFileSync(skillPath, 'utf8');
-  assert.match(content, /max 10 entries/);
+  assert.ok(!/Deferred Finding Context/i.test(content), 'the Step 1.6 preload must stay retired');
+  assert.ok(!content.includes('.claude_nit_history.json'), 'the deleted store must not be read');
+  assert.ok(!content.includes('DEFERRED_CONTEXT'), 'the injection variable must not survive the step');
+  assert.ok(!content.includes('<deferred_context>'), 'the XML block format must not survive the step');
 });
 
 // --- Prompt Templates: SPEC_CHECKLIST injection ---
@@ -101,9 +84,9 @@ for (const variant of promptVariants) {
     assert.match(content, /Implemented.*Partial.*Missing/);
   });
 
-  test(`${variant.name} prompt has DEFERRED_CONTEXT injection`, () => {
+  test(`${variant.name} prompt no longer injects the retired DEFERRED_CONTEXT`, () => {
     const content = readFileSync(variant.path, 'utf8');
-    assert.match(content, /DEFERRED_CONTEXT/);
+    assert.ok(!content.includes('DEFERRED_CONTEXT'), 'the nit-history preload retired with its store');
   });
 
   test(`${variant.name} prompt SPEC_CHECKLIST is before research instructions`, () => {
@@ -124,13 +107,6 @@ for (const variant of promptVariants) {
     assert.ok(acIdx < gateIdx, 'AC Coverage should appear before Merge Gate');
   });
 
-  test(`${variant.name} prompt DEFERRED_CONTEXT is before Review Dimensions`, () => {
-    const content = readFileSync(variant.path, 'utf8');
-    const deferredIdx = content.indexOf('DEFERRED_CONTEXT');
-    const dimIdx = content.indexOf('Review Dimensions');
-    assert.ok(dimIdx > 0, 'Review Dimensions should exist');
-    assert.ok(deferredIdx < dimIdx, 'DEFERRED_CONTEXT should appear before Review Dimensions');
-  });
 }
 
 // --- review-common.md: AC Coverage Format ---
@@ -160,7 +136,5 @@ test('all prompt templates use conditional injection (not unconditional)', () =>
     const content = readFileSync(variant.path, 'utf8');
     // SPEC_CHECKLIST uses ternary
     assert.match(content, /SPEC_CHECKLIST \? [`'"]/, `${variant.name}: SPEC_CHECKLIST should use conditional`);
-    // DEFERRED_CONTEXT uses ternary
-    assert.match(content, /DEFERRED_CONTEXT \?/, `${variant.name}: DEFERRED_CONTEXT should use conditional`);
   }
 });

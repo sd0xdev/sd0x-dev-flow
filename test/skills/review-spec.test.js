@@ -5,7 +5,7 @@ const { resolve } = require('node:path');
 
 const root = resolve(__dirname, '../..');
 const skillPath = resolve(root, 'skills/review-spec/SKILL.md');
-const hookPath = resolve(root, 'hooks/post-tool-review-state.sh');
+const sentinelSourcePath = resolve(root, 'rules/auto-loop.md');
 
 function skill() {
   return readFileSync(skillPath, 'utf8');
@@ -64,12 +64,13 @@ test('review-spec emits the parsed doc-plane sentinel pair and no unparseable ve
 });
 
 // Negative control for the assertion above: the sentinels this skill emits are exactly the pair
-// the hook parses. Reading them from the hook rather than restating them means a hook-side rename
-// fails here instead of silently disarming the gate.
-test('the sentinels review-spec emits are the ones the hook actually parses', () => {
-  const hook = readFileSync(hookPath, 'utf8');
+// rules/auto-loop.md § Gate Sentinels defines for the doc plane. Reading them from the rule
+// rather than restating them means a rule-side rename fails here instead of silently splitting
+// the vocabulary.
+test('the sentinels review-spec emits are the ones rules/auto-loop.md defines', () => {
+  const rule = readFileSync(sentinelSourcePath, 'utf8');
   for (const sentinel of ['✅ Mergeable', '⛔ Needs revision']) {
-    assert.ok(hook.includes(sentinel), `hook should parse ${sentinel}`);
+    assert.ok(rule.includes(sentinel), `rules/auto-loop.md should define ${sentinel}`);
     assert.ok(skill().includes(sentinel), `skill should emit ${sentinel}`);
   }
 });

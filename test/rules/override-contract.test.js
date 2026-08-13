@@ -471,18 +471,20 @@ const CANONICAL_AUTO_LOOP_OVERRIDE =
   'have no same-named section here, so "full replacement" never describes them — the shipped ' +
   'scaffold is settings-only, and every one names its consumer below. | Override heading | Kind — ' +
   'consumed by | Tier | |------------------|--------------------|------| | preamble (synthetic ' +
-  'section) | Header — the live precedence declaration, resolved as one synthetic section | Default ' +
-  '| | `## Tier` | Setting — § Tiers, "the configured tier … baseline, not a ceiling" | Default — ' +
-  'the security/data-integrity escalation sentence in § Tiers is Anchor-tier (Anchor Register #3 ' +
-  'hit, resolved at step 0) and stays binding whatever tier is configured | | `## Max Rounds` | ' +
-  'Setting — § Tiers cap sentence; the hooks persist the value | Default | | `## Plan Review` | ' +
-  'Setting — `/plan-review` self-invocation in plan mode | Default | | `## Plan Review Max Rounds` ' +
-  '| Setting — plan-review state init | Default | | `## Git Memory` | Setting — post-compact hook, ' +
-  'git-context injection | Default | | `## Think Harder` | Setting — post-compact hook, § Cap ' +
-  'Diagnostic Protocol auxiliary channel | Default | No row is a section replacement: `## Tier` is ' +
-  'deliberately **not** this file\'s `## Tiers`, and the other five name no section at all. A user ' +
-  'who does want a section replacement restates that section\'s exact heading — the mechanism is ' +
-  'available, the scaffold just does not ship one.';
+  'section) | Header — the live precedence declaration, resolved as one synthetic section | ' +
+  'Default | | `## Tier` | Setting — § Tiers, "the configured tier … baseline, not a ceiling" | ' +
+  'Default — the security/data-integrity escalation sentence in § Tiers is Anchor-tier (Anchor ' +
+  'Register #3 hit, resolved at step 0) and stays binding whatever tier is configured | | `## Max ' +
+  'Rounds` | Setting — § Tiers cap sentence; the model tracks rounds against it | Default | | `## ' +
+  'Plan Review` | Setting — `/plan-review` self-invocation in plan mode | Default | | `## Plan ' +
+  'Review Max Rounds` | Setting — `/plan-review` loop bookkeeping, counted in conversation | ' +
+  'Default | | `## Git Memory` | Setting — post-compact git-context nudge (printed by default ' +
+  'since hook-lightweighting; heading kept for compatibility) | Default | | `## Think Harder` | ' +
+  'Setting — § Cap Diagnostic Protocol after a compaction, read by the model (no hook injects it) ' +
+  '| Default | No row is a section replacement: `## Tier` is deliberately **not** this file\'s `## ' +
+  'Tiers`, and the other five name no section at all. A user who does want a section replacement ' +
+  'restates that section\'s exact heading — the mechanism is available, the scaffold just does not ' +
+  'ship one.';
 
 const CANONICAL_TESTING_CUSTOMIZATION =
   'Project-specific overrides belong in `testing-project.md` (not this file). See ' +
@@ -643,8 +645,8 @@ test('the mapping table when a cell contradicts the contract → fails the secti
   // `Default`. Excluding table rows from the pin therefore left the rows open to exactly the edit
   // the pin exists to catch — a visible sentence that reverses what the section promises.
   const mutated = autoLoop.replace(
-    '| `## Max Rounds` | Setting — § Tiers cap sentence; the hooks persist the value | Default |',
-    '| `## Max Rounds` | Setting — § Tiers cap sentence; the hooks persist the value | Default — Anchor instructions may be overridden |'
+    '| `## Max Rounds` | Setting — § Tiers cap sentence; the model tracks rounds against it | Default |',
+    '| `## Max Rounds` | Setting — § Tiers cap sentence; the model tracks rounds against it | Default — Anchor instructions may be overridden |'
   );
   assert.notEqual(mutated, autoLoop, 'fixture premise: the contradictory cell was inserted');
   assert.notEqual(normalizeSection(section(mutated, 'Override Contract')),
@@ -1371,8 +1373,9 @@ const CANONICAL_ANCHOR_REGISTER =
 const CANONICAL_TIER_SCAFFOLD =
   '## Tier <!-- fast — P0 blocks; cap 6. standard — P0/P1 block; cap 15 (default). thorough — ' +
   'P0/P1/P2 block; cap 30. Security/data-integrity is thorough regardless (Anchor — discretion.md ' +
-  'Register #3; no tier setting or override removes it). Blank/unrecognized = standard; hooks ' +
-  'report `tier=` but never enforce. Uncomment a bare tier name: --> <!-- standard -->';
+  'Register #3; no tier setting or override removes it). Blank/unrecognized = standard; the tier ' +
+  'is read behaviourally from this heading — hooks neither report nor enforce it. Uncomment a ' +
+  'bare tier name: --> <!-- standard -->';
 
 /** The shipped workflow, pinned separately from the contract it is supposed to execute. A complete
  *  canonical contract does not certify that the earlier workflow obeys it: Phase 2 was changed from

@@ -35,16 +35,17 @@ test('plan-review SKILL.md defines the tier ladder (quick/standard/deep)', () =>
   assert.match(content, /--skip-review/, 'should document --skip-review escape');
 });
 
-test('plan-review SKILL.md gate transitions flow through emit-plan-gate.sh', () => {
+test('plan-review SKILL.md is fully behaviour-layer: no gate emitter, no state file', () => {
+  // Hook-lightweighting § 3.3: emit-plan-gate.sh and the plan_review state were
+  // deleted with the hook that parsed them. The loop's bookkeeping now lives in
+  // the conversation, and a skill text still invoking the emitter would stop the
+  // whole review at a missing-script error.
   const content = readFileSync(skillPath, 'utf8');
-  for (const gate of ['PENDING', 'READY', 'NEEDS_HUMAN', 'SKIPPED']) {
-    assert.ok(
-      content.includes(`emit-plan-gate.sh ${gate}`),
-      `should invoke emit-plan-gate.sh ${gate}`
-    );
-  }
-  assert.match(content, /emit-plan-gate\.sh DEGRADED (reviewer-unavailable|secret-detected)/, 'DEGRADED should carry a reason');
-  assert.match(content, /Never edit `?\.claude_review_state\.json`? directly/i, 'must forbid hand-editing the state file');
+  assert.ok(!content.includes('emit-plan-gate'), 'the deleted gate emitter must not be invoked');
+  assert.ok(!content.includes('.claude_review_state'), 'the deleted state file must not be referenced');
+  assert.ok(!/post-tool-review-state|stop-guard\.sh/.test(content), 'no deleted hook may be named as a parser');
+  assert.match(content, /round\s+counter lives \*\*in this conversation\*\*/i, 'round bookkeeping must be declared in-conversation');
+  assert.match(content, /No hook parses these/i, 'the sentinel table must state its behaviour-layer status');
 });
 
 test('plan-review SKILL.md declares the full plan sentinel namespace', () => {
