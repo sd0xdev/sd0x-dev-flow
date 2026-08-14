@@ -108,15 +108,60 @@ function loadSkillDescriptions() {
   return descs;
 }
 
+// ── Shipping set ────────────────────────────────────────
+
+// The skills that reach a user: tracked, plus untracked-but-not-ignored so a
+// skill added and not yet staged still counts. Gitignored local-only skills
+// (`skills/update-readme/`, `skills/readme-i18n-sync/`) are maintainer tools
+// and are excluded — `npx skills add` installs 99, not the 101 on disk.
+//
+// One set, two consumers. Validation once enumerated the filesystem while the
+// counts used this list, so every run warned "Skill not in catalog" for the two
+// deliberately-ignored dirs — a permanent false positive that trains the reader
+// to skim past the warning line where a real missing-catalog entry would appear.
+// `git ls-files` always emits POSIX separators, so `split('/')` is safe on
+// Windows — do not "fix" this to use path.sep.
+//
+// The segment count is the directory test. `git ls-files` lists FILES, so a
+// path with exactly two segments is a file sitting directly in `skills/` — a
+// stray `skills/README.md` counted as a bundled skill both inflates the
+// published count and warns "Skill not in catalog: README.md" forever.
+function shippingSkillDirs() {
+  try {
+    const out = execFileSync(
+      'git',
+      ['ls-files', '--cached', '--others', '--exclude-standard', 'skills/'],
+      { encoding: 'utf8', cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }
+    );
+    const dirSet = new Set(
+      out.split('\n')
+        .map(p => p.split('/'))
+        .filter(parts => parts.length > 2)
+        .map(parts => parts[1])
+        .filter(Boolean)
+    );
+    if (dirSet.size > 0) return dirSet;
+  } catch {
+    // Fall through to the filesystem fallback below.
+  }
+  // git unavailable (unpacked tarball) or no entries (sparse checkout without
+  // skills/): every directory on disk is the best available answer.
+  return new Set(
+    fs.readdirSync(SKILLS_DIR).filter(d => {
+      try {
+        return fs.statSync(path.join(SKILLS_DIR, d)).isDirectory();
+      } catch {
+        return false;
+      }
+    })
+  );
+}
+
 // ── Validation ──────────────────────────────────────────
 
-function validate(catalog, descriptions) {
+function validate(catalog, descriptions, allDirs) {
   const warnings = [];
   const catalogCommands = new Set(catalog.skills.map(s => s.command.replace(/^\//, '')));
-  // Enumerate directories separately — skills without SKILL.md or description are still detected
-  const allDirs = new Set(
-    fs.readdirSync(SKILLS_DIR).filter(d => fs.statSync(path.join(SKILLS_DIR, d)).isDirectory())
-  );
   const validCategories = new Set(catalog.categories.map(c => c.id));
 
   for (const dir of allDirs) {
@@ -196,7 +241,7 @@ function buildInstallCoverage({ publicCount, bundledCount }) {
     '|--------|-------|----------|',
     `| Plugin install | Claude Code | Full (${bundledCount} bundled skills, hooks, rules, auto-loop) |`,
     `| \`npx skills add\` | Codex CLI, Cursor, Windsurf, Aider | Skills only (${publicCount} public skills) |`,
-    '| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |',
+    '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |',
   ].join('\n');
 }
 
@@ -283,46 +328,14 @@ function main() {
 
   const catalog = parseCatalogYaml(yamlText);
   const descriptions = loadSkillDescriptions();
-  const warnings = validate(catalog, descriptions);
+  const shipping = shippingSkillDirs();
+  const warnings = validate(catalog, descriptions, shipping);
 
   for (const w of warnings) process.stderr.write(w + '\n');
 
   const publicSkills = getPublicSkills(catalog);
   const publicCount = publicSkills.length;
-  // Count tracked + untracked-but-not-ignored skill dirs (what ships to plugin
-  // users once the worktree is committed). --others --exclude-standard keeps
-  // newly added (not yet staged) skills in the count while still excluding
-  // gitignored junk dirs — otherwise the README undercounts in the window
-  // between adding a skill and committing it, and ships stale after commit.
-  // Falls back to filesystem when git is unavailable (e.g. unpacked tarball)
-  // or when ls-files returns no entries (e.g. sparse checkout excluding skills/).
-  // `git ls-files` always emits POSIX path separators, so `split('/')` is safe
-  // even on Windows — do not "fix" this to use path.sep.
-  let bundledCount = 0;
-  try {
-    const out = execFileSync(
-      'git',
-      ['ls-files', '--cached', '--others', '--exclude-standard', 'skills/'],
-      { encoding: 'utf8', cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'] }
-    );
-    const dirSet = new Set(
-      out.split('\n').map(p => p.split('/')[1]).filter(Boolean)
-    );
-    bundledCount = dirSet.size;
-  } catch {
-    // Fall through to filesystem fallback below.
-  }
-  if (bundledCount === 0) {
-    bundledCount = fs
-      .readdirSync(SKILLS_DIR)
-      .filter(d => {
-        try {
-          return fs.statSync(path.join(SKILLS_DIR, d)).isDirectory();
-        } catch {
-          return false;
-        }
-      }).length;
-  }
+  const bundledCount = shipping.size;
   const counts = { publicCount, bundledCount, disk: diskCounts() };
 
   // Build blocks
