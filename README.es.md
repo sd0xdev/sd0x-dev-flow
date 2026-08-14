@@ -13,7 +13,7 @@ v4 da a Claude discreción dentro de un conjunto cerrado de anchors fijado por t
 Control plane completo en Claude Code. Distribución solo de skills para Codex CLI y otros agentes compatibles.
 
 <!-- BEGIN:HERO-COUNT -->
-96 bundled · 96 public skills · 15 agents — ~4% de la ventana de context de Claude
+99 bundled · 99 public skills · 15 agents — ~4% de la ventana de contexto de Claude
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -34,20 +34,33 @@ Un solo comando autodetecta framework, package manager, base de datos, entry poi
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — solo skills
 npx skills add sd0xdev/sd0x-dev-flow
+```
 
-# Generar AGENTS.md + instalar git hooks (ejecutar dentro de Claude Code)
-/codex-setup init
+Después, dentro de Codex CLI, genera el kernel AGENTS.md e instala los git hooks:
+
+```text
+$codex-setup init
 ```
 
 <!-- BEGIN:INSTALL-COVERAGE -->
 | Método | Herramientas | Cobertura |
 |--------|-------------|-----------|
-| Instalar plugin | Claude Code | Completa (96 bundled skills, hooks, rules, auto-loop) |
-| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Solo Skills (96 public skills) |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| Instalar plugin | Claude Code | Completa (99 bundled skills, hooks, rules, auto-loop) |
+| `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Solo Skills (99 public skills) |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requisitos**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
+**Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
+
+### Registro de Codex MCP
+
+```bash
+claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+```
+
+`-c 'model_reasoning_effort="high"'` es el valor por defecto aquí porque la revisión es la tarea en la que compensa razonar en profundidad (`rules/auto-loop.md` § Review Dispatch aplica el mismo principio al frontmatter de `agents/`). Es un valor por defecto, no un requisito: ajústalo o quítalo según tu equilibrio entre esfuerzo y latencia. `-c` funciona tanto antes como después del subcomando `mcp-server`.
+
+En cambio, `--profile` **no puede** usarse con `codex mcp-server`; sobrescribe la configuración directamente con `-c` en el comando de registro. El mensaje de error completo está en el [README en inglés](README.md#codex-mcp-registration).
 
 ## Por qué v4
 
@@ -83,7 +96,7 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 | 2 | **Digest-bound reminder state** | Los veredictos los anota el modelo (`node scripts/review-state.js note <plane> <pass\|fail>`) y quedan ligados al digest del árbol — una edición reabre el recordatorio de su plano porque el digest cambió; los sentinels de gate (`✅ Ready` / `## Overall: ✅ PASS`) siguen siendo señales de la capa de comportamiento | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
 | 3 | **Context recovery across compaction** | Línea base de git (rama + archivos sin commit) y recordatorios de gates pendientes re-inyectados tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 6 scripts — cuatro hooks de recordatorio consultivos, un auto-formateador y un guard de seguridad bloqueante (SessionStart ejecuta además `scripts/namespace-hint.sh`): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 89 de 98 skills públicas declaran `allowed-tools` |
+| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 90 de 99 skills públicas declaran `allowed-tools` |
 | 6 | **Defense-in-depth safety** | Los guards a nivel de git siguen siendo duros (commit-msg-guard, pre-push-gate sobre `/dev/tty`); pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad, no enforcement de workflow — requiere `jq`; sin jq, el guard no se activa); el Stop hook recuerda — las capas que custodian acciones irreversibles conservaron sus dientes, la capa de review se volvió consultiva por diseño | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | Disciplina de estancamiento basada en evidencia: tres rondas de revisión que no cierran ningún hallazgo — contadas por el modelo a partir de los reportes de review — disparan una clasificación estructurada más un ajuste acotado. El presupuesto de rondas por tier (por defecto 6 / 15 / 30, sobrescribible 3–50) queda como red de seguridad ante un bucle desbocado y ejecuta el mismo diagnóstico en su primer hit, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
@@ -254,7 +267,7 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 <!-- BEGIN:WHATS-INCLUDED-COUNT -->
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
-| Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
+| Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
@@ -298,7 +311,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 <!-- BEGIN:FULL-CATALOG -->
 <details>
-<summary>Las 96 public skills</summary>
+<summary>Las 99 public skills</summary>
 
 ### Desarrollo (33)
 
@@ -338,7 +351,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### Revisión (Codex MCP) (14)
+### Revisión (Codex MCP) (15)
 
 | Skill | Descripción | Soporte de loop |
 |-------|-------------|-----------------|
@@ -353,6 +366,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
 | `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
 | `/doc-review` | Document review via Codex MCP. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
 | `/security-review` | Security review via Codex MCP. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
 | `/test-review` | Test coverage review via Codex MCP. | - |
@@ -375,7 +389,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/test-health` | Holistic test coverage measurement. |
 | `/verify` | Verification loop — lint -> typecheck -> unit -> integration -> e2e |
 
-### Planificación (16)
+### Planificación (17)
 
 | Skill | Descripción |
 |-------|-------------|
@@ -385,10 +399,11 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/deep-research` | Universal multi-source research orchestration. |
 | `/feasibility-study` | Feasibility analysis from first principles. |
 | `/fp-brief` | First-principles briefing from technical documents. |
-| `/post-dev-recap` | Guided post-dev recap wrapper — scope detection + doc generation + Q&A. |
+| `/orchestrate` | Agent-driven workflow orchestration (v1 report-only). |
+| `/post-dev-recap` | Post-development recap wrapper. |
 | `/project-brief` | Convert a technical spec into a PM/CTO-readable executive summary. |
-| `/recap-ask` | Recap-bounded Q&A follow-up over an existing briefing-recap. |
-| `/recap-doc` | Post-development recap document generator with blind-spot detection. |
+| `/recap-ask` | Interactive Q&A over an existing recap document. |
+| `/recap-doc` | Post-development recap document generator. |
 | `/req-analyze` | Requirements analysis — problem decomposition, stakeholder scan, requirement structuring. |
 | `/request-tracking` | Request tracking knowledge base. |
 | `/review-spec` | Review technical spec documents from completeness, feasibility, risk, and code consistency perspectives. |
@@ -396,10 +411,11 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/tech-spec` | Tech spec generation and review. |
 | `/ui-first-principles` | First-principles UI/IA reasoning: turns a `<scenario>` + API field set into JTBD analysis, principle-anchored field-p... |
 
-### Documentación y Herramientas (20)
+### Documentación y Herramientas (21)
 
 | Skill | Descripción |
 |-------|-------------|
+| `/adr` | Write an Architecture Decision Record (ADR) for a feature — Context / Decision / Status / Consequences / Alternatives... |
 | `/claude-health` | Claude Code config health check + plugin sync. |
 | `/contract-decode` | EVM contract error and calldata decoder. |
 | `/create-request` | Create, update, or scan per-task request tickets for progress tracking. |

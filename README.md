@@ -34,9 +34,12 @@ One command auto-detects framework, package manager, database, entrypoints, and 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — skills only
 npx skills add sd0xdev/sd0x-dev-flow
+```
 
-# Generate AGENTS.md + install git hooks (run inside Claude Code)
-/codex-setup init
+Then, inside Codex CLI, generate the AGENTS.md kernel and install the git hooks:
+
+```text
+$codex-setup init
 ```
 
 <!-- BEGIN:INSTALL-COVERAGE -->
@@ -44,10 +47,10 @@ npx skills add sd0xdev/sd0x-dev-flow
 |--------|-------|----------|
 | Plugin install | Claude Code | Full (99 bundled skills, hooks, rules, auto-loop) |
 | `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (99 public skills) |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
+**Requirements**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` and `post-edit-format` parse their hook payload with it — without `jq` both exit 0, so the sensitive-path guard and auto-formatting are silently off) | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
 
 ### Codex MCP registration
 

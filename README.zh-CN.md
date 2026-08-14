@@ -13,7 +13,7 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 完整控制平面运行在 Claude Code 上。对 Codex CLI 与其他兼容 agent 提供 skills-only 分发。
 
 <!-- BEGIN:HERO-COUNT -->
-96 bundled · 96 public skills · 15 agents — 仅占 Claude context window 的 ~4%
+99 bundled · 99 public skills · 15 agents — 仅占 Claude context window 的 ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -34,20 +34,33 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — 仅 skills
 npx skills add sd0xdev/sd0x-dev-flow
+```
 
-# 生成 AGENTS.md + 安装 git hooks（在 Claude Code 中执行）
-/codex-setup init
+接着在 Codex CLI 中生成 AGENTS.md kernel 并安装 git hooks：
+
+```text
+$codex-setup init
 ```
 
 <!-- BEGIN:INSTALL-COVERAGE -->
 | 方式 | 适用工具 | 覆盖范围 |
 |------|---------|---------|
-| 插件安装 | Claude Code | 完整（96 bundled skills、hooks、rules、auto-loop） |
-| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 仅 Skills（96 public skills） |
-| `/codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| 插件安装 | Claude Code | 完整（99 bundled skills、hooks、rules、auto-loop） |
+| `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 仅 Skills（99 public skills） |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
 <!-- END:INSTALL-COVERAGE -->
 
-**环境要求**：Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装，但 `/codex-*` review gate 必须有——Codex 本身就是那位唯一的 reviewer，未安装时 review 会直接输出 `⛔ Blocked` + `⚠️ Need Human`，没有可降级的对象）
+**环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装，但 `/codex-*` review gate 必须有——Codex 本身就是那位唯一的 reviewer，未安装时 review 会直接输出 `⛔ Blocked` + `⚠️ Need Human`，没有可降级的对象）
+
+### 注册 Codex MCP
+
+```bash
+claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+```
+
+`-c 'model_reasoning_effort="high"'` 是这里的默认值——review 正是值得投入深度的工作（`rules/auto-loop.md` § Review Dispatch 对 `agents/` frontmatter 套用同一个原则）。它是默认值而非硬性要求，你可以按自己的 effort/latency 取舍调整或去掉。`-c` 放在 `mcp-server` 子命令前后都有效。
+
+`--profile` 则**完全无法**与 `codex mcp-server` 并用，请直接在注册命令上用 `-c` 覆盖配置；完整错误信息见 [English README](README.md#codex-mcp-registration)。
 
 ## 为什么是 v4
 
@@ -83,7 +96,7 @@ sd0x-dev-flow 是一个 reference implementation。下表的每一行都把一�
 | 2 | **Digest-bound reminder state** | Verdict 由模型记录（`node scripts/review-state.js note <plane> <pass\|fail>`）并与 tree digest 绑定——一次编辑会因 digest 变化而重新打开其 plane 的提醒；gate sentinel（`✅ Ready` / `## Overall: ✅ PASS`）保持为行为层信号 | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
 | 3 | **Context recovery across compaction** | SessionStart(compact) 之后重新注入 git 基线（分支 + 未提交文件）与待偿 gate 提醒 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 类 hook 事件分派到 6 个脚本——4 个建议性提醒 hook、1 个自动格式化、1 个会阻断的安全守卫（SessionStart 另外执行 `scripts/namespace-hint.sh`）：PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 个脚本) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具备 Edit/Write 权限 | 98 个公开 skills 中有 89 个声明了 `allowed-tools` |
+| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具备 Edit/Write 权限 | 99 个公开 skills 中有 90 个声明了 `allowed-tools` |
 | 6 | **Defense-in-depth safety** | Git 层守卫保持硬性（commit-msg-guard、走 `/dev/tty` 的 pre-push-gate）；编辑期的 pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，非工作流强制——需要 `jq`，缺 jq 时守卫不会启动）；Stop hook 只做提醒——把守不可逆操作的那几层保留了牙齿，审查层则按设计转为建议性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 审查 Claude 写的东西，自行研究 repo——绝不喂结论让它确认 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | 证据驱动的卡壳纪律：连续三轮 review 都没关掉任何 finding——由模型根据 review 报告自行计数——触发结构化的停滞分类与一次有边界的调整。按 tier 的轮次预算（默认 6 / 15 / 30，可覆写为 3–50）退居 runaway backstop，首次触发上限时跑同一套诊断，并保留列举出的人类出口 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
@@ -254,7 +267,7 @@ flowchart TD
 <!-- BEGIN:WHATS-INCLUDED-COUNT -->
 | 类别 | 数量 | 示例 |
 |------|------|------|
-| Skills | 96 public (96 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
+| Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | 代理 | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | 钩子 | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | 规则 | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
@@ -298,7 +311,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 
 <!-- BEGIN:FULL-CATALOG -->
 <details>
-<summary>全部 96 个 public skills</summary>
+<summary>全部 99 个 public skills</summary>
 
 ### 开发 (33)
 
@@ -338,7 +351,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### 审查 (Codex MCP) (14)
+### 审查 (Codex MCP) (15)
 
 | Skill | Description | 循环支持 |
 |-------|-------------|----------|
@@ -353,6 +366,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
 | `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
 | `/doc-review` | Document review via Codex MCP. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
 | `/security-review` | Security review via Codex MCP. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
 | `/test-review` | Test coverage review via Codex MCP. | - |
@@ -375,7 +389,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/test-health` | Holistic test coverage measurement. |
 | `/verify` | Verification loop — lint -> typecheck -> unit -> integration -> e2e |
 
-### 规划 (16)
+### 规划 (17)
 
 | Skill | Description |
 |-------|-------------|
@@ -385,10 +399,11 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/deep-research` | Universal multi-source research orchestration. |
 | `/feasibility-study` | Feasibility analysis from first principles. |
 | `/fp-brief` | First-principles briefing from technical documents. |
-| `/post-dev-recap` | Guided post-dev recap wrapper — scope detection + doc generation + Q&A. |
+| `/orchestrate` | Agent-driven workflow orchestration (v1 report-only). |
+| `/post-dev-recap` | Post-development recap wrapper. |
 | `/project-brief` | Convert a technical spec into a PM/CTO-readable executive summary. |
-| `/recap-ask` | Recap-bounded Q&A follow-up over an existing briefing-recap. |
-| `/recap-doc` | Post-development recap document generator with blind-spot detection. |
+| `/recap-ask` | Interactive Q&A over an existing recap document. |
+| `/recap-doc` | Post-development recap document generator. |
 | `/req-analyze` | Requirements analysis — problem decomposition, stakeholder scan, requirement structuring. |
 | `/request-tracking` | Request tracking knowledge base. |
 | `/review-spec` | Review technical spec documents from completeness, feasibility, risk, and code consistency perspectives. |
@@ -396,10 +411,11 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/tech-spec` | Tech spec generation and review. |
 | `/ui-first-principles` | First-principles UI/IA reasoning: turns a `<scenario>` + API field set into JTBD analysis, principle-anchored field-p... |
 
-### 文档与工具 (20)
+### 文档与工具 (21)
 
 | Skill | Description |
 |-------|-------------|
+| `/adr` | Write an Architecture Decision Record (ADR) for a feature — Context / Decision / Status / Consequences / Alternatives... |
 | `/claude-health` | Claude Code config health check + plugin sync. |
 | `/contract-decode` | EVM contract error and calldata decoder. |
 | `/create-request` | Create, update, or scan per-task request tickets for progress tracking. |
