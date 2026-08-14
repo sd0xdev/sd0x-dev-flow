@@ -42,5 +42,29 @@
   },
   "delta_thresholds": {
     "large_diff_count": 80
+  },
+  "manifest_map": {
+    "recognized_manifests": {
+      "node": ["package.json"],
+      "php": ["composer.json"],
+      "go": ["go.mod"],
+      "rust": ["Cargo.toml"],
+      "python": ["pyproject.toml"]
+    },
+    "controller_manifests": ["go.work", "pnpm-workspace.yaml"],
+    "detection_only": [
+      "pom.xml", "*.csproj", "build.gradle", "build.gradle.kts",
+      "Gemfile", "setup.py", "requirements.txt",
+      "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+      "Cargo.lock", "composer.lock", "go.sum", "poetry.lock",
+      "BUILD", "BUILD.bazel", "WORKSPACE", "MODULE.bazel", "CMakeLists.txt"
+    ],
+    "budgets": {
+      "max_manifests": 500,
+      "max_manifest_bytes": 1048576,
+      "top_default": 12,
+      "sample_limit": 12
+    },
+    "fixture_path_markers": ["examples/", "fixtures/", "testdata/", "samples/"]
   }
 }
