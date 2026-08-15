@@ -1,7 +1,7 @@
 # Sharingan v2: Multi-Source Input — R2 策略實作
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) §7
 > **Depends On**: [R1 設計基建](./2026-04-01-sharingan-v2-multi-source-r1.md)
@@ -43,13 +43,13 @@ See [R1](./2026-04-01-sharingan-v2-multi-source-r1.md) Scope section for the sec
 
 ## Acceptance Criteria
 
-- [ ] AC1: Phase 0A — GitHub URL (`GITHUB_URL_RE`) 仍走現有 scan-repo.js pipeline，v1 測試全部通過（zero regression）
-- [ ] AC2: Phase 0B — 非 GitHub 輸入進入 LLM classifier，輸出 strategy + confidence，低信心（< threshold）觸發 AskUserQuestion
-- [ ] AC3: `external_evidence` adapter — 呼叫 `/deep-research --budget low`，從 research output 提取 skill-relevant knowledge → SourceBundle
-- [ ] AC4: `local_code_context` adapter — Read/Grep 指定路徑 → 提取 patterns/conventions → SourceBundle
-- [ ] AC5: scan-repo.js 導出 `toSourceBundle(analysis)` function，將 v1 SourceAnalysis 轉換為 SourceBundle format
-- [ ] AC6: Security envelope 完整實作（tech spec §7.8 全部規則）：HTTPS-only、deny private addresses（127.0.0.1、10.x、172.16-31.x、192.168.x）、payload ≤ 500KB、timeout ≤ 30s、untrusted content isolation（sanitize before prompt）、no execution（永不執行 fetched code）、cross-verification（單一來源不自動採信）
-- [ ] AC7: Classifier + adapter 實作遵循 R1 參考文件：`input-classification.md` prompt template 用於 Phase 0B、`source-bundle.md` schema 用於 SourceBundle 輸出
+- [x] AC1: Phase 0A — GitHub URL (`GITHUB_URL_RE`) 仍走現有 scan-repo.js pipeline，v1 測試全部通過（zero regression）
+- [x] AC2: Phase 0B — 非 GitHub 輸入進入 LLM classifier，輸出 strategy + confidence，低信心（< threshold）觸發 AskUserQuestion
+- [x] AC3: `external_evidence` adapter — 呼叫 `/deep-research --budget low`，從 research output 提取 skill-relevant knowledge → SourceBundle
+- [x] AC4: `local_code_context` adapter — Read/Grep 指定路徑 → 提取 patterns/conventions → SourceBundle
+- [x] AC5: scan-repo.js 導出 `toSourceBundle(analysis)` function，將 v1 SourceAnalysis 轉換為 SourceBundle format
+- [x] AC6: Security envelope 完整實作（tech spec §7.8 全部規則）：HTTPS-only、deny private addresses（127.0.0.1、10.x、172.16-31.x、192.168.x）、payload ≤ 500KB、timeout ≤ 30s、untrusted content isolation（sanitize before prompt）、no execution（永不執行 fetched code）、cross-verification（單一來源不自動採信）
+- [x] AC7: Classifier + adapter 實作遵循 R1 參考文件：`input-classification.md` prompt template 用於 Phase 0B、`source-bundle.md` schema 用於 SourceBundle 輸出
 - [ ] AC8: 測試覆蓋 — classifier（GitHub/URL/description/local 各 1）、SourceBundle builder（斷言 `source.type`、`source.origin`、`knowledge.intent` 欄位存在）、security envelope（SSRF private IP rejection、HTTPS-only enforcement、payload limit rejection）、v1 regression（`node --test test/scripts/sharingan-scan-repo.test.js && node --test test/commands/sharingan.test.js` 全通過）
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit`
@@ -59,11 +59,11 @@ See [R1](./2026-04-01-sharingan-v2-multi-source-r1.md) Scope section for the sec
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Tech spec §7 + best practices audit |
-| Development | - | Blocked on R1 |
+| Development | In Progress | R1 no longer blocks: the Phase 0B classifier, the adapters and the SourceBundle builder shipped. Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 7/10 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
-**Status**: Not Started (blocked on R1)
+**Status**: In Progress
 
 ## References
 

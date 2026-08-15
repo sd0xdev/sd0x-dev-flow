@@ -1,7 +1,7 @@
 # Sharingan (寫輪眼) Skill — 外部 Skill 複製工具
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 
@@ -46,13 +46,13 @@
 
 ### Core Skill (AC1-AC3)
 
-- [ ] AC1: `skills/sharingan/SKILL.md` 存在，包含 Phase 0-4 workflow（Validate → Scan → Analyze → Generate → Validate），frontmatter 含 name + routing signature（2+ cues）+ allowed-tools
-- [ ] AC2: `skills/sharingan/scripts/scan-repo.js` 實作 URL validation、repo classifier（plugin/collection/single/unknown）、dependency graph builder
-- [ ] AC3: Dependency graph 正確實作 DAG（edge: dependency→dependent, leaf=in-degree 0, cycle detection via SCC, >3 skill cycle → hard gate）
+- [x] AC1: `skills/sharingan/SKILL.md` 存在，包含 Phase 0-4 workflow（Validate → Scan → Analyze → Generate → Validate），frontmatter 含 name + routing signature（2+ cues）+ allowed-tools
+- [x] AC2: `skills/sharingan/scripts/scan-repo.js` 實作 URL validation、repo classifier（plugin/collection/single/unknown）、dependency graph builder
+- [x] AC3: Dependency graph 正確實作 DAG（edge: dependency→dependent, leaf=in-degree 0, cycle detection via SCC, >3 skill cycle → hard gate）
 
 ### References (AC4-AC5)
 
-- [ ] AC4: 4 reference files 存在且內容完整：
+- [x] AC4: 4 reference files 存在且內容完整：
   - `format-mapping.md` — source→sd0x-dev-flow 對映表（frontmatter, routing signature, tools, rules, MCP）
   - `dependency-graph-algorithm.md` — DAG 建構演算法 + cycle handling
   - `output-template.md` — analyze/generate 報告模板（含必要 sections）
@@ -61,14 +61,14 @@
 
 ### Output Contract (AC6-AC7)
 
-- [ ] AC6: `--mode analyze` 產出 analysis report，包含：repo type, per-skill summary table, dependency graph (mermaid), untranslatable elements table, generation plan
-- [ ] AC7: `--mode generate` 產出 SKILL.md + commands/*.md + generation report，其中：
+- [x] AC6: `--mode analyze` 產出 analysis report，包含：repo type, per-skill summary table, dependency graph (mermaid), untranslatable elements table, generation plan
+- [x] AC7: `--mode generate` 產出 SKILL.md + commands/*.md + generation report，其中：
   - 每個 skill 通過 L1（frontmatter schema）+ L2（skill-lint.js 0 P0/P1）+ L3（LLM semantic — no hallucinated tools/skills）
   - Generation report 包含 3 必要 section：Generated Skills table、Per-Skill Detail（files + confidence + routing signature）、Integration Checklist
 
 ### Security (AC8)
 
-- [ ] AC8: Security controls 完整實作：
+- [x] AC8: Security controls 完整實作：
   - URL regex validation（`^https://github\.com/...`）
   - `gh auth status` 前置檢查
   - `--skill` / `--target-dir` path traversal 拒絕（`..`、absolute、symlink）
@@ -78,7 +78,7 @@
 ### Integration (AC9-AC10)
 
 - [ ] AC9: `CLAUDE.md` + `.claude/CLAUDE.md` + `CLAUDE.template.md` 三檔 command table 加入 `/sharingan` entry
-- [ ] AC10: Tests 完整：
+- [x] AC10: Tests 完整：
   - `test/scripts/sharingan-scan-repo.test.js` — URL validation, classification, DAG, cycle detection, format mapping
   - `test/commands/sharingan.test.js` — frontmatter, skill reference, argument-hint, reference preloading
 
@@ -92,9 +92,9 @@
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Deep research (3 agents, score 92/100) + tech spec (3 review rounds) |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 8/12 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

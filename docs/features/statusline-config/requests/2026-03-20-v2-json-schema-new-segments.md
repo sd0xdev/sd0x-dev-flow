@@ -34,12 +34,12 @@ Claude Code 2.1.80+ statusline JSON schema added 15 new entries (11 top-level + 
 
 ## Acceptance Criteria
 
-- [ ] `json-schema.md` documents all 15 new entries with types, descriptions, and null handling
-- [ ] SKILL.md Segments table includes Token Usage, Agent, Worktree with correct conditions
-- [ ] SKILL.md Script Rules includes token format (`%.1fk`), sanitization, and worktree replace rule
-- [ ] SKILL.md Example Output shows v2 normal mode and worktree mode
-- [ ] Verification JSON includes `current_usage`, `agent`, and `worktree` fields
-- [ ] Existing v1 segments and behavior remain unchanged (backward compatible)
+- [x] `json-schema.md` documents all 15 new entries with types, descriptions, and null handling
+- [x] SKILL.md Segments table includes Token Usage, Agent, Worktree with correct conditions
+- [x] SKILL.md Script Rules includes token format (`%.1fk`), sanitization, and worktree replace rule
+- [x] SKILL.md Example Output shows v2 normal mode and worktree mode
+- [x] Verification JSON includes `current_usage`, `agent`, and `worktree` fields
+- [x] Existing v1 segments and behavior remain unchanged (backward compatible)
 - [ ] Pass `/codex-review-doc`
 
 ## Progress
@@ -49,9 +49,9 @@ Claude Code 2.1.80+ statusline JSON schema added 15 new entries (11 top-level + 
 | Analysis | Done | Deep research + best-practices audit completed |
 | Design | Done | Brainstorm equilibrium reached (4 decisions) |
 | Tech Spec | Done | Section 11 added, 3-round Codex review passed |
-| Development | - | |
+| Development | In Progress | `references/json-schema.md` documents the v2 fields; SKILL.md carries the Token Usage / Agent / Worktree segments, script rules and examples |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/7 AC verified against the repo (batch `--update-all`, 2026-08-15); the `/codex-review-doc` gate has no recorded run |
 
 ## References
 

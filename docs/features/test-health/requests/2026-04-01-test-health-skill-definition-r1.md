@@ -1,7 +1,7 @@
 # /test-health Skill Definition
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 
@@ -41,10 +41,10 @@ sd0x-dev-flow 有 6 個測試相關 skill，全部是質性審查或執行工具
 
 ## Acceptance Criteria
 
-- [ ] `skills/test-health/SKILL.md` 建立，含 quick/full mode workflow + output schema
-- [ ] `skills/test-health/references/artifact-formats.md` 建立，涵蓋 Node.js/Python/Go/Rust/Java/Generic
-- [ ] `skills/test-health/references/trend-schema.md` 建立，含 snapshot schema + rolling window + lock 策略
-- [ ] `skills/test-health/references/test-count-parsers.md` 建立，含各生態系 regex + `count_level` 定義
+- [x] `skills/test-health/SKILL.md` 建立，含 quick/full mode workflow + output schema
+- [x] `skills/test-health/references/artifact-formats.md` 建立，涵蓋 Node.js/Python/Go/Rust/Java/Generic
+- [x] `skills/test-health/references/trend-schema.md` 建立，含 snapshot schema + rolling window + lock 策略
+- [x] `skills/test-health/references/test-count-parsers.md` 建立，含各生態系 regex + `count_level` 定義
 - [ ] `commands/test-health.md` 建立，含 `--full` / `--collect` / `--scope` / `--no-trend` flags
 - [ ] `test/commands/test-health.test.js` 建立，驗證 command schema
 - [ ] CLAUDE.md command tables 更新（3 files）
@@ -56,9 +56,9 @@ sd0x-dev-flow 有 6 個測試相關 skill，全部是質性審查或執行工具
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Tech spec completed + reviewed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 4/9 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

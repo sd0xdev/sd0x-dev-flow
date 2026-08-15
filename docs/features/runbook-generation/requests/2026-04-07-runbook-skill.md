@@ -1,7 +1,7 @@
 # Runbook Generation Skill
 
 > **Created**: 2026-04-07
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [Tech Spec](../2-tech-spec.md)
 
@@ -42,15 +42,15 @@ sd0x-dev-flow 有 60+ feature 文件但無 operational documentation。開發者
 
 ## Acceptance Criteria
 
-- [ ] AC1: `skills/runbook/SKILL.md` exists with valid frontmatter (name, description, allowed-tools) and defines create/update/check mode dispatch matching tech spec §3.3
+- [x] AC1: `skills/runbook/SKILL.md` exists with valid frontmatter (name, description, allowed-tools) and defines create/update/check mode dispatch matching tech spec §3.3
 - [ ] AC2: SKILL.md integrates feature resolver (`node scripts/resolve-feature-cli.js`) for auto-detection and uses `doc_inventory` for runbook existence check
-- [ ] AC3: SKILL.md defines `--request <path|title>` flag with multi-request selection fallback (auto-select single / AskUserQuestion multiple)
-- [ ] AC4: Template has 9 sections matching tech spec §3.4 structure, outputs to `docs/features/{feature}/runbook-release.md`
-- [ ] AC5: Template includes `<!-- runbook-provenance -->` block with multi-source array format (per-section `sources: [{file, sha}]`)
+- [x] AC3: SKILL.md defines `--request <path|title>` flag with multi-request selection fallback (auto-select single / AskUserQuestion multiple)
+- [x] AC4: Template has 9 sections matching tech spec §3.4 structure, outputs to `docs/features/{feature}/runbook-release.md`
+- [x] AC5: Template includes `<!-- runbook-provenance -->` block with multi-source array format (per-section `sources: [{file, sha}]`)
 - [ ] AC6: Discovery heuristics defines 4-priority scoped cascade (Related Files → Canonical → Feature-local → Repo-wide) with redaction rules for secrets/tokens/internal endpoints
-- [ ] AC7: `rules/docs-numbering.md` formally supports ancillary semantic naming (aligned with `doc-taxonomy.json` ancillary namespace)
-- [ ] AC8: `--check` mode output template defines Fresh/Stale/Missing/Unknown per-section multi-source status with SHA comparison
-- [ ] AC9: `doc-classifier.test.js` asserts `runbook-release.md` classified as `{ type: "runbook", namespace: "ancillary" }`
+- [x] AC7: `rules/docs-numbering.md` formally supports ancillary semantic naming (aligned with `doc-taxonomy.json` ancillary namespace)
+- [x] AC8: `--check` mode output template defines Fresh/Stale/Missing/Unknown per-section multi-source status with SHA comparison
+- [x] AC9: `doc-classifier.test.js` asserts `runbook-release.md` classified as `{ type: "runbook", namespace: "ancillary" }`
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit`
 
@@ -59,11 +59,11 @@ sd0x-dev-flow 有 60+ feature 文件但無 operational documentation。開發者
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best practices audit + adversarial debate completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 7/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
-**Status**: Not Started
+**Status**: In Progress
 
 ## Scope Clarification
 

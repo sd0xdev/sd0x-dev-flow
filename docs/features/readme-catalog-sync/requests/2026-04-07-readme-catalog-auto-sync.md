@@ -1,7 +1,7 @@
 # README Skill Catalog Auto-Sync
 
 > **Created**: 2026-04-07
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [Tech Spec](../2-tech-spec.md)
 
@@ -36,14 +36,14 @@ README 聲稱 87 skills 但實際有 90 個，catalog 只列出 76 個，14 個 
 ## Acceptance Criteria
 
 - [ ] AC1: `docs/skill-catalog.yml` has entries for all `skills/` directories — generator emits warnings for mismatches (missing entries or orphaned entries) per tech spec §3.4 validation
-- [ ] AC2: Generator produces correct counts matching `public: true` skill count in hero, what's included, install coverage, and `<summary>` locations
-- [ ] AC3: Essential Skills table uses 2-column format (`Skill | Use when`) with 12-15 `featured: true` entries
-- [ ] AC4: Full catalog uses grouped 2-column tables per category with per-category counts; Review category preserves 3-column `Loop Support` table per tech spec §3.3
-- [ ] AC5: Description derived from `SKILL.md` frontmatter by default; manifest `description` used only as override
-- [ ] AC6: Generator is idempotent (running twice produces identical output)
-- [ ] AC7: README.md contains all 5 BEGIN/END comment marker pairs (HERO-COUNT, WHATS-INCLUDED-COUNT, INSTALL-COVERAGE, ESSENTIAL-SKILLS, FULL-CATALOG)
-- [ ] AC8: No unmanaged `\d+ skills` strings remain in README outside comment markers
-- [ ] AC9: `skill-catalog.yml` passes YAML validation + all `category` values match defined `categories[].id`
+- [x] AC2: Generator produces correct counts matching `public: true` skill count in hero, what's included, install coverage, and `<summary>` locations
+- [x] AC3: Essential Skills table uses 2-column format (`Skill | Use when`) with 12-15 `featured: true` entries
+- [x] AC4: Full catalog uses grouped 2-column tables per category with per-category counts; Review category preserves 3-column `Loop Support` table per tech spec §3.3
+- [x] AC5: Description derived from `SKILL.md` frontmatter by default; manifest `description` used only as override
+- [x] AC6: Generator is idempotent (running twice produces identical output)
+- [x] AC7: README.md contains all 5 BEGIN/END comment marker pairs (HERO-COUNT, WHATS-INCLUDED-COUNT, INSTALL-COVERAGE, ESSENTIAL-SKILLS, FULL-CATALOG)
+- [x] AC8: No unmanaged `\d+ skills` strings remain in README outside comment markers
+- [x] AC9: `skill-catalog.yml` passes YAML validation + all `category` values match defined `categories[].id`
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit`
 
@@ -52,11 +52,11 @@ README 聲稱 87 skills 但實際有 90 個，catalog 只列出 76 個，14 個 
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best practices audit + adversarial debate completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 8/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
-**Status**: Not Started
+**Status**: In Progress
 
 ## References
 

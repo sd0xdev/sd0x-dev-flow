@@ -1,7 +1,7 @@
 # Create tech-brief Skill
 
 > **Created**: 2026-04-07
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [tech-brief Tech Spec](../2-tech-spec.md)
 
@@ -41,14 +41,14 @@
 
 ## Acceptance Criteria
 
-- [ ] `skills/tech-brief/SKILL.md` 存在，含正確 frontmatter（name, description, allowed-tools）、trigger、workflow、command signature
-- [ ] `references/output-template.md` 定義 6 sections + Source Provenance table + depth matrix（brief/normal/deep）
-- [ ] `references/source-guide.md` 定義 3-stage collection（docs → git/code reading → request selection with max 3 cap）
-- [ ] Feature resolver 整合：無參數時透過 5-level cascade 自動偵測 feature；支援 feature-key、dir path、doc path 三種輸入
-- [ ] Path security + save behavior：`..` traversal rejection + secret redaction；`--output <path>` 寫入指定路徑（含 `/tmp/`，repo 外 warning）；`--no-save` 僅 stdout；default 寫入 `docs/features/<key>/5-tech-brief.md`
-- [ ] `doc-taxonomy.json` 新增 `tech-brief` ancillary type；`tech-spec` type 的 `exclude_pattern` 包含 `-tech-brief\\.md$`
+- [x] `skills/tech-brief/SKILL.md` 存在，含正確 frontmatter（name, description, allowed-tools）、trigger、workflow、command signature
+- [x] `references/output-template.md` 定義 6 sections + Source Provenance table + depth matrix（brief/normal/deep）
+- [x] `references/source-guide.md` 定義 3-stage collection（docs → git/code reading → request selection with max 3 cap）
+- [x] Feature resolver 整合：無參數時透過 5-level cascade 自動偵測 feature；支援 feature-key、dir path、doc path 三種輸入
+- [x] Path security + save behavior：`..` traversal rejection + secret redaction；`--output <path>` 寫入指定路徑（含 `/tmp/`，repo 外 warning）；`--no-save` 僅 stdout；default 寫入 `docs/features/<key>/5-tech-brief.md`
+- [x] `doc-taxonomy.json` 新增 `tech-brief` ancillary type；`tech-spec` type 的 `exclude_pattern` 包含 `-tech-brief\\.md$`
 - [ ] `CLAUDE.md` 和 `.claude/CLAUDE.md` Command Quick Reference 都包含 `/tech-brief` 條目
-- [ ] `test/skills/tech-brief.test.js` 通過；`test/scripts/doc-classifier.test.js` 含 tech-brief classification cases
+- [x] `test/skills/tech-brief.test.js` 通過；`test/scripts/doc-classifier.test.js` 含 tech-brief classification cases
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit-fast`
 
@@ -57,11 +57,11 @@
 | Phase | Status | Note |
 | ----- | ------ | ---- |
 | Analysis | Done | Tech spec 完成（3 rounds review, ✅ Mergeable） |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 7/10 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
-**Status**: Not Started
+**Status**: In Progress
 
 ## References
 

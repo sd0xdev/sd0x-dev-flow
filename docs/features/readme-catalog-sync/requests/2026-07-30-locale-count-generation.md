@@ -1,7 +1,7 @@
 # Locale README Count Generation + Hero Tail Derivation
 
 > **Created**: 2026-07-30
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [Tech Spec](../2-tech-spec.md)
 
@@ -37,19 +37,19 @@ v4.1.0 的 README v4 全篇重寫（英文 + 5 locale）驗證了一個既知缺
 
 - [ ] generator 一次執行更新 6 個 README 的 count-bearing marker 區塊（HERO-COUNT / INSTALL-COVERAGE / WHATS-INCLUDED-COUNT / FULL-CATALOG 計數；ESSENTIAL-SKILLS 除外）
 - [ ] 在地化保留模型已決策（(a) 或 (b)）並有測試證明：locale 自有文字在重生成後存活，只有預期的生成欄位改變
-- [ ] locale hero 計數與英文一致（98/98），96→98 drift 消除
+- [x] locale hero 計數與英文一致（98/98），96→98 drift 消除
 - [ ] `~4%` 尾綴：衍生自量測，或移出 HERO-COUNT 區塊（擇一，記錄決策）
-- [ ] locale drift 測試涵蓋 skill 計數欄位（HERO-COUNT、INSTALL-COVERAGE、What's Included、FULL-CATALOG summary 與各分類計數），並對 marker 外的 `allowed-tools` 計數（89/98）依 Requirements 的三擇一決策執行（生成／釘住／明確記錄排除）
-- [ ] 既有 40 個 catalog 測試全數通過（contract 修訂處除外，需同步更新）
+- [x] locale drift 測試涵蓋 skill 計數欄位（HERO-COUNT、INSTALL-COVERAGE、What's Included、FULL-CATALOG summary 與各分類計數），並對 marker 外的 `allowed-tools` 計數（89/98）依 Requirements 的三擇一決策執行（生成／釘住／明確記錄排除）
+- [x] 既有 40 個 catalog 測試全數通過（contract 修訂處除外，需同步更新）
 - [ ] `/codex-review-fast` → `/precommit` 通過
 
 ## Progress
 
-| Phase | Status |
-|-------|--------|
-| Development | Pending |
-| Testing | Pending |
-| Acceptance | Pending |
+| Phase | Status | Note |
+|-------|--------|------|
+| Development | In Progress | The locale count-drift work shipped in `scripts/generate-readme-catalog.js` and its test contract; the 6-README single-run generator (AC1) did not. Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
+| Testing | In Progress | `test/scripts/generate-readme-catalog.test.js` covers the count-bearing fields across all six READMEs — see § Outcome for the measured run |
+| Acceptance | In Progress | 3/7 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac`. The `98/98` in the hero-count criterion is the figure of record from 2026-07-30, not today's value: what was verified is the equality it names — all six locales agree with English, measured at `99/99/15` (§ Outcome). The criterion text is left as written because this is a record |
 
 ## References
 

@@ -1,7 +1,7 @@
 # /test-health Implementation Scripts
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Depends On**: [R1 — Skill Definition](./2026-04-01-test-health-skill-definition-r1.md)
@@ -38,13 +38,13 @@ R1 建立 skill 定義後，本 request 負責實作 parser/trend scripts 和對
 ## Acceptance Criteria
 
 - [ ] `artifact-parser.js` 正確解析 7 種格式：LCOV（`LF:/LH:` + `BRF:/BRH:`）、Istanbul JSON（`.total.lines.pct`）、Jest summary JSON、Cobertura XML（`line-rate/branch-rate`）、Go cover profile（statement count）、Tarpaulin JSON（`covered/coverable`）、JaCoCo XML/CSV（`INSTRUCTION` + `BRANCH` counters）
-- [ ] `artifact-parser.js` 對 `.coverage`（Python SQLite DB）輸出提示訊息而非嘗試解析
+- [x] `artifact-parser.js` 對 `.coverage`（Python SQLite DB）輸出提示訊息而非嘗試解析
 - [ ] `artifact-parser.js` 實作 artifact scan（depth limit 3 層）+ candidate selection priority（freshness > proximity > completeness）
-- [ ] `artifact-parser.js` 實作 freshness check（mtime vs HEAD commit timestamp）+ dirty tree detection（`git status --porcelain`）
-- [ ] `count-parser.js` 正確解析 6 種框架 stdout（node:test, jest, vitest, pytest, go -json, cargo）
-- [ ] `count-parser.js` Go package-level fallback 標記 `count_level: package`
-- [ ] `trend.js` 使用 `mkdir`（無 `-p`）atomic lock + `stat` mtime TTL 60s + rolling window 保留 30 筆
-- [ ] `trend.js` 實作 `tool_id + source_type` 和 `count_level` comparability rules
+- [x] `artifact-parser.js` 實作 freshness check（mtime vs HEAD commit timestamp）+ dirty tree detection（`git status --porcelain`）
+- [x] `count-parser.js` 正確解析 6 種框架 stdout（node:test, jest, vitest, pytest, go -json, cargo）
+- [x] `count-parser.js` Go package-level fallback 標記 `count_level: package`
+- [x] `trend.js` 使用 `mkdir`（無 `-p`）atomic lock + `stat` mtime TTL 60s + rolling window 保留 30 筆
+- [x] `trend.js` 實作 `tool_id + source_type` 和 `count_level` comparability rules
 - [ ] Unit tests 覆蓋 happy path + error handling + edge cases（空檔案、格式錯誤、lock 衝突）
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit-fast`
@@ -54,9 +54,9 @@ R1 建立 skill 定義後，本 request 負責實作 parser/trend scripts 和對
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Tech spec completed + reviewed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

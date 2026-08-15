@@ -1,7 +1,7 @@
 # Sharingan v2: Multi-Source Input — R1 設計基建
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) §7
 
@@ -42,10 +42,10 @@ Sharingan v1 僅接受 GitHub URL。Best Practices Audit（2026-04-01）+ Claude
 
 ## Acceptance Criteria
 
-- [ ] AC1: `references/source-bundle.md` 定義 SourceBundle schema（source/knowledge/repo_analysis/synthesis_hints），包含 github_repo + external_evidence + local_code_context 三種 strategy 的正規化範例
-- [ ] AC2: `references/input-classification.md` 定義 LLM classifier prompt template，包含 confidence threshold（建議 0.7）、low-confidence guard 流程、5+ 輸入分類範例
-- [ ] AC3: SKILL.md routing signature 更新為 output-based MECE："Replicate knowledge from any source as sd0x-dev-flow skill definition"，含 Use when + Not for + Output（2+ cues）
-- [ ] AC4: SKILL.md allowed-tools 新增 `WebSearch`, `WebFetch`, `Skill`
+- [x] AC1: `references/source-bundle.md` 定義 SourceBundle schema（source/knowledge/repo_analysis/synthesis_hints），包含 github_repo + external_evidence + local_code_context 三種 strategy 的正規化範例
+- [x] AC2: `references/input-classification.md` 定義 LLM classifier prompt template，包含 confidence threshold（建議 0.7）、low-confidence guard 流程、5+ 輸入分類範例
+- [x] AC3: SKILL.md routing signature 更新為 output-based MECE："Replicate knowledge from any source as sd0x-dev-flow skill definition"，含 Use when + Not for + Output（2+ cues）
+- [x] AC4: SKILL.md allowed-tools 新增 `WebSearch`, `WebFetch`, `Skill`
 - [ ] AC5: SKILL.md Trigger 區段擴展接受任意輸入描述，但保留 temporary guard：Phase 0B + adapters 實作前（R2），非 GitHub 輸入時 SKILL.md Phase 0 步驟輸出包含 `v2 planned, currently GitHub URL only` 字串，可用 `grep "v2 planned" skills/sharingan/SKILL.md` 驗證
 - [ ] AC6: `commands/sharingan.md` argument-hint 更新為 `<input>` + `--source` optional flag
 - [ ] AC7: `commands/sharingan.md` allowed-tools 與 SKILL.md allowed-tools 同步更新（新增 WebSearch, WebFetch, Skill）
@@ -57,11 +57,11 @@ Sharingan v1 僅接受 GitHub URL。Best Practices Audit（2026-04-01）+ Claude
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best Practices Audit + adversarial debate (Nash Equilibrium) |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | N/A (docs only, /codex-review-doc) |
-| Acceptance | - | |
+| Acceptance | In Progress | 4/9 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
-**Status**: Not Started
+**Status**: In Progress
 
 ## References
 

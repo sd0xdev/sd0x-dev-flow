@@ -1,7 +1,7 @@
 # Requirements Analysis Skill
 
 > **Created**: 2026-04-03
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [Requirements Analysis Tech Spec](../2-tech-spec.md)
 
@@ -64,19 +64,19 @@ flowchart LR
 
 ## Acceptance Criteria
 
-- [ ] `skills/req-analyze/SKILL.md` 定義 3-tier budget (`--quick`/`--standard`/`--deep`)，含 trigger keywords、workflow phases
-- [ ] Quick tier: first-principles decomposition + mandatory stakeholder scan + requirement structuring + MoSCoW prioritization → 產出 `1-requirements.md`
-- [ ] Standard tier (default): quick + targeted code/context research + lightweight web validation（使用 shared research-cascade pattern）
-- [ ] Deep tier: standard + 直接 invoke `/deep-research` + completeness challenge pass（Codex debate）
-- [ ] `references/output-template.md` 含完整 `1-requirements.md` 模板（Problem, Goals, Stakeholders, Use Cases, FR, NFR, Constraints, Acceptance Signals, Open Questions）
-- [ ] `rules/docs-numbering.md` Phase 1 output command 更新為 `/req-analyze`
-- [ ] Adjacent skill integration：`/feasibility-study` consumes、`/tech-spec` references、`/next-step` checks、`/create-request` links
-- [ ] `references/research-cascade.md` 提取 shared research pattern（非 inline copy-paste from `/deep-research`）
-- [ ] Shared feature-context schema: `feature-resolver.js` output 加入 `has_requirements` field，`feature-context-resolution.md` 更新文件
-- [ ] Security guardrails: SKILL.md 含 path validation（reject `..` traversal, absolute paths）、untrusted web content handling、secret redaction rules
-- [ ] Budget tier 含 deterministic escalation triggers 和 early-exit criteria（避免 cost drift）
+- [x] `skills/req-analyze/SKILL.md` 定義 3-tier budget (`--quick`/`--standard`/`--deep`)，含 trigger keywords、workflow phases
+- [x] Quick tier: first-principles decomposition + mandatory stakeholder scan + requirement structuring + MoSCoW prioritization → 產出 `1-requirements.md`
+- [x] Standard tier (default): quick + targeted code/context research + lightweight web validation（使用 shared research-cascade pattern）
+- [x] Deep tier: standard + 直接 invoke `/deep-research` + completeness challenge pass（Codex debate）
+- [x] `references/output-template.md` 含完整 `1-requirements.md` 模板（Problem, Goals, Stakeholders, Use Cases, FR, NFR, Constraints, Acceptance Signals, Open Questions）
+- [x] `rules/docs-numbering.md` Phase 1 output command 更新為 `/req-analyze`
+- [x] Adjacent skill integration：`/feasibility-study` consumes、`/tech-spec` references、`/next-step` checks、`/create-request` links
+- [x] `references/research-cascade.md` 提取 shared research pattern（非 inline copy-paste from `/deep-research`）
+- [x] Shared feature-context schema: `feature-resolver.js` output 加入 `has_requirements` field，`feature-context-resolution.md` 更新文件
+- [x] Security guardrails: SKILL.md 含 path validation（reject `..` traversal, absolute paths）、untrusted web content handling、secret redaction rules
+- [x] Budget tier 含 deterministic escalation triggers 和 early-exit criteria（避免 cost drift）
 - [ ] Existing tests updated: `test/scripts/feature-resolver.test.js` 加入 `has_requirements` coverage、`test/scripts/next-step-analyze.test.js` 加入 Phase 1 check coverage
-- [ ] Cross-link invariant docs 更新：`feature-context-resolution.md`（both copies）含 `1-requirements.md` ↔ request/tech-spec link rules
+- [x] Cross-link invariant docs 更新：`feature-context-resolution.md`（both copies）含 `1-requirements.md` ↔ request/tech-spec link rules
 - [ ] Pass /codex-review-fast
 - [ ] Pass /precommit-fast
 
@@ -85,9 +85,9 @@ flowchart LR
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best-practices audit + Nash Equilibrium debate completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 12/15 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

@@ -1,7 +1,7 @@
 # Universal Refactor v1 — Code + Doc Orchestrator
 
 > **Created**: 2026-04-03
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 
@@ -49,15 +49,15 @@ sd0x-dev-flow 現有 3 個重構 skill（`/simplify`、`/doc-refactor`、`/de-ai
 
 ## Acceptance Criteria
 
-- [ ] `skills/refactor/SKILL.md` 建立，包含 Phase 0（target detection）→ Phase 2（incremental loop）→ Phase 3（delta report）workflow
+- [x] `skills/refactor/SKILL.md` 建立，包含 Phase 0（target detection）→ Phase 2（incremental loop）→ Phase 3（delta report）workflow
 - [ ] `commands/refactor.md` 正確 dispatch 到 SKILL.md
-- [ ] 4 reference files 建立（refactor-catalog、target-detection、behavioral-gate、output-template）
-- [ ] `--target <path>` code target 正確 dispatch 到 `/simplify` + `/verify fast` behavioral gate + `/codex-review-fast`；path validation 拒絕 absolute paths、`..` traversal、symlink escape
-- [ ] `--target <path>` doc target 正確 dispatch 到 `/doc-refactor` 或 `/de-ai-flavor`（AI artifact 3+ matches heuristic）+ `/codex-review-doc`（不經 `/verify`）
-- [ ] Behavioral gate：`/verify fast` exit code 比較（PRESERVED / BEHAVIOR_CHANGED / BASELINE_FAILING / NO_TESTS sentinels）；code baseline failing → skip
-- [ ] `--auto` mode：inline target selection（complexity + change frequency + isolation signals）→ priority queue → Phase 0 `/project-audit` baseline + Phase 3 delta report
-- [ ] Incremental loop 處理多目標：budget tracking（max-targets）+ skip-and-report on gate failure
-- [ ] `test/commands/refactor.test.js` contract tests 通過（target detection、gate definitions、dispatch mapping、path validation）
+- [x] 4 reference files 建立（refactor-catalog、target-detection、behavioral-gate、output-template）
+- [x] `--target <path>` code target 正確 dispatch 到 `/simplify` + `/verify fast` behavioral gate + `/codex-review-fast`；path validation 拒絕 absolute paths、`..` traversal、symlink escape
+- [x] `--target <path>` doc target 正確 dispatch 到 `/doc-refactor` 或 `/de-ai-flavor`（AI artifact 3+ matches heuristic）+ `/codex-review-doc`（不經 `/verify`）
+- [x] Behavioral gate：`/verify fast` exit code 比較（PRESERVED / BEHAVIOR_CHANGED / BASELINE_FAILING / NO_TESTS sentinels）；code baseline failing → skip
+- [x] `--auto` mode：inline target selection（complexity + change frequency + isolation signals）→ priority queue → Phase 0 `/project-audit` baseline + Phase 3 delta report
+- [x] Incremental loop 處理多目標：budget tracking（max-targets）+ skip-and-report on gate failure
+- [x] `test/commands/refactor.test.js` contract tests 通過（target detection、gate definitions、dispatch mapping、path validation）
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit-fast`
 
@@ -66,9 +66,9 @@ sd0x-dev-flow 現有 3 個重構 skill（`/simplify`、`/doc-refactor`、`/de-ai
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | 2 rounds /deep-research + /tech-spec + /codex-review-doc (4 rounds, ✅ Mergeable) |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 8/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

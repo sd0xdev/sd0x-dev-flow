@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc — for that see `../1-requirements.md` if present (created via `/req-analyze`).
 > **Created**: 2026-04-10
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Priority**: P1
 > **Tech Spec**: Pending (implement directly from research findings; create if scope expands)
 
@@ -36,22 +36,22 @@ Claude Code v2.1.98 introduced the Monitor tool for streaming stdout from backgr
 
 ## Acceptance Criteria
 
-- [ ] `watch-ci` allowed-tools includes `Monitor`
-- [ ] Step 3b default mode is Monitor streaming (not foreground blocking)
-- [ ] `--background` flag demoted to fallback-only with clear documentation
-- [ ] Multiple CI runs: when 2+ runs match, launch parallel Monitor instances; each reports per-run verdict; overall verdict = worst result
-- [ ] `push-ci` Phase 3 states "delegates to `/watch-ci` where Monitor streaming is default" (no foreground-blocking language remains)
-- [ ] CLAUDE.md + CLAUDE.template.md + .claude/CLAUDE.md Footguns table all contain Monitor tool + sleep-first blocking entries (3-file sync)
-- [ ] Pass `/codex-review-doc`
+- [x] `watch-ci` allowed-tools includes `Monitor`
+- [x] Step 3b default mode is Monitor streaming (not foreground blocking)
+- [x] `--background` flag demoted to fallback-only with clear documentation
+- [x] Multiple CI runs: when 2+ runs match, launch parallel Monitor instances; each reports per-run verdict; overall verdict = worst result
+- [x] `push-ci` Phase 3 states "delegates to `/watch-ci` where Monitor streaming is default" (no foreground-blocking language remains)
+- [x] CLAUDE.md + CLAUDE.template.md + .claude/CLAUDE.md Footguns table all contain Monitor tool + sleep-first blocking entries (3-file sync)
+- [x] Pass `/codex-review-doc`
 
 ## Progress
 
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | Deep research + deep explore completed (2026-04-10) |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | In Progress | Monitor-default migration shipped across `skills/watch-ci/SKILL.md`, `skills/push-ci/SKILL.md` and the 3 CLAUDE Footguns tables |
+| Testing | Done | `test/skills/watch-ci.test.js` guards the frontmatter and the removed fork-context warnings |
+| Acceptance | In Progress | 7/7 AC verified against the repo (batch `--update-all`, 2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 
