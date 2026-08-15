@@ -32,13 +32,16 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yar
 ## Shared Workflow
 
 ```
-Collect changes → [Pre-checks if Full] → Codex Review → Gate → Loop if Blocked
+Collect changes → [Pre-checks if Full] → Codex Review → Gate: derive sentinel × gate_reason (Step 4.5)
+  → Ready × NONE → next gate | Blocked × IN_SCOPE_BLOCKING × untriggered → fix loop | other Blocked outcomes → E1/E2
 ```
 
 Dual dispatch adds a second reviewer, and is opt-in:
 
 ```
---dual:  … → Codex + Task in parallel → Merge findings in conversation → Gate → Loop if Blocked
+--dual:  … → Codex + Task in parallel → Merge findings in conversation (field-level)
+  → Gate: derive sentinel × gate_reason (Step 4.5)
+  → Ready × NONE → next gate | Blocked × IN_SCOPE_BLOCKING × untriggered → fix loop | other Blocked outcomes → E1/E2
 ```
 
 ### Step 0: Reviewer Mode
@@ -66,6 +69,17 @@ Collect **metadata only** — Codex reads the actual diffs and file contents its
 | Branch  | Same + `CURRENT_BRANCH` + `BASE_BRANCH` + `COMMIT_COUNT` |
 
 Codex independently reads full diffs and file contents via `git diff HEAD -- <file>` + `cat` (per research instructions).
+
+**Scope baseline (frozen here).** Compute the baseline file set once, now, and freeze it for the whole review session (`@rules/scope-discipline.md` § Scope Baseline):
+
+| Variant | Baseline set |
+|---------|-------------|
+| Fast / Full | `git diff --name-only HEAD` ∪ untracked (`git ls-files --others --exclude-standard`) |
+| Branch (incl. `--dual`) | `git diff --name-only $(git merge-base ${BASE_BRANCH} HEAD)` ∪ the same uncommitted + untracked set |
+
+`${BASE_BRANCH}` resolution (Branch variant): explicit argument first (e.g. `/codex-review-branch origin/develop`); else `git symbolic-ref --short refs/remotes/origin/HEAD`; else `origin/main` — verify each candidate with `git rev-parse --verify` before use. All candidates failing → abort as a **parameter error** and ask for an explicit base; never continue on an empty baseline (an empty baseline would misread every unmodified file as out-of-scope), and the abort is not a human exit. Record the resolved base and the frozen file list in the review report metadata, and inject the list into every reviewer prompt as `SCOPE_BASELINE`.
+
+The frozen baseline is task-scoped and immutable: the initial reviewer, the inline secondary, `--continue`, and every same-task re-dispatch reuse the same list — no path recomputes it. The only growth is the user-named monotonic union of `@rules/scope-discipline.md` § Scope Baseline; ordinary fix edits during a round never write back into it.
 
 ### Step 1.1: Resolve the tier (required before dispatch)
 
@@ -147,6 +161,9 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
    ## Diff Stats
    <git diff --stat output>
 
+   ## Scope Baseline (frozen)
+   <SCOPE_BASELINE — the frozen file list from Step 1; do NOT recompute it>
+
    Read the actual diffs and file contents yourself to perform the review.
 
    Before reporting findings, independently verify each one:
@@ -157,11 +174,22 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
    5. Gap check: what related issues might you have overlooked?
    Only report findings that survive all 5 checks.
 
-   Output findings in this format:
-   - [P0/P1/P2/Nit] file:line issue description → fix recommendation
+   Classify every finding against the frozen baseline (contract:
+   references/review-common.md § Scope Fields): origin=<in-diff|pre-existing|uncertain>,
+   scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>,
+   scope=<in-scope|out-of-scope> (derived: out-of-scope ⇔ pre-existing ∧
+   pre-existing-outside), evidence=<file:line call site, or a blame/log -L citation;
+   pre-existing-outside requires the complete negative case>. One hop only — no
+   transitive expansion; no citable evidence → uncertain.
 
-   Group by severity. Include a final gate: ✅ Ready (no finding at or above ${BLOCKING})
-   or ⛔ Blocked (has one).
+   Output findings in this format:
+   - [P0/P1/P2/Nit] file:line issue description → fix recommendation | origin=... scope_reason=... scope=... evidence=...
+
+   Group by severity. Include a final gate: ✅ Ready or ⛔ Blocked, with one line
+   gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH> — Blocked ⇔ an
+   in-scope (incl. uncertain) finding at or above ${BLOCKING}, or an out-of-scope
+   P0/security/data-integrity finding with no valid [USER_SKIPPED]; NONE pairs only
+   with Ready.
    ```
 
 **Case B: Loop review (has `--continue`)**
@@ -181,41 +209,61 @@ If Codex itself is unavailable there is nothing to degrade to — the one review
 |-----------------|--------|
 | Completed before Codex | Include in aggregation (Step 4) |
 | Completed after Codex, before precommit | Reconcile at pre-precommit checkpoint |
-| Still running at precommit | Proceed with Codex gate (authoritative); if the late result has a finding at or above `${BLOCKING}`, re-open fix→re-review loop |
+| Still running at precommit | Proceed with Codex gate (authoritative); a late result is normalized fail-closed, merged conservatively, and its derived pair routed through the Step 4.5 matrix — a late in-scope blocking finding re-opens the fix loop, a late out-of-scope critical finding is E1, never a silent re-open |
 | Failed/timed out | Apply degradation matrix per `references/review-common.md § Dual Reviewer Aggregation` |
 
 ### Step 4: Consolidate Output
 
-**Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate: any finding at or above the tier's blocking severity → BLOCKED, else READY (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
+**Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate (dual-axis): first normalize every finding's scope fields fail-closed (`references/review-common.md § Scope Fields`), then BLOCKED ⇔ an in-scope (incl. `uncertain`) finding at or above the tier's blocking severity, **or** an out-of-scope critical finding (P0 / security / data-integrity) with no valid `[USER_SKIPPED]`; else READY with `gate_reason=NONE` (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
 
 **`--dual`:**
 
-1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix`
+1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...>` — the four scope fields survive normalization; a source that omitted them gets `uncertain` (fail-closed), never a blank
    - Codex findings: already in standard format
    - toolkit findings: apply Severity Mapping (see `references/review-common.md § Severity Mapping`)
    - strict-reviewer findings: already use P0/P1/P2/Nit
 
-2. **Deduplicate** using key = `file + canonical_issue_text` (ignore line ±5 difference)
-   - Same key → keep highest severity (P0 > P1 > P2 > Nit)
+2. **Deduplicate & merge by field** using key = `file + canonical_issue_text` (ignore line ±5 difference). Normalize each reviewer's findings fail-closed **before** merging, then merge conservatively per field (`references/review-common.md § Deduplication Algorithm`):
+   - severity: highest wins (P0 > P1 > P2 > Nit)
+   - scope: any source `in-scope` or `uncertain` → `in-scope`; `out-of-scope` only when **every** source independently proves it
+   - origin / scope_reason: sources conflict → `uncertain`
+   - security/data-integrity domain: any source hits → the aggregate keeps the critical domain
+   - evidence: keep all — never discard with the losing severity
+
+   `[USER_SKIPPED]` applies only **after** the aggregate identity forms: an aggregate that lands in-scope is not excluded by a disposition recorded against the out-of-scope reading.
 
 3. **Tag source**: `source = codex | toolkit | both`
 
 4. **Sort**: P0 → P1 → P2 → Nit
 
-5. **Gate decision**: any finding at or above the tier's blocking severity → BLOCKED; else → READY
+5. **Gate decision** (dual-axis, on the conservative aggregate): an in-scope (incl. `uncertain`) finding at or above the tier's blocking severity, or an out-of-scope critical finding with no valid `[USER_SKIPPED]` → BLOCKED; else → READY with `gate_reason=NONE`
 
-Output format includes source tag:
+Output format keeps the merged scope fields and adds the source tag:
 
 ```
-- [P0] file:line issue → fix [source: both]
-- [P1] file:line issue → fix [source: codex]
+- [P0] file:line issue → fix | origin=in-diff scope_reason=diff-file scope=in-scope evidence=<...> [source: both]
+- [P1] file:line issue → fix | origin=uncertain scope_reason=uncertain scope=in-scope evidence=<...> [source: codex]
 ```
 
 ### Step 4.5: Output the gate and note the verdict
 
 Output the standard gate sentinel:
-- `✅ Ready` — if READY (nothing at or above the tier's blocking severity)
+- `✅ Ready` — if READY (no blocking finding on either axis)
 - `⛔ Blocked` — if BLOCKED
+
+**Route on derived values, never declarations.** Before acting on the reviewer's sentinel, normalize all findings fail-closed (`references/review-common.md § Scope Fields`) and **derive** the expected sentinel × `gate_reason`; the reviewer's declared pair is an unverified claim. Four canonical recalculations: a declared `Ready × NONE` wrapping a real in-scope blocking finding routes as `Blocked × IN_SCOPE_BLOCKING` — a reviewer cannot wrap a real blocking finding in a lawful pairing; a declared `Ready × NONE` wrapping an out-of-scope critical finding with no valid `[USER_SKIPPED]` routes as `Blocked × OUT_OF_SCOPE_CRITICAL`; both classes present under a single declared reason derives `Blocked × BOTH`; a declared `Blocked` with no blocking finding on either axis routes as `Ready × NONE`. Findings too incomplete to derive → conservatively `Blocked × BOTH`. "Breaker triggered" is the model's own fix-phase state (`@rules/scope-discipline.md` § Circuit Breaker), not a reviewer field — check it before routing. The matrix indexes on the **derived** pair:
+
+| Sentinel × `gate_reason` × breaker | Action |
+|------------------------------------|--------|
+| `✅ Ready` × `NONE` | The only lawful Ready pairing — note pass, proceed to the next gate |
+| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × not triggered | Fix loop (§ Review Loop below) |
+| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × triggered | **No fix loop**: human exit E2 (`@rules/scope-discipline.md` § Human Exits) |
+| `⛔ Blocked` × `OUT_OF_SCOPE_CRITICAL` | `note code_review fail`; **do not fix** — human exit E1 (closed-set options) |
+| `⛔ Blocked` × `BOTH` × not triggered | E1 first (the user's decision may change scope); afterwards the remaining in-scope blocking findings are fixed — the two classes never cancel |
+| `⛔ Blocked` × `BOTH` × triggered | E1 and E2 merge into a **single** Need Human decision point: one notification carrying both the closed-set options and the re-scope decision |
+| Contradictory declaration (`Ready` × a blocking value, `Blocked` × `NONE`), missing or unknown values | Same as every row: re-index this matrix by the derived pair; findings insufficient to derive → treat as `⛔ Blocked` × `BOTH` |
+
+Out-of-scope findings that are not critical never block Ready: they are listed in the report's "Out-of-Scope Findings" section and recorded as `[OUT_OF_SCOPE_DEFERRED]` lines (`@rules/scope-discipline.md` § Records).
 
 Then **self-note the verdict** — this is the declared-provenance record the reminder hooks read
 (hook-lightweighting § 3.2), and it is behaviour-layer: an attestation the conversation can audit,
@@ -247,7 +295,9 @@ See `references/review-common.md` for:
 
 **⚠️ @CLAUDE.md auto-loop: fix → re-review → ... → ✅ PASS ⚠️**
 
-Blocked → fix the blocking findings → `/codex-review-fast --continue <threadId>` → repeat until Ready.
+A `⛔ Blocked` enters this loop only through the Step 4.5 routing matrix — `Blocked × IN_SCOPE_BLOCKING` with the breaker untriggered. `OUT_OF_SCOPE_CRITICAL`, `BOTH`, and a triggered breaker route to their human exits instead; sending a critical out-of-scope finding through this loop is exactly the sweep `@rules/scope-discipline.md` closes.
+
+Blocked → fix the in-scope blocking findings → `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`) → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
 Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
@@ -267,11 +317,13 @@ Any code edit resets the review cycle — the reviewer must re-run.
 
 Before triggering `/precommit`, reconcile any pending secondary result:
 
+A late secondary result goes through the same normalization and field-level merge as Step 4 (fail-closed scope fields, conservative aggregate), and its outcome routes through the Step 4.5 matrix — a late out-of-scope critical finding is E1, not a silent re-open of the fix loop:
+
 | Condition | Action |
 |-----------|--------|
-| Task completed + has a finding at or above `${BLOCKING}` | Re-emit BLOCKED → fix → re-review (Codex `--continue` + Secondary fresh) |
-| Task completed + nothing at or above `${BLOCKING}` | Union aggregate → proceed to precommit |
-| Task still running | Proceed with Codex gate (authoritative); if the late result has a finding at or above `${BLOCKING}`, re-open fix→re-review loop. Branch review is always `thorough`, so a late P2 counts |
+| Task completed + the merged aggregate has a blocking finding on either axis (in-scope ≥ `${BLOCKING}`, or out-of-scope critical with no valid `[USER_SKIPPED]`) | Re-emit BLOCKED → route via the Step 4.5 matrix (fix loop only for `IN_SCOPE_BLOCKING`, breaker untriggered) |
+| Task completed + no blocking finding on either axis | Union aggregate → proceed to precommit |
+| Task still running | Proceed with Codex gate (authoritative); if the late result produces a blocking finding on either axis after merge, route it via the Step 4.5 matrix. Branch review is always `thorough`, so a late in-scope P2 counts |
 
 ## Verification
 

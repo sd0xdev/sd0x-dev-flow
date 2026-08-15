@@ -14,6 +14,11 @@ ${CHANGED_FILES}
 ## Diff Stats
 ${DIFF_STAT}
 
+## Scope Baseline (frozen)
+${SCOPE_BASELINE}
+
+${DISPOSITIONS ? `## Active Dispositions\n${DISPOSITIONS}` : ''}
+
 ${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}
 
 ${SPEC_CHECKLIST ? `## Specification Checklist
@@ -65,6 +70,17 @@ Wait. Before assigning severity levels, independently verify each finding:
 
 Only report findings that survive all 5 checks.
 
+## Scope Determination
+
+Classify every finding against the frozen Scope Baseline above — do NOT recompute the baseline:
+
+- \`origin=<in-diff|pre-existing|uncertain>\` — was the defect introduced by these changes?
+- \`scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>\`
+- \`scope=<in-scope|out-of-scope>\` — **derived, not free**: out-of-scope ⇔ origin=pre-existing ∧ scope_reason=pre-existing-outside
+- \`evidence\` — a \`file:line\` call-site citation for one-hop; a \`git blame\`/\`git log -L\` line for branch-introduced; \`pre-existing-outside\` requires the **complete negative case**: not in the baseline, no one-hop call site from a changed symbol, not introduced by this branch
+
+One hop only: a direct caller or direct callee of a symbol the diff modified, with the call site cited — no transitive expansion. If you cannot cite the evidence, use \`uncertain\`; it is read as in-scope. Non-code files (\`.md\`, config, data): only baseline membership and branch introduction apply.
+
 ## Severity Level Definitions
 
 - **P0**: Would cause system crash, data loss, security vulnerability
@@ -92,7 +108,7 @@ Do not manufacture findings to fill a section. **No blocking finding is a normal
 
 ### Findings
 
-- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation>
+- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> evidence=<...>
 
 ${SPEC_CHECKLIST ? `### AC Coverage
 
@@ -102,20 +118,38 @@ ${SPEC_CHECKLIST ? `### AC Coverage
 
 ### Deferred Findings
 
-For every finding **below** ${BLOCKING}, emit one line here, starting at column 0:
+For every **in-scope** finding **below** ${BLOCKING}, emit one line here, starting at column 0 (out-of-scope findings belong exclusively to the Out-of-Scope Findings section):
 
 \`\`\`
 [NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-<severity> | <ISO8601 UTC>
 \`\`\`
 
-That tag and field order are parsed out of this output by a hook and stored with a TTL, which is what stops the same finding being raised again next session. Field 2 is the issue text, field 3 the reason — do not reorder them, and do not use a different tag. Omit this section entirely if every finding blocks.
+That tag and field order are a **reporting convention** — nothing parses or persists the line; the report and the conversation are the durable record, and the fixed field order is what keeps it greppable there. Field 2 is the issue text, field 3 the reason — do not reorder them, and do not use a different tag. Omit this section entirely if every finding blocks.
+
+### Out-of-Scope Findings
+
+For every finding whose derived scope is out-of-scope and that does **not** block (not P0, not security/data-integrity — or covered by a valid [USER_SKIPPED] in Active Dispositions), emit one line here, starting at column 0:
+
+\`\`\`
+[OUT_OF_SCOPE_DEFERRED] <file:line> | <issue> | <suggested-ticket> | <ISO8601 UTC>
+\`\`\`
+
+Same reporting convention as above: fixed field order, nothing parses it. Never include secrets. Omit this section if there are no out-of-scope findings.
 
 ### Merge Gate
 
-Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}).
+Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}). The gate has **two axes** — severity and scope:
 
-- ✅ Ready: no ${BLOCKING} findings — safe to merge, sub-threshold findings and all
-- ⛔ Blocked: has a ${BLOCKING} finding, needs fix
+- ✅ Ready: no blocking finding on either axis — sub-threshold and deferred out-of-scope findings included
+- ⛔ Blocked: an **in-scope** (incl. uncertain) finding at or above ${BLOCKING}, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+
+End the Gate section with exactly one line:
+
+\`\`\`
+gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH>
+\`\`\`
+
+NONE is the only value lawful with ✅ Ready.
 
 ### Structured Summary (optional, after text report)
 

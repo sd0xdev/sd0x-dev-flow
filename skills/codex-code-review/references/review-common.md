@@ -18,12 +18,27 @@
 
 ## Merge Gate
 
-The gate is decided by the **tier's blocking severity** (see `@rules/auto-loop.md` § Tiers): `fast` blocks on P0, `standard` (the default) on P0/P1, `thorough` on P0/P1/P2.
+The gate has **two axes**. The severity axis is decided by the **tier's blocking severity** (see `@rules/auto-loop.md` § Tiers: `fast` blocks on P0, `standard` — the default — on P0/P1, `thorough` on P0/P1/P2), never a fixed list; the scope axis by `@rules/scope-discipline.md`. "Critical" below = P0, or a security/data-integrity finding.
 
-- **Ready**: No finding at or above the tier's blocking severity
-- **Blocked**: At least one such finding, needs fix
+- **Blocked** ⇔ at least one finding that is "in-scope (incl. `uncertain`) ∧ at or above the tier's blocking severity" **or** "out-of-scope ∧ critical ∧ no valid `[USER_SKIPPED]`"
+- **Ready**: no such finding — `gate_reason=NONE` is the only pairing lawful with Ready
 
-Findings below that line are **sub-threshold** — reported, not blocking. See `@rules/auto-loop.md` § Sub-Threshold Findings for what to do with them.
+The report's Gate section carries one line `gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH>`. In-scope findings below the blocking line are **sub-threshold** (see `@rules/auto-loop.md` § Sub-Threshold Findings); out-of-scope non-critical findings are recorded as `[OUT_OF_SCOPE_DEFERRED]` and listed under the report's "Out-of-Scope Findings" section — neither blocks Ready.
+
+## Scope Fields (fail-closed)
+
+Every finding carries four scope fields (contract: `@rules/scope-discipline.md` § Gate Derivation), judged against the **frozen** `SCOPE_BASELINE` from Step 1 — never recomputed:
+
+```
+origin=<in-diff|pre-existing|uncertain>
+scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>
+scope=<in-scope|out-of-scope>   # derived, not free: out-of-scope ⇔ origin=pre-existing ∧ scope_reason=pre-existing-outside
+evidence=<file:line call site, or a one-line blame/log -L citation; pre-existing-outside requires the complete negative case: not in the baseline, no one-hop call site, not branch-introduced>
+```
+
+One hop only: a direct caller or direct callee of a symbol the diff modified, with the call site cited. No transitive expansion. Non-code files: only baseline membership and branch introduction apply.
+
+**Fail-closed reading** (the model applies this when consuming any report): a missing field, an unknown enum value, a contradictory combination (`origin=in-diff ∧ scope=out-of-scope`), or a `pre-existing-outside` whose evidence lacks the complete negative case ⇒ the finding is `uncertain` ⇒ **in-scope**. A reviewer that omits the fields degrades to today's behavior, never to something looser.
 
 ## Codex Independent Research (Required)
 
@@ -46,12 +61,12 @@ Codex **must** perform its own research, not rely only on provided diff/context:
 
 **⚠️ Follow @CLAUDE.md review loop rules ⚠️**
 
-When review result is Blocked:
+A `Blocked` result is routed by the **derived** sentinel × `gate_reason` pair (parent `SKILL.md` Step 4.5), never by the bare sentinel: only `Blocked × IN_SCOPE_BLOCKING` with the breaker untriggered enters this fix loop; `OUT_OF_SCOPE_CRITICAL` is human exit E1 (do **not** fix), `BOTH` resolves E1 first, and a triggered breaker is E2. For the pairing that does enter:
 
 1. Remember the `threadId`
-2. Fix every finding at or above the tier's blocking severity (`${BLOCKING}`) — sub-threshold ones are logged, not fixed
+2. Fix every **in-scope** (incl. `uncertain`) finding at or above the tier's blocking severity (`${BLOCKING}`) — sub-threshold and out-of-scope ones are logged, not fixed
 3. Re-review using `--continue <threadId>`
-4. Repeat until Ready
+4. Repeat until Ready — routing each round's result through Step 4.5 again
 
 ## Sub-Threshold Findings
 
@@ -91,21 +106,30 @@ Used with `mcp__codex__codex-reply`:
 ```typescript
 mcp__codex__codex-reply({
   threadId: '<from --continue parameter>',
-  prompt: `I have fixed the previously identified issues. Please re-review:
+  prompt: `The task state has changed since your last review (fixes applied, or a disposition recorded). Please re-review:
 
 ## ${LOCAL_CHECKS ? 'Local Check Results\n' + LOCAL_CHECKS + '\n\n##' : ''} New Git Diff
 \`\`\`diff
 ${GIT_DIFF}
 \`\`\`
 
+## Scope Baseline (frozen — unchanged for this task, do NOT recompute)
+${SCOPE_BASELINE}
+
+## Active Dispositions
+${DISPOSITIONS || 'None'}
+
 Please verify:
 1. Have the previously identified blocking issues been correctly fixed?
 2. Did the fixes introduce new issues?
-3. Update Merge Gate status`,
+3. Keep the scope fields on every finding (origin / scope_reason / scope / evidence), judged against the frozen baseline above
+4. Update Merge Gate status, including the gate_reason line`,
 });
 ```
 
 > The re-review deliberately does **not** ask for a status roll-call of sub-threshold findings. They were already logged as `[NIT_DEFERRED]` and are not what the loop is converging on; asking re-surfaces them and buys another round.
+
+`DISPOSITIONS` is the currently valid `[OUT_OF_SCOPE_DEFERRED]` / `[USER_SKIPPED]` lines for this task — carried by the model from the conversation and the prior reports (reporting conventions, nothing persists them). Validity is checked per `@rules/scope-discipline.md` § Closed-Set Options before a line is included.
 
 ## Dismiss Verdict Format
 
@@ -132,10 +156,10 @@ When a finding is verified via `/seek-verdict`, output:
 ## Output Findings Format
 
 ```
-- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> [source: codex|toolkit|both]
+- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: codex|toolkit|both]
 ```
 
-> Note: `[source: ...]` is required under `--dual` and omitted in single-reviewer mode, which is the default.
+> Note: `[source: ...]` is required under `--dual` and omitted in single-reviewer mode, which is the default. The four scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
 
 ## AC Coverage Format (Spec-Driven Review)
 
@@ -179,14 +203,22 @@ When `--dual` is passed, two reviewers run in parallel and **the merge happens i
 
 `strict-reviewer` already uses P0/P1/P2/Nit format — no mapping needed.
 
-### Deduplication Algorithm
+### Deduplication Algorithm (field-level merge)
+
+Normalize each reviewer's findings **fail-closed first** (§ Scope Fields), then merge per field — a keep-one-record dedupe would wash out the in-scope reading before normalization can see it:
 
 | Step | Rule |
 |------|------|
 | Key | `canonical_file_path + canonical_issue_text` |
 | Line tolerance | ±5 lines (ignore line number differences within range) |
-| Conflict resolution | Same key → keep highest severity (P0 > P1 > P2 > Nit) |
+| severity | Same key → keep highest severity (P0 > P1 > P2 > Nit) |
+| scope | Any source `in-scope` or `uncertain` → aggregate `in-scope`; aggregate `out-of-scope` **only when every source independently proves it** with complete negative evidence |
+| origin / scope_reason | Sources conflict → aggregate `uncertain` |
+| security/data-integrity domain | Any source hits → the aggregate keeps the critical domain |
+| evidence | Keep all sources' evidence — never discard it with the losing severity |
 | Source merge | Same key from both reviewers → `source = "both"` |
+
+`[USER_SKIPPED]` applies **after** the aggregate identity forms: a disposition recorded against an out-of-scope reading cannot exclude an aggregate that lands in-scope. The gate derivation (§ Merge Gate) runs on the conservative aggregate.
 
 ### Degradation Matrix
 
@@ -209,7 +241,7 @@ Every finding includes a source tag:
 | `toolkit` | Found by secondary reviewer only |
 | `both` | Found by both reviewers (deduplicated) |
 
-Output format: `- [P0] file:line issue → fix [source: both]`
+Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: both]`
 
 ### Review Loop (under `--dual`)
 

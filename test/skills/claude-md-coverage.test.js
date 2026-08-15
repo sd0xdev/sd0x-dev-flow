@@ -118,6 +118,7 @@ const ALLOWED_CLAUDE_READERS = new Set([
   'create-pr-sanitization.test.js',    // pins Development Rules #3 wording
   'discretion-tiers.test.js',          // pins @rules/discretion.md import in the two tracked CLAUDE templates (R7)
   'remind.test.js',                    // pins /remind extraction targets (section headings, not registration)
+  'scope-discipline.test.js',          // pins the closed-list human-exit union sentence (auto-loop + scope-discipline) in both tracked CLAUDE templates
   'review-dispatch.test.js',           // pins {TEST_COMMAND} placeholder + comments-only honesty prose
   'testing-rules.test.js',             // pins testing-project.md references
 ]);
