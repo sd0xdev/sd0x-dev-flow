@@ -1,7 +1,7 @@
 # Doc Classification Foundation
 
 > **Created**: 2026-04-03
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [Doc Classification Tech Spec](../2-tech-spec.md)
 
@@ -43,14 +43,14 @@
 
 ## Acceptance Criteria
 
-- [ ] `doc-taxonomy.json` 包含 5 個 lifecycle types + 至少 5 個 ancillary types，每個有 `canonical_filename` 或 `semantic_pattern`
-- [ ] `classifyByPath("2-tech-spec.md")` → `{ type: "tech-spec", is_canonical: true, confidence: "high" }`
-- [ ] `classifyByPath("2-tech-spec-fp-brief.md")` → `{ type: "fp-brief" }` (not tech-spec)
-- [ ] `classifyByPath("3-auto-loop-integration.md")` → `{ type: "architecture", is_canonical: false }` (lifecycle prefix fallback)
-- [ ] `scanFeatureDocs()` 遞迴掃描 folder-backed phases（`0-feasibility-study/` 下的子文件被分類為 feasibility variant）
-- [ ] `probe()` 回傳 `doc_inventory[]` + `canonical_docs` + `has_tech_spec` + `has_requirements` + `has_requests`（所有 legacy fields（`has_tech_spec`, `has_requirements`, `has_requests`）保留，向後相容）
-- [ ] `scanFeatureDocs()` 只處理 `.md` 檔案、忽略 symlinks、skip `requests/` 和 `archived/`、deep mode 限讀前 20 行
-- [ ] `node scripts/classify-docs-cli.js --feature <key>` 輸出合法 JSON（`test/scripts/classify-docs-cli.test.js` 驗證）
+- [x] `doc-taxonomy.json` 包含 5 個 lifecycle types + 至少 5 個 ancillary types，每個有 `canonical_filename` 或 `semantic_pattern`
+- [x] `classifyByPath("2-tech-spec.md")` → `{ type: "tech-spec", is_canonical: true, confidence: "high" }`
+- [x] `classifyByPath("2-tech-spec-fp-brief.md")` → `{ type: "fp-brief" }` (not tech-spec)
+- [x] `classifyByPath("3-auto-loop-integration.md")` → `{ type: "architecture", is_canonical: false }` (lifecycle prefix fallback)
+- [x] `scanFeatureDocs()` 遞迴掃描 folder-backed phases（`0-feasibility-study/` 下的子文件被分類為 feasibility variant）
+- [x] `probe()` 回傳 `doc_inventory[]` + `canonical_docs` + `has_tech_spec` + `has_requirements` + `has_requests`（所有 legacy fields（`has_tech_spec`, `has_requirements`, `has_requests`）保留，向後相容）
+- [x] `scanFeatureDocs()` 只處理 `.md` 檔案、忽略 symlinks、skip `requests/` 和 `archived/`、deep mode 限讀前 20 行
+- [x] `node scripts/classify-docs-cli.js --feature <key>` 輸出合法 JSON（`test/scripts/classify-docs-cli.test.js` 驗證）
 - [ ] Unit test coverage ≥ 80%（classifier + expanded probe）
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit-fast`
@@ -60,9 +60,9 @@
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best practices audit + tech-spec completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 8/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

@@ -36,14 +36,14 @@
 
 ## Acceptance Criteria
 
-- [ ] SKILL.md 不包含任何 Apifox-specific 內容（grep 驗證）
-- [ ] `references/cases/README.md` 包含案例 template（frontmatter: case_id, status, last_updated, review_by, platforms, attack_window, confidence）
-- [ ] `references/cases/apifox-2026-03.md` 包含完整 IoC 表格（網路指標、主機指標、加密指標 — 來源白帽醬文章）
-- [ ] Apifox 案例檔包含完整攻擊鏈（Stage-1/2 loader + 信息竊取 + 持久化 + FRP sys-gateway 後門）
+- [x] SKILL.md 不包含任何 Apifox-specific 內容（grep 驗證）
+- [x] `references/cases/README.md` 包含案例 template（frontmatter: case_id, status, last_updated, review_by, platforms, attack_window, confidence）
+- [x] `references/cases/apifox-2026-03.md` 包含完整 IoC 表格（網路指標、主機指標、加密指標 — 來源白帽醬文章）
+- [x] Apifox 案例檔包含完整攻擊鏈（Stage-1/2 loader + 信息竊取 + 持久化 + FRP sys-gateway 後門）
 - [ ] Phase 0 為通用 dispatcher（selection key: platform + product presence；無匹配 → skip；多匹配 → iterate；回報: case_id / status / confidence）
 - [ ] Phase 2 包含 4 條 parallel scan merge 規則（subagent 並行、統一 schema、去重、Critical 立即浮出）
-- [ ] Report template 使用 `Supply Chain Status` 取代 `Apifox IoC`
-- [ ] `rg "apifox-cleanup.md" skills/dev-security-audit/` 回傳 0 結果（無殘留引用）
+- [x] Report template 使用 `Supply Chain Status` 取代 `Apifox IoC`
+- [x] `rg "apifox-cleanup.md" skills/dev-security-audit/` 回傳 0 結果（無殘留引用）
 - [ ] 刪除的 `apifox-cleanup.md` 內容已完整遷移至案例檔 Cleanup 章節
 - [ ] Pass `/codex-review-doc`
 
@@ -52,9 +52,9 @@
 | Phase | Status | Note |
 | ----- | ------ | ---- |
 | Analysis | Done | best-practices 審計完成（3 輪 codex-brainstorm 辯論） |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/10 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## Design Decisions (from best-practices audit)
 

@@ -1,7 +1,7 @@
 # Phase 2: Distribution Stabilization
 
 > **Created**: 2026-03-21
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 > **Depends On**: [Platform Governance Integrity](./2026-03-21-platform-governance-integrity.md)
@@ -37,9 +37,9 @@ P0 integrity 修復完成後，`npx skills add` 分發路徑即被解鎖。此 r
 ## Acceptance Criteria
 
 - [ ] `npx skills add sd0xdev/sd0x-dev-flow` 成功安裝所有 skills 至 `.agents/skills/`
-- [ ] `codex-setup init` 產出有效 AGENTS.md kernel（≤ 24 KiB）
+- [x] `codex-setup init` 產出有效 AGENTS.md kernel（≤ 24 KiB）
 - [ ] `codex-setup doctor` 偵測並報告所有完整性問題
-- [ ] `codex-setup sync` 正確同步更新後的 artifacts
+- [x] `codex-setup sync` 正確同步更新後的 artifacts
 - [ ] Tier C 端到端：Codex CLI 可透過 skills 完成至少一個 review 任務
 - [ ] Pass `/codex-review-fast`
 - [ ] Pass `/precommit-fast`
@@ -49,9 +49,9 @@ P0 integrity 修復完成後，`npx skills add` 分發路徑即被解鎖。此 r
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | - | Tech spec Phase 2 已設計 |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 2/7 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

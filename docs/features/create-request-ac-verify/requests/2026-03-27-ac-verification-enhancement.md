@@ -34,13 +34,13 @@
 
 ## Acceptance Criteria
 
-- [ ] AC1: `--verify-ac` flag documented in SKILL.md arguments table
-- [ ] AC2: Phase 2.5 agent dispatch spec with AC list + Related Files input
+- [x] AC1: `--verify-ac` flag documented in SKILL.md arguments table
+- [x] AC2: Phase 2.5 agent dispatch spec with AC list + Related Files input
 - [ ] AC3: Agent output format follows AC Coverage schema（Complete/Partial/Not Found/Inconclusive）
-- [ ] AC4: Timeout 60 sec + Inconclusive fallback documented
-- [ ] AC5: `Candidate Complete` status in lifecycle table（Phase 4 Auto-Update）
-- [ ] AC6: Scan mode（`--status`）groups Candidate Complete after In Progress
-- [ ] AC7: `--update-all` marks heuristic-only completions as Candidate Complete（not Completed）
+- [x] AC4: Timeout 60 sec + Inconclusive fallback documented
+- [x] AC5: `Candidate Complete` status in lifecycle table（Phase 4 Auto-Update）
+- [x] AC6: Scan mode（`--status`）groups Candidate Complete after In Progress
+- [x] AC7: `--update-all` marks heuristic-only completions as Candidate Complete（not Completed）
 - [ ] Pass `/codex-review-doc`
 
 ## Progress
@@ -48,9 +48,9 @@
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | Best practices audit + debate completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/8 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

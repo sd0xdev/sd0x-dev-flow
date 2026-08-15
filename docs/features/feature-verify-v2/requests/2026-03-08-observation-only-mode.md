@@ -77,25 +77,25 @@ sequenceDiagram
 
 ## Acceptance Criteria
 
-- [ ] Degradation matrix 包含 L2-OBS variant（API unreachable + Log available → L2-OBS）
-- [ ] L2-OBS 模式下 P3 skip、P4 time-window scan 正常運作
-- [ ] environments.md auto-detection 包含 deterministic algorithm（3x health-check, 2s timeout, 全失敗 = unreachable）
-- [ ] environments.md 正確分類 L2-API vs L2-OBS（不與 L3 衝突）
-- [ ] L2-OBS confidence cap = Medium
-- [ ] 不破壞現有 L1-L4 整數編號（L2 拆為 L2-API / L2-OBS）
-- [ ] CLI `--level` 支援 `L2-API | L2-OBS`（`--level L2` 向後相容為 L2-API）
-- [ ] output-template.md 包含 L2-OBS verdict report 格式
-- [ ] When NOT to Use 不受影響
+- [x] Degradation matrix 包含 L2-OBS variant（API unreachable + Log available → L2-OBS）
+- [x] L2-OBS 模式下 P3 skip、P4 time-window scan 正常運作
+- [x] environments.md auto-detection 包含 deterministic algorithm（3x health-check, 2s timeout, 全失敗 = unreachable）
+- [x] environments.md 正確分類 L2-API vs L2-OBS（不與 L3 衝突）
+- [x] L2-OBS confidence cap = Medium
+- [x] 不破壞現有 L1-L4 整數編號（L2 拆為 L2-API / L2-OBS）
+- [x] CLI `--level` 支援 `L2-API | L2-OBS`（`--level L2` 向後相容為 L2-API）
+- [x] output-template.md 包含 L2-OBS verdict report 格式
+- [x] When NOT to Use 不受影響
 - [ ] `/codex-review-doc` 通過
 
 ## Progress
 
 | Phase | Status | Note |
 | ----- | ------ | ---- |
-| Analysis | - | |
-| Development | - | |
+| Analysis | Done | |
+| Development | In Progress | L2-OBS shipped in `skills/feature-verify/SKILL.md` plus `references/environments.md` and `references/output-template.md` |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 9/10 AC verified against the repo (batch `--update-all`, 2026-08-15); the `/codex-review-doc` gate has no recorded run |
 
 ## References
 

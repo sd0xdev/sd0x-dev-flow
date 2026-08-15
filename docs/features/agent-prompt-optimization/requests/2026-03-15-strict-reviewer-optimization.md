@@ -1,7 +1,7 @@
 # strict-reviewer sub-agent prompt 優化
 
 > **Created**: 2026-03-15
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 
 ## Background
@@ -38,16 +38,16 @@
 ## Acceptance Criteria
 
 - [ ] 檔案長度約 55-65 行（soft target，品質優先於行數）
-- [ ] 包含 5-step workflow section（含大 diff 防護策略）
-- [ ] 包含 4-dimension review table，定義對齊 `review-common.md`
-- [ ] Severity 定義與 `review-common.md` 一致（無 drift）
-- [ ] 包含 evidence rules（require file:line、no speculation、dedupe、no secrets）
-- [ ] Output template 展示所有 severity sections（P0/P1/P2/Nit）
-- [ ] Output 結尾包含 gate sentinel（`✅ Ready` / `⛔ Blocked`）
-- [ ] Output format 相容 dual-review aggregation（`- [severity] file:line issue → fix`）
-- [ ] 無 confidence scoring（經辯論確認不加）
-- [ ] `model: opus` 保留不變
-- [ ] `description` 含 "Use proactively" routing 語句
+- [x] 包含 5-step workflow section（含大 diff 防護策略）
+- [x] 包含 4-dimension review table，定義對齊 `review-common.md`
+- [x] Severity 定義與 `review-common.md` 一致（無 drift）
+- [x] 包含 evidence rules（require file:line、no speculation、dedupe、no secrets）
+- [x] Output template 展示所有 severity sections（P0/P1/P2/Nit）
+- [x] Output 結尾包含 gate sentinel（`✅ Ready` / `⛔ Blocked`）
+- [x] Output format 相容 dual-review aggregation（`- [severity] file:line issue → fix`）
+- [x] 無 confidence scoring（經辯論確認不加）
+- [x] `model: opus` 保留不變
+- [x] `description` 含 "Use proactively" routing 語句
 
 ## Design Decisions（Debate Record）
 
@@ -65,6 +65,6 @@
 | Phase | Status | Note |
 | ----- | ------ | ---- |
 | Analysis | ✅ Done | best-practices audit + codex-brainstorm 完成 |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 10/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |

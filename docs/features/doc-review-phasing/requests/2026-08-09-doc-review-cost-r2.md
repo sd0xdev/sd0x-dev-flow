@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc.
 > **Created**: 2026-08-09
-> **Status**: In Progress
+> **Status**: Candidate Complete
 > **Note**: Second of three siblings (r1 → r2 → r3). The consumer migration is meaningless without the classifier, so both tech-spec steps land together here.
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) <- Technical detail (primary source)

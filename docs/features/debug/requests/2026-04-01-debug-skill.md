@@ -1,7 +1,7 @@
 # Debug Skill — Interactive Hypothesis-Driven Debugging
 
 > **Created**: 2026-04-01
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 
@@ -40,13 +40,13 @@ sd0x-dev-flow 缺少系統化的互動式除錯能力。現有 `/issue-analyze` 
 
 ## Acceptance Criteria
 
-- [ ] `skills/debug/SKILL.md` 包含 Phase 0-5 完整工作流
-- [ ] Probe Protocol 編碼假設驅動探測（max 6 rounds + stagnation gate + brainstorm escalation）
-- [ ] Failure Taxonomy 覆蓋 6 種問題類型（script bug, API error, config, silent failure, race condition, dependency）
-- [ ] Phase 3 必要整合 `/seek-verdict --intent confirm`（含 anti-anchoring 合約）
-- [ ] `--export` 匯出完整 Debug Report 至檔案（含 redaction）
+- [x] `skills/debug/SKILL.md` 包含 Phase 0-5 完整工作流
+- [x] Probe Protocol 編碼假設驅動探測（max 6 rounds + stagnation gate + brainstorm escalation）
+- [x] Failure Taxonomy 覆蓋 6 種問題類型（script bug, API error, config, silent failure, race condition, dependency）
+- [x] Phase 3 必要整合 `/seek-verdict --intent confirm`（含 anti-anchoring 合約）
+- [x] `--export` 匯出完整 Debug Report 至檔案（含 redaction）
 - [ ] `commands/debug.md` frontmatter + trigger keywords 不與現有 skill 衝突
-- [ ] Probe Safety Rules 實作（read-first default, write-probe gate, deny list, timeout）
+- [x] Probe Safety Rules 實作（read-first default, write-probe gate, deny list, timeout）
 - [ ] `test/commands/debug.test.js` 覆蓋 trigger、phase routing、probe 終止判據
 - [ ] `CLAUDE.md` + `CLAUDE.template.md` 命令表包含 `/debug`（通過 `claude-md-coverage.test.js`）
 - [ ] Pass `/codex-review-fast`
@@ -57,9 +57,9 @@ sd0x-dev-flow 缺少系統化的互動式除錯能力。現有 `/issue-analyze` 
 | Phase | Status | Note |
 | ----- | ------ | ---- |
 | Analysis | Done | Tech spec + best practices audit + brainstorm debate |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/11 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

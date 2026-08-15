@@ -1,7 +1,7 @@
 # Doc Classification Integration
 
 > **Created**: 2026-04-03
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [Doc Classification Tech Spec](../2-tech-spec.md)
 > **Depends On**: [Doc Classification Foundation](./2026-04-03-doc-classification-foundation-r1.md)
@@ -51,11 +51,11 @@ r1 建立了分類基礎設施（taxonomy registry + classifier + expanded probe
 - [ ] `/update-docs docs/features/<key>/2-tech-spec.md` 仍然只更新該檔案（target=file backward compat）
 - [ ] `/update-docs <keyword>` inventory all docs + dispatch to handler-supported types
 - [ ] handler dispatch 使用 shared research pass（`{ gitDiff, docInventory, canonicalDocs }` 只計算一次）
-- [ ] `docs-numbering.md` 允許 `<type>-<name>.md` ancillary docs（不再違反 "must have numeric prefix"）
+- [x] `docs-numbering.md` 允許 `<type>-<name>.md` ancillary docs（不再違反 "must have numeric prefix"）
 - [ ] `analyze.js` 使用 `${featureCtx.docs_path}/${featureCtx.canonical_docs.tech_spec.file}` 而非硬編碼 `2-tech-spec.md`
 - [ ] `skills/tech-spec/SKILL.md` upsert detection 使用 `canonical_docs.tech_spec.file` 而非硬編碼路徑
 - [ ] `skills/architecture/SKILL.md` + references 使用 `canonical_docs` 而非硬編碼 `2-tech-spec.md` / `3-architecture.md`
-- [ ] `scripts/resolve-feature.sh` output docs 反映新 schema
+- [x] `scripts/resolve-feature.sh` output docs 反映新 schema
 - [ ] `skills/feature-dev/SKILL.md` fallback 描述與 shared spec 一致
 - [ ] `create-request/references/feature-context-resolution.md` 與 canonical copy 一致
 - [ ] `.sd0x/doc-taxonomy.overrides.json` 在 `.gitignore` 中（不影響 `.sd0x/install-state.json`）
@@ -70,7 +70,7 @@ r1 建立了分類基礎設施（taxonomy registry + classifier + expanded probe
 | Analysis | Done | Tech-spec + r1 foundation landed |
 | Development | - | r1 foundation available; integration pending |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 2/14 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 

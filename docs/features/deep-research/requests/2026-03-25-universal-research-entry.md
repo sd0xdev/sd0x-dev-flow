@@ -1,7 +1,7 @@
 # `/deep-research` Trigger Redesign — Universal Research Entry Point
 
 > **Created**: 2026-03-25
-> **Status**: Spec Complete
+> **Status**: In Progress
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) (incremental update §1, §3.2)
 > **Best Practices Audit**: Phase 4 Gap Report (conversation 2026-03-25, 6 sources)
@@ -55,31 +55,31 @@
 
 ### AC1: Description Redesign
 
-- [ ] SKILL.md `description` field 改為 universal entry 措辭
-- [ ] 移除 hard "Not for" exclusion（`best-practices`、`feasibility-study`）
-- [ ] 加入 soft single-dimension routing preference（「dispatcher may prefer a narrower skill」）
-- [ ] 明確提及 `low/medium/high budget tiers`
+- [x] SKILL.md `description` field 改為 universal entry 措辭
+- [x] 移除 hard "Not for" exclusion（`best-practices`、`feasibility-study`）
+- [x] 加入 soft single-dimension routing preference（「dispatcher may prefer a narrower skill」）
+- [x] 明確提及 `low/medium/high budget tiers`
 
 ### AC2: Trigger Keywords Expansion
 
 - [ ] Trigger section 涵蓋 10-15 keyword phrases（含中英文日常用語）
-- [ ] 英文：research, investigate, analyze, explore, study, survey, look into, understand deeply, comprehensive analysis, compare approaches
-- [ ] 中文：了解, 調查, 分析, 研究, 從各面向研究
-- [ ] 加入意圖描述：broad questions, mixed-intent queries, ambiguous research needs
+- [x] 英文：research, investigate, analyze, explore, study, survey, look into, understand deeply, comprehensive analysis, compare approaches
+- [x] 中文：了解, 調查, 分析, 研究, 從各面向研究
+- [x] 加入意圖描述：broad questions, mixed-intent queries, ambiguous research needs
 
 ### AC3: "When NOT to Use" Simplification
 
-- [ ] 從 5 行縮減為 3 行
-- [ ] 只保留非研究意圖：code review, bug fix/implementation, adversarial debate only
-- [ ] 加入 "Soft routing hint" 說明 block 替代 hint
+- [x] 從 5 行縮減為 3 行
+- [x] 只保留非研究意圖：code review, bug fix/implementation, adversarial debate only
+- [x] 加入 "Soft routing hint" 說明 block 替代 hint
 
 ### AC4: Phase 0 Specialized Skill Suggestion
 
-- [ ] Phase 0 加入 suggestion table（advisory, non-blocking）
-- [ ] 偵測 "best practices" + "audit" → 建議 `/best-practices`
-- [ ] 偵測 "compare X vs Y" → 建議 `/feasibility-study`
-- [ ] 偵測 code-only → 建議 `/deep-explore`
-- [ ] 建議後繼續執行 Phase 1（非阻擋）
+- [x] Phase 0 加入 suggestion table（advisory, non-blocking）
+- [x] 偵測 "best practices" + "audit" → 建議 `/best-practices`
+- [x] 偵測 "compare X vs Y" → 建議 `/feasibility-study`
+- [x] 偵測 code-only → 建議 `/deep-explore`
+- [x] 建議後繼續執行 Phase 1（非阻擋）
 
 ### AC5: Command Sync
 

@@ -1,7 +1,7 @@
 # Context-Aware Q&A Skill `/ask`
 
 > **Created**: 2026-04-08
-> **Status**: Pending
+> **Status**: In Progress
 > **Priority**: P2
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
 
@@ -42,12 +42,12 @@
 
 ## Acceptance Criteria
 
-- [ ] SKILL.md 通過 `skill-lint.js` 所有 P0/P1/P2 checks
-- [ ] Intent classification 涵蓋 7 個 intent types，每個有 per-intent context gathering pipeline
-- [ ] Sub-agent dispatch 基於 complexity（simple: 0 agents、medium: 1、complex: 2 max）
-- [ ] Skill routing：支援至少 8 個 route target（`/feature-dev`、`/codex-review-fast`、`/review-spec`、`/codex-review-doc`、`/bug-fix`、`/next-step`、`/deep-research`、`/code-explore`），路由建議含理由
-- [ ] Source evidence 支援 3 種 type（file / commit / command），output 含 Sources table
-- [ ] Read-only + path security：SKILL.md 含 prohibited git commands 清單、`allowed-tools` 無 Edit/Write；repo boundary enforcement + `.env`/`credentials.*`/`*secret*` skip patterns + output secret redaction
+- [x] SKILL.md 通過 `skill-lint.js` 所有 P0/P1/P2 checks
+- [x] Intent classification 涵蓋 7 個 intent types，每個有 per-intent context gathering pipeline
+- [x] Sub-agent dispatch 基於 complexity（simple: 0 agents、medium: 1、complex: 2 max）
+- [x] Skill routing：支援至少 8 個 route target（`/feature-dev`、`/codex-review-fast`、`/review-spec`、`/codex-review-doc`、`/bug-fix`、`/next-step`、`/deep-research`、`/code-explore`），路由建議含理由
+- [x] Source evidence 支援 3 種 type（file / commit / command），output 含 Sources table
+- [x] Read-only + path security：SKILL.md 含 prohibited git commands 清單、`allowed-tools` 無 Edit/Write；repo boundary enforcement + `.env`/`credentials.*`/`*secret*` skip patterns + output secret redaction
 - [ ] Conversation context integration：reuse 先前 conversation 中的 active feature/file context 來豐富問題理解；當前 turn 有相關 prior context 時，Sources 中引用之
 - [ ] Doc discovery 使用 feature-first 策略（`canonical_docs` → fallback glob）
 - [ ] Pass `/codex-review-fast`
@@ -58,9 +58,9 @@
 | Phase | Status | Note |
 |-------|--------|------|
 | Analysis | Done | req-analyze + tech-spec completed |
-| Development | - | |
+| Development | In Progress | Implementation identified heuristically by batch `--update-all` (2026-08-15). This ticket records no per-AC `file:line` evidence — producing that is what `--verify-ac` is for |
 | Testing | - | |
-| Acceptance | - | |
+| Acceptance | In Progress | 6/10 AC verified against the repo by batch `--update-all` (2026-08-15); closure-grade sign-off still needs `--verify-ac` |
 
 ## References
 
