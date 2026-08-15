@@ -29,7 +29,7 @@ v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量�
 /project-setup
 ```
 
-一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 15 條 rules + 6 個 hooks。使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
+一個指令自動偵測 framework、package manager、資料庫、entry point 和 script 指令。安裝部分 rules 與 hooks；完整 plugin 包含 16 條 rules + 6 個 hooks。使用 `--lite` 僅設定 CLAUDE.md（跳過 rules/hooks）。
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — 僅 skills
@@ -270,7 +270,7 @@ flowchart TD
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
-| Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
+| Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
 | Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
@@ -442,7 +442,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## Rules & Hooks
 
-15 條 rules + 6 個 hooks。Rules 是分層的契約：`discretion.md` 把 12 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hook 組成是 4 支建議性提醒 hook，加上 1 支自動格式化與 1 支會阻擋的安全護欄。提醒角色各不相同：Stop 與 post-compact hook 依據綁定 digest 的狀態（`review-state.js`）印出欠著的 gate 提醒，prompt hook 印出 `[AUTO_LOOP_STATE]` 事實行，post-skill hook 印出固定的閘門順序行，post-compact hook 另外重新注入 git baseline；review 層永不阻擋——pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，需要 `jq`，缺 jq 時不會啟動），硬性關卡則位於 git 層級（commit-msg-guard、pre-push-gate）。
+16 條 rules + 6 個 hooks。Rules 是分層的契約：`discretion.md` 把 13 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hook 組成是 4 支建議性提醒 hook，加上 1 支自動格式化與 1 支會阻擋的安全護欄。提醒角色各不相同：Stop 與 post-compact hook 依據綁定 digest 的狀態（`review-state.js`）印出欠著的 gate 提醒，prompt hook 印出 `[AUTO_LOOP_STATE]` 事實行，post-skill hook 印出固定的閘門順序行，post-compact hook 另外重新注入 git baseline；review 層永不阻擋——pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，需要 `jq`，缺 jq 時不會啟動），硬性關卡則位於 git 層級（commit-msg-guard、pre-push-gate）。
 
 > **客製化**：編輯 `auto-loop-project.md` 可覆寫專案的 auto-loop 行為。Plugin 更新不會衝突 — 詳見 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 

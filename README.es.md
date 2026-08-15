@@ -29,7 +29,7 @@ Control plane completo en Claude Code. Distribución solo de skills para Codex C
 /project-setup
 ```
 
-Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 15 rules + 6 hooks. Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
+Un solo comando autodetecta framework, package manager, base de datos, entry points y scripts. Instala un subconjunto de rules y hooks; el plugin completo incluye 16 rules + 6 hooks. Usa `--lite` para solo configurar CLAUDE.md (sin rules/hooks).
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — solo skills
@@ -270,7 +270,7 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
 | Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
-| Rules | 15 | auto-loop, auto-loop-project, codex-invocation, security, testing, git-workflow, self-improvement, context-management |
+| Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
 | Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
@@ -442,7 +442,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 ## Reglas & Hooks
 
-15 reglas + 6 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 12 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. El conjunto de hooks consta de cuatro hooks de recordatorio consultivos más un auto-formateador y un guard de seguridad bloqueante. Los roles de recordatorio difieren por hook: los hooks de Stop y post-compact renderizan recordatorios de gates pendientes a partir del estado ligado al digest (`review-state.js`), el hook de prompt imprime la línea de hechos `[AUTO_LOOP_STATE]`, el hook post-skill imprime una línea estática con el orden de gates, y el hook post-compact además re-inyecta la línea base de git tras la compactación; la capa de review nunca bloquea — pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad; requiere `jq` y sin jq no se activa), y los gates duros viven a nivel de git (commit-msg-guard, pre-push-gate).
+16 reglas + 6 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 13 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. El conjunto de hooks consta de cuatro hooks de recordatorio consultivos más un auto-formateador y un guard de seguridad bloqueante. Los roles de recordatorio difieren por hook: los hooks de Stop y post-compact renderizan recordatorios de gates pendientes a partir del estado ligado al digest (`review-state.js`), el hook de prompt imprime la línea de hechos `[AUTO_LOOP_STATE]`, el hook post-skill imprime una línea estática con el orden de gates, y el hook post-compact además re-inyecta la línea base de git tras la compactación; la capa de review nunca bloquea — pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad; requiere `jq` y sin jq no se activa), y los gates duros viven a nivel de git (commit-msg-guard, pre-push-gate).
 
 > **Personalización**: Edita `auto-loop-project.md` para sobrescribir el comportamiento de auto-loop por proyecto. Las actualizaciones del plugin no conflictuarán — ver [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
