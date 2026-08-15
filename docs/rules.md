@@ -6,7 +6,8 @@
 | `auto-loop-project` | Project-specific auto-loop overrides (user-owned, not plugin-managed) |
 | `codex-invocation` | Codex must independently research, never feed conclusions |
 | `discretion` | Instruction tiers: Anchor / Default / Guidance (single authority) |
-| `fix-all-issues` | Zero tolerance: fix every issue found |
+| `fix-all-issues` | Zero tolerance for in-scope blocking findings; out-of-scope critical routes to a human exit |
+| `scope-discipline` | Scope axis orthogonal to severity; out-of-scope pre-existing defects get a recorded exit |
 | `self-improvement` | Corrected → record lesson → prevent recurrence |
 | `framework` | Framework-specific conventions (customizable) |
 | `testing` | Unit/Integration/E2E isolation |

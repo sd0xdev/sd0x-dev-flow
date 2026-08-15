@@ -2,7 +2,7 @@
 
 **How binding is a line in this file?** Three tiers: **Anchor** (never deviate), **Default** (the normal call; deviate by stating a `[DEVIATION]` line that cites a fact signal, then *keep working*), **Guidance** (advisory). This file's own baseline is **Default** and lines above that baseline are marked inline — @rules/discretion.md classifies the plugin-managed `rules/*.md`, not this file, but its **Anchor Register is the authority everywhere**: a line here that hits the Register is Anchor no matter how it is worded or where it is restated.
 
-Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask — the human exits are the enumerated ones in @rules/auto-loop.md, and that file is the closed list, not this sentence.
+Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask — the human exits are the union of the ones enumerated in @rules/auto-loop.md and @rules/scope-discipline.md; those two enumerations are the closed list, not this sentence.
 
 ## Required Checks (Stop Hook reminded)
 
@@ -61,6 +61,7 @@ Rules 3 and 4 are Anchor Register #4 (@rules/discretion.md); their exception lis
 - @rules/auto-loop-project.md -- Project-specific auto-loop overrides (user-owned)
 - @rules/codex-invocation.md -- Codex must independently research (critical)
 - @rules/fix-all-issues.md -- Zero tolerance for blocking findings; sub-threshold ones are logged, not fixed
+- @rules/scope-discipline.md -- Scope axis orthogonal to severity; out-of-scope pre-existing defects get a recorded exit, not a repo-wide sweep
 - @rules/testing.md -- Test pyramid, conventions, evidence model, adequacy gate
 - @rules/testing-project.md -- Project-specific testing overrides (user-owned)
 - @rules/framework.md

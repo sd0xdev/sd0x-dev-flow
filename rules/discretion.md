@@ -1,6 +1,6 @@
 # Discretion Tiers ⚠️ CRITICAL
 
-Single authority for how binding each instruction in the plugin-managed `rules/*.md` files is. Every instruction in the 12 files below resolves to **exactly one** tier: Anchor Register hit → **Anchor**; otherwise a listed file exception → that tier; otherwise the file's **baseline**. Preamble text (before a file's first `##`) follows the same resolution. `rules/auto-loop-project.md` and `rules/testing-project.md` are **out of scope of this file's classification** — they are user-owned, so their tiers are not assigned here. Their precedence and resolution contract is defined by R8 (`docs/features/auto-loop-autonomy/requests/2026-07-26-override-contract-migration-r8.md`) and published in `auto-loop.md` § Override Contract and `testing.md` § Project Customization, which resolve **Anchor-first**: this file decides what is Anchor, and no annotation in a user-owned file can downgrade a Register hit.
+Single authority for how binding each instruction in the plugin-managed `rules/*.md` files is. Every instruction in the 13 files below resolves to **exactly one** tier: Anchor Register hit → **Anchor**; otherwise a listed file exception → that tier; otherwise the file's **baseline**. Preamble text (before a file's first `##`) follows the same resolution. `rules/auto-loop-project.md` and `rules/testing-project.md` are **out of scope of this file's classification** — they are user-owned, so their tiers are not assigned here. Their precedence and resolution contract is defined by R8 (`docs/features/auto-loop-autonomy/requests/2026-07-26-override-contract-migration-r8.md`) and published in `auto-loop.md` § Override Contract and `testing.md` § Project Customization, which resolve **Anchor-first**: this file decides what is Anchor, and no annotation in a user-owned file can downgrade a Register hit.
 
 ## Tiers
 
@@ -10,7 +10,7 @@ Single authority for how binding each instruction in the plugin-managed `rules/*
 | **Default** | The normal call; the model may judge otherwise from context | State a `[DEVIATION]` line citing a fact signal, then **continue working** |
 | **Guidance** | Advisory | Nothing |
 
-## File Baselines (12 plugin-managed files)
+## File Baselines (13 plugin-managed files)
 
 | File | Baseline | Exceptions above baseline |
 |------|----------|---------------------------|
@@ -26,6 +26,7 @@ Single authority for how binding each instruction in the plugin-managed `rules/*
 | `context-management.md` | Default | "Context state never overrides auto-loop" and gate-skip prohibition → Anchor (Register #7); no secrets in compact summaries → Anchor (Register #2) |
 | `framework.md` | Guidance | — |
 | `self-improvement.md` | Default | Redaction rules (never record secrets) → Anchor (Register #2) |
+| `scope-discipline.md` | Default | Edit re-review sentence → Anchor (Register #6); deferred/skip records never carry secrets → Anchor (Register #2); security/data-integrity `thorough` escalation → Anchor (Register #3) |
 
 ## Anchor Register (closed list)
 
