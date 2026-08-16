@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **言語**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | 日本語 | [한국어](README.ko.md) | [Español](README.es.md)
 
@@ -22,7 +22,7 @@ Claude Code ではフルコントロールプレーン。Codex CLI やその他�
 
 ```bash
 # Claude Code — フルコントロールプレーン
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # プロジェクトを設定
@@ -33,10 +33,10 @@ Claude Code ではフルコントロールプレーン。Codex CLI やその他�
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — スキルのみ
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-続いて Codex CLI 内で AGENTS.md カーネルを生成し、git フックをインストールします：
+続いて Codex CLI 内で AGENTS.md カーネルを生成し、`commit-msg` フックをインストールします。`pre-push` ゲートはオプトインです — 併せて入れる場合は `--with-push-gate` を付けてください：
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |------|-----------|-----------|
 | プラグインインストール | Claude Code | フル（99 bundled skills、フック、ルール、auto-loop） |
 | `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | スキルのみ（99 public skills） |
-| `$codex-setup init` | Codex CLI | AGENTS.md カーネル + git フック |
+| `$codex-setup init` | Codex CLI | AGENTS.md カーネル + commit-msg フック（pre-push ゲートはオプトイン） |
 <!-- END:INSTALL-COVERAGE -->
 
 **必要環境**: Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` と `post-edit-format` が hook のペイロードをこれで解析します — `jq` が無いと両者とも exit 0 するため、センシティブパスのガードと自動フォーマットが黙って無効になります）| [Codex MCP](https://github.com/openai/codex)（プラグインのインストールには不要ですが、`/codex-*` のレビューゲートには必須です — Codex がその唯一のレビューアーなので、未インストール時はフォールバックせず `⛔ Blocked` + `⚠️ Need Human` を出します）
@@ -79,7 +79,7 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 | 所有者 | 所有するもの |
 |-------|------|
 | **モデル** | バッチ処理、タイミング、レビュー深度のエスカレーション、Default tier の逸脱（明示してから作業を続行） |
-| **Harness** | digest に束縛されたリマインダー状態、git レベルのガード（commit-msg、pre-push）、閉じた Anchor セット |
+| **Harness** | digest に束縛されたリマインダー状態、git レベルのガード（`commit-msg` は既定でインストール、`pre-push` はオプトイン）、閉じた Anchor セット |
 | **人間** | 不可逆な承認（push、commit、merge）と列挙された exit ポイント |
 
 モデルは経路を所有します。harness は証拠と交渉不可能な境界を所有します。人間は不可逆の権限を保持します。
@@ -97,10 +97,10 @@ sd0x-dev-flow は reference implementation です。以下の各行は、harness
 | 3 | **Context recovery across compaction** | SessionStart(compact) 後に git ベースライン（ブランチ + 未コミットファイル）と未完了ゲートのリマインダーを再注入 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 種類の hook event を 6 本のスクリプトへディスパッチ — 4 本の advisory リマインダーフック、1 本の自動フォーマッタ、1 本のブロックするセキュリティガード（SessionStart は追加で `scripts/namespace-hint.sh` を実行）: PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter の `allowed-tools` — 例: `/ask` には Edit/Write が無い | 99 個の公開 skill のうち 90 個が `allowed-tools` を宣言 |
-| 6 | **Defense-in-depth safety** | git レベルのガードはハードなまま（commit-msg-guard、`/dev/tty` 経由の pre-push-gate）。編集時の pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガードであり、ワークフロー強制ではない — `jq` が必要で、jq が無いとガードは作動しない）、Stop hook はリマインドする — 不可逆な操作をゲートする層は牙を残し、レビュー層は設計として advisory になった | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | インストール済みの git レベルのガードはハードなまま — commit-msg-guard は常にインストールされ、`/dev/tty` 経由の pre-push-gate はオプトインした場合に有効です。編集時の pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガードであり、ワークフロー強制ではない — `jq` が必要で、jq が無いとガードは作動しない）、Stop hook はリマインドする — 不可逆な操作をゲートする層は牙を残し、レビュー層は設計として advisory になった | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex が Claude の書いたコードをレビュー。リポジトリを自力で調査し、結論を渡されて追認することはない | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | 証拠にもとづくストール規律：finding を 1 つも閉じないレビューラウンドが 3 回続くと — モデルがレビューレポートから数えます — 構造化されたストール分類と 1 回の限定的な調整を起動します。Tier ごとのラウンド予算（デフォルト 6 / 15 / 30、3〜50 でオーバーライド可）は暴走用のバックストップに退き、初回の上限到達でも同じ診断を行い、列挙された human exit を備える | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
-| 9 | **Human-in-the-loop safety gates** | すべての `/push-ci` push の前に `AskUserQuestion` で承認。保護ブランチへの push では `/dev/tty` による pre-push 確認が最終的な資格情報（加えて non-fast-forward 検出） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop safety gates** | すべての `/push-ci` push の前に `AskUserQuestion` で承認 — この承認は常に必要で、オプトインの `pre-push` フックが無い場合はそれ自体が承認になります。フックがある場合は、保護ブランチへの push で `/dev/tty` 確認が最終的な資格情報です（加えて non-fast-forward 検出） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 是正 → lesson として記録 → 3 回以上の再発で rule に昇格 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 多くの harness プロジェクトはこれらのうち 2〜4 個しかカバーしません。sd0x-dev-flow は 10 個すべてをカバーしており、単なるツールではなく学習対象として読めるコードになっています。
@@ -123,7 +123,7 @@ flowchart LR
 
 フックは**命令ではなくファクト**を報告します：リマインダーと `[AUTO_LOOP_STATE]` のファクト行（変更クラス、プレーンごとの verdict 状態）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ストール — finding を 1 つも閉じないレビューラウンドが 3 回続くこと。モデルが数えます — あるいはバックストップとしてのラウンド上限到達により、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します。どの trigger で発火しても human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
 
-強制モードは存在しません（hook-lightweighting、2026-08-13）：レビュー層のフックはすべて exit 0 で終了するリマインダーです。verdict はモデルが note した時点で存在し（`node scripts/review-state.js note <plane> <pass|fail>`、digest に束縛 — 編集するとそのプレーンが再オープン）、リマインダーを黙らせる正直な方法は、ゲートを実行して結果を note することです。レビュー層の外のガードは効力を保ちます：pre-edit-guard は機密パスへの編集を引き続きブロックし（`jq` がある場合。無いとガードは作動しない）、git レベルのガード（commit-msg-guard、pre-push-gate）はハードなままです。
+強制モードは存在しません（hook-lightweighting、2026-08-13）：レビュー層のフックはすべて exit 0 で終了するリマインダーです。verdict はモデルが note した時点で存在し（`node scripts/review-state.js note <plane> <pass|fail>`、digest に束縛 — 編集するとそのプレーンが再オープン）、リマインダーを黙らせる正直な方法は、ゲートを実行して結果を note することです。レビュー層の外のガードは効力を保ちます：pre-edit-guard は機密パスへの編集を引き続きブロックし（`jq` がある場合。無いとガードは作動しない）、インストール済みの git レベルのガードはハードなままです（commit-msg-guard は既定、pre-push-gate はオプトイン）。
 
 2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。フックと依存関係の詳細は [docs/hooks.md](docs/hooks.md) を参照してください。
 
@@ -442,7 +442,7 @@ Claude の 200k context window のわずか ~4% — 96% はコードに使えま
 
 ## ルール & フック
 
-16 ルール + 6 フック。ルールは tier 付きの契約です：`discretion.md` が、プラグイン管理の 13 のルールファイル内のすべての指示を Anchor / Default / Guidance のいずれかちょうど 1 つに解決し、ユーザー所有の 2 つのオーバーライドファイルは親ルールの下で Anchor-first に解決されます。フック構成は 4 本の advisory リマインダーフックに、自動フォーマッタ 1 本とブロックするセキュリティガード 1 本を加えたものです。リマインダーの役割はフックごとに異なります：Stop と post-compact フックは digest 束縛の状態（`review-state.js`）から未完了ゲートのリマインダーを描画し、prompt フックは `[AUTO_LOOP_STATE]` の事実行を、post-skill フックは固定のゲート順序行を出力し、post-compact フックはさらに git ベースラインを再注入します。レビュー層は何もブロックしません — pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガード、`jq` 必須 — 無いと作動しない）、ハードなゲートは git レベル（commit-msg-guard、pre-push-gate）にあります。
+16 ルール + 6 フック。ルールは tier 付きの契約です：`discretion.md` が、プラグイン管理の 13 のルールファイル内のすべての指示を Anchor / Default / Guidance のいずれかちょうど 1 つに解決し、ユーザー所有の 2 つのオーバーライドファイルは親ルールの下で Anchor-first に解決されます。フック構成は 4 本の advisory リマインダーフックに、自動フォーマッタ 1 本とブロックするセキュリティガード 1 本を加えたものです。リマインダーの役割はフックごとに異なります：Stop と post-compact フックは digest 束縛の状態（`review-state.js`）から未完了ゲートのリマインダーを描画し、prompt フックは `[AUTO_LOOP_STATE]` の事実行を、post-skill フックは固定のゲート順序行を出力し、post-compact フックはさらに git ベースラインを再注入します。レビュー層は何もブロックしません — pre-edit-guard は機密パスへの編集を引き続きブロックし（セキュリティガード、`jq` 必須 — 無いと作動しない）、ハードなゲートは git レベルにあります（commit-msg-guard は既定でインストール、pre-push-gate はオプトイン）。
 
 > **カスタマイズ**：`auto-loop-project.md` を編集してプロジェクトの auto-loop 動作をオーバーライドできます。プラグイン更新と競合しません — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 参照。
 
@@ -509,10 +509,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

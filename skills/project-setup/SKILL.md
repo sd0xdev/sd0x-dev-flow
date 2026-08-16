@@ -165,7 +165,10 @@ Find the plugin's `rules/` directory using this priority (short-circuit on first
    ⛔ Rule source not found. Auto-loop rules cannot be installed.
 
    Remediation (choose one):
-   1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
+   1. Install the plugin — run these two slash commands one after the other (they are
+      Claude Code commands, not shell commands, so `&&` chaining does not apply):
+      /plugin marketplace add sd0xdev/sd0x-harness
+      /plugin install sd0x-dev-flow@sd0xdev-marketplace
    2. Copy rules manually from a machine that has the plugin installed
    3. Re-run with --no-rules to skip (rules layer will be missing)
    ```
@@ -264,7 +267,10 @@ Same 3-level fallback as Phase 5.1, but search for `hooks/pre-edit-guard.sh`:
    ⛔ Hook source not found. The reminder-layer hooks cannot be installed.
 
    Remediation (choose one):
-   1. Install the plugin: /plugin marketplace add sd0xdev/sd0x-dev-flow && /plugin install sd0x-dev-flow@sd0xdev-marketplace
+   1. Install the plugin — run these two slash commands one after the other (they are
+      Claude Code commands, not shell commands, so `&&` chaining does not apply):
+      /plugin marketplace add sd0xdev/sd0x-harness
+      /plugin install sd0x-dev-flow@sd0xdev-marketplace
    2. Copy hooks manually from a machine that has the plugin installed
    3. Re-run with --no-hooks to skip (reminder hooks will be missing)
    ```

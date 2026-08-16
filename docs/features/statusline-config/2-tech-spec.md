@@ -6,7 +6,7 @@
 |-------|-------|
 | Skill Name | `statusline-config` |
 | Status | v2 implemented (stable) — see [Section 11](#11-v2-update-new-json-fields--segments) |
-| Standalone Install | `npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config` |
+| Standalone Install | `npx skills add sd0xdev/sd0x-harness --skill statusline-config` |
 | Output | `~/.claude/statusline-command.sh` (POSIX shell script) |
 | Dependencies | `jq` (required), `git` (optional, for branch segment) |
 | Claude Code Version | 2.1+ (v2 targets 2.1.80+ JSON schema) |
@@ -40,7 +40,7 @@ Claude Code supports custom statusline scripts via `~/.claude/statusline-command
 This skill can be installed independently — the full sd0x-dev-flow plugin is **not** required.
 
 ```bash
-npx skills add sd0xdev/sd0x-dev-flow --skill statusline-config
+npx skills add sd0xdev/sd0x-harness --skill statusline-config
 ```
 
 After installation, the skill files are located at:

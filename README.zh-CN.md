@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **语言**: [English](README.md) | [繁體中文](README.zh-TW.md) | 简体中文 | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
@@ -22,7 +22,7 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 
 ```bash
 # Claude Code — 完整控制平面
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # 配置项目
@@ -33,10 +33,10 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — 仅 skills
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-接着在 Codex CLI 中生成 AGENTS.md kernel 并安装 git hooks：
+接着在 Codex CLI 中生成 AGENTS.md kernel 并安装 `commit-msg` hook。`pre-push` 守卫为 opt-in——要一并安装请加上 `--with-push-gate`：
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |------|---------|---------|
 | 插件安装 | Claude Code | 完整（99 bundled skills、hooks、rules、auto-loop） |
 | `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 仅 Skills（99 public skills） |
-| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook（pre-push 守卫为 opt-in） |
 <!-- END:INSTALL-COVERAGE -->
 
 **环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装，但 `/codex-*` review gate 必须有——Codex 本身就是那位唯一的 reviewer，未安装时 review 会直接输出 `⛔ Blocked` + `⚠️ Need Human`，没有可降级的对象）
@@ -79,7 +79,7 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 | 所有者 | 拥有 |
 |--------|------|
 | **模型** | 批处理、时机、审查深度升档、Default 层级的偏离（声明后继续工作） |
-| **Harness** | 与 digest 绑定的提醒状态、git 层守卫（commit-msg、pre-push）、封闭的 anchor 集合 |
+| **Harness** | 与 digest 绑定的提醒状态、git 层守卫（`commit-msg` 默认安装、`pre-push` 为 opt-in）、封闭的 anchor 集合 |
 | **人类** | 不可逆的批准（push、commit、merge）与列举出的出口点 |
 
 模型拥有路径。Harness 拥有证据与不可协商的边界。人类保留不可逆的决定权。
@@ -97,10 +97,10 @@ sd0x-dev-flow 是一个 reference implementation。下表的每一行都把一�
 | 3 | **Context recovery across compaction** | SessionStart(compact) 之后重新注入 git 基线（分支 + 未提交文件）与待偿 gate 提醒 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 类 hook 事件分派到 6 个脚本——4 个建议性提醒 hook、1 个自动格式化、1 个会阻断的安全守卫（SessionStart 另外执行 `scripts/namespace-hint.sh`）：PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 个脚本) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具备 Edit/Write 权限 | 99 个公开 skills 中有 90 个声明了 `allowed-tools` |
-| 6 | **Defense-in-depth safety** | Git 层守卫保持硬性（commit-msg-guard、走 `/dev/tty` 的 pre-push-gate）；编辑期的 pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，非工作流强制——需要 `jq`，缺 jq 时守卫不会启动）；Stop hook 只做提醒——把守不可逆操作的那几层保留了牙齿，审查层则按设计转为建议性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | 已安装的 git 层守卫保持硬性——commit-msg-guard 始终安装，走 `/dev/tty` 的 pre-push-gate 则在 opt-in 后生效；编辑期的 pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，非工作流强制——需要 `jq`，缺 jq 时守卫不会启动）；Stop hook 只做提醒——把守不可逆操作的那几层保留了牙齿，审查层则按设计转为建议性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 审查 Claude 写的东西，自行研究 repo——绝不喂结论让它确认 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | 证据驱动的卡壳纪律：连续三轮 review 都没关掉任何 finding——由模型根据 review 报告自行计数——触发结构化的停滞分类与一次有边界的调整。按 tier 的轮次预算（默认 6 / 15 / 30，可覆写为 3–50）退居 runaway backstop，首次触发上限时跑同一套诊断，并保留列举出的人类出口 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
-| 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 之前的 `AskUserQuestion` 批准；`/dev/tty` pre-push 确认是保护分支 push 的最终凭证（外加非 fast-forward 检测） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 之前的 `AskUserQuestion` 批准——该批准始终必要，且在未安装 opt-in 的 `pre-push` hook 时就是授权本身；已安装时，`/dev/tty` 确认才是保护分支 push 的最终凭证（外加非 fast-forward 检测） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 纠正 → 记录 lesson → 累计 3 次以上后晋升为 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 多数 harness 项目只覆盖其中 2 – 4 项。sd0x-dev-flow 覆盖全部 10 项 — 这让它的代码不只是工具，更是值得研读的学习素材。
@@ -123,7 +123,7 @@ flowchart LR
 
 Hooks 报告的是**事实，不是命令**：它们打印提醒和一行 `[AUTO_LOOP_STATE]` 事实（change class、各 plane 的 verdict 状态），决策权归模型。什么算 blocking 由 tier 决定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低于该门槛的 findings 只记录下来，loop 继续往前，不再多开一轮。卡壳——连续三轮 review 没有关掉任何 finding，由模型自行计数——或作为兜底，触发轮次上限——会启动一次结构化自我诊断（架构问题？文档过长？注意力发散？）与一次有边界的调整，然后 loop 继续，而不是自动移交；无论由哪个 trigger 发动，人类出口都仍然有效（安全与数据完整性改动完全跳过诊断；被诊断为架构级或需求歧义的停滞交给人类）。
 
-不存在强制执行模式（hook-lightweighting，2026-08-13）：每个审查层 hook 都是以 exit 0 结束的提醒。Verdict 只有在模型记录它时才存在（`node scripts/review-state.js note <plane> <pass|fail>`，与 digest 绑定——一次编辑会重新打开其 plane），而让提醒安静下来的诚实方式是把 gate 跑完并记录结果。审查层之外的守卫仍然保有约束力：pre-edit-guard 仍会阻断敏感路径编辑（需要 `jq`，缺 jq 时守卫不会启动），而 git 层守卫（commit-msg-guard、pre-push-gate）仍然是硬性的。
+不存在强制执行模式（hook-lightweighting，2026-08-13）：每个审查层 hook 都是以 exit 0 结束的提醒。Verdict 只有在模型记录它时才存在（`node scripts/review-state.js note <plane> <pass|fail>`，与 digest 绑定——一次编辑会重新打开其 plane），而让提醒安静下来的诚实方式是把 gate 跑完并记录结果。审查层之外的守卫仍然保有约束力：pre-edit-guard 仍会阻断敏感路径编辑（需要 `jq`，缺 jq 时守卫不会启动），而已安装的 git 层守卫仍然是硬性的（commit-msg-guard 默认安装、pre-push-gate 为 opt-in）。
 
 第二位 reviewer 走 `/codex-review-branch --dual`，默认不启用。Hook 与依赖详情见 [docs/hooks.md](docs/hooks.md)。
 
@@ -442,7 +442,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 
 ## 规则与钩子
 
-16 条规则 + 6 个钩子。规则是分层级的契约：`discretion.md` 把 13 个由插件管理的 rule 文件中的每条指令解析为 Anchor / Default / Guidance 三者中的确切一个，2 个用户自有的 override 文件则在其父规则之下以 Anchor 优先的方式解析。Hook 的组成是 4 个建议性提醒 hook，加上 1 个自动格式化与 1 个会阻断的安全守卫。提醒角色各不相同：Stop 与 post-compact hook 从与 digest 绑定的状态（`review-state.js`）打印待偿 gate 提醒，prompt hook 打印 `[AUTO_LOOP_STATE]` 事实行，post-skill hook 打印固定的 gate 顺序行，post-compact hook 另外重新注入 git 基线；审查层永不阻断——pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，需要 `jq`，缺 jq 时不会启动），硬性 gate 位于 git 层（commit-msg-guard、pre-push-gate）。
+16 条规则 + 6 个钩子。规则是分层级的契约：`discretion.md` 把 13 个由插件管理的 rule 文件中的每条指令解析为 Anchor / Default / Guidance 三者中的确切一个，2 个用户自有的 override 文件则在其父规则之下以 Anchor 优先的方式解析。Hook 的组成是 4 个建议性提醒 hook，加上 1 个自动格式化与 1 个会阻断的安全守卫。提醒角色各不相同：Stop 与 post-compact hook 从与 digest 绑定的状态（`review-state.js`）打印待偿 gate 提醒，prompt hook 打印 `[AUTO_LOOP_STATE]` 事实行，post-skill hook 打印固定的 gate 顺序行，post-compact hook 另外重新注入 git 基线；审查层永不阻断——pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，需要 `jq`，缺 jq 时不会启动），硬性 gate 位于 git 层（commit-msg-guard 默认安装；pre-push-gate 为 opt-in）。
 
 > **定制化**：编辑 `auto-loop-project.md` 可覆写项目的 auto-loop 行为。插件更新不会冲突 — 详见 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 
@@ -509,10 +509,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

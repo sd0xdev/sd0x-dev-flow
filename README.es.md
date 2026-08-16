@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **Idioma**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | Español
 
@@ -22,7 +22,7 @@ Control plane completo en Claude Code. Distribución solo de skills para Codex C
 
 ```bash
 # Claude Code — control plane completo
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # Configurar tu proyecto
@@ -33,10 +33,10 @@ Un solo comando autodetecta framework, package manager, base de datos, entry poi
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — solo skills
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-Después, dentro de Codex CLI, genera el kernel AGENTS.md e instala los git hooks:
+Después, dentro de Codex CLI, genera el kernel AGENTS.md e instala el hook `commit-msg`. La puerta `pre-push` es opt-in: añade `--with-push-gate` para instalarla también:
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |--------|-------------|-----------|
 | Instalar plugin | Claude Code | Completa (99 bundled skills, hooks, rules, auto-loop) |
 | `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Solo Skills (99 public skills) |
-| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| `$codex-setup init` | Codex CLI | Kernel AGENTS.md + hook commit-msg (la puerta pre-push es opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
 **Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
@@ -79,7 +79,7 @@ El núcleo no negociable vive en un **Anchor Register cerrado** (`rules/discreti
 | Propietario | Posee |
 |-------------|-------|
 | **Modelo** | Agrupación, timing, escalado de la profundidad de review, desviaciones de tier Default (declaradas, y luego seguir trabajando) |
-| **Harness** | Estado de recordatorio ligado al digest, guards a nivel de git (commit-msg, pre-push), el conjunto cerrado de anchors |
+| **Harness** | Estado de recordatorio ligado al digest, guards a nivel de git (`commit-msg` por defecto, `pre-push` opt-in), el conjunto cerrado de anchors |
 | **Humano** | Aprobaciones irreversibles (push, commit, merge) y los puntos de salida enumerados |
 
 El modelo posee el camino. El harness posee la evidencia y los límites no negociables. El humano conserva la autoridad irreversible.
@@ -97,10 +97,10 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 | 3 | **Context recovery across compaction** | Línea base de git (rama + archivos sin commit) y recordatorios de gates pendientes re-inyectados tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 6 scripts — cuatro hooks de recordatorio consultivos, un auto-formateador y un guard de seguridad bloqueante (SessionStart ejecuta además `scripts/namespace-hint.sh`): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 90 de 99 skills públicas declaran `allowed-tools` |
-| 6 | **Defense-in-depth safety** | Los guards a nivel de git siguen siendo duros (commit-msg-guard, pre-push-gate sobre `/dev/tty`); pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad, no enforcement de workflow — requiere `jq`; sin jq, el guard no se activa); el Stop hook recuerda — las capas que custodian acciones irreversibles conservaron sus dientes, la capa de review se volvió consultiva por diseño | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | Los guards a nivel de git instalados siguen siendo duros — commit-msg-guard siempre, y pre-push-gate sobre `/dev/tty` cuando se ha optado por él; pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad, no enforcement de workflow — requiere `jq`; sin jq, el guard no se activa); el Stop hook recuerda — las capas que custodian acciones irreversibles conservaron sus dientes, la capa de review se volvió consultiva por diseño | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | Disciplina de estancamiento basada en evidencia: tres rondas de revisión que no cierran ningún hallazgo — contadas por el modelo a partir de los reportes de review — disparan una clasificación estructurada más un ajuste acotado. El presupuesto de rondas por tier (por defecto 6 / 15 / 30, sobrescribible 3–50) queda como red de seguridad ante un bucle desbocado y ejecuta el mismo diagnóstico en su primer hit, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
-| 9 | **Human-in-the-loop safety gates** | Aprobación por `AskUserQuestion` antes de cada push de `/push-ci`; la confirmación pre-push por `/dev/tty` es la credencial terminal para pushes a ramas protegidas (más detección de non-fast-forward) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop safety gates** | Aprobación por `AskUserQuestion` antes de cada push de `/push-ci` — siempre obligatoria, y la autorización misma cuando el hook `pre-push` opt-in no está instalado; con el hook instalado, la confirmación por `/dev/tty` es la credencial terminal para pushes a ramas protegidas (más detección de non-fast-forward) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Corrección → registrar lesson → promover a regla tras 3+ recurrencias | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 La mayoría de proyectos de harness cubren 2–4 de estos subproblemas. sd0x-dev-flow cubre los 10 — lo que hace el código útil como objeto de estudio, no solo como herramienta.
@@ -123,7 +123,7 @@ Todo orbita alrededor de una sola regla — el **terminal completion invariant**
 
 Los hooks reportan **hechos, no órdenes**: imprimen recordatorios y una línea de hechos `[AUTO_LOOP_STATE]` (clase de cambio, estado de veredicto por plano) y el modelo es dueño de la decisión. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de esa línea se registran y el bucle continúa en lugar de abrir otra ronda. Un estancamiento — tres rondas de revisión que no cierran nada, contadas por el modelo — o, como red de seguridad, alcanzar el tope de rondas dispara un autodiagnóstico estructurado (¿problema de arquitectura? ¿doc demasiado largo? ¿difusión de atención?) y un ajuste acotado antes de que el bucle se reanude, en lugar de un traspaso automático; las salidas humanas siguen vigentes sea cual sea el disparador (los cambios de seguridad e integridad de datos se saltan el diagnóstico por completo; un estancamiento diagnosticado como de nivel de arquitectura o como ambigüedad de requisitos va al humano).
 
-No hay modo de enforcement (hook-lightweighting, 2026-08-13): todo hook de la capa de review es un recordatorio que sale con 0. Un veredicto existe cuando el modelo lo anota (`node scripts/review-state.js note <plane> <pass|fail>`, ligado al digest — una edición reabre su plano), y la manera honesta de silenciar un recordatorio es ejecutar el gate y anotar el resultado. Los guards fuera de la capa de review conservan su fuerza: pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (con `jq` disponible; sin jq, el guard no se activa), y los guards a nivel de git (commit-msg-guard, pre-push-gate) siguen siendo duros.
+No hay modo de enforcement (hook-lightweighting, 2026-08-13): todo hook de la capa de review es un recordatorio que sale con 0. Un veredicto existe cuando el modelo lo anota (`node scripts/review-state.js note <plane> <pass|fail>`, ligado al digest — una edición reabre su plano), y la manera honesta de silenciar un recordatorio es ejecutar el gate y anotar el resultado. Los guards fuera de la capa de review conservan su fuerza: pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (con `jq` disponible; sin jq, el guard no se activa), y los guards a nivel de git instalados siguen siendo duros (commit-msg-guard por defecto, pre-push-gate opt-in).
 
 Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado por defecto. Ver [docs/hooks.md](docs/hooks.md) para detalles de hooks y dependencias.
 
@@ -442,7 +442,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 
 ## Reglas & Hooks
 
-16 reglas + 6 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 13 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. El conjunto de hooks consta de cuatro hooks de recordatorio consultivos más un auto-formateador y un guard de seguridad bloqueante. Los roles de recordatorio difieren por hook: los hooks de Stop y post-compact renderizan recordatorios de gates pendientes a partir del estado ligado al digest (`review-state.js`), el hook de prompt imprime la línea de hechos `[AUTO_LOOP_STATE]`, el hook post-skill imprime una línea estática con el orden de gates, y el hook post-compact además re-inyecta la línea base de git tras la compactación; la capa de review nunca bloquea — pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad; requiere `jq` y sin jq no se activa), y los gates duros viven a nivel de git (commit-msg-guard, pre-push-gate).
+16 reglas + 6 hooks. Las reglas son contratos por tiers: `discretion.md` resuelve cada instrucción de los 13 archivos de reglas gestionados por el plugin a exactamente uno de Anchor / Default / Guidance, y los 2 archivos de override propiedad del usuario se resuelven Anchor-first bajo sus reglas padre. El conjunto de hooks consta de cuatro hooks de recordatorio consultivos más un auto-formateador y un guard de seguridad bloqueante. Los roles de recordatorio difieren por hook: los hooks de Stop y post-compact renderizan recordatorios de gates pendientes a partir del estado ligado al digest (`review-state.js`), el hook de prompt imprime la línea de hechos `[AUTO_LOOP_STATE]`, el hook post-skill imprime una línea estática con el orden de gates, y el hook post-compact además re-inyecta la línea base de git tras la compactación; la capa de review nunca bloquea — pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad; requiere `jq` y sin jq no se activa), y los gates duros viven a nivel de git (commit-msg-guard, instalado por defecto; pre-push-gate, opt-in).
 
 > **Personalización**: Edita `auto-loop-project.md` para sobrescribir el comportamiento de auto-loop por proyecto. Las actualizaciones del plugin no conflictuarán — ver [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
@@ -509,10 +509,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **語言**: [English](README.md) | 繁體中文 | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
@@ -22,7 +22,7 @@ v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量�
 
 ```bash
 # Claude Code — 完整 control plane
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # 設定你的專案
@@ -33,10 +33,10 @@ v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量�
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — 僅 skills
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-接著在 Codex CLI 內產生 AGENTS.md kernel 並安裝 git hooks：
+接著在 Codex CLI 內產生 AGENTS.md kernel 並安裝 `commit-msg` hook。`pre-push` 護欄採 opt-in——要一併安裝請加上 `--with-push-gate`：
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |------|---------|---------|
 | Plugin 安裝 | Claude Code | 完整（99 bundled skills、hooks、rules、auto-loop） |
 | `npx skills add` | Codex CLI、Cursor、Windsurf、Aider | 僅 Skills（99 public skills） |
-| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook（pre-push 護欄為 opt-in） |
 <!-- END:INSTALL-COVERAGE -->
 
 **需求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 與 `post-edit-format` 用它解析 hook payload——沒有 `jq` 時兩者都直接 exit 0，敏感路徑防護與自動格式化等於默默關閉）| [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝，但 `/codex-*` review gate 必須有——Codex 本身就是那位唯一的 reviewer，未安裝時 review 會直接輸出 `⛔ Blocked` + `⚠️ Need Human`，沒有可降級的對象）
@@ -79,7 +79,7 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 | 擁有者 | 擁有的範圍 |
 |--------|-----------|
 | **模型** | 批次、時機、review 深度升級、Default 層級的偏離（陳述後繼續工作） |
-| **Harness** | 綁定 digest 的提醒狀態、git 層級的護欄（commit-msg、pre-push）、封閉的 anchor 集合 |
+| **Harness** | 綁定 digest 的提醒狀態、git 層級的護欄（`commit-msg` 預設安裝、`pre-push` 為 opt-in）、封閉的 anchor 集合 |
 | **人類** | 不可逆的核准（push、commit、merge）與列舉的出口點 |
 
 模型擁有路徑。Harness 擁有證據與不可協商的邊界。人類保留不可逆的權力。
@@ -97,10 +97,10 @@ sd0x-dev-flow 是一個 reference implementation。下表每一列都將一個�
 | 3 | **Context recovery across compaction** | SessionStart(compact) 後重新注入 git baseline（分支 + 未提交檔案）與欠著的 gate 提醒 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 種 hook 事件分派到 6 支腳本——4 支建議性提醒 hook、1 支自動格式化、1 支會阻擋的安全護欄（SessionStart 另外執行 `scripts/namespace-hint.sh`）:PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/)(6 支腳本)+ [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具備 Edit/Write | 99 個公開 skill 中有 90 個宣告 `allowed-tools` |
-| 6 | **Defense-in-depth safety** | Git 層級的護欄維持硬性（commit-msg-guard、走 `/dev/tty` 的 pre-push-gate）；編輯期的 pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，非工作流強制——需要 `jq`，缺 jq 時護欄不會啟動）；Stop hook 只做提醒——把關不可逆動作的層保留了強制力，review 層則刻意改為建議性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | 已安裝的 git 層級護欄維持硬性——commit-msg-guard 一律安裝，走 `/dev/tty` 的 pre-push-gate 則在 opt-in 後生效；編輯期的 pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，非工作流強制——需要 `jq`，缺 jq 時護欄不會啟動）；Stop hook 只做提醒——把關不可逆動作的層保留了強制力，review 層則刻意改為建議性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 審查 Claude 寫的東西,自行研究 repo——絕不餵結論要它確認 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md)(Review Dispatch) |
 | 8 | **Incremental progress tracking** | 證據驅動的卡關紀律：連續三輪 review 都沒關掉任何 finding——由模型從 review 報告中自行計數——就觸發結構化的停滯分類與一次有界調整。每個 tier 的輪次預算（預設 6 / 15 / 30，可覆寫為 3–50）退居 runaway backstop，第一次觸頂跑同一套診斷，並保留列舉的人類出口 | [`rules/auto-loop.md`](rules/auto-loop.md)（§ Stall Detection + § Cap Diagnostic Protocol） |
-| 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 前都需 `AskUserQuestion` 核准；`/dev/tty` pre-push 確認是保護分支 push 的最終憑證（外加 non-fast-forward 偵測） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop safety gates** | 每次 `/push-ci` push 前都需 `AskUserQuestion` 核准——此核准一律必要，且在未安裝 opt-in 的 `pre-push` hook 時即為授權本身；已安裝時，`/dev/tty` 確認才是保護分支 push 的最終憑證（外加 non-fast-forward 偵測） | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | 被糾正 → 記錄 lesson → 重複 3 次以上後提升為 rule | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 大多數 harness 專案只涵蓋其中的 2–4 項,sd0x-dev-flow 把 10 項全部做齊 — 這也是為什麼它的程式碼不只是工具,更值得當成學習對象。
@@ -123,7 +123,7 @@ flowchart LR
 
 Hooks 回報的是**事實，不是命令**：它們印出提醒與一行 `[AUTO_LOOP_STATE]` 事實（change class、各 plane 的 verdict 狀態），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。卡關——連續三輪 review 都沒關掉任何 finding，由模型自行計數——或作為最後防線的輪次上限觸頂，會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續，而不是自動交接；無論由哪一個 trigger 發動，人類出口都仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
 
-沒有強制執行模式（hook-lightweighting，2026-08-13）：每個 review 層 hook 都是以 exit 0 結束的提醒。Verdict 只在模型記錄它時才存在（`node scripts/review-state.js note <plane> <pass|fail>`，綁定 digest——一次編輯就會重新打開該 plane），而讓提醒安靜下來的誠實做法，是真的跑完 gate 並記下結果。review 層以外的護欄仍然保有牙齒：pre-edit-guard 仍會阻擋敏感路徑編輯（需要 `jq`，缺 jq 時護欄不會啟動），而 git 層級的護欄（commit-msg-guard、pre-push-gate）維持硬性。
+沒有強制執行模式（hook-lightweighting，2026-08-13）：每個 review 層 hook 都是以 exit 0 結束的提醒。Verdict 只在模型記錄它時才存在（`node scripts/review-state.js note <plane> <pass|fail>`，綁定 digest——一次編輯就會重新打開該 plane），而讓提醒安靜下來的誠實做法，是真的跑完 gate 並記下結果。review 層以外的護欄仍然保有牙齒：pre-edit-guard 仍會阻擋敏感路徑編輯（需要 `jq`，缺 jq 時護欄不會啟動），而已安裝的 git 層級護欄維持硬性（commit-msg-guard 預設安裝、pre-push-gate 為 opt-in）。
 
 第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。Hook 與相依細節詳見 [docs/hooks.md](docs/hooks.md)。
 
@@ -442,7 +442,7 @@ Skills 按需載入。閒置 Skill 不佔用任何 Token。
 
 ## Rules & Hooks
 
-16 條 rules + 6 個 hooks。Rules 是分層的契約：`discretion.md` 把 13 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hook 組成是 4 支建議性提醒 hook，加上 1 支自動格式化與 1 支會阻擋的安全護欄。提醒角色各不相同：Stop 與 post-compact hook 依據綁定 digest 的狀態（`review-state.js`）印出欠著的 gate 提醒，prompt hook 印出 `[AUTO_LOOP_STATE]` 事實行，post-skill hook 印出固定的閘門順序行，post-compact hook 另外重新注入 git baseline；review 層永不阻擋——pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，需要 `jq`，缺 jq 時不會啟動），硬性關卡則位於 git 層級（commit-msg-guard、pre-push-gate）。
+16 條 rules + 6 個 hooks。Rules 是分層的契約：`discretion.md` 把 13 個 plugin 管理的 rule 檔中的每一條指示解析為 Anchor / Default / Guidance 三者之一，2 個使用者擁有的 override 檔則在其父規則之下以 Anchor-first 解析。Hook 組成是 4 支建議性提醒 hook，加上 1 支自動格式化與 1 支會阻擋的安全護欄。提醒角色各不相同：Stop 與 post-compact hook 依據綁定 digest 的狀態（`review-state.js`）印出欠著的 gate 提醒，prompt hook 印出 `[AUTO_LOOP_STATE]` 事實行，post-skill hook 印出固定的閘門順序行，post-compact hook 另外重新注入 git baseline；review 層永不阻擋——pre-edit-guard 仍會阻擋敏感路徑編輯（安全護欄，需要 `jq`，缺 jq 時不會啟動），硬性關卡則位於 git 層級（commit-msg-guard 預設安裝；pre-push-gate 為 opt-in）。
 
 > **客製化**：編輯 `auto-loop-project.md` 可覆寫專案的 auto-loop 行為。Plugin 更新不會衝突 — 詳見 [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md)。
 
@@ -509,10 +509,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

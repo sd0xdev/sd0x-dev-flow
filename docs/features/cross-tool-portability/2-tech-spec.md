@@ -51,7 +51,7 @@ sd0x-dev-flow/
 | hooks/*.sh | `hooks.json` 4 lifecycle events (SessionStart, PreToolUse, PostToolUse, Stop) | 不可移植（需 adapter） | Tier B adapter（Phase 3） |
 | rules/*.md | 純 Markdown 內容 | 可移植 | Core rules 嵌入 AGENTS kernel；Extended rules 透過 skills 載入 |
 | scripts/*.sh/.js | 標準 shell/Node.js | 可移植 | `codex-setup init` 自動複製 |
-| Git hooks (commit-msg, pre-push) | 標準 git hooks | 可移植 | `codex-setup init` multi-mode installer |
+| Git hooks (commit-msg 預設、pre-push opt-in) | 標準 git hooks | 可移植 | `codex-setup init` multi-mode installer（`pre-push` 需 `--with-push-gate`） |
 
 ### 2.3 各工具指令系統對照
 
@@ -114,8 +114,8 @@ graph TD
     SKILLS[npx skills add] -->|skills 分發| CC
     SKILLS -->|skills 分發| CX
     SKILLS -->|skills 分發| WS
-    SETUP[codex-setup skill] -->|AGENTS.md + hooks| CX
-    SETUP -->|AGENTS.md + hooks| AD
+    SETUP[codex-setup skill] -->|AGENTS.md + commit-msg hook| CX
+    SETUP -->|AGENTS.md + commit-msg hook| AD
     CORE[sd0x-flow-core] -->|adapter-claude| CC
     CORE -->|adapter-windsurf| WS
     CORE -->|adapter-git| CX
@@ -131,7 +131,7 @@ sequenceDiagram
     participant CS as codex-setup skill
     participant G as build-codex-artifacts.js
 
-    U->>S: npx skills add sd0xdev/sd0x-dev-flow
+    U->>S: npx skills add sd0xdev/sd0x-harness
     S-->>U: Skills 安裝至 .agents/skills/
     U->>CS: /codex-setup init
     CS->>G: 產生 AGENTS.md kernel
@@ -144,7 +144,7 @@ sequenceDiagram
 | 層 | 負責元件 | 解決問題 |
 |----|----------|----------|
 | **L1: Skill 分發** | `npx skills add`（標準生態） | Skills 跨 37+ 工具安裝 |
-| **L2: 基建安裝** | `codex-setup` skill | AGENTS.md kernel + git hooks + scripts |
+| **L2: 基建安裝** | `codex-setup` skill | AGENTS.md kernel + commit-msg hook（pre-push opt-in）+ scripts |
 | **L3: Runtime 適配** | sd0x-flow-core adapters | Hook lifecycle 映射（Tier A/B） |
 
 ### 3.3 Agent Skills 標準適配（L1）
@@ -172,9 +172,9 @@ sequenceDiagram
 
 | Command | Purpose |
 |---------|---------|
-| `init` | 初始安裝：AGENTS.md kernel + hooks + scripts |
+| `init` | 初始安裝：AGENTS.md kernel + commit-msg hook + scripts（pre-push gate 需 `--with-push-gate` 才安裝） |
 | `doctor` | 驗證安裝完整性（檔案存在 + hash 比對） |
-| `sync` | `npx skills update` 後同步 AGENTS.md + hooks |
+| `sync` | `npx skills update` 後同步 AGENTS.md + 已安裝的 hooks；`--with-push-gate` 可在此補裝 pre-push gate |
 
 #### init 流程
 
@@ -343,8 +343,8 @@ Hook parser（`post-tool-review-state.sh`）辨識的完整 sentinel 集合：
   "agents_md_hash": "<sha1>",
   "agents_md_size": 8192,
   "hooks_installed": {
-    "commit-msg": { "hash": "<sha1>", "mode": "direct" },
-    "pre-push": { "hash": "<sha1>", "mode": "direct" }
+    "commit-msg": { "status": "installed", "hash": "<sha1>", "mode": "direct" },
+    "pre-push": { "status": "declined" }
   },
   "scripts_installed": {
     "precommit-runner.js": "<sha1>",
@@ -372,7 +372,7 @@ fi
 
 ```bash
 # Step 1: 安裝 skills（標準生態）[Phase 1a 後可用]
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 
 # Step 2: 在 Codex CLI 中執行基建安裝 [Phase 1b + 2a 後可用]
 codex> /codex-setup init
@@ -381,7 +381,7 @@ codex> /codex-setup init
 codex> /codex-setup doctor
 
 # 後續更新 [Phase 1b 後可用]
-npx skills update sd0xdev/sd0x-dev-flow
+npx skills update sd0xdev/sd0x-harness
 codex> /codex-setup sync
 ```
 
@@ -400,7 +400,7 @@ codex> /codex-setup sync
 
 | # | Risk | 影響 | 緩解 |
 |---|------|------|------|
-| 1 | Codex CLI AGENTS.md 只是被動指令，無法強制行為；git hooks 保證 commit 格式、protected branch 確認、non-fast-forward 阻擋，但不驗證 review/precommit 品質結果 | Tier C 保證等級低 | git hooks 作為格式 + push 安全閘道 + CI server-side quality gate 作為品質閘道 |
+| 1 | Codex CLI AGENTS.md 只是被動指令，無法強制行為；commit-msg hook 保證 commit 格式，protected branch 確認與 non-fast-forward 阻擋則**僅在以 `--with-push-gate` 選裝 pre-push gate 後才存在**，且兩者都不驗證 review/precommit 品質結果 | Tier C 保證等級低；未選裝 pre-push gate 的 Tier C 專案**不存在任何 client-side push 防護**——`/push-ci` 的 AskUserQuestion 授權僅存在於 Claude Code（Tier A），commands 不在移植範圍（§ 1 Scope OUT），Tier C 使用者並未安裝它（`rules/git-workflow.md` § Push safety 的 AskUserQuestion 條款是 Tier A 機制） | commit-msg hook 作為格式閘道 + 選裝的 pre-push gate 作為 push 安全閘道 + CI server-side quality gate 作為品質閘道 |
 | 2 | Windsurf hooks API 可能變更 | adapter 需持續維護 | Pin 版本 + 相容性測試 |
 | 3 | Cursor hooks 為 beta | 不適合立即投入 | 等穩定後再開發 adapter |
 | 4 | 32 KiB AGENTS.md 限制 | CLAUDE.md + rules 全文 = 32,716 bytes，僅差 52 bytes 超標 | Core/Extended rule 分層 + kernel 摘要（≤ 8 KiB） |

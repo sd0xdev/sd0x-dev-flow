@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **Language**: English | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Español](README.es.md)
 
@@ -22,7 +22,7 @@ Full control plane on Claude Code. Skills-only distribution for Codex CLI and ot
 
 ```bash
 # Claude Code — full control plane
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # Configure your project
@@ -33,10 +33,10 @@ One command auto-detects framework, package manager, database, entrypoints, and 
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — skills only
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-Then, inside Codex CLI, generate the AGENTS.md kernel and install the git hooks:
+Then, inside Codex CLI, generate the AGENTS.md kernel and install the `commit-msg` hook. The `pre-push` gate is opt-in — add `--with-push-gate` to install it too:
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |--------|-------|----------|
 | Plugin install | Claude Code | Full (99 bundled skills, hooks, rules, auto-loop) |
 | `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (99 public skills) |
-| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |
+| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
 **Requirements**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` and `post-edit-format` parse their hook payload with it — without `jq` both exit 0, so the sensitive-path guard and auto-formatting are silently off) | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
@@ -94,7 +94,7 @@ The non-negotiable core lives in a **closed Anchor Register** (`rules/discretion
 | Owner | Owns |
 |-------|------|
 | **Model** | Batching, timing, review depth escalation, Default-tier deviations (stated, then keep working) |
-| **Harness** | Digest-bound reminder state, git-level guards (commit-msg, pre-push), the closed anchor set |
+| **Harness** | Digest-bound reminder state, git-level guards (`commit-msg` by default, `pre-push` opt-in), the closed anchor set |
 | **Human** | Irreversible approvals (push, commit, merge) and the enumerated exit points |
 
 The model owns the path. The harness owns the evidence and non-negotiable boundaries. The human retains irreversible authority.
@@ -112,10 +112,10 @@ sd0x-dev-flow is a reference implementation. Each row below maps a canonical har
 | 3 | **Context recovery across compaction** | Git baseline (branch + uncommitted files) and owed-gate reminders re-injected after SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 hook event types dispatched to 6 scripts — 4 advisory reminder hooks, an auto-formatter, and one blocking security guard (SessionStart additionally runs `scripts/namespace-hint.sh`): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability-based tool gating** | Skill frontmatter `allowed-tools` — e.g., `/ask` has no Edit/Write | 90 of 99 public skills declare `allowed-tools` |
-| 6 | **Defense-in-depth safety** | Git-level guards stay hard (commit-msg-guard, pre-push-gate over `/dev/tty`); edit-time pre-edit-guard still blocks sensitive-path edits (a security guard, not workflow enforcement — it needs `jq`, and without it the guard does not fire); the Stop hook reminds — the layers that gate irreversible actions and secrets kept their teeth, the review layer became advisory by design | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth safety** | Git-level guards stay hard where they are installed — commit-msg-guard always, pre-push-gate over `/dev/tty` when opted in; edit-time pre-edit-guard still blocks sensitive-path edits (a security guard, not workflow enforcement — it needs `jq`, and without it the guard does not fire); the Stop hook reminds — the layers that gate irreversible actions and secrets kept their teeth, the review layer became advisory by design | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex reviews what Claude wrote, researching the repo independently — never handed a conclusion to confirm | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | Evidence-based stall discipline: three review rounds that close no findings — counted by the model from the review reports — trigger a structured classification plus one bounded adjustment. The per-tier round budget (default 6 / 15 / 30, overridable 3–50) is the runaway backstop and runs the same diagnosis on its first hit, with enumerated human exits | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
-| 9 | **Human-in-the-loop safety gates** | `AskUserQuestion` approval before every `/push-ci` push; `/dev/tty` pre-push confirmation is the terminal credential for protected-branch pushes (plus non-fast-forward detection) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop safety gates** | `AskUserQuestion` approval before every `/push-ci` push — always required, and the authorization itself where the opt-in `pre-push` hook is absent; with the hook installed, `/dev/tty` confirmation is the terminal credential for protected-branch pushes (plus non-fast-forward detection) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **Self-improvement loop** | Correction → record lesson → promote to rule after 3+ recurrences | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 Most harness projects cover 2–4 of these. sd0x-dev-flow covers all 10 — which makes the code useful as a study target, not just a tool.
@@ -138,7 +138,7 @@ Everything orbits one rule — the **terminal completion invariant**: work on a 
 
 Hooks report **facts, not orders**: they print reminders and an `[AUTO_LOOP_STATE]` fact line (change class, per-plane verdict state) and the model owns the decision. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. A stall — three review rounds that close nothing, counted by the model — or, as a backstop, hitting the round cap triggers a structured self-diagnosis (architecture problem? doc too long? attention diffusion?) and one bounded adjustment before the loop resumes, rather than an automatic hand-off; the human exits stay in force whichever trigger fired (security and data-integrity changes skip the diagnosis entirely; a stall diagnosed as architecture-level or requirement ambiguity goes to the human).
 
-There is no enforcement mode (hook-lightweighting, 2026-08-13): every review-layer hook is a reminder that exits 0. A verdict exists when the model notes it (`node scripts/review-state.js note <plane> <pass|fail>`, digest-bound — an edit re-opens its plane), and the honest way to silence a reminder is to run the gate and note the outcome. The guards outside the review layer keep their teeth: pre-edit-guard still blocks sensitive-path edits (when `jq` is available; without it the guard does not fire), and the git-level guards (commit-msg-guard, pre-push-gate) remain hard.
+There is no enforcement mode (hook-lightweighting, 2026-08-13): every review-layer hook is a reminder that exits 0. A verdict exists when the model notes it (`node scripts/review-state.js note <plane> <pass|fail>`, digest-bound — an edit re-opens its plane), and the honest way to silence a reminder is to run the gate and note the outcome. The guards outside the review layer keep their teeth: pre-edit-guard still blocks sensitive-path edits (when `jq` is available; without it the guard does not fire), and the git-level guards remain hard where installed (commit-msg-guard by default, pre-push-gate opt-in).
 
 A second reviewer is available via `/codex-review-branch --dual` and is off by default. See [docs/hooks.md](docs/hooks.md) for hook and dependency details.
 
@@ -457,7 +457,7 @@ Skills load on-demand. Idle skills cost zero tokens.
 
 ## Rules & Hooks
 
-16 rules + 6 hooks. The rules are tiered contracts: `discretion.md` resolves every instruction in the 13 plugin-managed rule files to exactly one of Anchor / Default / Guidance, and the 2 user-owned override files resolve Anchor-first under their parent rules. The hook set is 4 advisory reminder hooks plus an auto-formatter and a blocking security guard. The reminder roles differ per hook: the Stop and post-compact hooks render owed-gate reminders from the digest-bound state (`review-state.js`), the prompt hook prints the `[AUTO_LOOP_STATE]` fact line, the post-skill hook prints a static gate-order line, and the post-compact hook also re-injects the git baseline; the review layer never blocks — pre-edit-guard still blocks sensitive-path edits (a security guard; it needs `jq` and does not fire without it), and the hard gates live at the git level (commit-msg-guard, pre-push-gate).
+16 rules + 6 hooks. The rules are tiered contracts: `discretion.md` resolves every instruction in the 13 plugin-managed rule files to exactly one of Anchor / Default / Guidance, and the 2 user-owned override files resolve Anchor-first under their parent rules. The hook set is 4 advisory reminder hooks plus an auto-formatter and a blocking security guard. The reminder roles differ per hook: the Stop and post-compact hooks render owed-gate reminders from the digest-bound state (`review-state.js`), the prompt hook prints the `[AUTO_LOOP_STATE]` fact line, the post-skill hook prints a static gate-order line, and the post-compact hook also re-injects the git baseline; the review layer never blocks — pre-edit-guard still blocks sensitive-path edits (a security guard; it needs `jq` and does not fire without it), and the hard gates live at the git level (commit-msg-guard, installed by default; pre-push-gate, opt-in).
 
 > **Customization**: Edit `auto-loop-project.md` to override auto-loop behavior per project. Plugin updates won't conflict — see [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md).
 
@@ -524,10 +524,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

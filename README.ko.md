@@ -1,6 +1,6 @@
 # sd0x-dev-flow
 
-![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-dev-flow/main/banner.jpg)
+![sd0x-dev-flow banner](https://raw.githubusercontent.com/sd0xdev/sd0x-harness/main/banner.jpg)
 
 **언어**: [English](README.md) | [繁體中文](README.zh-TW.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | 한국어 | [Español](README.es.md)
 
@@ -22,7 +22,7 @@ Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기�
 
 ```bash
 # Claude Code — 전체 control plane
-/plugin marketplace add sd0xdev/sd0x-dev-flow
+/plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
 
 # 프로젝트 설정
@@ -33,10 +33,10 @@ Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기�
 
 ```bash
 # Codex CLI / Cursor / Windsurf / Aider — skills만
-npx skills add sd0xdev/sd0x-dev-flow
+npx skills add sd0xdev/sd0x-harness
 ```
 
-이어서 Codex CLI 안에서 AGENTS.md 커널을 생성하고 git hooks를 설치합니다:
+이어서 Codex CLI 안에서 AGENTS.md 커널을 생성하고 `commit-msg` hook을 설치합니다. `pre-push` 게이트는 opt-in이며, 함께 설치하려면 `--with-push-gate`를 붙이세요:
 
 ```text
 $codex-setup init
@@ -47,7 +47,7 @@ $codex-setup init
 |------|----------|---------|
 | 플러그인 설치 | Claude Code | 전체 (99 bundled skills, hooks, rules, auto-loop) |
 | `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills만 (99 public skills) |
-| `$codex-setup init` | Codex CLI | AGENTS.md 커널 + git hooks |
+| `$codex-setup init` | Codex CLI | AGENTS.md 커널 + commit-msg hook (pre-push 게이트는 opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
 **요구 사항**: Claude Code 2.1+ | Node.js 18+ | `jq`(`pre-edit-guard`와 `post-edit-format`이 hook 페이로드를 이것으로 파싱합니다 — `jq`가 없으면 둘 다 exit 0 하므로, 민감 경로 가드와 자동 포매팅이 조용히 꺼집니다) | [Codex MCP](https://github.com/openai/codex)(플러그인 설치에는 선택 사항이지만 `/codex-*` 리뷰 게이트에는 필수 — Codex가 바로 그 유일한 리뷰어이므로, 미설치 시 폴백하지 않고 `⛔ Blocked` + `⚠️ Need Human`을 냅니다)
@@ -79,7 +79,7 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 | 소유자 | 소유 범위 |
 |--------|-----------|
 | **모델** | 배치, 타이밍, 리뷰 깊이 상향, Default tier 이탈 (명시한 뒤 계속 작업) |
-| **Harness** | Digest 기반 reminder 상태, git 레벨 가드 (commit-msg, pre-push), 닫힌 anchor 집합 |
+| **Harness** | Digest 기반 reminder 상태, git 레벨 가드 (`commit-msg`는 기본 설치, `pre-push`는 opt-in), 닫힌 anchor 집합 |
 | **사람** | 되돌릴 수 없는 승인 (push, commit, merge)과 열거된 exit 지점 |
 
 모델은 경로를 소유합니다. Harness는 증거와 양보할 수 없는 경계를 소유합니다. 사람은 되돌릴 수 없는 권한을 보유합니다.
@@ -97,10 +97,10 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 | 3 | **Context 압축 후 복구** | SessionStart(compact) 이후 git baseline(브랜치 + 미커밋 파일)과 미완료 gate reminder를 재주입 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptor** | 5가지 hook event type을 6개 스크립트로 디스패치 — 4개의 권고형 reminder hook, 1개의 자동 포매터, 1개의 차단형 보안 가드(SessionStart는 추가로 `scripts/namespace-hint.sh`를 실행): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6개 스크립트) + [`.claude/settings.json`](.claude/settings.json) |
 | 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 99개 skill 중 90개가 `allowed-tools`를 선언 |
-| 6 | **Defense-in-depth 안전장치** | Git 레벨 가드는 그대로 강제됩니다 (commit-msg-guard, `/dev/tty`를 통한 pre-push-gate); 편집 시점의 pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드이며 워크플로 강제가 아님 — `jq`가 필요하며, jq가 없으면 가드가 작동하지 않음), Stop hook은 reminder를 출력합니다 — 되돌릴 수 없는 동작을 막는 레이어는 강제력을 유지하고, 리뷰 레이어는 의도적으로 권고형이 되었습니다 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
+| 6 | **Defense-in-depth 안전장치** | 설치된 git 레벨 가드는 그대로 강제됩니다 — commit-msg-guard는 항상 설치되고, `/dev/tty`를 통한 pre-push-gate는 opt-in한 경우에 작동합니다; 편집 시점의 pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드이며 워크플로 강제가 아님 — `jq`가 필요하며, jq가 없으면 가드가 작동하지 않음), Stop hook은 reminder를 출력합니다 — 되돌릴 수 없는 동작을 막는 레이어는 강제력을 유지하고, 리뷰 레이어는 의도적으로 권고형이 되었습니다 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator 분리** | Codex가 Claude의 결과물을 리뷰하며 저장소를 직접 조사 — 결론을 건네받아 승인만 하는 일은 없음 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **점진적 진행 추적** | 증거 기반 정체 규율: finding을 하나도 닫지 못한 리뷰 라운드가 3회 연속되면 — 모델이 리뷰 리포트로부터 직접 셉니다 — 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거합니다. Tier별 라운드 예산 (기본 6 / 15 / 30, 3–50으로 오버라이드 가능) 은 폭주 방지용 백스톱으로 물러나며, 첫 상한 도달 시에도 같은 진단을 수행하고, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection + § Cap Diagnostic Protocol) |
-| 9 | **Human-in-the-loop 안전 게이트** | 모든 `/push-ci` push 전 `AskUserQuestion` 승인; 보호 브랜치 push에는 `/dev/tty` pre-push 확인이 최종 credential (non-fast-forward 감지 포함) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
+| 9 | **Human-in-the-loop 안전 게이트** | 모든 `/push-ci` push 전 `AskUserQuestion` 승인 — 이 승인은 항상 필요하며, opt-in인 `pre-push` hook이 없으면 그 자체가 인가입니다. hook이 설치된 경우에는 보호 브랜치 push에서 `/dev/tty` 확인이 최종 credential입니다 (non-fast-forward 감지 포함) | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`skills/push-ci/SKILL.md`](skills/push-ci/SKILL.md) |
 | 10 | **자기 개선 루프** | 지적 → lesson 기록 → 3회 이상 재발 시 rule로 승격 | [`rules/self-improvement.md`](rules/self-improvement.md) |
 
 대부분의 harness 프로젝트는 이 중 2~4개만 다룹니다. sd0x-dev-flow는 10개 모두를 다루므로, 단순한 도구가 아니라 연구 대상으로서의 코드로 활용할 수 있습니다.
@@ -123,7 +123,7 @@ flowchart LR
 
 Hooks는 **명령이 아니라 사실**을 보고합니다: reminder와 `[AUTO_LOOP_STATE]` 사실 라인(변경 클래스, plane별 verdict 상태)을 출력하고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 정체 — 아무것도 닫지 못한 리뷰 라운드 3회 연속, 모델이 직접 셉니다 — 또는 백스톱으로서의 라운드 상한 도달이 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 촉발하고, 그 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 어느 trigger로 발화했든 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
 
-강제(enforcement) 모드는 없습니다 (hook-lightweighting, 2026-08-13): 모든 리뷰 레이어 hook은 exit 0으로 끝나는 reminder입니다. Verdict는 모델이 기록할 때 존재하며(`node scripts/review-state.js note <plane> <pass|fail>`, digest 바인딩 — 편집하면 해당 plane이 다시 열립니다), reminder를 정직하게 잠재우는 방법은 gate를 실행하고 결과를 기록하는 것입니다. 리뷰 레이어 밖의 가드는 여전히 유효합니다: pre-edit-guard는 민감 경로 편집을 여전히 차단하고(`jq`가 있을 때 — 없으면 가드가 작동하지 않음), git 레벨 가드(commit-msg-guard, pre-push-gate)는 그대로 강제됩니다.
+강제(enforcement) 모드는 없습니다 (hook-lightweighting, 2026-08-13): 모든 리뷰 레이어 hook은 exit 0으로 끝나는 reminder입니다. Verdict는 모델이 기록할 때 존재하며(`node scripts/review-state.js note <plane> <pass|fail>`, digest 바인딩 — 편집하면 해당 plane이 다시 열립니다), reminder를 정직하게 잠재우는 방법은 gate를 실행하고 결과를 기록하는 것입니다. 리뷰 레이어 밖의 가드는 여전히 유효합니다: pre-edit-guard는 민감 경로 편집을 여전히 차단하고(`jq`가 있을 때 — 없으면 가드가 작동하지 않음), 설치된 git 레벨 가드는 그대로 강제됩니다(commit-msg-guard는 기본, pre-push-gate는 opt-in).
 
 두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 기본값은 비활성입니다. Hook과 의존성에 대한 자세한 내용은 [docs/hooks.md](docs/hooks.md)를 참조하세요.
 
@@ -442,7 +442,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 
 ## 규칙 & Hook
 
-16개 규칙 + 6개 Hook. 규칙은 tier화된 계약입니다: `discretion.md`가 플러그인이 관리하는 13개 규칙 파일의 모든 지시를 Anchor / Default / Guidance 중 정확히 하나로 해석하고, 사용자 소유의 오버라이드 파일 2개는 상위 규칙 아래에서 Anchor 우선으로 해석됩니다. Hook 구성은 4개의 권고형 reminder hook에 자동 포매터 1개와 차단형 보안 가드 1개를 더한 것입니다. reminder 역할은 hook마다 다릅니다: Stop과 post-compact hook은 digest 기반 상태(`review-state.js`)로부터 미완료 gate reminder를 렌더링하고, prompt hook은 `[AUTO_LOOP_STATE]` 사실 라인을, post-skill hook은 고정된 gate 순서 라인을 출력하며, post-compact hook은 추가로 git baseline을 재주입합니다. 리뷰 레이어는 아무것도 차단하지 않습니다 — pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드, `jq` 필요 — 없으면 작동하지 않음), 강제 gate는 git 레벨에 있습니다 (commit-msg-guard, pre-push-gate).
+16개 규칙 + 6개 Hook. 규칙은 tier화된 계약입니다: `discretion.md`가 플러그인이 관리하는 13개 규칙 파일의 모든 지시를 Anchor / Default / Guidance 중 정확히 하나로 해석하고, 사용자 소유의 오버라이드 파일 2개는 상위 규칙 아래에서 Anchor 우선으로 해석됩니다. Hook 구성은 4개의 권고형 reminder hook에 자동 포매터 1개와 차단형 보안 가드 1개를 더한 것입니다. reminder 역할은 hook마다 다릅니다: Stop과 post-compact hook은 digest 기반 상태(`review-state.js`)로부터 미완료 gate reminder를 렌더링하고, prompt hook은 `[AUTO_LOOP_STATE]` 사실 라인을, post-skill hook은 고정된 gate 순서 라인을 출력하며, post-compact hook은 추가로 git baseline을 재주입합니다. 리뷰 레이어는 아무것도 차단하지 않습니다 — pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드, `jq` 필요 — 없으면 작동하지 않음), 강제 gate는 git 레벨에 있습니다 (commit-msg-guard는 기본 설치, pre-push-gate는 opt-in).
 
 > **커스터마이징**: `auto-loop-project.md`를 편집하여 프로젝트별 auto-loop 동작을 오버라이드할 수 있습니다. 플러그인 업데이트와 충돌하지 않습니다 — [Rule Override Pattern](docs/features/rule-override-pattern/2-tech-spec.md) 참조.
 
@@ -509,10 +509,10 @@ MIT
 
 ## Star History
 
-<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-dev-flow&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=sd0xdev%2Fsd0x-harness&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-dev-flow&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/image?repos=sd0xdev/sd0x-harness&type=date&legend=top-left" />
  </picture>
 </a>

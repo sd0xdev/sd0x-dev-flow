@@ -6,7 +6,7 @@
       "name": "sd0x-dev-flow",
       "source": {
         "source": "github",
-        "repo": "sd0xdev/sd0x-dev-flow"
+        "repo": "sd0xdev/sd0x-harness"
       },
       "description": "Harness engineering for Claude Code — reminder-layer review hooks, behaviour-layer gates, and fail-closed safety where it counts."
     }
