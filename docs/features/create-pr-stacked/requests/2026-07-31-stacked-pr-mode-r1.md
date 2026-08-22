@@ -5,7 +5,7 @@
 > **Status**: In Progress
 > **Note**: 原規劃含 `/feasibility-study`（授權落點評估）；使用者於 2026-07-31 直接裁決 v1 組合方案（`/push-ci` + `/create-pr`），該項由決策取代，不另跑
 > **Priority**: P1
-> **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
+> **Tech Spec**: [2-tech-spec.md](../2-tech-spec/2-tech-spec.md)
 > **Requirements**: [1-requirements.md](../1-requirements.md)
 
 ## Background
@@ -32,6 +32,12 @@ GitHub Stacked PR（2026-07-30 public preview）要納入 `/create-pr`，但 `gh
 | `docs/features/create-pr-stacked/1-requirements.md` | Modify | Open Question 裁決記錄（已完成） |
 | `docs/features/create-pr-stacked/2-tech-spec.md` | New | 技術設計（已完成，✅ Mergeable） |
 
+> **路徑變更（2026-08-21 補記）**：上表與下方 AC 所寫的 `2-tech-spec.md` 是 2026-07-31 當時的路徑，
+> 保留原文不改。該檔已依 `@rules/docs-numbering.md` § Size Limit 拆為
+> [`../2-tech-spec/2-tech-spec.md`](../2-tech-spec/2-tech-spec.md)（主檔）與
+> [`../2-tech-spec/1-core-logic.md`](../2-tech-spec/1-core-logic.md)（原 § 3.4 切出）。
+> 引用 § 3.4 內個別項次（items）時應指向後者。
+
 ## Acceptance Criteria
 
 - [x] 執行端授權決策記錄於 `1-requirements.md` §9（v1 組合方案：push → `/push-ci` 或使用者手動；PR ops → 既有 `gh pr create/edit` 契約；`gh stack` → 使用者自行執行）
@@ -52,6 +58,6 @@ GitHub Stacked PR（2026-07-30 public preview）要納入 `/create-pr`，但 `gh
 
 ## References
 
-- Tech Spec: [2-tech-spec.md](../2-tech-spec.md) §7 Open Questions
+- Tech Spec: [2-tech-spec.md](../2-tech-spec/2-tech-spec.md) §7 Open Questions
 - Requirements: [1-requirements.md](../1-requirements.md) §9
 - Sibling: [r2 — v1 實作](./2026-07-31-stacked-pr-mode-r2.md)

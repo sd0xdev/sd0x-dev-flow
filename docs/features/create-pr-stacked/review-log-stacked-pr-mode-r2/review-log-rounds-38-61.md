@@ -1,6 +1,12 @@
 # Stacked PR Mode r2 — Review Log, Rounds 38–61
 
 > 已完結的輪次記錄，內容不再變動。索引與最新一輪在 [review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)。
+>
+> **路徑變更（2026-08-21 補記）**：下文各輪「規格同步」段落所寫的 `create-pr-stacked/2-tech-spec.md`
+> 是當時的路徑，**保留原文不改**。該檔已依 `@rules/docs-numbering.md` § Size Limit 拆為
+> [`../2-tech-spec/2-tech-spec.md`](../2-tech-spec/2-tech-spec.md)（主檔）與
+> [`../2-tech-spec/1-core-logic.md`](../2-tech-spec/1-core-logic.md)（原 § 3.4 切出）。下文提到的
+> items（31–39 等）全部屬 § 3.4，因此現在都在 `1-core-logic.md`。
 
 **Note — 第 38 輪：加固措施自身的副作用（Codex 重審）**
 
@@ -382,3 +388,25 @@ Codex 確認第 60 輪的六個對抗形式都已正確處理、shipped fences �
 `case` 在替換裡（`$(case … in a) … ;; esac)`）具名拒收：那是唯一一種閉括號無法用計數找到的形狀，與其在錯誤的一端分析，不如說清楚。
 
 **十一個新控制，四點突變驗證**。突變前先確認替換確實套用（`MEMORY.md` 的那條）：`OPAQUE` 字述詞、重導向跳過、`${…}` 遞迴、替換 aside，四個突變體全部被抓到。全套件 3381 tests / 3375 pass / 0 fail / 6 skipped，與編輯前相同。
+
+> **由 `2-tech-spec.md` § 7 移入（2026-08-20 doc review round 16）**：以下 12 條是第 50–61 輪的
+> 審查歷程，主題為 `/install-scripts` 的 hook 路徑解析與 F6b shell 分析器，**與 stacked PR 設計無關**。
+> 它們原先掛在 tech spec 的 Open Questions 之下、無標題、非開放問題，使該檔在一次淨增 194 行的
+> substantive edit 後達 536 行。依 `@rules/docs-numbering.md` 的「先 prune、再 merge、後 split」，
+> 這批屬於「歸屬錯誤的活資訊」——搬移而非刪除，資訊零淨損。
+
+## 第 50–61 輪的通用教訓（自 tech spec § 7 移入）
+
+ 1. **先問清楚「答案是相對於什麼」，多半整段補償邏輯都可以刪掉**。第 50–51 輪為 `--git-path` 的相對答案疊了三層補償：`--path-format=absolute`（新旗標）、`| tail -n 1`（吃掉舊版 git 回顯的旗標）、再加形狀判讀。實測後發現 `-C "$REPO_ROOT"` 早已把 cwd 釘在 root，**相對答案本來就是 root-relative**——一行 `case` 就夠，七種情境（預設／子目錄／相對 `core.hooksPath`／絕對 `core.hooksPath`／`~`／`%(prefix)`／linked worktree）全對，之後再加測的 submodule 亦然。三層補償一起消失，同時解掉「路徑含換行時 `tail` 會截斷」與「`tail` 是未授權的外部相依」兩個發現。界線要講準：hook 路徑「內部」的換行可存活，`REPO_ROOT` 自身末段的換行不行也無法行——`rev-parse --show-toplevel` 沒有 `-z` 形式，那種路徑在它的輸出裡根本無法表達。補償邏輯堆疊本身就是訊號：它通常代表某個前提沒被量測過。
+ 2. **手寫清單無法察覺它從未被告知的相依**。F6 以一份寫死的工具清單斷言 frontmatter「已預先授權所需工具」，於是在出貨 resolver 悄悄引入 `tail` 之後，它仍然回報契約完整——互動模式下會多跳一次授權詢問，headless 模式直接失敗。修法不是把 `tail` 補進清單（那只修這一次），而是**從 fence 反推**：掃描 skill 自己執行的每個 bash 區塊，取命令位置的字詞（跳過 `$GIT_ENV` 這類變數前綴與 `VAR=value` 賦值——未授權指令正是藏在前綴後面），扣掉 shell 內建，逐一要求 `allowed-tools` 涵蓋。印給使用者的 ````markdown 區塊依既有政策豁免，因為它們在使用者自己的 shell 執行。與 item 46 同一手法：消除缺陷類別，而不是消除這一個實例。第一版只認行首與少數運算子，`if tail …` 藏在保留字後仍全綠；現在保留字被**消耗**（每個都開啟新的命令位置），引號區段先被剝除，且豁免只認裸名——`/usr/bin/printf` 是相依，`printf` 不是。抽取器本身有六個自檢探針。
+ 3. **對照組不夠時，補的不是更多案例，而是「唯一正確答案不在預設位置」的案例**。第 51 輪已刪掉預設 hook，但 Codex 指出仍有一個 mutant 存活：手寫處理相對／絕對／`~` 三種 `core.hooksPath`，其餘落回寫死的 `$REPO_ROOT/.git/hooks/commit-msg`。能殺掉它的只有「`$REPO_ROOT/.git` 根本不是答案」的兩個場景——`%(prefix)`（展開到 git 自己的安裝前綴；測試把手寫版會組出的字面目錄 `$REPO_ROOT/%(prefix)/opt/hooks` 真的建出來並裝上 hook，於是正解是 `missing`、只有 mutant 會答 `installed`），以及 **linked worktree**（`.git` 是**檔案**，hook 在 common dir）。實證：把 mutant 逐步補強到能過 `~` 與 `%(prefix)`，仍死在 worktree 那一關；另補一個「只在 submodule 錯」的 mutant，死在 submodule fixture。兩個界線要寫明：`%(prefix)` 的尾段改用 mkdtemp 的唯一目錄名，否則展開目標若在該機器上真的存在，正解會是 `installed` 而測試會為了非缺陷的理由失敗——精確地說這是**抗碰撞**而非 hermetic：mkdtemp 只保證該名稱在暫存父目錄未被使用，不保證它不存在於 git 安裝前綴之下；而「把所有 `%(prefix)` 一律當 missing」的 mutant **殺不掉**——那需要在 git 安裝前綴內放一個可執行 hook，沒有 hermetic 的做法。
+
+ 4. **「無法修」必須是關於工具的事實，不是關於成本的判斷**。第 53 輪我把「命令替換剝除尾端換行」記成第三方限制，理由是 `rev-parse --show-toplevel` 沒有 `-z` 形式。前半是事實，結論卻不成立：在命令替換**內部**附加一個非換行 sentinel，再依序移除 sentinel 與**恰好一個**換行，就只刪掉記錄分隔符而保留路徑本身的換行。我當時真正的理由是「要改 19 處太貴」——那是成本判斷，卻被寫成 "cannot"。這正是 `fix-all-issues.md` 所禁的藉口，只是換上了技術外觀。實測：末段含換行的 repo，直接寫法得到不存在的路徑，sentinel 寫法得到真實路徑。19 處全數改寫，並加 **F1g** 以真實 repo 固化，內含「舊寫法在此必須答 missing」的控制斷言以防 fixture 失效後測試變空洞。
+ 5. **把自己的盲點寫進期望值，等於讓 oracle 為它簽名**。F6b 的探針 `probe('$GIT_ENV FOO=1 sed -n 1p x')` 期望 `['sed']`——但 `$GIT_ENV` 展開成 `env -u …`，每一次呼叫都真的執行了 `env` 這個外部 binary。我在寫探針時把「前綴是無害的、可以剝掉」這個假設當成規格，於是 F6b 漏抓 `env` 而探針永遠綠；真正擋住 frontmatter 缺漏的仍是它本應取代的手寫清單 F6。修法：`$VAR` 命令前綴會去查同 fence 內的字面賦值並計入其首字，查不到就**具名失敗**。教訓與 item 49 同源，但更隱蔽——那次是 oracle 被自己的散文滿足，這次是被自己的探針滿足。
+ 6. **分析不了的構造，要大聲拒絕，不要安靜略過**。F6b 的目標是消除「未授權相依」這個類別，但正則式看不到 heredoc 內容、`xargs`／`find -exec` 的運算元、陣列元素、alias、以及引號內的 `$( )`。當下的 fence 一個都沒用到——「今天沒有」正是這種 oracle 失效的方式。修法是把不可分析的構造列成一張 `OPAQUE` 表，執行 fence 一旦出現就以具名訊息失敗（「請先擴充 F6b 再使用該構造」），無法解析的 `$VAR` 命令前綴同理。這把未知的漏網轉成大聲的失敗：涵蓋範圍不再是宣稱，而是可執行的邊界。
+ 7. **一條規則的適用範圍要看它自己的界定句，不看引用它的人怎麼轉述**。`docs-numbering.md` 的 500 行上限第一句就寫明管的是 `docs/features/` 的 feature 文件，但 `docs-writing.md` 的 Bounded 一列把它轉述成通用敘述，於是 11 個 skill 測試檔據此對 `SKILL.md` 設下硬上限，而我在多輪審查中為此壓縮內容。兩個本可及早發現的訊號：`skills/project-setup/SKILL.md` 已 555 行且長期無人抱怨（**存活的違例**），以及 `grep -rn "500" hooks/ scripts/` 找不到任何執行者。規則已改為正面表列範圍＋功能性文件豁免表，並改回由模型判斷個別檔案；11 個行數斷言移除。
+ 8. **修一個維度時，順手毀掉另一個維度**。第 54 輪為了保住結尾換行，在 substitution 內加上 `printf .` sentinel——用的是 `;`。substitution 回報的是**最後一個命令**的狀態，於是 `printf` 的 exit 0 蓋掉 `git rev-parse` 的失敗：`REPO_ROOT` 靜默變成空字串，之後每個 `git -C ""` 改為對「當下目錄」動作，而 `execute-mode.md` 寫好的 `|| { rm -f "$MSG_FILE"; exit 1; }` 掛在一個不可能失敗的東西上。byte 維度修好了，status 維度壞了，而當輪的 F1g 只驗 byte，所以全綠。改法是 `&&`（失敗即不執行 printf，狀態為 git 的）並把 `||` 從尾端的 parameter strip 移回 substitution——parameter assignment 永遠成功，寫在它後面的守衛永遠不會觸發。教訓：一個修正要問「它動到哪幾個可觀察量」，而回歸測試要對每一個都有 oracle，不是只對當初出事的那一個。
+ 9. **可分析性的邊界要雙向釘住：既要會失敗，也要不亂失敗**。第 54 輪的 `OPAQUE` 表把不可分析構造轉成具名失敗，但它比對的是**原始 fence 內容**，於是註解裡的「alias」一詞、引號內的 `'xargs is unavailable'`、算術式 `1 << 2` 全都會誤觸；而整張表刪掉後所有 probe 仍然全綠——它從來沒有負向控制。修法是每條規則宣告自己讀哪個 view（heredoc 讀「去註解」，字詞類讀「去註解＋去引號」），並補上兩組對稱的 probe：每個構造都必須具名失敗，同樣的字詞當作散文時都必須不失敗。一個只會漏報的守衛沒有價值；一個會亂叫的守衛會被刪掉。
+10. **「剝除」和「不算數」是兩件事**。F6b 把 `exec`／`command`／`builtin`／`time`／`nohup`／`nice` 一律剝除後遺忘。前四個是 shell builtin／keyword，遺忘是對的；`nohup`／`nice` 是實打實的外部二進位檔，於是 `nohup git status` 只靠 git 已被授權就全綠，實際 tool call 的第一個字卻是未授權的 `nohup`。同一個動作（往後看下一個字）不代表同一個結論（自己不算相依）。已拆成 `PREFIXES`（剝除）與 `WRAPPERS`（計入自身並繼續往下解析運算元；第 56 輪由 `EXTERNAL_PREFIXES` 併入，因為「計入」和「不往下看」也是兩件事）。同輪一併釘住的還有作用域：literals map 原本讀整份文件，但每個 fence 是各自獨立的 shell，跨 fence 的賦值不能拿來解釋這裡的 `$TOOL`。
+11. **靜態剖析器的正確收斂方向是縮小輸入，不是擴大能力**。F6b 是手刻的 shell 詞法分析器，第 54 至 57 輪每一輪都產出它的新漏洞——每修好一個形狀就浮出下一個（`env` wrapper → `${TOOL:-curl}` 展開 → 算術內的 backtick → 跳脫感知 → `timeout` 的位置參數 → `eval`／`trap` → `<<<` 排除失效 → `case` pattern 誤觸）。這不是修得不夠仔細，是問題本身沒有邊界：判斷「一個字是不是命令」在 shell 裡需要執行期。第 57 輪起改變方向——新出現的每一個漏洞，優先問「能不能把這個形狀直接拒收」而不是「能不能讀懂它」。`eval`／`trap`／變數展開出的 glob 都走這條路。代價是 fence 的可寫範圍變窄，換到的是一個**可陳述且可執行**的保證：`OPAQUE` 列出的構造會大聲失敗。同時把做不到的部分寫進測試註解（行內 glob 與 `case` arm 切段後無法區分、descent 的 `break` 與「這裡沒東西」無法區分），因為一個 oracle 最危險的狀態不是覆蓋不足，是宣稱的覆蓋大於實際。
+12. **無聲失效的檢查比從來沒有那道檢查更糟**。第 61 輪的六個 P2 裡有一項與其他五項不同類：`OPAQUE`（列出「看不懂就大聲拒收」的構造）讀的是抹掉引號的原文視圖，於是 `X="$(xargs curl)"` 整段被視圖刪去，強制的 `xargs` 拒收不再觸發。其他五項是「少看到一個命令」，這一項是**一道原本會擋下來的閘門停止運作，而外觀完全沒變**。F6b 的全部價值建立在「無法解析就拒收」上；一道拒收無聲失效之後，它的存在反而讓人相信那個構造被擋住了。實務結論有二：其一，重構一個安全檢查時，「原本會拒收的輸入現在還會不會拒收」必須有自己的正向控制，不能只驗證「該通過的還通過」；其二，凡是宣稱「所有判斷都走同一條路徑」的重構，該宣稱本身要能被機械驗證——第 60 輪我寫下這句話而它是假的，是 Codex 讀程式碼發現的，不是測試發現的。

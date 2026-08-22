@@ -6,7 +6,7 @@
 # has no environment override — a variable that swaps the policy for a weaker
 # one is, at runtime, indistinguishable from an attack. Why this is a script
 # rather than prose in the skill, and the shape of each mode below:
-# docs/features/create-pr-stacked/2-tech-spec.md §3.4.
+# docs/features/create-pr-stacked/2-tech-spec/1-core-logic.md (§ 3.4).
 #
 # Usage: /bin/bash -p scripts/run-skill.sh create-pr sanitize-pr-content.sh <mode> <file>
 #   title         exit 0 clean, 3 if attribution found; never rewrites
@@ -27,7 +27,7 @@
 # could. Why each construct is the one that survived measurement, what defeated
 # the earlier `$-` and environment-scan designs, and the residual still open
 # (marker pre-set AND privileged mode already on): see
-# docs/features/create-pr-stacked/2-tech-spec.md §3.4 items 23, 27, 31, 33, 38.
+# docs/features/create-pr-stacked/2-tech-spec/1-core-logic.md (§ 3.4) items 23, 27, 31, 33, 38.
 case "${SD0X_PRIV_REEXEC:-}" in
   '')
     exec /usr/bin/env -u SHELLOPTS -u BASHOPTS -u BASH_ENV 'SD0X_PRIV_REEXEC=1' \
@@ -187,7 +187,7 @@ BLOCK="$(sed -n '/^PATTERNS=(/,/^)/p' "$GUARD")" || die "could not read the patt
 # error under POSIXLY_CORRECT, a here-string needs a writable TMPDIR on the
 # bash 3.2 macOS ships, and a pipeline runs the loop in a subshell where `die`
 # and the loops' variables are lost. Each was measured, and each broke
-# something real — see docs/features/create-pr-stacked/2-tech-spec.md §3.4
+# something real — see docs/features/create-pr-stacked/2-tech-spec/1-core-logic.md (§ 3.4)
 # item 20 for the measurements and the two denials they caused.
 #
 # `set -f` is mandatory, not tidiness: the unquoted expansion that DOES the

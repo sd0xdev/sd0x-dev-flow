@@ -5,13 +5,13 @@
 > **Status**: In Progress
 > **Note**: 不被 r1 的 Q1 阻塞（v1 主路徑為輸出手動 push 指令）；但 Phase D rollout 偵測細節依賴 r1 Q2 的實測結果，實作時以保守降級為預設
 > **Priority**: P1
-> **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md)
+> **Tech Spec**: [2-tech-spec.md](../2-tech-spec/2-tech-spec.md)
 > **Depends On**: [r1 設計前置與 Preview 實測](./2026-07-31-stacked-pr-mode-r1.md)
 > **Requirements**: [1-requirements.md](../1-requirements.md)
 
 ## Background
 
-依 [tech spec](../2-tech-spec.md) 實作 `/create-pr --stack` 模式（WBS W1/W2/W2a/W4）：sync 分類先行、chain 驗證、逐層 PR create/edit（可重入）、依賴標記三模式、環境偵測與降級——全程不執行 push/rebase（Anchor #4 零變更）。
+依 [tech spec](../2-tech-spec/2-tech-spec.md) 實作 `/create-pr --stack` 模式（WBS W1/W2/W2a/W4）：sync 分類先行、chain 驗證、逐層 PR create/edit（可重入）、依賴標記三模式、環境偵測與降級——全程不執行 push/rebase（Anchor #4 零變更）。
 
 ## Requirements
 
@@ -45,6 +45,12 @@
 | `docs/features/create-pr-stacked/1-requirements.md` | Modify | NFR-1 的 `allowed-tools` 度量改寫（見下方 Note — NFR-1）、NFR-6 行數更新 |
 | `docs/features/create-pr-stacked/requests/2026-07-31-stacked-pr-mode-r1.md` | Modify | 連結格式修正（本需求變更的一部分，故列於此） |
 | `docs/features/create-pr-stacked/requests/2026-07-31-stacked-pr-mode-r2.md` | Modify | 本文件：進度與 AC 證據（review 歷程見同層 review log） |
+
+> **路徑變更（2026-08-21 補記）**：上表的 `docs/features/create-pr-stacked/2-tech-spec.md` 是本單
+> 動工當時的路徑，保留原文不改。該檔已依 `@rules/docs-numbering.md` § Size Limit 拆為
+> [`../2-tech-spec/2-tech-spec.md`](../2-tech-spec/2-tech-spec.md)（主檔）與
+> [`../2-tech-spec/1-core-logic.md`](../2-tech-spec/1-core-logic.md)（原 § 3.4 切出）。該列所述
+> 的四處同步中，§ 3.4 契約 7 落在切出檔，其餘三處留在主檔。
 
 ## Acceptance Criteria
 
@@ -125,107 +131,20 @@ signal=mcp__codex__codex 於 2026-07-31 兩次回傳 usage limit（恢復時間 
 | Testing    | in progress | 契約測試 109/0 fail、sanitizer 87/0 fail、既有 sanitization regression 20/0 fail、`commit-msg-guard` 83/0 fail、`run-skill` 25/0 fail（第 34 輪新增 4 個 fail-closed 案例——原本的 18 個在修正前後同樣全綠，證明不了那個修正；第 35 輪再增環境層與內容隱蔽案例），全 suite 3286 tests／3280 pass／0 fail／6 skipped（本機）。開發過程另以臨時 mutation 腳本反覆檢查各項守衛（revert 每個修正、注入敵意 fence），但該腳本未入庫、無留存產物，**故不列為證據**；能長期守住這些檢查的是入庫的合成 fixture 測試（`assert.throws` 直接驅動 sweep 函式）與負控制（拿掉守衛後缺陷必須重現）|
 | Acceptance | -      | 待 `/feature-verify` 補齊 runtime 證據 |
 
-**Note — 檔案行數**：`wc -l` 為 SKILL.md 481 行、`references/stack-mode.md` 351 行。**此上限已不再適用**：`@rules/docs-numbering.md` § Size Limit 只管 `docs/features/` 下的散文，功能性文件（`skills/**`、`agents/`、`commands/`、`rules/`、template）整類豁免，該行數測試已於第 54 輪移除。以下是當時在該上限下的歷程，保留為紀錄：SKILL.md 一度到 507 行、被行數上限測試擋下，改以 `@rules/docs-writing.md` 的第一原則（表格取代散文）壓回；第 35 輪修 Step 5 的裸 `gh pr edit` 時，發現該處把 canonical block 整段又抄了一遍，改為參數表指向唯一權威後降到 477，離上限 23 行（第 37 輪補入 residual 契約與絕對直譯器說明後為 481，餘裕 19 行）——Step 7b 的驗證循環與 § Stacked PR Mode 的六段散文改為表格，資訊不減；可執行 fence 全數留在 SKILL.md，因為全域 fence 掃描與 canonical block 測試以它為輸入。
-
-**Note — 第 35 輪：三個環境層 P0（Codex）**
-
-前五輪 review（含兩個本地 strict reviewer）都沒找到這三項，共同形狀是**它們都不是邏輯錯誤**：政策條文正確、控制流正確，失效發生在條文之外的一層。
-
-| # | 缺陷 | 重現 | 修法 | 負控制 |
-| - | ---- | ---- | ---- | ------ |
-| P0-1 | 兩個執行點皆以裸名呼叫工具；bash 在腳本第一行**之前**就從環境匯入函式，且匯入的函式優先於 PATH **與同名 builtin**（`set`／`unset`／`command` 皆然），故腳本內清除不可行 | `BASH_FUNC_grep%%='() { return 1; }'` → `scan` 對真實 trailer 回 0、hook 放行 | 第一行 `exec /bin/bash -p`（privileged mode 不匯入函式）；判據為 `$-` 含 `p`——參數展開，無法被偽造。`exec` 亦可被遮蔽，故其後以 `${x:?}` 對本行剛清空的變數展開作 fail-closed 中止（展開早於命令查找） | 只拿掉 `exec` → 拒絕執行；連中止一起拿掉 → 缺陷重現（exit 0） |
-| P0-2 | `matched_lines \| cut \| sort \| paste` 在 `pipefail` 下回報**最後一個**非零成分，`cut` 回 1 遮蔽掃描的 2，而 1 正是「乾淨」 | 樁住 `cut` 回 1 → 敵意 body 原樣輸出、exit 0，同時記了 `[AI_STRIPPED]` | 掃描狀態先單獨捕獲再轉換；轉換自成 pipeline，任一 utility 失敗即中止 | `cut`／`sort`／`paste` 各一個 exit-1 案例 + `body-inplace` 不得覆寫原檔 |
-| P0-3 | guard 把命中的整行寫進 stderr（終端機與 CI log），commit message 可能夾帶貼上的憑證（Anchor Register #2）；同一條政策的另一端早已隱蔽內容 | 合成 marker 出現在 stderr | 只報 `line <n> matched pattern <i>`，格式與 sibling 一致 | 還原成印出 `$MATCH` → marker 重現 |
-
-同輪另修 Codex P1（Step 5 裸 `gh pr edit` 未受保護且不清理 Step 4b 目錄）與 P2（`commit-msg-guard` 的「診斷未被丟棄」測試是空洞的——不製造不可用 pattern、不檢查 stderr，還原 `2>/dev/null` 仍全綠）。P2 改為取真實 grep 對同一 pattern 的錯誤訊息作期望值（BSD 與 GNU 措辭不同，不可寫死），並附還原丟棄的負控制。
-
-**Note — 第 35 輪 delta review（另一位審查者）**：獨立確認前一輪四項修復皆真實生效，並實測 `<PRIOR_STATUS>` 的兩層防護各自擋不同通道（引號擋代換期執行、`case` 擋算術重求值），拿掉任一層在 fence 實際執行的 shell 下都會重開缺口。其 P1（guard 無回歸測試）在該快照後已補；P2（fail-closed 分支未給出路，反射動作會是 `--no-verify`）已修。三個 Nit 逐項處置：SKILL.md 行數已從 497 降到 477（現 481）；`awk`／`sed` 未釘 locale 屬一致性而非缺陷，且不參與判定，記為 `[NIT_DEFERRED]`；零填充 `<PRIOR_STATUS>`（`010` 被讀為八進位）不可達（shell status 不會補零）且清理照常執行，同記 `[NIT_DEFERRED]`。
-
-**Note — 第 36 輪：兩個更上游的 P0（Codex 重審）**
-
-第 35 輪修完三個 P0 後送重審，Codex 找出兩個**位置更前面**的同類缺陷。共同教訓：把防線畫在腳本第一行，仍然晚了一步。
-
-| # | 缺陷 | 重現 | 修法 | 負控制 |
-| - | ---- | ---- | ---- | ------ |
-| P0-4 | `$BASH_ENV`：非互動 bash 在腳本**第一行之前**載入它，內容 `exit 0` 即讓整個執行以成功結束、一行都沒跑。上一輪的 privileged 區塊在第一行**之後**，救不到 | `BASH_ENV=<(echo 'exit 0') bash <script>` → sanitizer 0、hook 0 | shebang 改為 `#!/bin/bash -p`（`-p` 不處理 `$BASH_ENV`），git 以 shebang 執行 hook 故該路徑關閉；SKILL.md 三道指令模板改為 `bash -p scripts/run-skill.sh …`，skill 路徑關閉 | 把 shebang 的 `-p` 拿掉 → 缺陷重現（exit 0） |
-| P0-5 | `run-skill.sh` 以 `exec bash "$TARGET"` 派送；匯入的 `exec` 函式直接回傳成功而不啟動任何東西，目標腳本自身的防護一次都沒跑。上一輪的測試全部直接呼叫目標，看不到 wrapper 這一層 | `BASH_FUNC_exec%%='() { return 0; }'` 經 wrapper → 0；直接呼叫目標 → 1 | wrapper 自己先進 privileged mode，再以 `exec bash -p "$TARGET"` 派送 | 兩種呼叫形式（帶／不帶 `-p`）都斷言非 0 |
-
-**residual 明說**：`bash <script>` 這種略過 shebang 的形式配上敵意 `$BASH_ENV` 仍會失效。這不是可修的洞——那等同於呼叫端根本沒有執行這道檢查，與不呼叫它無從區分；能做的是讓**文件化的每一種呼叫形式**都不長那樣，已照做。
-
-同輪另修：
-
-| findings | 處置 |
-| ---- | ---- |
-| P1：`--title` 檢查的是 `pr-title.txt`、發布的卻是另一份 inline 字串，兩者無機制綁定（body 因 `--body-file` 指向同一份檔案而無此問題） | SKILL.md 明訂「`--title` 由掃描過的那個檔讀回渲染」，並說明 Step 4b 的「重新產生一次」正是分歧時點；harness 的 `renderLayer()` 改為讀檔渲染——原本取產生端的字串，兩者依構造相等，永遠測不出分歧。另加測試：只改檔案內容，渲染結果必須跟著變 |
-| P1：locale 負控制在 CI 必紅——CI 跑 ubuntu-latest，GNU grep 不重現該 bypass，而斷言寫死「拿掉 pin 就會重現」 | 改為先量測前提（實跑本機 grep 看是否回 1），不成立則 `t.skip` 並說明原因。以模擬 GNU 行為的 stub 驗證：兩案 skip 而非 fail |
-| P2：guard 未關 xtrace；`bash -px` 下已是 privileged、不會 re-exec，於是 `MATCH=` 的整行被 xtrace 寫進 stderr，繞過刻意的內容隱蔽 | 補 `set +x` / `set +v`，與 sibling 一致；負控制拿掉後 marker 重現 |
-| 「hostile title 不觸發 gh」的測試對**順序**而言是空洞的——`fx.calls()` 為空只因為該測試從未執行任何 block | 補正向對照：同一 fixture、同一道 shipped block、乾淨 title，必須錄到一次呼叫 |
-
-**Note — 第 37 輪：兩個又更上游的 P0+ 三個 P1（Codex 重審）**
-
-第 36 輪修完兩個 P0 後再送重審。Codex 找出的仍不是邏輯錯誤，而是**同一條邊界再往前一格**：前兩輪把防線從 utility 推到直譯器、再推到呼叫形式，這一輪指出被繼承的**環境值**與被解析的**檔案位置**都還在防線之外。
-
-| # | 缺陷 | 重現（本機實測） | 修法 | 負控制 |
-| - | ---- | ---- | ---- | ------ |
-| P0-6 | `GREP_OPTIONS`：BSD grep 至今仍尊重它。privileged mode 擋匯入的**函式**，對繼承的**值**毫無作用 | `GREP_OPTIONS=-x` → hook 對真實 trailer exit 0；sanitizer `scan` 0、`body` 把違規行原樣輸出。`-m0` 對 `scan` 同樣有效 | 兩個執行點釘死 `PATH`／`GREP_OPTIONS`／`IFS`（sanitizer 另含 `umask`） | 拿掉 pin 後在**先量測前提**（本機 grep 是否尊重該變數）成立時斷言缺陷重現；GNU grep 上直接 return，避免在 CI 空跑 |
-| P0-7 | 文件化入口寫成裸 `bash -p …`。`bash` 這個字是在**呼叫端 shell** 解析的，發生在 privileged mode 存在之前 | `BASH_FUNC_bash%%='() { return 0; }'` 包住文件所寫的指令 → exit 0，wrapper 與政策腳本一行都沒跑 | 文件、wrapper 內部派送、腳本 usage 一律改寫 `/bin/bash -p` | 同一敵意函式下，裸寫法必須 exit 0、絕對寫法必須回 4 |
-| P1-1 | 敵意 `PATH`：所有 utility 以裸名呼叫。換掉 `grep` 回答「沒命中」，換掉抽取用的 `sed` 吐三條永不命中的 pattern——下游每一項計數檢查都滿足 | 植入 `exit 1` 的假 grep → hook 0、`scan` 0 | 同 P0-6 的 PATH pin | 拿掉 pin，同一個植入目錄下缺陷必須重現 |
-| P1-2 | wrapper 由未解析的 `BASH_SOURCE` 推導 root。把 wrapper 的 symlink 種進攻擊者的樹，派送到的就是那棵樹裡的「政策」腳本——只需 `exit 0` | planted tree + symlink → 攻擊者副本被選中 | wrapper 先實體解析自身 symlink 鏈（含深度上限）再推導 root | planted tree 必須回 4（真政策執行）；`while false` 掉解析迴圈即變紅 |
-| P1-3 | `ALLOW_AI_COAUTHOR=1` 直接 `exit 0`、訊息連讀都沒讀。Anchor Register #4 只給**一行**例外，實作卻放行整份禁止清單，且憑一個任何呼叫端都能設的環境變數 | opt-in 下 `Generated by Claude`／🤖 標記／變體 `Co-Authored-By` 全部通過 | 以 `grep -Fxv` 移除**恰好那一行**（整行相符），其餘仍受完整 pattern 集約束。白名單字串未變，`/smart-commit --ai-co-author` 照常通過——這是執行既有例外，不是新增例外 | 7 種變體在 opt-in 下必須全部 exit 1；把 `-Fx` 改成 `-F` 立刻變紅 |
-
-**同輪自行引入並修掉的迴歸**：`cleanup()` 在無暫存檔時最後一個命令回 1，而 EXIT trap 的結束狀態會**覆蓋**腳本結束碼——乾淨的 commit message 變成 exit 1，等於 hook 否決了它自己核准的每一次 commit。補 `return 0`，並以三種乾淨訊息的迴歸測試釘住（拿掉 `return 0` → 10 個測試變紅）。
-
-同輪另修的 P2：
-
-| findings | 處置 |
-| ---- | ---- |
-| 「檢查的位元組綁定發布的位元組」是過度宣稱——掃描與發布是兩個行程讀同一個可變路徑，同 user 的任何行程都能在中間替換 | SKILL.md 改寫為可據以行動的契約：**本工作流自身永不發布未經掃描的位元組；它不防禦並行的同 user 寫入者**，並註明 Step 7b 是偵測而非預防。新增一個**明示 TOCTOU 示範測試**把界線釘住，另加測試禁止舊措辭回來 |
-| `run-skill.test.js` 的主測試以 `; true` 吞掉結束碼、斷言 `output.length >= 0`——對任何字串（含空字串）都成立，目標沒啟動也會綠 | 整份改寫：確定性 fixture 印出 nonce + 解析後的 root，斷言**精確 stdout 與結束碼**；另補 symlink、敵意 PATH、`-p` 傳遞（以 `$-` 直接觀測）、`.js`／`.sh` 派送。四項守衛逐一 revert 皆變紅 |
-| 整合測試以裸 `bash <script>` 直接呼叫目標，而非文件渲染的 wrapper 入口——這正是它看不到 P0-7／P1-2 的原因 | harness 改走 `/bin/bash -p scripts/run-skill.sh …`，並加一個測試比對 harness 與 SKILL.md 實際渲染的指令形狀是否一致 |
-| 三處迴圈無條件 spawn `zsh`／`dash`；缺其一時 `status` 為 `null`，測試因環境而非產品而紅 | 全部改走既有的 `availableShells()`（補上 `dash`），並要求 `bash`／`sh` 必須存在——那是真檢查而非可攜性風險 |
-
-**測試機制本身的兩處修正**：PATH pin 讓 9 個既有「壞掉的 utility」測試失去注入通道。**沒有**放寬腳本，而是改在**完整樹的副本**裡把 harness 自有的 stub 目錄接進被釘死的清單前端——仍是固定清單、仍非呼叫端可選。另外兩個既有負控制因我的重構打錯了替換目標而失效（`LC_ALL=C grep` 現在會先命中新加的白名單 grep；policy grep 已改讀 `$SCAN_FILE`），皆補上「突變確實套用」的斷言——未套用的突變看起來和存活的測試一模一樣。
-
-**Note — NFR-1**：`1-requirements.md` 原本把度量寫成「`allowed-tools` 不擴增」，與實作不符——v1 加入了 `Bash(mktemp:*)`／`Bash(rm:*)`／`Bash(bash:*)`／`Write`。這是把手段誤當成目的：真正的約束是 `Bash(git:*)` 不得被用來執行 push/rebase，那由 SKILL.md 契約與測試斷言把關，不是由工具清單長度把關。已改寫該度量而非改實作。
-
-**Note — `git fetch --prune origin` 的定位**：`rules/git-workflow.md` 的 allowed 清單（status/diff/log/branch/rev-parse）未列 fetch，forbidden 清單（add/commit/push/stash/reset --hard/rebase）也未列。Phase A 需要它：分類是本地與 `origin/<head>` 的 OID 比對，沒有 fetch 就是拿過期的 remote-tracking refs 做判定。fetch 只寫 remote-tracking refs、不動工作樹也不改寫歷史，不落在 Anchor Register #4 的破壞性操作範圍。詳見本輪 `[DEVIATION]` 記錄。
-
-**Note — AC 粒度**：排除兩個 quality-gate AC 後有 11 個行為 AC，超過 request template 建議的 ≤8（其中 3 個是把原本綁在一起、可各自獨立證偽的條件拆開計分的結果——寧可條目多，也不要以已達成項掩蓋未達成項）。本票涵蓋 W1+W2+W2a+W4 四個 WBS 單元是成因。**不於實作中途重切**：重切會讓既有 gate 歷史（review round、precommit 記錄）分裂在兩張票之間，代價高於收益；記錄為已知偏離，後續同類功能票依 layer 拆分。
-
-**Note — review 歷史的可追溯性**：本文件引用的 review round 與 thread id（本文件僅在 AC-Q1 引用兩個：round 27 的 code review `019fb9e4` 與 doc review `019fb9e6`）存在於 Codex session，**repository 內無留存產物**。它們用於說明現況演進，**不作為 AC 證據**；可作為證據的只有入庫的測試與可重跑的指令（與上方 mutation 腳本同一原則）。
-
-**Note — Adequacy Gate（advisory mode，`testing-project.md ## Adequacy Mode` 未設定）**
-
-較早一輪 Codex AC trace 判定 **⛔ Inadequate**。多數判據已關閉，此處記錄現況而非沿用舊結論（同上，該 trace 本身無留存產物）：
-
-| 舊判據 | 現況 |
-| ---- | ---- |
-| shipped-block runtime 測試未執行 | 為唯讀沙箱的 `mkdtemp` 限制；本機確實執行。**注意**：此類失敗不會顯示為 skip，故不可用 `skipped 0` 反駁 |
-| 全 suite 未通過 | 本機 3286 tests / 3280 pass / 0 fail / 6 skipped |
-| AC2 由文件表格建 classifier 再驗證同一表格，構成循環 | **已解除**——以 plumbing 建真實 git DAG 與真實 `fetch`，逐字執行 shipped fence，期望值獨立寫定，並附負控制 |
-| AC5 僅有文字斷言 | **已解除**——sanitization 改為可執行腳本，逐層／敵意標題／Step 7b 首次驗證／Step 7b 重驗四路徑皆實際執行 shipped fence |
-| 建議補 Phase A 的 git DAG fixture | 已存在（`buildSyncFixture()`，七種狀態 + bare origin） |
-
-**仍未關閉的缺口分兩類**，先前版本誤稱「全部屬 Manual」：
-
-*Unit 證據缺口*（屬 spec §6 的 Unit 列，非 Manual）——AC3 Phase B 政策與 AC4 依賴標記仍以「政策字串存在」為主要證據，缺 stubbed `gh pr list` fixture；AC2 的 per-mode 處置亦尚未行為驗證。關閉它們會重新開啟 code review gate，故列為下一輪工作而非本輪阻塞項。
-
-*Manual 缺口*（spec §6 本就歸屬 Manual 列，需 `/feature-verify`）——三者授權需求不同：
-
-| Manual 驗證 | 對外副作用 | 是否需使用者授權 |
-| ---- | ---- | ---- |
-| 三層 dry-run（AC1） | 無——僅輸出指令，不呼叫 `gh pr create` | 否，可逕行執行 |
-| 缺 extension 降級（AC7） | 無——僅讀取 `gh extension list` | 否，可逕行執行 |
-| 第二層失敗後重入（AC11） | **會建立真實 PR** | **是**，須先取得授權 |
+**2026-08-21 依 § Write-Time Budget 移出兩段，整段搬移未改寫，去向均為
+[`../review-log-stacked-pr-mode-r2.md`](../review-log-stacked-pr-mode-r2.md)**：第 35–37 輪的 P0/P1 鏈、
+測試機制修正、NFR-1 度量、AC 粒度、Adequacy Gate、未關閉缺口分類 → § 逐輪 review 記錄；切分決議、
+切點量測與雙向連結修復清單 → § 2026-08-20 round 16。兩檔皆 tracked，`git diff HEAD` 可逐行複核。
 
 ## References
 
-- Tech Spec: [2-tech-spec.md](../2-tech-spec.md) §3.3–§3.4、§5、§6
+- Tech Spec: [2-tech-spec.md](../2-tech-spec/2-tech-spec.md) §3.3–§3.4、§5、§6
 - Requirements: [1-requirements.md](../1-requirements.md) §5、§8
 - Sibling: [r1 — 設計前置](./2026-07-31-stacked-pr-mode-r1.md)
 
 ## Review Log
 
-逐輪審查紀錄（**第 38 輪起**，含每輪 findings、處置、變異驗證與撤回的宣稱）已移至
-[../review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)——該檔保留索引與最新一輪，較早的輪次分置於其同名子目錄。
-第 27–37 輪未搬走，散見於本文件正文的 `## Acceptance Criteria`（AC-Q1 本體、審查者替換說明，及其後的 review Note）與 `## Progress`（狀態表與第 35–37 輪的 Note）——**不在本節**，本節只有這段索引說明。形式不一致：有的是具名 `**Note —**`，有的併在 AC 段落裡，第 34 輪沒有獨立條目。
+**第 38 輪起**的逐輪紀錄（findings、處置、變異驗證、撤回的宣稱）在
+[../review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)（索引與最新一輪；較早輪次
+在其同名子目錄）。**第 27–37 輪不在本節**：散見於 `## Acceptance Criteria`（AC-Q1 本體、審查者替換
+說明及其後的 review Note）與 `## Progress`（狀態表與 Note），形式不一致，第 34 輪無獨立條目。

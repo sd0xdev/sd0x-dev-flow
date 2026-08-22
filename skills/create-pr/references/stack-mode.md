@@ -1,6 +1,6 @@
 # Stacked PR Mode (`--stack`)
 
-Detail reference for `/create-pr --stack`. Design source: `docs/features/create-pr-stacked/2-tech-spec.md`.
+Detail reference for `/create-pr --stack`. Design source: `docs/features/create-pr-stacked/2-tech-spec/2-tech-spec.md`.
 
 ## Authorization Boundary ⚠️
 

@@ -12,7 +12,7 @@
 # could. Why each construct is the one that survived measurement, what defeated
 # the earlier `$-` and environment-scan designs, and the residual still open
 # (marker pre-set AND privileged mode already on): see
-# docs/features/create-pr-stacked/2-tech-spec.md §3.4 items 23, 27, 31, 33, 38.
+# docs/features/create-pr-stacked/2-tech-spec/1-core-logic.md (§ 3.4) items 23, 27, 31, 33, 38.
 case "${SD0X_PRIV_REEXEC:-}" in
   '')
     exec /usr/bin/env -u SHELLOPTS -u BASHOPTS -u BASH_ENV 'SD0X_PRIV_REEXEC=1' \
@@ -84,7 +84,7 @@ unset POSIXLY_CORRECT
 # unresolved, a symlink to this wrapper planted in an attacker's tree dispatches
 # that tree's copy of the policy script. Why that is reachable in this repo, and
 # the rest of the threat model these blocks implement: see
-# docs/features/create-pr-stacked/2-tech-spec.md §3.4 items 14, 15 and 18.
+# docs/features/create-pr-stacked/2-tech-spec/1-core-logic.md (§ 3.4) items 14, 15 and 18.
 SELF="${BASH_SOURCE[0]:-$0}"
 HOPS=0
 while [ -L "$SELF" ]; do

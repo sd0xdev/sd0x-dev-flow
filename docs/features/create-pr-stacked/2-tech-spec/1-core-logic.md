@@ -1,109 +1,129 @@
-# create-pr Stacked PR Mode Technical Spec
+# 3.4 Core Logic
 
-> **Doc class**: Lifecycle — Phase 2 tech spec (per `@rules/docs-numbering.md`)
-> **Created**: 2026-07-31
-> **Requirements**: [1-requirements.md](./1-requirements.md)
+> 本檔為 [`2-tech-spec.md`](./2-tech-spec.md) § 3.4 的切出檔（2026-08-21）。切分理由與量測見主檔的
+> **Size disposition** 區塊。**節號維持 `3.4`**：`scripts/run-skill.sh`、`scripts/commit-msg-guard.sh`、
+> `skills/create-pr/scripts/sanitize-pr-content.sh` 與 `skills/smart-commit/references/git-environment.md`
+> 的註解以「§3.4 items N」形式引用本節的編號條目，改節號會讓那些引用全部失效。
 
-## 1. Requirement Summary
 
-- **Problem**: 多 Agent 開發下大功能需要拆成相依 PR 鏈；現行 `/create-pr` 只有 body 註記 `Stacked on #N` 與 Multi-PR Mode，GitHub 端不理解依賴。GitHub 原生 Stacked PR（2026-07-30 public preview）提供正式建模，但其 CLI（`gh stack submit/rebase/push`）內含 branch push、rebase、force-with-lease——全部落在 Anchor Register #4 禁止清單。
-- **Goals**: 在**不修改 Anchor #4 例外清單**的前提下，用既有授權工作流組合出 stacked PR 工作流：branch push → `/push-ci`，PR create/edit → `/create-pr` 既有 `--execute` 契約（SKILL.md Step 5a、Steps 6-7），`gh stack` 系列 → dry-run 輸出由使用者自行執行。
-- **Scope**: In — `/create-pr` 新增 `--stack` 模式（chain 驗證、逐層 PR 建立/更新、狀態表、環境偵測與降級）、`/push-ci` 多 branch 支援評估、配套測試。Out — 自動執行任何 `gh stack` 指令、cascading rebase 的自動傳遞、auto-merge/merge queue 整合、cross-fork。
+**Phase Contract（規範性；§3.1 時序圖為其圖示，衝突時以本表為準）。** 這張表存在的理由是實測出來的：doc review 連續三輪各找到一處「某階段讀了更晚才產生的事實」（A0.1 讀 Phase D、Phase C 讀 Phase D、§3.2 把 A0.1 已取得的 PR 事實列為 fetch 後才有），而每次都是逐條修一支箭頭、下一輪再冒出同型的第四處。逐箭頭修法看不見的東西，在這張表上是一眼可比對的：**任一階段的「進入時已具備」不得引用位於它下方的任何一列的「產出」**。
 
-本 spec 同時**裁決** `1-requirements.md` § Open Questions 之首：v1 採組合方案（`/push-ci` + `/create-pr`），不啟動 Anchor-level 變更。
+| Phase | 進入時已具備的輸入 | 產出的事實 | 施加的守衛 | 終止出口 | 可輸出「改動遠端」的建議？ |
+|-------|-------------------|-----------|-----------|----------|--------------------------|
+| **D0** 環境前置偵測 | CLI 引數 | `native_available`（`gh extension list` 比對 `github/gh-stack` 完整身分；**僅 rollout 已確認才為真**，未確認保守取偽——但這個布林只約束 D1 的 gating，不約束訊息）；**降級說明——兩模式皆到達，且分三態**：缺件 → 逐字缺件訊息＋安裝指令；已安裝但 rollout 未確認 → 說明該狀態、**不印安裝指令**；已確認 → 不輸出 | — | 無（缺件不中止，僅降級） | ❌ |
+| **A0.1** chain 解析 | CLI 引數；`{TARGET_BRANCH}` 設定 | `target`；每層 `head`、`base`；自動偵測時的 `discovery_relation` | 逐跳「恰一條 OPEN 且 base 可解析的關係」；**取得即驗**——`{TARGET_BRANCH}`／`--base`（步驟 1 當下）、每個顯式 head（取得當下）、每個回傳的 `baseRefName`（每跳當下）皆須通過 `git check-ref-format --branch` | 該跳回傳多筆、僅有 CLOSED/MERGED、base 無法解析、或**任一值 `check-ref-format --branch` 失敗** → STOP 並指名該層；**唯一可執行來源**（既有 PR base 關係）查無資料 → 要求顯式 chain | ❌ |
+| **A0.2** 輸入驗證 | A0.1 的完整 layer 序列 | — | 每層 `head` 比對 protected 集合（**不驗最底層 base**） | 任一 head 命中 → 中止列明違規層 | ❌ |
+| **A** sync 分類 | 已驗過的 chain；repo 存取 | **refreshed remote refs**（`git fetch --prune` 由本階段執行）、`local_oid`、`remote_oid`、`sync` | 每個 fence 失敗即 `\|\| exit`，不用 `set -e`：fetch 失敗後續跑探測會讀到**過期**的 remote-tracking refs 而回報成功 | **fetch 失敗 → 立即退出，不做任何 ref 探測**；ref 探測回傳「預期不存在」以外的任何錯誤 → 退出；`NO_SUCH_BRANCH` → 輸入錯誤中止；`ABSENT`／`LOCAL_AHEAD --execute` → 待 push 清單後結束；`REMOTE_AHEAD`／`DIVERGED` → 提示處理後結束 | ✅ —— **Phase B 政策驗證之前唯一的一列**，這正是 A0.2 必須排在它之前的全部理由 |
+| **B** chain 驗證 | A 的分類結果 | `pr`（重新查詢，非沿用 A0.1 的 `discovery_relation`）、`commits` | ancestry、unique commits、既有 PR 政策、層數、protected 重申 | 任一檢查失敗 → 中止 | ❌ |
+| **C** 內容生成 | B 的驗證結果 | 逐層 title/body（僅一般 PR 指令） | Step 4b sanitization | 操作前：body 寫檔失敗、title 反覆被拒、使用者於 AskUserQuestion 拒絕 → 中止；sanitization 拒絕該層內容 → 中止；`--execute` 下**任一** `gh pr *` 失敗（`create`／`edit`／`view`／Step 7b 驗證所用者皆算，NFR-2 說的是任一外部 `gh pr` 操作）→ 於**該層當下** fail-fast：不做該層後續步驟、不進下一層，並報告已完成到哪一層 | ❌（`--execute` 的實際 mutation 屬本列，但那是執行而非建議） |
+| **D1** native 序列輸出（**僅 dry-run，且僅 `native_available` 為真時**） | C 的產物；**D0 的 `native_available`** | 追加的 `gh stack init/add/submit` 序列 | — | — | ✅ —— `gh stack … submit` 會 push 分支並開 PR（`1-requirements.md` FR-9），故本列輸出的是**遠端改動建議**，不是唯讀對照 |
 
-## 2. Existing Code Analysis
+`D0` 與 `D1` 是同一件事的兩半，拆開正是為了讓上面那條規則成立：`D1` 需要 `native_available`，而它在表上位於 `D0` 之下，合法；把偵測與輸出綁成一列放在底部，`1-requirements.md` FR-4／NFR-5 要求的「**前置**偵測步驟」就無處存在。`D0` 不消費任何後續事實，因此排在最前不製造循環——round 6 的循環來自 A0.1 拿 Phase D 的結果決定 native metadata 是否為權威來源，那條依賴已移除。
 
-| Module | 現況 | 與本功能的關係 |
-|--------|------|----------------|
-| `skills/create-pr/SKILL.md` | create/update/dry-run/execute 矩陣；Step 4b sanitization、Step 7b post-verify；Multi-PR Mode 與 `Stacked on #N` 註記（§ Stacked PR Mode 一節） | 主要修改點：新增 `--stack` 模式，重用 Steps 2-4（title/body 生成）、4b、5a、7b |
-| `skills/push-ci/SKILL.md` | 推**當前 branch**，AskUserQuestion（advisory）+ `pre-push-gate.sh`（每次 push 的 policy gate；`/dev/tty` 終端確認限 protected branches，non-fast-forward 為 policy 阻擋、僅授權的 lease 契約放行）；成功後委派 `/watch-ci` | stack 的 branch push 授權路徑；限制：單次單 branch（§3.4 Phase A、§7） |
-| `skills/epic-merge/SKILL.md` | linear chain 驗證（Phase 0）、backup tags、逐 PR squash-merge | chain 驗證邏輯可對齊重用；合併端維持其職責，本功能不重疊 |
-| `skills/pr-summary/SKILL.md` § Workflow → 1. Run Script（`Detect` 列） | 以「base 非 main/master/develop」啟發式偵測 stacked PR | 消費端；`--stack` 產生的 chained-base PR 天然可被其偵測 |
-| `test/skills/create-pr-sanitization.test.js` | Step 4b/7b 的 regression 測試 | 全數保留；新測試另立 `test/skills/create-pr.test.js` |
-| `scripts/commit-msg-guard.sh` | forbidden pattern 唯一來源 | 逐層 PR title/body 沿用 |
+**「唯一一列」這個說法曾經寫錯，值得留下更正**：A 一度被記為唯一可輸出遠端改動建議的階段，而 `D1` 記為 ❌。實際上 `D1` 印出的 `gh stack init/add/submit` 序列裡，`submit` 會 push 分支並開 PR——`1-requirements.md` FR-9 本來就把它歸類為 remote-mutating。A0.1 的守衛需要的性質從來不是「之後沒有任何階段能建議遠端改動」，而是**「Phase B 政策驗證之前只有 A 能」**；把它寫成前者，剛好把一個真的會 push 的輸出漂白成唯讀對照。`D1` 限定 dry-run 也是同一考量的一部分：`--execute` 已經實際建好一整條 chained-base PR chain，再印一組會重新 push 並開 PR 的指令，是兩條會互相覆寫的路徑。這與出貨實作既有的 dry-run-only 設計一致（`skills/create-pr/references/stack-mode.md:329`）。
 
-**環境事實**（2026-07-31 實測）：`gh` 2.95.0 已安裝；`gh-stack` extension 未安裝；repo 是否被 preview rollout 涵蓋未驗證。
+**Phase A0 — Chain 解析與輸入驗證**（**在 D0 之後、其餘一切之前**）。兩個步驟，順序不可調換：
 
-## 3. Technical Solution
+**A0.1 解析出「有效 chain」。** 產出的是 §3.2 定義的完整 layer 序列——每一層的 `head` **和** `base` 都已填妥。三個步驟，順序不可調換：
 
-### 3.1 Architecture Design
+| 步驟 | 動作 | 為何在這個位置 |
+|------|------|----------------|
+| 1 | 解析 target branch：`--base` → `{TARGET_BRANCH}` → `main` | **它是自動偵測回溯的終止條件**，必須先有。`{TARGET_BRANCH}` 是 `develop`、或呼叫端給了 `--base` 時，「回溯到 main 為止」是錯的終止條件；把這一步排在回溯之後，回溯就不知道該在哪停 |
+| 2 | 取得 head 序列（兩模式在此分歧，見下表） | 需要步驟 1 的終止條件（自動偵測）；顯式引數則不需要，但排在同一步以維持單一模型 |
+| 3 | 依 head 序列填妥每層 `base`：最底層 = 步驟 1 的 target，其餘層 = 下一層的 head | 需要完整的 head 序列 |
 
-授權分層是本設計的骨架——三類操作、三條既有路徑，皆不觸碰 Anchor #4 例外清單：
+步驟 2 的兩種模式：
 
-| 操作類別 | 執行者 | 授權依據 |
-|----------|--------|----------|
-| `gh pr create` / `gh pr edit` | `/create-pr --stack --execute` | 既有 Step 5a / Steps 6-7 契約（AskUserQuestion per run） |
-| `git push`（各層 branch，非 force） | `/push-ci`（逐 branch 或 §7 的 `--branches` 擴充） | Anchor #4 既有例外：AskUserQuestion + `pre-push-gate.sh` |
-| `gh stack init/add/submit/rebase/push/modify` | **使用者本人**（skill 僅輸出指令） | 不在 Claude 執行範圍，無需授權 |
+| 模式 | head 序列來源 |
+|------|---------------|
+| 顯式引數 | 即引數本身，**順序原樣保留**（不重排、不推斷） |
+| 無引數（自動偵測） | **尚不存在**——由當前 branch 出發逐跳回溯，每跳以 `gh pr list --head <本跳 head> --state all --limit 100 --json number,baseRefName,state` 查詢。`--state all` 與 `--limit 100` 不可省（`gh pr list` 預設只回 OPEN、且只給 30 筆，省略會漏掉 Phase B 要偵測的 CLOSED/MERGED 衝突）。**回傳的是 list，不是單一 PR**，故每跳套用與 Phase B 相同的單一政策——**恰一條 OPEN 且 base 可解析的關係才算權威，否則 STOP** |
 
-```mermaid
-sequenceDiagram
-    participant U as User
-    participant CP as /create-pr --stack
-    participant PC as /push-ci
-    participant GH as GitHub
+**為什麼逐跳就要判，不能留給 Phase B**：Phase A 夾在兩者之間，而它是**在 Phase B 政策驗證之前**唯一會輸出「改動遠端」建議的階段（見 Phase Contract 表；D1 也會輸出遠端改動建議，但它排在 B 之後，故不影響此處的推論）。一條 MERGED 且遠端分支已刪除的關係若被 A0.1 當成下一跳，Phase A 會把該層分類為 `ABSENT` 並建議重新 push 一個早已合併掉的分支，Phase B 才拒絕——而拒絕發生在建議之後就沒有意義。同一顆事實在 A0.1 只用來**建構 chain**（記為 `discovery_relation`），Phase B 則在 fetch 後**重新查詢**作政策驗證；A0.1 的觀察不被沿用，因為兩次查詢之間隔著一次 fetch，狀態可能已變。
 
-    U->>CP: /create-pr --stack A B C
-    CP->>GH: git fetch --prune origin
-    CP->>CP: Phase A: 逐層 sync 分類（OID 比對）
-    alt 有 ABSENT 層（或 LOCAL_AHEAD 且 --execute）
-        CP->>U: 輸出待 push 清單 → 建議 /push-ci（或手動 push）→ 停止
-        U->>PC: /push-ci（per branch）
-        PC->>GH: git push（AskUserQuestion + pre-push-gate.sh）
-        U->>CP: 重新執行 --stack（可重入）
-    else 有 REMOTE_AHEAD / DIVERGED 層
-        CP->>U: 提示先 fetch/rebase 處理後重跑 → 停止（push 不是此類的補救）
-    end
-    Note over CP: LOCAL_AHEAD 於 dry-run 僅警告續行；僅獲准續行的路徑進入 Phase B
-    CP->>CP: Phase B: chain 驗證（ancestry、PR 政策）
-    CP->>CP: Phase C: 逐層生成 title/body + Step 4b sanitization
-    alt --execute
-        CP->>U: AskUserQuestion 確認
-        loop 由底至頂，每層一個 guarded block
-            CP->>GH: gh pr create（無 PR，--base=下層 head）／gh pr edit（既有 PR，僅 title/body，不重送 --base）
-            CP->>GH: gh pr view --json number（create 只印 URL，編號需回讀）
-            CP->>CP: Step 7b post-verify + 以 #N 產生上一層 body
-        end
-    else dry-run（預設）
-        CP->>U: 輸出逐層 gh pr create／gh pr edit 指令（+ gh stack 對照指令，僅在 Phase D 確認可用時）
-    end
-    CP->>U: Stack 狀態表
-```
+顯式引數那一列常被誤讀成「這一步是恆等」——**不是**。恆等的只有 head 順序；`base` 欄位在兩種模式下都要填，A0.1 沒填完就進 A0.2，等於拿一個半成品去驗。這一步必須在此完成，不能留到 Phase B。
 
-### 3.2 Data Model
+> ### ⚠️ ERRATUM E1（2026-08-20 doc review round 15）：A0.1 的兩個開放缺口
+>
+> **這是一份勘誤，不是補充說明。** 下列四處條款自本勘誤起被**推翻**。
+>
+> **round 16 更正了處置方式**：round 15 的做法是讓四處原文留在原地、各標一個 `⟨見 ERRATUM E1⟩`
+> 指標。複核指出那**沒有解決問題**——規範章節仍逐字寫著一套可實作的流程，讀者可以照著實作出
+> 與本勘誤相反的 A0.1。指標不是勘誤。因此四處**已於 round 16 就地改寫為現行契約**，被推翻的
+> 原文逐字保存於下表第二欄（本節是勘誤，屬記錄，保存原文正是它的職責）：
+>
+> | 被推翻的條款 | 被移除的原文（逐字） | 現行契約（已寫入該處） |
+> | ------------ | -------------------- | ---------------------- |
+> | § A0.1 sequenceDiagram 的「來源二」分支 | `else 清單為空` → `CP->>GH: 來源二: 查詢 native stack metadata（唯讀；與 Phase D0 的環境偵測無關）` → `GH-->>CP: 層次結構，或「無此資料」` | 該分支已自圖中移除；「清單為空」併入「多筆／僅 CLOSED-MERGED／base 無法解析或驗證失敗」的同一條 STOP |
+> | § A0.1 sequenceDiagram 的 break 標籤 | `break 自動偵測下兩個權威來源皆無資料` | `break 自動偵測下唯一可執行來源查無資料` |
+> | Phase Contract 表 **A0.1** 列的 STOP 條件 | 「該跳回傳多筆、僅有 CLOSED/MERGED、或 base 無法解析 → STOP；兩權威來源皆無資料 → 要求顯式 chain」 | 加入 `check-ref-format --branch` 失敗為 STOP 條件，並改為「**唯一可執行來源**查無資料 → 要求顯式 chain」 |
+> | § 3.2 資料模型 | 「`head` 序列…在自動偵測模式下由既有 PR base 關係**或** native stack metadata 唯讀回溯產生（兩個來源皆合法，見 §3.4「自動偵測」段）」 | 「由**既有 PR base 關係**唯讀回溯產生（**這是唯一可執行的來源**）」，並載明三類值取得即驗 |
+> | § 3.4「自動偵測（無引數）僅允許權威來源」段 | 「由當前 branch 的既有 PR base 關係、或 native stack metadata 回溯至解析後的 target branch」及其後「無既有 PR 亦無 native metadata 時 → 要求顯式 chain」 | 同上，單一來源；STOP 條件改為列舉五種（查無資料／多筆／僅 CLOSED-MERGED／base 無法解析／驗證失敗） |
+>
+> 演進過程（round 14 只追加附註、round 15 只加指標）屬審查歷程，記於
+> [review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md)，不再佔用本節。
+>
+> 兩者都不是措辭問題，而是本節目前**沒有定義**的行為。在補上之前，A0.1 不足以據以實作。
+>
+> **(1) 「來源二：查詢 native stack metadata」沒有可執行的定義。** 上方 sequenceDiagram 把它畫成
+> 回傳「層次結構，或『無此資料』」的權威來源，但本節沒有寫出**查詢指令、回應 schema，或失敗語意**
+> （查不到 vs 查詢失敗 vs 權限不足，三者後果不同卻無區分）。而且以現地 `gh 2.97.0` 於 2026-08-20 實測（非 2026-07-31 的環境，見 `2-tech-spec.md` § 環境事實的未解決衝突註記），
+> `gh pr view --json` 與 `gh pr list --json` 的欄位清單**都沒有任何 stack 相關欄位**——所以這個來源
+> 目前連「怎麼問」都不存在，更談不上是權威。**這不是 r1 的 Q3。** Q3 問的是「手動 chained-base PR
+> 是否算 native stack 物件」——那是分類問題；這裡缺的是**查詢契約**（指令、schema、失敗語意），
+> 是另一個未知數，目前沒有任何開放問題在追它。**新開放問題 Q5**：native stack 探索的查詢指令、
+> 回應 schema，以及「查無資料／查詢失敗／權限不足」三種失敗語意各自的後果——在 Q5 有答案之前，
+> A0.1 不得把來源二當成可用分支：清單為空即走 STOP，與「關係不唯一」同一條路徑。
+>
+> **(2) 顯式引數的 head 未經 `git check-ref-format --branch` 就進入 revision expression。**
+> § 3.2 的 `local_oid` 以 `git rev-parse 'refs/heads/<head>'` 判定分支是否存在，而 revision
+> expression 會在這個位置**靜默解析成功**。實測（git，2026-08-20，臨時 repo）：
+>
+> | 輸入 | `check-ref-format --branch` | `rev-parse refs/heads/<輸入>` |
+> | ---- | --------------------------- | ----------------------------- |
+> | `main` | ok | 解析成功 |
+> | `main^{commit}` | **REJECT** | **解析成功（同一個 commit）** |
+> | `main~0` | **REJECT** | **解析成功（同一個 commit）** |
+> | `main@{0}` | **REJECT** | **解析成功（同一個 commit）** |
+>
+> 後果有兩個，而且**成因不同**——前一版把它們寫成同一個，是錯的：
+>
+> | 後果 | 成因 |
+> | ---- | ---- |
+> | 繞過 A0.2 的 protected branch 檢查 | A0.2 做的是**逐字比對**，`main~0` 逐字不等於 `main`。與 `rev-parse` 是否成功無關——A0.2 排在任何 revision expression 之前 |
+> | 分類錯誤：不是分支的輸入不會落入 `NO_SUCH_BRANCH` | § 3.2 的 `local_oid` 用 `git rev-parse 'refs/heads/<head>'`，revision expression 在此靜默解析成功 |
+>
+> § 3 的 Shell 安全段已經寫明 `check-ref-format --branch` 會拒絕 leading `-`，但**沒有把它定為入口驗證**。
+>
+> **修法的範圍比前一版寬**——round 15 複核指出前一版只涵蓋顯式 head，漏了另外兩類同樣會成為
+> revision expression 運算元的值：
+>
+> | 值 | 取得時機 | 何時驗 |
+> | -- | -------- | ------ |
+> | `{TARGET_BRANCH}` / `--base` | A0.1 步驟 1 | **步驟 1 當下**——它是回溯的終止條件，比任何 head 都早被使用 |
+> | 顯式引數的每一個 head | A0.1 步驟 2 | 取得當下 |
+> | 自動偵測回傳的每一個 `baseRefName` | A0.1 步驟 2 逐跳 | **每跳取得當下**，不是全部收完再驗 |
+>
+> 三者皆以 `git check-ref-format --branch` 驗，失敗即中止並指名該層。**驗證時機的原則是「取得即驗」**，
+> 不是集中在某個步驟——這也是為什麼不能只放在 A0.2：A0.2 雖然排在 revision expression 之前、
+> 拿來擋 head 是可行的，但它排在 A0.1 步驟 1 之**後**，接不住 target branch。
 
-Stack chain 為記憶體內的有序結構，不落地任何狀態檔（Phase B 以 GitHub 查詢重建狀態、Phase C 據以可重入分流）。所有欄位在 `git fetch --prune origin` 之後取值（`--prune` 確保已刪除的 remote branch 不會以 stale ref 混入），一律以 **remote refs** 為準：
+**A0.2 驗證。** 對 **A0.1 產出的每一層 head** 比對 `rules/git-workflow.md` § Prohibited 的完整集合（`main`、`master`、`develop`、`release/*`），命中即中止並列明違規層。比對的是 **head**，不是最底層宣告的 base——base 是 `main` 正是常態。檢查刻意是**純詞法**的：只看名字，不碰 remote，因此不依賴任何 fetch，A0.1 若動用了 `gh pr list` 也不改變這點——驗證本身的輸入是名字字串。
 
-```
-chain := [ layer_1, ..., layer_N ]   # 底層在前；宣告的 base 關係須通過 Phase B ancestry 驗證，非僅列表順序
-layer := {
-  head:       branch name,
-  base:       layer_1 為解析後的 target branch（`--base` → `{TARGET_BRANCH}` → `main`），其餘為 layer_{i-1}.head,
-  local_oid:  git rev-parse 'refs/heads/<head>'（本地存在時）,
-  remote_oid: git rev-parse 'refs/remotes/origin/<head>'（fetch 後）,
-  sync:       NO_SUCH_BRANCH | ABSENT | IN_SYNC | LOCAL_AHEAD | REMOTE_AHEAD | DIVERGED,   # 由兩個 OID + merge-base 分類
-  pr:         { number, baseRefName, state } | null,
-              # 查詢：gh pr list --head <head> --state all --limit 100 --json number,baseRefName,state
-              # （gh pr list 預設僅回 OPEN，必須帶 --state all 才能看到 CLOSED/MERGED 與異 base 的 PR）
-  commits:    git log 'refs/remotes/origin/<base>..refs/remotes/origin/<head>' --oneline 計數   # 內容生成一律取自 remote 快照
-}
-```
+**單一模型：先完整解析，再一次驗證。** A0.1 跑完才進 A0.2，不把比對塞進回溯迴圈。曾考慮「邊推導邊驗證」（每解析出一層就立刻比對），但它同時是不必要的、且會直接壞掉：
 
-### 3.3 CLI Surface
+| | |
+|---|---|
+| **不必要** | A0.1 全程是**唯讀**的（`gh pr list`、native metadata 查詢），中途落到一個 protected branch 上不產生任何外部效果。要守的安全性質是「驗證早於 Phase A 的 push 建議」，不是「驗證早於每一跳」——後者買不到前者以外的東西 |
+| **會壞掉** | 回溯的**終點就是解析後的 target branch**，而 target branch 正常情況下就是 `main`——protected 集合的成員。逐跳驗每個推導出的名字，會在正常終止點擋下每一次自動偵測。救回來的唯一分野是「驗 head、不驗最底層的 base」，而那正是 A0.2 已經寫明的規則；把比對打散進迴圈只會讓這條分野更難維持 |
 
-```
-/create-pr --stack <branch...>        # 顯式指定 chain（底層在前）；dry-run 預設
-/create-pr --stack                    # 自動偵測：從當前 branch 沿 base 關係回溯至解析後的 target branch
-/create-pr --stack --execute          # 逐層 gh pr create/edit（AskUserQuestion 確認）
-/create-pr --stack --update           # 既有 stack 逐層更新 title/body（重用 Step 5a）
-```
+所以 A0.1 產出完整的有效 chain（含最底層宣告的 base），A0.2 對其中**每一層 head** 比對一次，base 不驗。
 
-與既有旗標的互動：`--base` 僅作用於最底層（未給時依 `{TARGET_BRANCH}` → `main` 解析，非寫死 `main`）；`--title` 在 stack 模式禁用（逐層自動生成，避免同名）；`--head` 與 `--stack` 互斥。
+**為什麼這兩步不能放在 Phase B**：Phase A 對 `ABSENT` 層會先輸出「待 push 清單」再停止，那份清單是使用者會照著執行的指令。若守衛留在 Phase B，一個本地存在、remote 不存在的 `release/new` 會**先進入待 push 清單**，等使用者推完、重跑才被拒——protected branch 已經被建立在 remote 上了。**解析也一樣不能留在後面**：把 chain 解析放在 Phase B 而驗證放在 A0，等於讓無引數模式完全繞過 A0——A0 拿不到任何名字可驗，Phase A 卻已經憑著自動偵測不出來、只能靠當前 branch 的那條路徑走完並吐出清單。驗證必須早於任何「建議變更遠端」的輸出，而**驗證的對象必須是有效 chain 而非宣告 chain**；前者是排序問題，後者是「驗到的是不是真的那一組」的問題，兩者都不是集合定義問題。（`/push-ci` 對受保護分支另有自己的授權層，故此處不是授權繞過；但它讓 stack 驗證失去意義，也使 §3.1 時序圖對憑證的描述不成立。）
 
-### 3.4 Core Logic
+> **實作尚未同步（2026-08-20）**：A0 目前只存在於本 spec。已出貨的 `skills/create-pr/SKILL.md` 與 `references/stack-mode.md` 仍寫「Phase A — Sync Classification (**runs first**)」、沒有 protected-head 拒絕、且對 `ABSENT` 層照樣輸出 push 補救；`test/skills/create-pr.test.js` 也還沒有對應斷言。上面「A0 已保證各層非 protected」的推論**描述的是本 spec 的設計，不是今天跑起來的行為**。**Phase D0 前置偵測同屬未同步**（出貨仍是單一 Phase D 排在最後）。兩處合併記於 R7，同步屬 `[OUT_OF_SCOPE_DEFERRED]`（見下方紀錄），不在本次變更範圍內。
 
-**Phase A — Sync 分類與 push 委派**（最先執行：後續一切驗證與內容生成都依賴 remote refs，remote ref 不存在時 ancestry/commit-range 指令根本無法跑）。先 `git fetch --prune origin`（`--prune` 清除已刪除的 stale remote-tracking refs），逐層以 `local_oid` / `remote_oid` / merge-base 分類 `sync`：
+**Phase A — Sync 分類與 push 委派**（通過 A0 後最先執行：後續一切驗證與內容生成都依賴 remote refs，remote ref 不存在時 ancestry/commit-range 指令根本無法跑）。先 `git fetch --prune origin`（`--prune` 清除已刪除的 stale remote-tracking refs），逐層以 `local_oid` / `remote_oid` / merge-base 分類 `sync`：
 
 | sync | 意義 | dry-run | `--execute` |
 |------|------|---------|-------------|
@@ -113,7 +133,24 @@ layer := {
 | `NO_SUCH_BRANCH` | 本地與 remote 皆不存在——chain 輸入錯誤，**push 補救不了打錯的名字** | 中止（非 push 清單） | 拒絕啟動 |
 | `REMOTE_AHEAD` / `DIVERGED` | remote 較新或分岔 | 中止該層：提示先 fetch/rebase 由使用者處理 | 拒絕啟動 |
 
-待 push 清單輸出兩條路徑供選：(1) 逐 branch `/push-ci`（現行契約，需 checkout 各 branch）；(2) 可複製的 `git push origin -- 'b1' 'b2' 'b3'` 指令由使用者自行執行（`--` 為 option terminator，與 Shell 安全契約一致）。**本 skill 不執行 push**。Push 完成後重新執行 `--stack`（可重入），全層 remote refs 齊備才進入 Phase B。`ls-remote` 只證明 remote branch 存在、不證明同步——這是本 Phase 以 OID 比對取代它的原因；PR 內容（title/body/commit 計數）一律生成自 `refs/remotes/origin/<base>..refs/remotes/origin/<head>`，杜絕「PR body 描述了 GitHub 上不存在的 commits」。
+待 push 清單輸出兩條路徑供選：(1) 逐 branch `/push-ci`（現行契約，需 checkout 各 branch）；(2) 可複製的多 branch push 指令由使用者自行執行——**每個運算元必須輸出為完整且加引號的 refspec**：
+
+```
+git push origin -- 'refs/heads/b1:refs/heads/b1' 'refs/heads/b2:refs/heads/b2' 'refs/heads/b3:refs/heads/b3'
+```
+
+> **⚠️ 安全更正（2026-08-20 round 16）**：前一版輸出的是 `git push origin -- 'b1' 'b2' 'b3'`，
+> 並宣稱 `--` 已足夠。**那是錯的，且會擊穿 A0.2 的 protected-head 保證**：`--` 終止的是**選項**
+> 解析，不是 **refspec** 解析。實測（本機 git 2.55.0）——`git check-ref-format --branch '+main'`
+> **退出 0**，所以名為 `+main` 的 branch 通過 A0.2 的**詞法**比對（它逐字不等於 `main`）；接著
+> `git push origin -- '+main'` 把 `+main` 當成 refspec，`+` 前綴即 **force**，於是在**沒有任何
+> force 旗標**的情況下強制更新 `main`。這正是 `/push-ci`／`/epic-merge` ref-name hardening 記錄過的
+> 同一類缺陷（見 `../../ref-name-hardening/4-implementation.md`）。
+>
+> 完整 refspec 形式關掉這條路：`refs/heads/+main:refs/heads/+main` 的來源與目的都被完全限定，
+> `+` 落在 ref 名稱**內部**而非前綴位置，無法再被讀成 force 修飾符。
+
+**本 skill 不執行 push**。Push 完成後重新執行 `--stack`（可重入），全層 remote refs 齊備才進入 Phase B。`ls-remote` 只證明 remote branch 存在、不證明同步——這是本 Phase 以 OID 比對取代它的原因；PR 內容（title/body/commit 計數）一律生成自 `refs/remotes/origin/<base>..refs/remotes/origin/<head>`，杜絕「PR body 描述了 GitHub 上不存在的 commits」。
 
 **Phase B — Chain 驗證**（僅在所需 remote refs 齊備後執行；ancestry 檢查為真實拓撲驗證，非列表順序自我比對）：
 
@@ -122,9 +159,10 @@ layer := {
 | 線性 ancestry：**每層（含最底層）皆須源自其宣告的 base**，且每組相鄰層 `refs/remotes/origin/<lower-head>` 是 `refs/remotes/origin/<upper-head>` 的祖先 | `git merge-base --is-ancestor 'refs/remotes/origin/<base>' 'refs/remotes/origin/<head>'`（逐層）＋相鄰對 | 中止：說明 stack 僅支援線性依賴（FR-5 / UC-6）。僅驗相鄰對會漏掉「底層已與 base 分岔」 |
 | 每層有 unique commits | `git log 'refs/remotes/origin/<base>..refs/remotes/origin/<head>'` 非空 | 中止：空層無意義 |
 | 既有 PR 政策（單一政策）：每層的 PR 必須「OPEN 且 `baseRefName` = chain 宣告的 base」或 ABSENT | `gh pr list --head <head> --state all --limit 100 --json number,baseRefName,state`；多筆符合、CLOSED、MERGED、base 不符 → 皆中止並列明衝突 | 中止：要求人工處理衝突 PR |
-| 層數 | 空 chain 且無引數 → 進自動偵測；空 chain 且顯式引數 → 錯誤；單層 → 中止並建議一般 `/create-pr`；2–5 正常；>5 警告不中止 | 依左列 |
+| 層數 | 驗的是 **A0.1 解析出的有效 chain**（自動偵測已在 A0.1 完成，不在此處觸發）：空 chain → 錯誤（顯式引數給了空集合，或自動偵測回溯不出任何一層）；單層 → 中止並建議一般 `/create-pr`；2–5 正常；>5 警告不中止 | 依左列 |
+| **各層 head 皆非 protected branch**（Phase A0 已擋下，此處**重申**而非首次把關） | 同 A0：比對 `rules/git-workflow.md` § Prohibited 的完整集合 | 中止並列明違規層。留在此處是為了讓 chain 驗證表自我完備——若有人日後重排 phase 而漏掉 A0，這一列仍會擋住；但**它不是唯一防線，也不該是**（理由見 A0） |
 
-**自動偵測（無引數）僅允許權威來源**：由當前 branch 的既有 PR base 關係、或 native stack metadata（可用時）回溯至解析後的 target branch。Git branch 本身不記錄「意圖中的 base」，因此無既有 PR 亦無 native metadata 時 → 要求顯式 chain，模糊即 STOP，不猜測。Dirty working tree **警告不中止**（v1 mutation 全部是遠端 `gh pr` 操作，內容一律取自 fetch 後的 remote refs——本地未提交內容不影響輸出）。
+**自動偵測（無引數）僅允許權威來源**——這是 **A0.1** 的來源限制，寫在此處只因它與上表的既有 PR 政策共用同一組 `gh pr` 事實，執行時機仍是 A0.1：由當前 branch 的**既有 PR base 關係**回溯至解析後的 target branch。**這是唯一一個來源**——native stack metadata 沒有可執行的查詢契約（§7 Q5），在 Q5 有答案前不得作為探索分支。A0.1 也不消費 §3.4 Phase D0 的 `native_available`：那個布林只決定 **D1 是否輸出 native 對照**，降級說明由 D0 自己輸出，不是 D1 的分支（round 6 的循環正是來自 A0.1 曾消費過它）。Git branch 本身不記錄「意圖中的 base」，因此既有 PR 關係查無資料、回傳多筆、僅有 CLOSED/MERGED、或 base 無法解析／`check-ref-format --branch` 驗證失敗時 → 一律 STOP，要求顯式 chain，不猜測。Dirty working tree **警告不中止**（v1 mutation 全部是遠端 `gh pr` 操作，內容一律取自 fetch 後的 remote refs——本地未提交內容不影響輸出）。
 
 **Shell 安全（輸出與執行雙軌，涵蓋所有動態欄位）**：git 允許 branch 名含 shell metacharacters（`;`、`$( )`、`&`、引號均可通過 `git check-ref-format --branch`；leading `-` 會被其拒絕，但對 CLI 引數仍以 `--` 分隔符防禦 option 誤讀——**限該 CLI 接受 `--` 之處**：`git rev-parse --verify --quiet` 不接受，加上去會讓存在的 ref 回 1，而 1 正是「不存在」的分類值，於是每一層都被誤判為 `NO_SUCH_BRANCH`。shipped 契約見 `skills/create-pr/SKILL.md` § Shell Safety）。契約：
 
@@ -133,7 +171,7 @@ layer := {
 3. `mktemp -d` **必須實際執行建立目錄**，不得以變數假借：每次 Bash 呼叫都是新 shell，`DIR=$(mktemp -d)` 後於他次呼叫使用 `$DIR` 會展開為空。
 4. **Phase A 的 fence 每個失敗皆顯式 `|| exit`，不用 `set -e`**：`git fetch --prune origin` 失敗後若仍執行探測，讀到的是**過期**的 remote-tracking refs 而 fence 回報 0——實測確認（未防護：印出 OID、exit 0；shipped 形式：exit 128 且探測未執行）。**不用 `set -e` 是刻意的**：呼叫端一旦測試某指令的狀態，errexit 對該指令即失效，而該脈絡會被 subshell 繼承——這是 POSIX 行為，非特定 shell 的怪癖。實測 `bash`／`sh`／`zsh`／`dash` 皆同：`f || true` 包住 `( set -e; false; echo REACHED )` 一律印出 `REACHED` 且回報 0；以 shipped fence 對不可達 remote 實測，`set -e` 形式在直接呼叫時確實中止（128、無 `end:`），但在呼叫端測試狀態時於三種 shell 全部印出過期 OID 與 `end:` 並回報 0。fence 無從控制呼叫端是否測試它的狀態，因此以 `set -e` 承載政策只是碰運氣。各探測再以 `|| [ "$?" = 1 ] || exit 2` 守衛（缺 ref 是預期答案，其餘一律離開），並以 `local:` / `remote:` / `end:` 標記界定輸出區段——`--quiet` 對缺 ref 不輸出，無標記時 `ABSENT` 與 remote-only 會產生完全相同的觀測，而兩者處置相反。
 
-5. **dry-run 不呼叫 mutating `gh`、不留存任何檔案**：dry-run 是預設模式，遺留物會發生在每一次預覽。但它**必須**建立目錄、寫檔並執行 Step 4b——sanitization 作用於檔案，而 dry-run 輸出的 body 正是使用者會複製去執行的文字，跳過它等於留下唯一一條讓 AI trailer 進入 PR 的路徑。唯讀查詢仍會執行（Phase B `gh pr list` 決定 create/edit 路由、Phase D `gh extension list` 決定輸出形式），被禁的只有 `gh pr create` / `gh pr edit`。因此保證的是**不留存**而非**不動作**：dry-run 於交付報告前以 teardown fence 自行清除該目錄，而不是把清理留在使用者未必會執行的指令內；`--execute` 則額外執行操作並由 guarded block 負責清理。
+5. **dry-run 不呼叫 mutating `gh`、不留存任何檔案**：dry-run 是預設模式，遺留物會發生在每一次預覽。但它**必須**建立目錄、寫檔並執行 Step 4b——sanitization 作用於檔案，而 dry-run 輸出的 body 正是使用者會複製去執行的文字，跳過它等於留下唯一一條讓 AI trailer 進入 PR 的路徑。唯讀查詢仍會執行（Phase B `gh pr list` 決定 create/edit 路由、Phase D0 `gh extension list` 決定輸出形式），被禁的只有 `gh pr create` / `gh pr edit`。因此保證的是**不留存**而非**不動作**：dry-run 於交付報告前以 teardown fence 自行清除該目錄，而不是把清理留在使用者未必會執行的指令內；`--execute` 則額外執行操作並由 guarded block 負責清理。
 
 6. **`gh pr list` 明確指定 `--limit 100`**：預設 30，而既有 PR 政策會拒絕任何衝突項——落在第二頁的衝突 PR 會被讀成「不存在」，整條 chain 便建立在錯誤前提上。
 
@@ -173,7 +211,7 @@ layer := {
 
 23. **`$-` 報告的是選項，不是它怎麼被設定的**。早先兩個政策執行點都以「`$-` 含 `p`」作為安全啟動的憑據，並在註解中宣稱匯入的函式無法偽造它。實測推翻：匯出 `SHELLOPTS=privileged` 會讓一個**普通** bash 啟動時 `$-` 已含 `p`，而環境函式**照樣匯入**——敵意 `grep` 函式因此存活，hook 對真實 trailer 回 exit 0；`BASH_ENV` 內含 `set -o privileged` 亦同。可信的是反向觀察：**bash 自己從不匯出 `SHELLOPTS`／`BASHOPTS`／`BASH_ENV`**，這三者出現在匯出環境中即證明是繼承來的——正是偽造向量本身。現行作法：三者任一出現、或 `$-` 缺 `p`，即以 `exec /usr/bin/env -u SHELLOPTS -u BASHOPTS -u BASH_ENV … /bin/bash -p` 重新啟動（`/usr/bin/env` 寫絕對路徑，理由見 item 27——**不是**因為它不可被遮蔽），並以 `SD0X_PRIV_REEXEC` 界定為至多一次以免無限迴圈；該標記可被呼叫端預設，因此預設它得到的是**拒絕**而非略過檢查。`exec` 之後仍以 `${x:?}` fail-closed，因為 `exec` 本身可被遮蔽。合法匯出 `SHELLOPTS` 的開發者只是多一次 exec，不會被拒。（**第 46 輪補記**：本條當時導出的「環境掃描 + 條件式 re-exec」設計已被整個移除——因為那個掃描本身是命令替換，而環境變數的值可以含換行，沒有任何文字錨點能區分真變數與別人資料裡的一行。現行是無條件 re-exec；本條保留的是那個仍然成立的反向觀察（bash 自己從不匯出 `SHELLOPTS`／`BASHOPTS`／`BASH_ENV`），第二關的 `${BASH_ENV+x}` 檢查即出自它。見 item 31。）
 
-24. **`cd` 是 builtin，PATH 釘死對它無效**。`run-skill.sh` 的解析階段以 `cd -P "$(dirname …)"` 推導 root，而 `CDPATH` 只要有一項底下存在名為 `scripts` 的目錄，相對 operand 就會被導向他處，並把 `cd` 印出的路徑污染進命令替換。實測（相對呼叫形式，即文件所寫的形式）：exit 1、`No such file or directory`——是阻斷，而在合適的樹下則是重導。修法為在解析前 `CDPATH=''`（sanitizer 早已在自己的 `cd` 上採 `CDPATH='' cd -P`）。CDPATH 只作用於**相對** operand，因此測試必須以相對路徑呼叫，否則負控制不會紅。（**第 99 輪補記**：這條修法本身現由兩個測試釘住，射程各不相同，缺一不可。其一是 **source-order pin**：以字面文字列出 wrapper 內每一條 `cd -P`，斷言它們全部位於 `CDPATH=''` 之後——它建立的**只有文字順序**，不宣稱任何一行會執行。其二是**可攜的執行 oracle**：觀測被派送目標所**繼承到**的 CDPATH 值，因為 `-p` 雖然讓 bash 4.0+ 對 `cd` 忽略 CDPATH，卻仍保留該變數的值與 export 屬性——所以「那行有沒有真的執行」在 bash 3.2 與 5.3 上都觀測得到，不需要 macOS CI job。兩者分工的理由是第 99 輪查出來的：`CDPATH=''` 的逐字位元組可以存活在 `CDPATH_DOC="…"` 這類字串裡而永不執行，因此 code 與 data 的區分只能**行為地**判定，任何文字錨點都做不到。見 [review-log-stacked-pr-mode-r2.md](./review-log-stacked-pr-mode-r2.md) Round 99。）
+24. **`cd` 是 builtin，PATH 釘死對它無效**。`run-skill.sh` 的解析階段以 `cd -P "$(dirname …)"` 推導 root，而 `CDPATH` 只要有一項底下存在名為 `scripts` 的目錄，相對 operand 就會被導向他處，並把 `cd` 印出的路徑污染進命令替換。實測（相對呼叫形式，即文件所寫的形式）：exit 1、`No such file or directory`——是阻斷，而在合適的樹下則是重導。修法為在解析前 `CDPATH=''`（sanitizer 早已在自己的 `cd` 上採 `CDPATH='' cd -P`）。CDPATH 只作用於**相對** operand，因此測試必須以相對路徑呼叫，否則負控制不會紅。（**第 99 輪補記**：這條修法本身現由兩個測試釘住，射程各不相同，缺一不可。其一是 **source-order pin**：以字面文字列出 wrapper 內每一條 `cd -P`，斷言它們全部位於 `CDPATH=''` 之後——它建立的**只有文字順序**，不宣稱任何一行會執行。其二是**可攜的執行 oracle**：觀測被派送目標所**繼承到**的 CDPATH 值，因為 `-p` 雖然讓 bash 4.0+ 對 `cd` 忽略 CDPATH，卻仍保留該變數的值與 export 屬性——所以「那行有沒有真的執行」在 bash 3.2 與 5.3 上都觀測得到，不需要 macOS CI job。兩者分工的理由是第 99 輪查出來的：`CDPATH=''` 的逐字位元組可以存活在 `CDPATH_DOC="…"` 這類字串裡而永不執行，因此 code 與 data 的區分只能**行為地**判定，任何文字錨點都做不到。見 [review-log-stacked-pr-mode-r2.md](../review-log-stacked-pr-mode-r2.md) Round 99。）
 
 25. **政策樣式集曾比它宣稱執行的規則窄**。實測有五類明顯的 AI 署名通過：`Generated-by: Claude`（連字號——樣式只寫了空格）、`Generated by Anthropic`（`Anthropic` 只存在於 Co-Authored-By 那條）、`🤖 Copilot`（robot 條缺 `Copilot`）、`Co-Authored-By: Codex` 與 `Co-Authored-By: Gemini`。本次變更把這組樣式從 commit hook 提升為**PR title/body 的執行政策**，缺口因而同時成為可發布的內容。三條樣式已補齊（`Generated[ -]`、三條都含 `Anthropic|Copilot|Codex|Gemini`），並同步四份既有複本——`skills/smart-commit/references/execute-mode.md`（`/smart-commit --execute` 的 runtime validator，不同步就會比 hook 更弱）、`skills/smart-commit/SKILL.md`、`skills/create-pr/SKILL.md`、`docs/features/smart-commit-hardening/2-tech-spec.md`。漂移由既有測試偵測到，不是靠人工比對。誤判對照組（`maintainer`／`detailed`／`domain`／「Codex 作為被引用的審查者」／人類 co-author／`generated nightly by cron`）逐條斷言仍為 0。
 
@@ -227,75 +265,13 @@ layer := {
 
 失敗即 fail-fast：停止後續層，輸出各層狀態（succeeded / failed / pending）；重跑時已建立的層被 Phase B 偵測為既有 PR 進入 update mode，不重複建立（NFR-2、Signal 7）。
 
-**Phase D — 環境偵測與 native 對照**：以 `gh extension list` 比對 **`github/gh-stack` 完整身分**（不得用寬鬆的 `grep stack` 子字串，否則任何名稱含 stack 的擴充都會誤判）。rollout 偵測待 preview API 確認（§7、r1 Q2）；**在 rollout 未確認前，「已安裝」本身不足以啟用 native 路徑**——保守降級為預設，native 對照指令僅在確認可用時輸出。不可用時輸出說明缺件與安裝指令。兩條路徑產物一致皆為 chained-base PR；native 路徑額外獲得 GitHub stack 物件（單層 diff 檢視、merge 連動）——差異在輸出中明示。
+**Phase D — 環境偵測與 native 對照，拆為 D0 / D1 兩半**（理由見上方 Phase Contract 表）：
+
+- **D0（前置偵測，最先執行，兩模式共通）** 產出 `native_available`，不消費任何後續事實，因此排在最前不製造循環。這一步的存在直接滿足 `1-requirements.md` FR-4 的「**前置**偵測」與 NFR-5 的「前置偵測步驟存在」——不需要重新詮釋那兩條需求的字面意思。（round 6 的循環來自 A0.1 拿偵測結果決定 native metadata 是不是權威來源，那條依賴已移除；偵測本身早跑從來不是循環的來源。）
+- **D1（輸出，僅 dry-run 且僅 `native_available` 為真）** 追加 `gh stack init/add/submit` 序列。限定 dry-run 與出貨實作一致（`stack-mode.md:329`），理由見上方 Phase Contract 表下的更正段：`--execute` 已建好整條 chain，`gh stack submit` 會重新 push 並開 PR，兩條路徑會互相覆寫。
+
+**缺件訊息歸 D0，不歸 D1——這條分界曾寫錯。** 一度把「可用 → 印序列」與「不可用 → 印缺件說明」兩條**同時**放進 dry-run only 的 D1，於是 `--execute` 在缺件狀態下什麼都不印。但 dry-run 限制只成立於**可用**那一半：`gh stack` 序列在 `--execute` 下會與已建好的 chain 打架，缺件說明不會。出貨實作本來就把兩者分開（`stack-mode.md:329` 是 dry-run 的 native 序列，`:331` 是任何 rollout 狀態下的缺件訊息與降級），而 UC-4 / FR-4 對該訊息沒有任何 dry-run 限定。**目前實測即缺件態**（`gh extension list` 回空，與 §1 的 2026-07-31 環境事實一致），所以那個錯誤版本等於讓每一次 `--execute` 都靜默降級——UC-4 與 Signal 2 要的正是明確訊息。（曾把此處寫成「rollout 未確認是目前的常態」，那是把 `stack-mode.md:330` Rollout 欄裡的 "the current state" 誤讀為整列的複合狀態；該註解修飾的是該**欄的值**——rollout signal 未確認——並未斷言 extension 已安裝。）
+
+偵測方式：以 `gh extension list` 比對 **`github/gh-stack` 完整身分**（不得用寬鬆的 `grep stack` 子字串，否則任何名稱含 stack 的擴充都會誤判）。rollout 偵測待 preview API 確認（§7、r1 Q2）；**在 rollout 未確認前，「已安裝」本身不足以啟用 native 路徑**——保守降級為預設，native 對照指令僅在確認可用時輸出。**但 `native_available` 為偽有兩種成因，訊息不可共用**：缺件才輸出缺件說明與安裝指令；已安裝而 rollout 未確認則說明該狀態、不印安裝指令（`SKILL.md:458` 的「say so」；同處的「exactly as if the extension were absent」指的是**走非 native 路徑**，不是套用同一段訊息）。兩條路徑產物一致皆為 chained-base PR；native 路徑額外獲得 GitHub stack 物件（單層 diff 檢視、merge 連動）——差異在輸出中明示。
 
 **Update 流程**：使用者自行執行 `gh stack rebase --upstack` + `gh stack push` 後（SHA 改寫），`/create-pr --stack --update` 逐層更新 title/body；CI 監控可另接 `/watch-ci`。
-
-## 4. Risks and Dependencies
-
-| # | 風險/依賴 | 影響 | 緩解 |
-|---|-----------|------|------|
-| R1 | `/push-ci` 單次僅推當前 branch，N 層 chain 需 N 次 checkout+invoke，體驗差 | 中 | §7 Q1：評估 `--branches` 擴充；v1 先以「輸出手動 push 指令」為主路徑 |
-| R2 | `skills/push-ci/SKILL.md` § Authorization 表標 `--force-with-lease` Forbidden，但 Arguments/Phase 2/Examples 均支援——既有文件內部矛盾 | 低（不阻擋本功能；v1 無 force push） | 已記錄；應在 push-ci 的獨立修正中解決，非本 feature 範圍 |
-| R3 | Public preview API/CLI 行為變動；rollout 偵測方式未定 | 中 | Phase D 偵測失敗一律降級為非 native 路徑；native 對照輸出標註 preview |
-| R4 | 手動 `gh pr create` 產生的 chained-base PR 是否被 GitHub 識別為 native stack 物件——依現有文件推定**否** | 中（使用者期待落差） | 輸出中明示兩條路徑的差異（§3.4 Phase D）；不宣稱 native 等價 |
-| R5 | cascading rebase 後多層 force-with-lease push 無授權路徑（`/push-ci` 表禁止、`/epic-merge` 限合併流程） | v1 無影響（rebase 由使用者執行） | v2 若要自動傳遞，屆時才是 Anchor-level 議題 |
-| R6 | SKILL.md 行數：實作前 294，實作後 481（`wc -l skills/create-pr/SKILL.md`），。**該上限已於第 54 輪撤除**——`@rules/docs-numbering.md` § Size Limit 明文豁免功能性文件，`test/skills/create-pr.test.js` 的行數斷言（連同其餘 10 個 skill 測試檔的同類斷言）已移除。以下為當時在該上限下的歷程：review 迴圈中一度衝到 507 行被擋下；第 35 輪把 Step 5 重複抄寫的 canonical block 換成參數表後回到 477，第 37 輪補入 scan/publish residual 契約與絕對直譯器說明後為 481 | 中 | stack 模式細節已放 `skills/create-pr/references/stack-mode.md`（351 行），SKILL.md 僅留摘要與入口。當時超標採 `@rules/docs-writing.md` 的第一原則處理——把 Step 7b 的驗證循環與 § Stacked PR Mode 的六段散文改寫為表格，資訊不減而行數下降；可執行 fence 全數留在 SKILL.md，因為全域 fence 掃描與 canonical block 測試以它為輸入 |
-
-## 5. Work Breakdown
-
-| # | 任務 | 產出 | 規模 | 依賴 |
-|---|------|------|------|------|
-| W1 | `/create-pr` SKILL.md 新增 `--stack` 模式（Phase A-D、CLI surface、與既有旗標互動、降級訊息） | `skills/create-pr/SKILL.md` + `references/stack-mode.md` | M | — |
-| W2 | 新測試：chain 驗證、可重入、降級、拒絕、sanitization 逐層套用 | `test/skills/create-pr.test.js`（新） | M | W1 |
-| W2a | sanitization 由散文改為可執行實作（Step 4b/7b 共用），樣式仍以 `commit-msg-guard.sh` 為唯一來源 | `skills/create-pr/scripts/sanitize-pr-content.sh`（新）、`test/scripts/sanitize-pr-content.test.js`（新） | S | W2 |
-| W3 | `/push-ci --branches` 擴充評估與（若採納）實作 | `skills/push-ci/SKILL.md` + 測試 | S | §7 Q1 裁決 |
-| W4 | Doc sync：`1-requirements.md`（Open Question 裁決記錄與需求修訂）、`docs/skill-catalog.yml` create-pr 條目、`README.md` skill catalog 條目 | docs | S | W1 |
-
-## 6. Testing Strategy
-
-依 `@rules/testing.md`（skill 測試慣例同 `test/skills/create-pr-sanitization.test.js`：對 SKILL.md 內容做契約斷言）：
-
-| 層 | 涵蓋 | 案例 |
-|----|------|------|
-| Unit（SKILL.md 契約） | `--stack` 章節存在性與關鍵契約字串：不執行 push 的聲明、fail-fast + 各層狀態、可重入 update 偵測、`merge-base --is-ancestor` ancestry 驗證、`--state all` PR 查詢、OID sync 分類、single-quote escaping 要求、依賴標記三模式、降級訊息、`--title` 禁用 | happy path + 邊界（空 chain、單層中止、>5 層警告、全新三層 dry-run 用 branch 標記） |
-| Unit（契約細節） | PR 政策拒絕案例：CLOSED / MERGED / base 不符 / 多筆符合；sync 案例：`ABSENT` 中止於 PR 規劃前、`LOCAL_AHEAD` dry-run 警告 execute 拒絕、`REMOTE_AHEAD`/`DIVERGED` 中止；自動偵測無權威來源 → STOP；hostile 案例：ref 含 `;`、`$( )`、`&`、引號之 escaping 斷言、CLI 引數 `--` 分隔 | 新增於 `test/skills/create-pr.test.js` |
-| Unit（regression） | 既有 sanitization 測試全數通過無刪減 | `create-pr-sanitization.test.js` |
-| Unit（sanitization 實作） | sanitization 由 `skills/create-pr/scripts/sanitize-pr-content.sh` **執行**而非以散文描述：`title`（偵測，exit 3，永不改寫）／`body`（剝除結果送 stdout，供預覽）／`body-inplace`（原子寫回檔案本身——`… body file > file` 會在讀取前清空輸入檔，故工作流用的是這個模式）／`scan`（已發布內容偵測，exit 4）。三條樣式於執行期自 `scripts/commit-msg-guard.sh` 讀出，腳本本身不得複製樣式（有測試釘住）。**fail-closed 七路徑各有測試**：樣式來源缺失、讀到 0 條樣式、讀到的條數少於宣告條數（只執行部分政策，從呼叫端看與執行全部政策完全相同）、陣列中出現本 parser 不認得但 bash 合法的條目（`"雙引號"`／`$'ANSI-C'`——只數「認得的行」會讓 parsed 與 declared 一致，而該樣式已悄悄停止生效）、`grep` 回傳 ≥2（無效 ERE／讀取失敗——先前被當成「無匹配」，是 fail-open）、以及 `awk`／`cat`／`mv` 等輔助工具失敗（一律正規化為 2；讓 `set -e` 帶出工具自身的 1 會撞上腳本已賦予意義的狀態碼）、以及**呼叫端 locale 下的位元組失效**（`LC_ALL=C grep`——UTF-8 locale 中 BSD grep 對含無效位元組的行回傳 1，而 1 正是「乾淨」分支；一個 latin-1 位元組即可讓真實 trailer 四種模式全數 exit 0）。另有測試釘住**沒有專為切換樣式來源而設的環境變數**——`AI_PATTERN_SOURCE` 這類旁路已移除。來源解析**不讀任何環境變數**——`PLUGIN_ROOT` 已刻意不再參考（它能讓呼叫者把執行點指向宣告三條永不匹配樣式的 guard），改由本檔案自身位置解析並先走完 symlink chain。殘留邊界是「路徑不等於本檔案真實位置」的呼叫：copy 或 hardlink 進被植入的 tree——shell 拿不到自己的 inode 真相，屬構造上的殘留；正式入口 `scripts/run-skill.sh` 以自身 `BASH_SOURCE` 組出絕對 `TARGET`，該路徑因而封閉，而非本腳本另開的後門 | `test/scripts/sanitize-pr-content.test.js` |
-| Unit（診斷不外洩機密） | 診斷只輸出 `line <n> matched pattern <k>`，**不回顯匹配到的整行**：PR body 是可被外部影響的文字，`Generated by GPT-4; token=…` 這類行會把憑證寫進 command／session log（`rules/security.md`、Anchor Register #2）。測試以帶假 token 的 body 斷言 stdout/stderr 皆不含該字串，且仍報出位置 | 同上 |
-| Unit（sanitization 逐層行為） | 三層 chain 以**未經處理的敵意 body** 起始，逐層跑 shipped `body-inplace` 後執行 shipped 逐層 block，由 stub `gh` 錄下實際收到的 bytes；敵意標題則斷言 `gh` **完全未被呼叫**；Step 7b 完整循環以 shipped capture fence（`gh pr view … > '<PR_BODY_DIR>/published.txt'`，stub `gh pr view` 供料）產生待掃描檔案後，偵測 → remediate → 重新驗證亦實際執行。**測試不得自行補上 shipped 工作流缺少的步驟**：先前版本由測試 `writeFileSync()` 寫回 sanitized stdout、並自行建立 `published.txt`，於是即使 shipped 路徑根本沒有持久化與擷取步驟，測試依然全綠——兩份 review 各自獨立指出同一根因 | `test/skills/create-pr.test.js` |
-| Unit（shell 契約，實作後新增） | heredoc **禁用**斷言（取代初版的 delimiter regression）；canonical guarded block 唯一性與骨架比對；以及**實際執行** shipped block 的 runtime 驗證。各案的 shell 涵蓋範圍不一致，逐案列出以免概括失真：基本 `errexit` block 與呼叫端 `readonly STATUS` 為 `bash`；敵意 `IFS` 為 `bash`/`sh`/`zsh`；cleanup 狀態優先與 teardown 狀態傳遞為 `bash`/`sh`/`zsh`/`dash`；Phase A 兩道 fence 為 `sh`/`bash`/`zsh`，且置於會停用 `errexit` 的 status-tested 呼叫脈絡（POSIX 行為，`bash`／`sh`／`zsh`／`dash` 皆同，非 zsh 特有）。**這些案例需要可寫入的暫存目錄**，在唯讀沙箱中會以 `EPERM` 失敗於 `mkdtemp`，而非顯示為 skip | `test/skills/create-pr.test.js` |
-| Unit（授權邊界） | **document-wide sweep**：兩份文件每個 bash fence 的每個指令，皆須命中 exact-form allowlist；可變更操作僅 `gh pr create` / `gh pr edit`，且須通過共用的旗標文法（raw 拼寫比對、canonical literal 值、`--base` 僅限 guarded 形式，且**既有 PR 的 `gh pr edit` 不得帶 `--base`**——Phase B 只放行「已是宣告 base」的 PR，重送唯一能觸及的狀態是有人在驗證與執行之間手動改了 base，重送會靜默還原該變更）。`git push` / `git rebase` / `gh stack *` 一旦成為可執行即測試失敗——Anchor Register #4 的測試化。另有 fence 分類：capture fence（`gh pr view` + 導向固定檔名，唯讀且只寫進驗證目錄）自成一類，導向目標以固定檔名釘住，不得被改指向 body 檔——覆寫輸入正是 `body-inplace` 要避免的截斷風險 | 同上 |
-| Manual（`/feature-verify`） | 實際三層 chain dry-run；`gh-stack` 未安裝降級；`--execute` 於測試 repo 逐層建立 + 模擬第二層失敗後重入 | 對應 Signals 1、2、7 |
-
-安全/資料完整性相關 AC（不執行 push/rebase、sanitization 逐層）不設 manual exception（testing.md ❌ Never 列）。
-
-**`@rules/testing.md` 慣例的已知偏離**：部分契約測試以迴圈跑 shell／狀態矩陣（例如同一 teardown fence 跨 `bash`/`sh`/`zsh`/`dash` × 三種狀態組合），單一 `test()` 內的斷言數超過慣例的 ≤7。維持現狀的理由：這些迴圈驗證的是**同一條契約在多個環境下的一致性**，拆成 N 個案例會把「四個 shell 表現一致」這個真正的斷言拆散成四個各自為政的案例，反而更難看出退化；命名亦採敘述句而非 `<unit> <condition> → <expected>` 樣板。此為 Default-tier 慣例的自覺偏離，記錄於此而非默默違反。
-
-## 7. Open Questions
-
-- [ ] **Q1**：`/push-ci --branches b1 b2 b3`（多 branch、非 force、單次 AskUserQuestion 列出全部 + `pre-push-gate.sh` 逐 push 把關）是否屬於 Anchor #4 既有例外「`/push-ci` (push)」的範圍內擴充？本 spec 的讀法是**是**（工作流與雙層 gate 皆未變，僅引數面擴大），但因觸及 Anchor 所指名的工作流，採納前需人工確認。v1 不阻塞於此：主路徑為輸出手動 push 指令。
-- [ ] **Q2**：repo 是否已被 preview rollout 涵蓋、rollout 偵測的可靠訊號（API 欄位或 CLI 行為）——待實測。
-- [ ] **Q3**：R4 的推定（手動 chained-base PR ≠ native stack 物件）待 rollout 後實測確認。
-- [ ] **Q4**：`stack metadata`（`github.event.pull_request.stack.*`）欄位實測後，本 repo CI 是否需要分層策略——延續 `1-requirements.md` 的 open question，不在 v1。
-
- 1. **先問清楚「答案是相對於什麼」，多半整段補償邏輯都可以刪掉**。第 50–51 輪為 `--git-path` 的相對答案疊了三層補償：`--path-format=absolute`（新旗標）、`| tail -n 1`（吃掉舊版 git 回顯的旗標）、再加形狀判讀。實測後發現 `-C "$REPO_ROOT"` 早已把 cwd 釘在 root，**相對答案本來就是 root-relative**——一行 `case` 就夠，七種情境（預設／子目錄／相對 `core.hooksPath`／絕對 `core.hooksPath`／`~`／`%(prefix)`／linked worktree）全對，之後再加測的 submodule 亦然。三層補償一起消失，同時解掉「路徑含換行時 `tail` 會截斷」與「`tail` 是未授權的外部相依」兩個發現。界線要講準：hook 路徑「內部」的換行可存活，`REPO_ROOT` 自身末段的換行不行也無法行——`rev-parse --show-toplevel` 沒有 `-z` 形式，那種路徑在它的輸出裡根本無法表達。補償邏輯堆疊本身就是訊號：它通常代表某個前提沒被量測過。
- 2. **手寫清單無法察覺它從未被告知的相依**。F6 以一份寫死的工具清單斷言 frontmatter「已預先授權所需工具」，於是在出貨 resolver 悄悄引入 `tail` 之後，它仍然回報契約完整——互動模式下會多跳一次授權詢問，headless 模式直接失敗。修法不是把 `tail` 補進清單（那只修這一次），而是**從 fence 反推**：掃描 skill 自己執行的每個 bash 區塊，取命令位置的字詞（跳過 `$GIT_ENV` 這類變數前綴與 `VAR=value` 賦值——未授權指令正是藏在前綴後面），扣掉 shell 內建，逐一要求 `allowed-tools` 涵蓋。印給使用者的 ````markdown 區塊依既有政策豁免，因為它們在使用者自己的 shell 執行。與 item 46 同一手法：消除缺陷類別，而不是消除這一個實例。第一版只認行首與少數運算子，`if tail …` 藏在保留字後仍全綠；現在保留字被**消耗**（每個都開啟新的命令位置），引號區段先被剝除，且豁免只認裸名——`/usr/bin/printf` 是相依，`printf` 不是。抽取器本身有六個自檢探針。
- 3. **對照組不夠時，補的不是更多案例，而是「唯一正確答案不在預設位置」的案例**。第 51 輪已刪掉預設 hook，但 Codex 指出仍有一個 mutant 存活：手寫處理相對／絕對／`~` 三種 `core.hooksPath`，其餘落回寫死的 `$REPO_ROOT/.git/hooks/commit-msg`。能殺掉它的只有「`$REPO_ROOT/.git` 根本不是答案」的兩個場景——`%(prefix)`（展開到 git 自己的安裝前綴；測試把手寫版會組出的字面目錄 `$REPO_ROOT/%(prefix)/opt/hooks` 真的建出來並裝上 hook，於是正解是 `missing`、只有 mutant 會答 `installed`），以及 **linked worktree**（`.git` 是**檔案**，hook 在 common dir）。實證：把 mutant 逐步補強到能過 `~` 與 `%(prefix)`，仍死在 worktree 那一關；另補一個「只在 submodule 錯」的 mutant，死在 submodule fixture。兩個界線要寫明：`%(prefix)` 的尾段改用 mkdtemp 的唯一目錄名，否則展開目標若在該機器上真的存在，正解會是 `installed` 而測試會為了非缺陷的理由失敗——精確地說這是**抗碰撞**而非 hermetic：mkdtemp 只保證該名稱在暫存父目錄未被使用，不保證它不存在於 git 安裝前綴之下；而「把所有 `%(prefix)` 一律當 missing」的 mutant **殺不掉**——那需要在 git 安裝前綴內放一個可執行 hook，沒有 hermetic 的做法。
-
- 4. **「無法修」必須是關於工具的事實，不是關於成本的判斷**。第 53 輪我把「命令替換剝除尾端換行」記成第三方限制，理由是 `rev-parse --show-toplevel` 沒有 `-z` 形式。前半是事實，結論卻不成立：在命令替換**內部**附加一個非換行 sentinel，再依序移除 sentinel 與**恰好一個**換行，就只刪掉記錄分隔符而保留路徑本身的換行。我當時真正的理由是「要改 19 處太貴」——那是成本判斷，卻被寫成 "cannot"。這正是 `fix-all-issues.md` 所禁的藉口，只是換上了技術外觀。實測：末段含換行的 repo，直接寫法得到不存在的路徑，sentinel 寫法得到真實路徑。19 處全數改寫，並加 **F1g** 以真實 repo 固化，內含「舊寫法在此必須答 missing」的控制斷言以防 fixture 失效後測試變空洞。
- 5. **把自己的盲點寫進期望值，等於讓 oracle 為它簽名**。F6b 的探針 `probe('$GIT_ENV FOO=1 sed -n 1p x')` 期望 `['sed']`——但 `$GIT_ENV` 展開成 `env -u …`，每一次呼叫都真的執行了 `env` 這個外部 binary。我在寫探針時把「前綴是無害的、可以剝掉」這個假設當成規格，於是 F6b 漏抓 `env` 而探針永遠綠；真正擋住 frontmatter 缺漏的仍是它本應取代的手寫清單 F6。修法：`$VAR` 命令前綴會去查同 fence 內的字面賦值並計入其首字，查不到就**具名失敗**。教訓與 item 49 同源，但更隱蔽——那次是 oracle 被自己的散文滿足，這次是被自己的探針滿足。
- 6. **分析不了的構造，要大聲拒絕，不要安靜略過**。F6b 的目標是消除「未授權相依」這個類別，但正則式看不到 heredoc 內容、`xargs`／`find -exec` 的運算元、陣列元素、alias、以及引號內的 `$( )`。當下的 fence 一個都沒用到——「今天沒有」正是這種 oracle 失效的方式。修法是把不可分析的構造列成一張 `OPAQUE` 表，執行 fence 一旦出現就以具名訊息失敗（「請先擴充 F6b 再使用該構造」），無法解析的 `$VAR` 命令前綴同理。這把未知的漏網轉成大聲的失敗：涵蓋範圍不再是宣稱，而是可執行的邊界。
- 7. **一條規則的適用範圍要看它自己的界定句，不看引用它的人怎麼轉述**。`docs-numbering.md` 的 500 行上限第一句就寫明管的是 `docs/features/` 的 feature 文件，但 `docs-writing.md` 的 Bounded 一列把它轉述成通用敘述，於是 11 個 skill 測試檔據此對 `SKILL.md` 設下硬上限，而我在多輪審查中為此壓縮內容。兩個本可及早發現的訊號：`skills/project-setup/SKILL.md` 已 555 行且長期無人抱怨（**存活的違例**），以及 `grep -rn "500" hooks/ scripts/` 找不到任何執行者。規則已改為正面表列範圍＋功能性文件豁免表，並改回由模型判斷個別檔案；11 個行數斷言移除。
- 8. **修一個維度時，順手毀掉另一個維度**。第 54 輪為了保住結尾換行，在 substitution 內加上 `printf .` sentinel——用的是 `;`。substitution 回報的是**最後一個命令**的狀態，於是 `printf` 的 exit 0 蓋掉 `git rev-parse` 的失敗：`REPO_ROOT` 靜默變成空字串，之後每個 `git -C ""` 改為對「當下目錄」動作，而 `execute-mode.md` 寫好的 `|| { rm -f "$MSG_FILE"; exit 1; }` 掛在一個不可能失敗的東西上。byte 維度修好了，status 維度壞了，而當輪的 F1g 只驗 byte，所以全綠。改法是 `&&`（失敗即不執行 printf，狀態為 git 的）並把 `||` 從尾端的 parameter strip 移回 substitution——parameter assignment 永遠成功，寫在它後面的守衛永遠不會觸發。教訓：一個修正要問「它動到哪幾個可觀察量」，而回歸測試要對每一個都有 oracle，不是只對當初出事的那一個。
- 9. **可分析性的邊界要雙向釘住：既要會失敗，也要不亂失敗**。第 54 輪的 `OPAQUE` 表把不可分析構造轉成具名失敗，但它比對的是**原始 fence 內容**，於是註解裡的「alias」一詞、引號內的 `'xargs is unavailable'`、算術式 `1 << 2` 全都會誤觸；而整張表刪掉後所有 probe 仍然全綠——它從來沒有負向控制。修法是每條規則宣告自己讀哪個 view（heredoc 讀「去註解」，字詞類讀「去註解＋去引號」），並補上兩組對稱的 probe：每個構造都必須具名失敗，同樣的字詞當作散文時都必須不失敗。一個只會漏報的守衛沒有價值；一個會亂叫的守衛會被刪掉。
-10. **「剝除」和「不算數」是兩件事**。F6b 把 `exec`／`command`／`builtin`／`time`／`nohup`／`nice` 一律剝除後遺忘。前四個是 shell builtin／keyword，遺忘是對的；`nohup`／`nice` 是實打實的外部二進位檔，於是 `nohup git status` 只靠 git 已被授權就全綠，實際 tool call 的第一個字卻是未授權的 `nohup`。同一個動作（往後看下一個字）不代表同一個結論（自己不算相依）。已拆成 `PREFIXES`（剝除）與 `WRAPPERS`（計入自身並繼續往下解析運算元；第 56 輪由 `EXTERNAL_PREFIXES` 併入，因為「計入」和「不往下看」也是兩件事）。同輪一併釘住的還有作用域：literals map 原本讀整份文件，但每個 fence 是各自獨立的 shell，跨 fence 的賦值不能拿來解釋這裡的 `$TOOL`。
-11. **靜態剖析器的正確收斂方向是縮小輸入，不是擴大能力**。F6b 是手刻的 shell 詞法分析器，第 54 至 57 輪每一輪都產出它的新漏洞——每修好一個形狀就浮出下一個（`env` wrapper → `${TOOL:-curl}` 展開 → 算術內的 backtick → 跳脫感知 → `timeout` 的位置參數 → `eval`／`trap` → `<<<` 排除失效 → `case` pattern 誤觸）。這不是修得不夠仔細，是問題本身沒有邊界：判斷「一個字是不是命令」在 shell 裡需要執行期。第 57 輪起改變方向——新出現的每一個漏洞，優先問「能不能把這個形狀直接拒收」而不是「能不能讀懂它」。`eval`／`trap`／變數展開出的 glob 都走這條路。代價是 fence 的可寫範圍變窄，換到的是一個**可陳述且可執行**的保證：`OPAQUE` 列出的構造會大聲失敗。同時把做不到的部分寫進測試註解（行內 glob 與 `case` arm 切段後無法區分、descent 的 `break` 與「這裡沒東西」無法區分），因為一個 oracle 最危險的狀態不是覆蓋不足，是宣稱的覆蓋大於實際。
-12. **無聲失效的檢查比從來沒有那道檢查更糟**。第 61 輪的六個 P2 裡有一項與其他五項不同類：`OPAQUE`（列出「看不懂就大聲拒收」的構造）讀的是抹掉引號的原文視圖，於是 `X="$(xargs curl)"` 整段被視圖刪去，強制的 `xargs` 拒收不再觸發。其他五項是「少看到一個命令」，這一項是**一道原本會擋下來的閘門停止運作，而外觀完全沒變**。F6b 的全部價值建立在「無法解析就拒收」上；一道拒收無聲失效之後，它的存在反而讓人相信那個構造被擋住了。實務結論有二：其一，重構一個安全檢查時，「原本會拒收的輸入現在還會不會拒收」必須有自己的正向控制，不能只驗證「該通過的還通過」；其二，凡是宣稱「所有判斷都走同一條路徑」的重構，該宣稱本身要能被機械驗證——第 60 輪我寫下這句話而它是假的，是 Codex 讀程式碼發現的，不是測試發現的。
-
-## References
-
-- [Requirements](./1-requirements.md) — FR/NFR/constraints 編號的定義來源
-- `skills/create-pr/SKILL.md`、`skills/push-ci/SKILL.md`、`skills/epic-merge/SKILL.md`
-- `rules/discretion.md` § Anchor Register #4
-- [GitHub Changelog — Stacked PRs public preview](https://github.blog/changelog/2026-07-30-stacked-pull-requests-are-now-in-public-preview/)

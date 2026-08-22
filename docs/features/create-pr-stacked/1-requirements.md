@@ -2,9 +2,9 @@
 
 > **Doc class**: Lifecycle — Phase 1 requirements (per `@rules/docs-numbering.md`). Feature-level problem-space analysis. **Not** a task tracking ticket; for per-task progress tracking see `requests/*.md` (created via `/create-request`).
 > **Created**: 2026-07-31
-> **Updated**: 2026-07-31
+> **Updated**: 2026-07-31（原始記錄日）· **Later clarifications appended**: 2026-08-20（授權面澄清與 FR-4 三態拆分，**均以表格後的日期註記追加，原表列文字未改**）· **入向路徑修復**: 2026-08-21（`2-tech-spec.md` 依 § Size Limit 切入 `2-tech-spec/` 資料夾，本檔指向它的連結一律加一層目錄——僅路徑，不動敘述）
 > **Tier**: standard
-> **Tech Spec**: [2-tech-spec.md](./2-tech-spec.md)
+> **Tech Spec**: [2-tech-spec.md](./2-tech-spec/2-tech-spec.md)
 > **Request tickets**: See [`requests/`](./requests/) for per-task execution tracking
 
 ## 1. Problem Statement
@@ -40,6 +40,10 @@
 | CI（GitHub Actions） | Operator | 每層 PR 各觸發一次 workflow，五層 stack 的 CI 成本可能 5 倍；cascading rebase 再放大 |
 | Reviewer（人類或 Codex） | User | 每層只看該層 diff；rebase 改寫 SHA 可能使舊 review comment 錯位、approval 失效 |
 
+> **授權面澄清（2026-08-20 記入，2026-08-21 自 `/push-ci` 列移出）**。上表該列的原文保留不動；本註記是**追加**，不是改寫——前一版把以下內容直接寫進儲存格，等同於用今日的授權模型覆蓋 2026-07-31 當下的記錄。
+>
+> `pre-push-gate.sh` 自 2026-08 起是 **opt-in**（`rules/git-workflow.md` § Push safety）。它是否安裝，不改變上表該列的結論——**前提是 chain 的每一層都不是 protected branch**。該前提由 `2-tech-spec/2-tech-spec.md` §3.4 Phase A0 的 protected-head 檢查強制，而非因 stacked chain 天生如此；且該檢查刻意早於任何 push 建議。hook 只對 protected branch 提示，故前提成立時，兩種安裝狀態下 `/push-ci` 的 AskUserQuestion 都是授權本身，安裝與否換不掉憑證。**該檢查截至 2026-08-20 仍只存在於 spec**，出貨的 `skills/create-pr/` 尚未同步（見 `2-tech-spec/2-tech-spec.md` R7）。
+
 ## 4. Use Cases
 
 | # | Actor | Action | Expected Outcome |
@@ -65,6 +69,16 @@
 | FR-8 | 與 `/pr-summary`、`/epic-merge` 共用 stack 偵測約定（同一條 chain 的定義與偵測來源一致） | Could | 避免三個 skill 各自實作互相矛盾的啟發式 |
 | FR-9 | 自動執行 `gh stack rebase --upstack` / `gh stack push` / `gh stack submit` / `gh stack modify` | Won't (v1) | 內含 rebase 與 force-push，落在 Anchor Register #4 禁止清單；例外清單封閉，擴充本身是 Anchor-level 變更（見 Open Questions） |
 | FR-10 | auto-merge / merge queue 整合 | Won't (v1) | 官方 merging reference 明言 stacked PR 不支援 auto-merge，與 AI 教學頁矛盾；preview 階段以保守文件為準 |
+
+**FR-4 降級三態**（2026-08-20 round 16 記入；2026-08-21 兩次調整——先自 FR-4 儲存格移出，因巢狀表格會終止外層 FR 表使 FR-5 之後全部不再是表列，再把被就地改寫的 FR-4 原文還原）。
+
+FR-4 原文寫的是「兩者任一缺件 → 明確訊息」，把兩種狀態合併成同一則缺件訊息，與 tech spec §3.4 **Phase D0** 的契約衝突（**已安裝**的 extension 收到一則叫他去安裝的訊息，是錯的指示）。**該原文保留在上表不動**——它是 2026-07-31 當下的需求記錄；實作要遵循的是以下三態，降級路徑相同，差別只在訊息：
+
+| 狀態 | 判定 | 輸出 |
+| ---- | ---- | ---- |
+| extension 缺件 | `gh extension list` 未比對到 `github/gh-stack`（查詢失敗亦視同缺件） | 逐字缺件訊息 **+ 安裝指令** |
+| 已安裝、rollout 未確認 | 比對到 extension，但 rollout 無已確認訊號（§7 Q2） | 說明「已安裝但 rollout 未確認」，**不得印安裝指令** |
+| 已安裝、rollout 已確認 | 兩者皆成立 | 不輸出降級說明 |
 
 ## 6. Non-Functional Requirements
 
@@ -104,7 +118,7 @@
 
 ## 9. Open Questions
 
-- [x] **執行端授權設計**（最關鍵）：`gh pr create/edit` 已在現行 `--execute` 授權內，無需新授權；缺口在 **branch push**——`gh stack submit` 同時做 push branches + create PRs，無法只取其半。**已裁決（2026-07-31，使用者決策）**：v1 採組合方案——branch push 經 `/push-ci` 或使用者手動執行，skill 僅逐層 `gh pr create/edit`，`gh stack` 系列一律由使用者自行執行；不啟動 Anchor-level 變更。設計細節見 [2-tech-spec.md](./2-tech-spec.md) §3.1。
+- [x] **執行端授權設計**（最關鍵）：`gh pr create/edit` 已在現行 `--execute` 授權內，無需新授權；缺口在 **branch push**——`gh stack submit` 同時做 push branches + create PRs，無法只取其半。**已裁決（2026-07-31，使用者決策）**：v1 採組合方案——branch push 經 `/push-ci` 或使用者手動執行，skill 僅逐層 `gh pr create/edit`，`gh stack` 系列一律由使用者自行執行；不啟動 Anchor-level 變更。設計細節見 [2-tech-spec.md](./2-tech-spec/2-tech-spec.md) §3.1。
 - [ ] Solution concern（**post-v1 限定**——v1 授權已由上一項裁決，本項不重啟）：未來若要自動執行 mutating `gh stack` 系列（cascading rebase 傳遞、多 branch force-with-lease），授權應落在何處 — suggest `/feasibility-study`。
 - [ ] Solution concern：native stack 的 merge 語意與 `/epic-merge` 的手動 squash chain 是取代、共存還是分工（native stack 用於新 chain、epic-merge 用於 epic branch 場景）— suggest `/feasibility-study`。
 - [ ] `/pr-summary` 的 stacked 偵測啟發式（base 非主幹）與 native stack metadata 的對齊時機與方式。
