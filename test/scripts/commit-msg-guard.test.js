@@ -681,11 +681,55 @@ test('opt-in rejects duplicated trailers even when separated by other lines', ()
   assert.match(result.stderr, /appears 2 times/);
 });
 
+// A listing of the SYSTEM temp directory cannot be an assertion about one process.
+// `mktemp -t commit-msg-guard.XXXXXX` (line 202 of the guard) writes there and nowhere else: on
+// macOS `-t` resolves the directory through `_CS_DARWIN_USER_TEMP_DIR` and **ignores `TMPDIR`**
+// (measured 2026-08-22 — exporting `TMPDIR` to a private directory still produced a file under
+// `/var/folders/…/T`), so this scan cannot be handed a directory only this test writes to. Eight
+// other test files run the same guard and `node --test` runs files in parallel, so the listing
+// routinely contains a **sibling's** scratch file that is still in flight. Measured: red in a
+// full-suite run, green twice when the file ran alone.
+//
+// What stays exactly true is the property the test is named for: `runGuard` is synchronous, so
+// our own guard process has already exited when it returns — a file its trap failed to remove is
+// there permanently, while a sibling's leaves when that sibling's trap fires. Settling on the
+// difference is the same assertion with the other processes allowed to finish, not a weaker one.
+// The negative control below is what keeps that claim honest.
+function tmpLeftovers() {
+  return new Set(require('fs').readdirSync(tmpdir()).filter((n) => n.startsWith('commit-msg-guard.')));
+}
+
+// Sleeping synchronously, because the assertion is about state observed after a synchronous call.
+function settleClear(before, budgetMs) {
+  const step = 25;
+  for (let waited = 0; ; waited += step) {
+    const extra = [...tmpLeftovers()].filter((n) => !before.has(n));
+    if (extra.length === 0) return true;
+    if (waited >= budgetMs) return false;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, step);
+  }
+}
+
 test('opt-in leaves no temporary file behind', () => {
-  const before = require('fs').readdirSync(tmpdir()).filter((f) => f.startsWith('commit-msg-guard.'));
+  const before = tmpLeftovers();
   runGuard(`fix: t\n\n${ALLOWED}\n`, { ALLOW_AI_COAUTHOR: '1' });
-  const afterFiles = require('fs').readdirSync(tmpdir()).filter((f) => f.startsWith('commit-msg-guard.'));
-  assert.deepEqual(afterFiles, before, 'the EXIT trap must remove the whitelist scratch file');
+  assert.ok(settleClear(before, 5000), 'the EXIT trap must remove the whitelist scratch file');
+});
+
+test('control: a scratch file that is never removed is not settled away', () => {
+  // Without this, the test above passes on a settle loop that always returns true — and a guard
+  // that leaked on every run would read as a guard whose trap works.
+  const planted = join(tmpdir(), `commit-msg-guard.negative-control-${process.pid}`);
+  const before = tmpLeftovers();
+  writeFileSync(planted, '');
+  try {
+    assert.equal(settleClear(before, 200), false,
+      'control: a file present for the whole budget must fail the settle, not be waited out');
+    assert.ok(tmpLeftovers().has(`commit-msg-guard.negative-control-${process.pid}`),
+      'control: the planted file must actually have been visible to the scan');
+  } finally {
+    rmSync(planted, { force: true });
+  }
 });
 
 test('EXIT-trap regression: a clean message on the non-opt-in path exits 0', () => {
