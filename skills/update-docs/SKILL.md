@@ -46,13 +46,46 @@ is not evidence the sets are complete — `scan_error` rides alongside a resolve
 **This skill rewrites current-authority docs. It does not rewrite records.**
 
 `resolveDocRole(path, source, taxonomy)` in `scripts/lib/doc-metadata.js` answers which a file is,
-and `owesCodeAlignment()` is the same answer as a boolean — a doc owes code alignment exactly when
-its role is the fallback (current-authority) one.
+and `owesCodeAlignment(path, source, taxonomy)` is the same answer as a boolean — a doc owes code
+alignment exactly when its role is the fallback (current-authority) one.
 
-| Class | Examples | What this skill does |
-|-------|----------|----------------------|
-| Current authority — owes code alignment | `2-tech-spec.md`, `3-architecture.md`, `README.md` | Rewrite the sections the code changed |
-| Record — states a point in time | `requests/*.md`, `review-log-*.md`, `adr-*.md` | **Do not rewrite.** Status and outcome only, appended by `/create-request --update` |
+**Both take a repository `path` as the first argument — never a role label.** Spelling it
+`owesCodeAlignment()` invites the call that has already been made here once: passing the string
+`"Design record"` where the path goes. That string matches no rule, so it falls through to
+`FALLBACK_ROLE` and the function returns `true` — a **fail-closed default reads exactly like an
+affirmative answer**, and the wrong reading was an instruction to rewrite a frozen record
+(`docs/features/push-gate-optin/review-log-push-gate-optin.md`, round 43).
+
+The four roles below are `BUILTIN_ROLE_CONFIG.closed_set` in that file, and the Examples column
+states what its `path_defaults` patterns actually match — **read it there, not from the phase number**.
+`docs-numbering.md` numbers documents by lifecycle *phase*; `doc-metadata.js` assigns *authority
+role*. They are different axes, and reading the first as the second is what put `2-tech-spec.md` in
+the Current-authority row of this table until 2026-08-21 — an instruction to rewrite a frozen design
+record, and the exact failure the paragraph below this table warns about.
+
+| Role | Matches (`path_defaults`) | What this skill does |
+|------|---------------------------|----------------------|
+| Current authority — owes code alignment | `4-implementation*`; anything whose first segment is `skills`/`rules`/`agents`/`commands`; and the **fallback**, which is what `README.md` resolves through | Rewrite the sections the code changed |
+| Design record — states a decision | Conventionally `0-feasibility-study*`, `1-requirements*`, `2-tech-spec*`, `3-architecture*` — but the pattern is `^[0-3]-(feasibility\|requirements\|tech-spec\|architecture)`, a **cross-product**: any of those four prefixes with any of those four stems, sixteen names, not four (see below) | **Do not rewrite.** Append a dated `> **Update(…)**` note recording what later changed |
+| Work record — states what was asked | anything under a `requests/` segment | **Do not rewrite** — this skill does not touch it at all. `/create-request --update` may **overwrite** exactly four fields (Status, the Progress table, AC checkboxes, Progress.Note); everything else in the ticket is frozen, and a closed ticket is frozen entirely. That is the whole mutable set — see `skills/create-request/SKILL.md` § Phase 4.5 |
+| History record | `review-log-*`, `adr-*` | **Do not rewrite.** Append only |
+
+`owesCodeAlignment(path, source, taxonomy)` is `resolveDocRole(path, source, taxonomy) ===
+FALLBACK_ROLE` — the **`Current authority` role and nothing else**, so the three record rows are one
+decision, not three. Named by role, not by position: "the first row" was true only until somebody
+reordered or inserted one, and a reordered table would then have silently redirected this
+instruction at a record.
+
+**The four canonical pairings — `0-feasibility-study`, `1-requirements`, `2-tech-spec`,
+`3-architecture` — are a naming convention (`@rules/docs-numbering.md`), not what the classifier
+tests.** Measured 2026-08-21: `1-tech-spec.md`, `3-requirements.md`, `0-architecture.md` and
+`2-feasibility-study.md` all resolve to **Design record**, because the prefix and the stem are
+matched independently. Listing only the four pairings invites the opposite reading — that an
+off-convention name is a gap the classifier cannot see — and it is the reverse: the classifier is
+wider than the convention, deliberately, so a mis-numbered spec is still protected from rewriting.
+Where it does stop is the prefix: `4-tech-spec.md` falls past `[0-3]` into the fallback and
+resolves to **Current authority**, i.e. rewritable. A spec numbered outside the range loses the
+protection its name suggests, so fix the number rather than relying on the stem.
 
 A record that disagrees with today's code is not stale — that disagreement *is* the record. Editing
 it to agree destroys the only copy of what was decided, and buys nothing: the reviewer reads records
