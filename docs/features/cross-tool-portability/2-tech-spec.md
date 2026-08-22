@@ -1,5 +1,42 @@
 # Cross-Tool Portability Technical Spec
 
+> **這是一份設計記錄（design record），不是現況權威。** 原始決策日 **2026-03-09**（`d04f582`）。它陳述當時決定了什麼；與今日程式碼脫節是記錄正常運作，**不要就地改寫**成現行行為——後續變更一律以帶日期的 `> **Update（…）**` 註記表述，並區分「決議日」與「實際生效日」。現行行為請看 [git-workflow.md](../../../rules/git-workflow.md) § Push safety、[codex-setup](../../../skills/codex-setup/SKILL.md) 與各 feature 的當前權威文件。
+>
+> **「生效」在本檔的定義（2026-08-20 round 16 補訂）**：下方每一則 `> **Update（…）**` 註記都同時陳述兩件事，**不可互推**——(1) **本 checkout 的工作樹**是否已有該實作：有，則此 checkout 的 `skills/**` 指令面即照新行為執行；(2) **`HEAD` 是否已含該實作**：未含，則凡是從 `HEAD`（或由其產生的 release）取得本 plugin 的安裝，行為仍是舊的。「未提交」只回答第 (2) 題，**不等於「工作樹裡也沒作用」**——指令面是被讀取執行的文件，不是編譯產物。
+>
+> **既有的就地改寫（2026-08-20 doc review 盤點，於此保存原文以免資訊淨損失）**：
+>
+> | Commit | 日期 | 就地改寫了什麼 | 原文 |
+> |--------|------|----------------|------|
+> | `a9f9ce6` | 2026-03-09（原始 commit 後約 4 小時） | install manifest 檔名與 runner script 安裝路徑，共 12 處：sequenceDiagram ×2、runner 指令表 ×3、state 檔案表 ×1、`####` 標題 ×1、bash drift 偵測 ×2、Risk 5／Risk 7 各 ×1，以及 § 3.6 Migration 整段 | **本文一律不還原**（2026-08-21 定案）：記錄只增不刪，把已提交的就地改寫再改回去是**第二次**改寫，不是修復。本文因此保留 `a9f9ce6` 的字句，此表只記錄它是就地改寫。`d04f582` 的改寫前原文以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回；`a9f9ce6` 的後像以 `git show a9f9ce6 -- docs/features/cross-tool-portability/2-tech-spec.md` 取回 |
+> | `3224ba2` | 2026-08-13 | § 3.1 的 `> **Note**:` 標籤就地改為 `> **Note（撰寫當時）**:`（同一 commit 另**追加**了 2026-08-13 hook-lightweighting 的 Update 註記——追加合規，改標籤不合規） | **標籤不還原**（同上）：本文保留 `3224ba2` 寫下的 `> **Note（撰寫當時）**:`；`d04f582` 的原標籤 `> **Note**:` 以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回。該 commit 追加的 Update 註記**內容未改**，它正是這條 Note 的時態限定 |
+> | `2692ede` | 2026-08-16 | **兩類，不只一類**：(a) 三處 `npx skills` 範例中的 repository locator；(b) **六處 push-gate 設計主張**——§2.2 hooks 列、§3.1 架構圖兩條邊、§3.2 L2 列、§3.4 `init`／`sync` 指令表、§3.7 `hooks_installed` JSON、§4 Risk 1 | 兩類皆**不還原**（2026-08-21 定案，全檔一致）：正文即 `2692ede` 之後的字句，改寫前原文以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回。locator 在 `d04f582` 為 **`sd0xdev/sd0x-dev-flow`**，正文現為 `sd0xdev/sd0x-harness`，與今日正式名稱一致（`.claude-plugin/marketplace.json`）。**注意**：這六處是 `2692ede` **已提交**的改寫，不是未提交的工作樹改動——opt-in 的**實作**才是未提交的 |
+>
+> **舊佈局確實曾經為真**（2026-08-20 round 15 查證）：`988ba48`（2026-03-09 14:29:52）實作了頂層 `scripts/` 的 runner 與 `.sd0x-codex-state.json`；`d04f582`（14:30:03）記錄了它；`0aecf29`（18:17:35）才改成 `.sd0x/`；`a9f9ce6`（18:18:09）隨即就地改寫記錄。**處置（2026-08-21 定案）：正文一律不還原**——把已提交的就地改寫再改回去是第二次改寫，不是修復。正文因此是 `a9f9ce6` 之後的 `.sd0x/` 佈局；`d04f582` 記錄的舊佈局以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回，Migration 整段另逐字保存於 § 3.6 下方的日期註記。
+
+> **篇幅處置（2026-08-21 round 25 提出、round 26 重測定案）**：`wc -l` 為 **581** 行，超過
+> `@rules/docs-numbering.md` § Size Limit 的 500 行訊號，該節要求「動手，或說明為何這一檔不切比較好讀」。
+> 說明如下，並先更正一項會誤導的量法：`grep -c '^## '` 回報 **15**，但其中七個（`## Core Behavioral
+> Requirements` 起算）在 § 3 的 kernel 模板 code fence **之內**，不是章節。實際章節 **8** 個
+> （`## 1.`–`## 7.` 加 Appendix），§ 3 為 132–469 共 **338** 行（58.2%）。
+>
+> **（量測紀律）** round 25 這則處置最初寫的是 539 行 —— 那是在同一輪編輯**尚未完成時**量的，
+> 隨後追加的兩則更正註記使它立即過期，審查者實測到不同的數字。**編輯結束後才量，不要在中途量**；
+> 上列數字是本輪全部編輯落地後重測的。
+>
+> **判定：維持不切。** 三個補救依序評估——**Prune** 不適用：本檔是 design record（分類器判定，見下段），
+> 記錄裡「與今日脫節」的文字正是記錄在運作，刪掉就是唯一一份原文消失；**Merge** 不適用：八個章節各談
+> 一件事，無重複段落；**Split** 會落在論證中間：唯一夠大的切點是 § 3，但 § 3 的每一小節都被上方那三張
+> 「就地改寫盤點」表以節號引用，切出去之後那些指標全部要重寫，而重寫指向記錄的指標正是本檔一路在避免的
+> 二次改寫。下次實質編輯時重新以 `wc -l` 量測；若 § 3 超過約 400 行，自然切點是 § 3.6 Migration 連同其
+> 下方的逐字保存註記獨立成子檔。
+>
+> **對 doc review 的備註（2026-08-21 round 25）**：本檔曾被審查者判為「tech spec 屬 current authority，
+> 故不得以日期註記表述、應就地改寫正文」。該前提與本專案的分類器不符，故不採納：
+> `node scripts/classify-docs-cli.js --feature cross-tool-portability` 回報本檔
+> `role: "Design record"`、`current_authority: []`；`skills/ask/SKILL.md` § Phase 2 亦明載「問現行行為
+> 不要讀 tech spec —— 它記的是設計，不是出貨的東西」。本檔的日期註記體例因此是正確處置，不是缺陷。
+
 ## 1. Requirement Summary
 
 - **Problem**: sd0x-dev-flow 目前僅支援 Claude Code runtime。使用者希望在 OpenAI Codex CLI、Cursor、Windsurf、Aider 等 AI coding tools 上使用相同的開發流程規範。
@@ -53,6 +90,19 @@ sd0x-dev-flow/
 | scripts/*.sh/.js | 標準 shell/Node.js | 可移植 | `codex-setup init` 自動複製 |
 | Git hooks (commit-msg 預設、pre-push opt-in) | 標準 git hooks | 可移植 | `codex-setup init` multi-mode installer（`pre-push` 需 `--with-push-gate`） |
 
+> **Update（決議 2026-08-15；實作已在 2026-08-20 的本 checkout 工作樹，**未提交至 `HEAD`**——push-gate-optin r2–r4）**：**這段註記 2026-08-21 round 18 更正**（原文說「上列最後一行仍是舊設計、`HEAD` 亦然、表格保留為記錄」——三句都不成立，量測見下）：上列最後一行**已經是 opt-in 版本**，`git show HEAD:` 該檔亦然，因為 `2692ede` 已把它改寫過。撰寫當時的原始列要往前一個 commit 取：
+
+```text
+$ git show 2692ede^:docs/features/cross-tool-portability/2-tech-spec.md | grep 'Git hooks'
+| Git hooks (commit-msg, pre-push) | 標準 git hooks | 可移植 | `codex-setup init` multi-mode installer |
+```
+
+仍然成立的是**實作**那一半：`HEAD` 的 `skills/codex-setup/SKILL.md` 沒有任何 `--with-push-gate`
+（`git show HEAD:skills/codex-setup/SKILL.md | grep -c -- '--with-push-gate'` → 0），所以取自 `HEAD`
+或其 release 的安裝**仍是無條件安裝**，opt-in 尚未生效。本 checkout 的工作樹版本已照 opt-in 執行。
+介面先於實作發佈這件事本身即 [`../push-gate-optin/2-tech-spec.md`](../push-gate-optin/2-tech-spec.md)
+§ 2.4 記的原子發佈集破功。提交日待 r2/r3/r4 同批落地後補記。
+
 ### 2.3 各工具指令系統對照
 
 | Feature | Claude Code | Codex CLI | Cursor | Windsurf | Aider |
@@ -86,6 +136,8 @@ sd0x-dev-flow 的 SKILL.md 格式與 Agent Skills 標準（Vercel `skills` CLI�
 > **Note（撰寫當時）**: Tier A 的 stop-guard 預設為 warn 模式（記錄但允許停止），設定 `STOP_GUARD_MODE=strict` 可啟用 blocking 模式。Tier C 的 git hooks 保證 commit 格式（AI trailer 偵測）、protected branch 確認、以及 non-fast-forward push 阻擋（可透過 `ALLOW_FORCE_WITH_LEASE=1` 豁免 `--force-with-lease` 工作流），review/precommit 品質結果需透過 CI server-side gate 或 pre-commit hook 強制。
 >
 > **Update（2026-08-13, hook-lightweighting）**: stop-guard 已改為純提醒（列出欠著的 gate、恆 exit 0），無 blocking 模式（`STOP_GUARD_MODE` 已廢止），`post-tool-review-state.sh` 已刪除。下方架構圖為撰寫當時的快照——Tier A 標示的「Conditional Full Enforcement」與 warn/strict 分支已不存在，現行契約見 `docs/features/hook-lightweighting/2-tech-spec.md`。本節其餘內容保留為記錄。
+>
+> **更正（2026-08-21 round 27）**：上一則 2026-08-13 註記本文**已還原為 `3224ba2` 的原字句**——先前這一輪曾把它就地改成「下方架構圖的 Tier A 部分為撰寫當時的快照」並以 `<br>` 內嵌更正，那正是本檔開頭宣告不做的事：就地改寫一則既有的日期註記。該改寫尚未提交，還原的是工作樹而非記錄，因此不構成「第二次改寫」。更正內容改置於此：原註記寫「下方架構圖為撰寫當時的快照」，**範圍過寬**——圖中兩條 `SETUP -->` 邊已由 `2692ede` 就地改寫（`AGENTS.md + hooks` → `AGENTS.md + commit-msg hook`），不是撰寫當時的文字，原文見 `2692ede^`。該註記的時態限定實際只涵蓋 Tier A 那半邊。
 
 ```mermaid
 graph TD
@@ -147,6 +199,8 @@ sequenceDiagram
 | **L2: 基建安裝** | `codex-setup` skill | AGENTS.md kernel + commit-msg hook（pre-push opt-in）+ scripts |
 | **L3: Runtime 適配** | sd0x-flow-core adapters | Hook lifecycle 映射（Tier A/B） |
 
+> **Update（決議 2026-08-15；2026-08-21 更正）**：**上方 L2 那列已經是改寫後的 opt-in 版本**——`2692ede` 就地改寫了它（`AGENTS.md kernel + git hooks + scripts` → 現行文字）。撰寫當時的原文請看 `git show 2692ede^:docs/features/cross-tool-portability/2-tech-spec.md`。前一版註記寫「撰寫當時指兩個都裝，`HEAD` 仍然如此」，對正文與 `HEAD` 都是假的：`HEAD` 這一列與上方逐字相同。**在 `HEAD` 仍為無條件安裝的是實作**（`git show HEAD:skills/codex-setup/SKILL.md` 全檔不含 `--with-push-gate`），不是本文件的敘述——這正是 r2 § Background 預言的原子發佈集破功中間態。見 § 2.2 同批註記。
+
 ### 3.3 Agent Skills 標準適配（L1）
 
 #### plugin.json skills 陣列
@@ -175,6 +229,8 @@ sequenceDiagram
 | `init` | 初始安裝：AGENTS.md kernel + commit-msg hook + scripts（pre-push gate 需 `--with-push-gate` 才安裝） |
 | `doctor` | 驗證安裝完整性（檔案存在 + hash 比對） |
 | `sync` | `npx skills update` 後同步 AGENTS.md + 已安裝的 hooks；`--with-push-gate` 可在此補裝 pre-push gate |
+
+> **Update（決議 2026-08-15；2026-08-21 更正）**：**上表的 `init` 與 `sync` 兩列已經是改寫後的 opt-in 版本**——同樣由 `2692ede` 就地改寫（原文為 `AGENTS.md kernel + hooks + scripts` 與 `同步 AGENTS.md + hooks`，見 `2692ede^`）。前一版註記說「上表保留為撰寫當時的設計，`HEAD` 的行為仍與上表一致」，兩個子句同時錯：上表不是撰寫當時的設計，而 `HEAD` 的**實作**恰恰與上表**不**一致——`HEAD` 的 `skills/codex-setup/SKILL.md` 仍無條件安裝兩個 hook。上表描述的是工作樹的行為。
 
 #### init 流程
 
@@ -304,6 +360,19 @@ sd0x-flow-core/
 
 > **Migration**：現有 `.claude_review_state.json` 維持不變（Tier A runtime 專用）。`.sd0x/install-state.json` 為全新檔案，與 runtime state 不重疊。**舊名稱遷移**：v1.8.15 之前安裝的 host 可能存有 `.sd0x-codex-state.json`；`codex-setup sync` 預計處理自動遷移（Phase 2 backlog，尚未實作）。
 
+> **Update（2026-03-09，`a9f9ce6`；註記補於 2026-08-20 doc review round 15）**：上方為 `a9f9ce6`
+> 就地改寫後的字句，**未還原**——記錄只增不刪，改回去會是第二次改寫。改寫前的 `d04f582` 原文以
+> `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回。同日稍晚 `0aecf29`（18:17）把**實作**的版面改掉——runner 由頂層
+> `scripts/` 移入 `.sd0x/scripts/`，install manifest 由 `.sd0x-codex-state.json` 改名為
+> `.sd0x/install-state.json`——`a9f9ce6`（18:18）隨即把本文件就地改寫成新版面。改寫的**內容**是對的，
+> 錯的是**方式**：記錄應以日期註記追加。`a9f9ce6` 當時寫入的字句即上方本文，此處再引一次以便對照：
+>
+>     > **Migration**：現有 `.claude_review_state.json` 維持不變（Tier A runtime 專用）。`.sd0x/install-state.json` 為全新檔案，與 runtime state 不重疊。**舊名稱遷移**：v1.8.15 之前安裝的 host 可能存有 `.sd0x-codex-state.json`；`codex-setup sync` 預計處理自動遷移（Phase 2 backlog，尚未實作）。
+>
+> 本段連同本檔其他 11 處 `a9f9ce6` 就地改寫（sequenceDiagram 兩處、runner 指令表三列、state 檔案表一列、
+> `####` 標題一處、bash drift 偵測兩行、Risk 5 與 Risk 7 各一列）**一律不還原**，本文即 `a9f9ce6` 之後的
+> 字句；改寫前的原文以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md` 取回。
+
 #### State Model（Runtime）
 
 ```json
@@ -353,6 +422,8 @@ Hook parser（`post-tool-review-state.sh`）辨識的完整 sentinel 集合：
   "generated_at": "ISO8601"
 }
 ```
+
+> **Update（決議 2026-08-15；2026-08-21 二次更正）**：**上方 `hooks_installed` 已經是加了 `status` 欄的新形狀**——`2692ede` 就地把 `"pre-push": { "hash": …, "mode": … }` 改成 `"pre-push": { "status": "declined" }`。撰寫當時「兩個 hook 都必然安裝、只需記 hash 與 mode」的原形狀在 `2692ede^`。前一版註記說「上方為撰寫當時的形狀」，指的是上方已不存在的文字——這是本輪 review 抓到的第三處同型錯誤，成因相同：`2692ede` 改寫了六處設計主張，而追加註記逐一假設正文未動。<br>設計理由不變：pre-push 改為 opt-in 後「未安裝」成了合法且需區分的狀態（未裝 vs 裝了但漂移），故每個 hook 多一個 `status` 欄（`installed` / `declined` / `pending`），`declined` 時不帶 hash。**未提交至 `HEAD` 的是實作**：`HEAD` 的 `skills/codex-setup/SKILL.md` 仍寫兩個 hook 無條件安裝，故凡是從 `HEAD` 或其 release 取得本 plugin 的安裝，行為仍是舊的——即使本文件在 `HEAD` 已描述新形狀。
 
 #### Drift Check
 
@@ -408,6 +479,25 @@ codex> /codex-setup sync
 | 6 | 62 commands 無法自動移植 | 使用者體驗落差大 | 提供 top-20 prompt recipe 文件 |
 | 7 | State file 路徑/格式跨工具一致性 | 多工具共用同一 repo 可能衝突 | Runtime state 維持 `.claude_review_state.json`（Tier A 專用）；install manifest 使用 `.sd0x/install-state.json`（跨工具通用） |
 | 8 | Version drift（plugin 更新但 AGENTS.md 未同步） | 規則不一致 | `codex-setup sync` + drift gate 偵測 |
+
+> **Update（決議 2026-08-15；2026-08-21 更正）**：**上表 Risk 1 那列已經是改寫後的條件式版本**——`2692ede` 就地把「git hooks 保證 commit 格式、protected branch 確認、non-fast-forward 阻擋」改成現行的「僅在以 `--with-push-gate` 選裝後才存在」。無條件的原文在 `2692ede^`。前一版註記說「Risk 1 的緩解在撰寫當時成立……`HEAD` 至今仍是如此」，描述的是上方已被取代的文字。**在 `HEAD` 仍是舊行為的是實作，不是這一列。**風險判斷本身不變——pre-push 改為 opt-in 後即**風險等級升高**：`commit-msg` 仍是預設的格式閘道，但 protected branch 確認與 non-fast-forward 阻擋改為**只在磁碟上實際有 sd0x wiring 時才存在**。**這不等於「一律要帶旗標」**：依工作樹 [codex-setup](../../../skills/codex-setup/SKILL.md) 的 lifecycle 矩陣，state 記為 `installed`、或 `unknown` 但磁碟驗出 sd0x wiring 的專案，都會被保留並重新複製，**不需旗標**；真正失去這一層的只有「首次安裝且無 gate 可承接」與「記錄為 `declined`」兩格。所以升級專案（原本無條件裝上的 gate）是被 grandfather 的，風險升高的是**新專案**。且 Tier C **沒有 Tier A 的替代層**——`/push-ci` 的 AskUserQuestion 授權只存在於 Claude Code，commands 不在移植範圍（§ 1 Scope OUT），所以未選裝 pre-push gate 的 Tier C 專案**不存在任何 client-side push 防護**，只剩 CI server-side gate。（[git-workflow.md](../../../rules/git-workflow.md) § Push safety 的 AskUserQuestion 條款是 Tier A 機制，不可讀為 Tier C 的保證。）上表保留為記錄。
+
+> **更正（2026-08-21 round 26）**：上一則註記的最後一段有兩處把**所有**非快轉拒絕都歸給 hook，過寬。
+> 依體例不改寫上文，於此追加更正——
+>
+> 1. 「non-fast-forward 阻擋改為只在磁碟上實際有 sd0x wiring 時才存在」：**只對 force 形式成立**。
+>    非快轉推送有兩種拒絕來源，取決於推送**形式**：帶 `--force-with-lease` 時 git 把 ref 交給 hook，
+>    由 hook 自己 `exit 1`；**不帶旗標**時 git 早在 hook 之前就自行拒絕（git 會扣住它已經拒絕的 ref，
+>    hook 因此收到**空的 ref 清單**，找不到分支、驗不出分歧，`exit 0` 而什麼也沒擋——操作者看到的
+>    `[rejected] … (non-fast-forward)` 是 git 的，不是 gate 的）。後者與 hook 是否安裝無關。
+> 2. 「未選裝 pre-push gate 的 Tier C 專案**不存在任何 client-side push 防護**」：**不成立**。
+>    上述 git 自身的非快轉拒絕就是 client-side 防護，而且是預設的。準確的說法是：未選裝 gate 的
+>    Tier C 專案不存在 **sd0x 這一層**的 client-side 防護（protected branch 的 `/dev/tty` 確認，
+>    以及 force 形式非快轉的攔截），git 內建的那一層照常運作。
+>
+> 兩處的**風險方向**不變（升級專案被 grandfather、風險升高的是新專案），改變的是「失去了什麼」的
+> 範圍。實測與逐形式對照：[`../push-gate-optin/2-tech-spec.md`](../push-gate-optin/2-tech-spec.md)
+> § 2.3 的授權表，以及 `test/scripts/pre-push-gate.test.js` 的 `REFLINES:0` / `REFLINES:1` 兩例。
 
 ## 5. Work Breakdown
 

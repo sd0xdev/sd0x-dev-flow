@@ -1,5 +1,52 @@
 # README Skill Catalog Auto-Sync Technical Spec
 
+> ## ⚠️ 記錄完整性聲明（2026-08-20 doc review round 14）
+>
+> 本檔經 `scripts/resolve-review-profile.js` 判定為 **Design record**——它記載 **2026-04-07**
+> 當時的設計（起始 commit `7ad6cc3`，2026-04-07 20:34:42 +0800；git 史中不存在更早的版本，
+> 前一版此處誤寫為「2026-03」），不是「今日行為」的權威來源。記錄的更新方式應為**日期註記追加**，
+> 而非就地改寫。但本檔歷史上曾有一次就地改寫，為免該筆原文永久失傳，於此保存。
+>
+> **（2026-08-21 round 25 補記）** 本檔曾被審查者判為「`2-tech-spec.md` 是 lifecycle 文件，故屬
+> current authority，§ Technical Solution 那列 `AGENTS.md kernel + git hooks` 的舊契約應就地改寫」。
+> 該前提與本專案的分類器不符，故不採納——`node scripts/classify-docs-cli.js --feature
+> readme-catalog-sync` 回報本檔 `role: "Design record"`、`current_authority: []`；
+> `skills/ask/SKILL.md` § Phase 2 亦明載「問現行行為不要讀 tech spec」。**「lifecycle」與
+> 「current authority」是兩個不同的軸**：`@rules/docs-numbering.md` 分的是編號體例，
+> `scripts/lib/doc-metadata.js` 分的是權威角色，把前者讀成後者就會得出「設計記錄必須被改寫成今日行為」
+> 這個相反的結論。那列舊契約是刻意保留的 2026-04 原文，判讀依據是緊接其後的日期註記；現行安裝面行為請看
+> [`skills/codex-setup/SKILL.md`](../../../skills/codex-setup/SKILL.md)。
+>
+> **原文以 fenced block 逐字保存**（前一版放在表格儲存格內，行內反引號無法表示，因而**掉了每個
+> slash command 與 `npx skills add` 外層的反引號**——那是摘述不是原文）。以下兩段由
+> `git show b93e90f^:docs/features/readme-catalog-sync/2-tech-spec.md` 抽出，逐位元組比對：
+>
+> `b93e90f`（2026-04-08）覆蓋的 § 3.3 `WHATS-INCLUDED-COUNT` 範例：
+>
+> ~~~markdown
+> | Skills | 90 | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
+> ~~~
+>
+> 同一 commit 覆蓋的 § 3.3 `INSTALL-COVERAGE` 範例：
+>
+> ~~~markdown
+> | Plugin install | Claude Code | Full (90 skills, hooks, rules, auto-loop) |
+> | `npx skills add` | Codex CLI, Cursor, Windsurf, Aider | Skills only (90 skills) |
+> ~~~
+>
+> **為何不還原這兩處**：`b93e90f` 的標題是 “Move README marker blocks to wrap full tables”——
+> 它改的不只是文字，而是 marker 的**設計本身**（marker 由包住單列改為包住整張表）。範例改成省略形式
+> 是在示範新的 marker 形狀。把舊列還原回去，會讓本節誤述**現行 marker 設計**，那是比就地改寫更嚴重的
+> 缺陷。因此處置是**保存原文於此、不還原本文**。
+>
+> **與 `cross-tool-portability` 的處置相同，理由不同。** 兩檔都不還原正文，都改以追加日期註記讓新舊
+> 兩態並存：該檔的正文原樣留著（改寫前原文以 `git show d04f582:docs/features/cross-tool-portability/2-tech-spec.md`
+> 取回），本檔的範例也不還原 `b93e90f` 之前的形狀。但**不還原的理由不可互換**——該檔是因為還原已提交
+> 的記錄正文本身就是第二次改寫；本檔是因為那兩列示範的 marker 形狀已被推翻，還原會讓本節誤述現行設計。
+> 同一個動作、兩種論證，寫明是為了不讓其中一邊被當成另一邊的先例。
+>
+> 2026-08-20 本輪（push-gate-optin r1–r5）自己造成的就地改寫**已全數還原**，八月行為改以日期註記表述。
+
 ## 1. Requirement Summary
 
 - **Problem**: sd0x-dev-flow 有 90 個 skills，但 README 聲稱 87 個，catalog 實際只列出 76 個。14 個 skills 完全未出現在 README 中。每次新增 skill 需手動更新 README + CLAUDE.md + CLAUDE.template.md + 5 locale files = 8+ files，導致 systemic drift。
@@ -175,6 +222,25 @@ Generator replaces content between marker pairs:
 </details>
 <!-- END:FULL-CATALOG -->
 ```
+
+> **Update（決議 2026-08-15；實作僅存在於 2026-08-20 工作樹，**尚未提交**——push-gate-optin r1–r5）**：上方 `INSTALL-COVERAGE` 區塊是撰寫當時的**示意**（`...` 是省略號，不是逐字輸出）。`pre-push` 改為 opt-in 後，該列的實際產出已變。**變更所在**：`buildInstallCoverage()`
+> （`scripts/generate-readme-catalog.js`）——該檔在 2026-08-20 的**工作樹**中已改，**尚未提交**，
+> `HEAD` 產生的仍是舊字串。工作樹版本逐字為：
+>
+> ```text
+> | `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |
+> ```
+>
+> **三處**與示意不同，其中第三處才是本註記存在的理由：
+>
+> | # | 欄 | 示意 | 工作樹實際輸出 | 性質 |
+> | - | -- | ---- | -------------- | ---- |
+> | 1 | Method | `/codex-setup init` | `$codex-setup init` | 排版慣例——README 以 `$` 表示在 Codex CLI 提示字元下輸入（`README.md` § Codex CLI 安裝段的 `text` 區塊） |
+> | 2 | Tools | `...` | `Codex CLI` | 示意的省略號被實際值取代，非語意差異 |
+> | 3 | **Coverage** | `AGENTS.md kernel + git hooks` | `AGENTS.md kernel + commit-msg hook (pre-push gate opt-in)` | **語意變更**——複數 "git hooks" 曾暗示兩個 hook 皆預設安裝；`pre-push` 改 opt-in 後不再成立 |
+>
+> 上一版只列了前兩處，把唯一有語意的第三處漏掉了（2026-08-20 doc review round 14 抓到）。
+> 上方示意保留為記錄——它示範的是 marker 區塊的形狀，不是逐字內容，所以**不改寫**它。
 
 ### 3.4 Generator Script (`scripts/generate-readme-catalog.js`)
 

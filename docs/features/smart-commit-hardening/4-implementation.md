@@ -160,7 +160,7 @@ an executed one **by comparing bytes**. Two lists that are merely "the same set"
 
 An earlier version made the prefix conditional on those variables being set *at planning time* —
 the wrong shell and the wrong moment, since the condition is evaluated in the skill's shell and
-the command runs in the user's, later. Recorded as `create-pr-stacked/2-tech-spec.md` item 40;
+the command runs in the user's, later. Recorded as `create-pr-stacked/2-tech-spec/1-core-logic.md` item 40;
 partial application is items 36–37 of the same file.
 
 ## 5. Why the fallback must not resolve the way the preferred path does
@@ -187,7 +187,9 @@ looking for the real failure.
 
 **Architecture-level; out of scope for the smart-commit hardening work. Logged, not fixed.**
 
-`/install-scripts` flattens everything into one directory (`skills/install-scripts/SKILL.md:51-53`):
+`/install-scripts` flattens everything into one directory (`skills/install-scripts/SKILL.md` § Script Types —
+the `Skill scripts` row; an earlier version of this sentence cited `:51-53`, which the file has since drifted
+past — that range is now the arguments table):
 
 ```
 plugin checkout          consuming project
@@ -207,10 +209,10 @@ There are **two** defects stacked here, and the first is the one that actually f
    Derivation, so these are not another unreproducible count:
 
    ```bash
-   grep -rho 'scripts/run-skill\.sh'              --include='*.md' skills/ | wc -l  # 37 total
+   grep -rho 'scripts/run-skill\.sh'              --include='*.md' skills/ | wc -l  # 41 total
    grep -rho '\$REPO_ROOT/scripts/run-skill\.sh'  --include='*.md' skills/ | wc -l  #  1 prefixed
    grep -rho 'scripts/run-skill\.sh' --include='*.md' skills/ \
-     --exclude-dir=smart-commit | wc -l                                            # 34 elsewhere
+     --exclude-dir=smart-commit | wc -l                                            # 38 elsewhere
    ```
 
 2. **Reached at its installed location, the runner still misresolves.** `SCRIPT_DIR` is derived
@@ -221,14 +223,14 @@ There are **two** defects stacked here, and the first is the one that actually f
 Defect 1 is fixable **in this skill alone**, with the same two-step locator the ten `$INSPECT`
 fences already use. Defect 2 is not: it is the runner's own contract.
 
-**Scope: 11 skills, 35 delegating call sites** (registry: `docs/skill-catalog.yml`) — 37
+**Scope: 11 skills, 39 delegating call sites** (registry: `docs/skill-catalog.yml`) — 41
 occurrences less the two that are *about* the runner rather than calls to it: `SKILL.md`'s
 "*resolution* — the preferred path goes **through** `scripts/run-skill.sh`" and
 `references/execute-mode.md`'s "The script is **not** reached through `scripts/run-skill.sh`".
-That leaves 34 elsewhere plus the one here.
+That leaves 38 elsewhere plus the one here.
 
 They are **call sites**, not fences, and the split between the two is measured rather than
-characterised: of the 34, **20 sit inside fenced blocks and 14 are inline code spans** in list
+characterised: of the 38, **24 sit inside fenced blocks and 14 are inline code spans** in list
 items and table cells. `skills/obsidian-cli/SKILL.md` alone carries **9** — 2 inline table cells
 plus two separate ` ```bash ` blocks of 3 and 4, the largest single block in the file. § 2.2 draws
 the fence/invocation distinction two sections earlier, and "call site" is the term that survives
@@ -236,7 +238,7 @@ it — a fence can hold several, and an inline span is one without being a fence
 
 ```bash
 # occurrences, and the fenced/inline split, tracking fence state per file
-grep -rn 'scripts/run-skill\.sh' --include='*.md' skills/ | grep -vc '^skills/smart-commit/'   # 34
+grep -rn 'scripts/run-skill\.sh' --include='*.md' skills/ | grep -vc '^skills/smart-commit/'   # 38
 python3 - <<'PY'
 import re, subprocess
 hits = [h for h in subprocess.run(['grep','-rn','scripts/run-skill\.sh','--include=*.md','skills/'],
@@ -251,7 +253,7 @@ for f, nums in by.items():
         if re.match(r'^\s*```', l): inside = not inside; continue
         if inside: marked.add(i)
     for n in nums: fenced += n in marked; inline += n not in marked
-print(fenced, inline)   # 20 14
+print(fenced, inline)   # 24 14
 PY
 ```
 
@@ -763,10 +765,11 @@ maintainer relaxes the row on a premise nobody re-ran.
 
 **And the backslash escape had no oracle.** Deleting `ESC=${ESC//\\/\\\\}` left 94/94 green,
 though the code comment calls it load-bearing ("Backslash first, or the escape stops being
-injective") — 94/94 was the two suites' size at that moment; they are **132** now (80 + 52,
-`node --test`'s own count — round 18 review, P2: this figure previously read 115/63+52, stale by
-one round; re-derive with `node --test test/scripts/smart-commit-inspect.test.js
-test/scripts/smart-commit.test.js 2>&1 | grep -E '^# (tests|pass)'`; 122 by a static `^test(` scan,
+injective") — 94/94 was the two suites' size at that moment; they are **166** now (102 + 64,
+`node --test`'s own count — re-derived 2026-08-22; the figure has been stale twice, reading
+115/63+52 before round 18 and 132/80+52 until now, which is why the derivation command is written
+into the sentence: `node --test test/scripts/smart-commit-inspect.test.js
+test/scripts/smart-commit.test.js 2>&1 | grep -E '^# (tests|pass)'`; **156** by a static `^test(` scan,
 which does not see the parameterized `P17`/`P19`/`P19d` loops), and the mutation
 reddens `P8n` alone and `SKILL.md` publishes `\\` in the escape table, so a reader decodes it. Without the
 encoder rule, a value containing the two literal characters `\` `n` decodes at the reader into a
@@ -1648,29 +1651,54 @@ Recorded because § 9.3's own rule applies to the change as a whole: a note that
 reassuring half is how the next maintainer reverts it. Both round-10 reviewers reached this
 independently, and so did the measurement below.
 
-| Instruction surface (loaded whole on every read) | HEAD | now | Δ bytes |
+| Instruction surface (loaded whole on every read) | round-10 baseline | now (2026-08-22) | Δ bytes |
 |---|---|---|---|
-| `skills/smart-commit/SKILL.md` | 579 L / 43,892 B | 787 L / 65,800 B | **+21,908** |
-| `references/git-environment.md` | 139 L / 10,942 B | 270 L / 25,333 B | **+14,391** |
-| `references/execute-mode.md` | 552 L / 38,625 B | 543 L / 38,066 B | −559 |
-| **total** | **93,459 B** | **129,199 B** | **+35,740 (+38.2%)** |
+| `skills/smart-commit/SKILL.md` | 579 L / 43,892 B | 811 L / 68,660 B | **+24,768** |
+| `references/git-environment.md` | 139 L / 10,942 B | 286 L / 26,664 B | **+15,722** |
+| `references/execute-mode.md` | 552 L / 38,625 B | 559 L / 40,957 B | **+2,332** |
+| **total** | **93,459 B** | **136,281 B** | **+42,822 (+45.8%)** |
+
+**The first column is a recorded baseline, not `git show HEAD:`** — it said "HEAD" for eleven
+rounds and that was wrong the day it was written. No commit in this repository contains a
+579-line / 43,892-byte `SKILL.md`. The three most recent commits touching the file hold 811 L /
+68,471 B (`fead97d`), 823 L / 69,089 B (`187b0aa`) and 471 L / 20,953 B (`96786d1`) — derive the
+list with `git log --format=%H -- skills/smart-commit/SKILL.md` and `git show "${c}:<path>" | wc
+-l -c`. **Which of them `HEAD` pointed at when the baseline was taken is not recorded anywhere,
+and is not reconstructed here** — the round is undated in this document, so any answer would be
+an inference dressed as a fact. What is established is the negative: no commit produces the
+figure, so the baseline is the working tree *before this refactor's edits*, never committed on
+its own, re-derivable from nothing and surviving only as this row. That is a legitimate thing for a measurement to be — it is what the comparison was
+actually made against — but it must not be labelled with a command that returns something else.
+Re-derive the second column with `wc -l -c` on the three paths; the first column, take as read.
 
 Plus three new files: `smart-commit-inspect.sh`, `smart-commit-inspect.test.js`, and this one.
 
-**Weight: not reduced — increased 38.2%** (up from 30.4% at round 20 — round 21's and round 24's
-`git-environment.md` § 1 additions account for the whole movement since round 20; neither round
-24's re-review (§ 10.17) nor its own re-review (§ 10.18) touched any file this table measures, so
-the percentage has been unchanged since round 24 proper landed, and each subsequent doc pass here
-is a re-check of that same figure, not evidence of a new move). The bytes went into prose, not
-commands: SKILL.md's
-fenced-bash surface fell **97 → 91** body lines while the surrounding explanation grew faster. Nor
+**Weight: not reduced — increased 45.8%** (30.4% at round 20, 38.2% until round 69). The
+"unchanged since round 24" reading this paragraph used to carry is **retired, not restated**: it
+was true when written and the intervening rounds falsified it — all three measured files have
+moved since, `SKILL.md` most of all, and `execute-mode.md` has crossed from −559 B to +2,332 B,
+so the one row that used to show a reduction no longer does. What the figure has never been is
+stable enough to quote without re-deriving, which is the argument for re-deriving it here rather
+than for annotating it again. The bytes went into prose, not commands: SKILL.md's
+fenced-bash surface is **91** body lines (re-derived 2026-08-22; the same command against `HEAD`
+also returns 91, and no committed revision of the file has ever measured 97 — the highest before
+the current pair is 41). The **97** this sentence used to compare against is a recorded
+observation of an uncommitted intermediate state: unreconstructable, exactly like the 25 below,
+and kept here only as the figure someone wrote down. The direction is unquantified; the current
+surface is the half that can be checked. The surrounding explanation grew faster than it. Nor
 did the specific duplication the extraction targeted disappear. The `env -u` prefix has grown to
-**559 bytes** (round 17's `+23` for `GIT_CONFIG_NOSYSTEM` over the 473-byte baseline, then `+21`
-each for `GIT_EXTERNAL_DIFF`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` added across rounds 18–20
-— `473 + 23 + 21 + 21 + 21 = 559`) and appears **21 times in SKILL.md now against 20 at HEAD** —
-11,739 bytes, 17.8% of the file (`11739 / 65800`).
-Both figures are re-derivable; an earlier revision of this section carried a fence count that is
-not, which is why the command is written down:
+**568 bytes** (round 17's `+23` for `GIT_CONFIG_NOSYSTEM` over the 473-byte baseline, then `+21`
+each for `GIT_EXTERNAL_DIFF`, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` added across rounds 18–20,
+then `+9` when `env` itself became `/usr/bin/env` — a shell function outranks a bare command word,
+so the policy prefix had to stop being one — `473 + 23 + 21 + 21 + 21 + 9 = 568`) and appears
+**21 times in SKILL.md** — 11,928 bytes, 17.4% of the file (`11928 / 68660`; re-derived
+2026-08-22). It used to read "21 now against 20 at HEAD", and that comparison is **gone rather
+than corrected**: `git show HEAD:skills/smart-commit/SKILL.md | grep -c 'env -u GIT_DIR'` returns
+**21** as well, because the refactor those 20 predate has since been committed. The 20 belongs to
+the same round-10 baseline the table above describes, and a baseline no command reproduces cannot
+be quoted as one side of a `HEAD` comparison. The current figure is re-derivable and stands
+alone; an earlier revision of this section carried a fence count that was not re-derivable at all,
+which is why the command is written down:
 
 ```bash
 # fence body lines, excluding the ````markdown illustration block
@@ -1688,31 +1716,48 @@ the prefix is *written*, which is the figure above and which went up. It is in h
 policy is **applied**. The two are different counts, and an earlier revision of this table conflated
 them badly enough to invert one column:
 
-| | HEAD | now |
+| | round-10 baseline | now |
 |---|---|---|
-| Literal restatements of the 559-byte prefix in `SKILL.md` | 20 | **21** |
+| Literal restatements of the prefix in `SKILL.md` (473 B then, 568 B now) | 20 | **21** |
 | — as a `GIT_ENV="…"` assignment, applied later via `$GIT_ENV` | 14 | 0 |
 | — written at the point of use | 6 | 21 |
 | **Points where the policy is applied to a command** | **39** | **21** |
 | — deriving `REPO_ROOT` (structurally irreducible) | 14 | 14 |
 | — reaching a command that does the actual work | **25** | **7** |
 
+Only the last two lines still run. The first four were written against a working tree that was
+never committed, and `HEAD` has since absorbed the refactor they measure the far side of — run
+today they return 21, 0, 0 and 0, which describes the *result*, not the baseline. They are kept
+because they say what the baseline column *meant*, and struck through because they **never**
+produced it: they read `git show HEAD:`, and the baseline column is an uncommitted working tree
+that no commit has ever held. "Outdated" would be the flattering reading — the mismatch is not
+that `HEAD` moved past them, it is that `HEAD` was the wrong place to look on the day they were
+written.
+
 ```bash
-git show HEAD:skills/smart-commit/SKILL.md > /tmp/head.md
-grep -c 'env -u GIT_DIR' /tmp/head.md                              # 20 literal restatements
-grep -c 'GIT_ENV="env -u' /tmp/head.md                             # 14 of them are assignments
-grep -c '\$GIT_ENV ' /tmp/head.md                                  # 33 applications via the variable
-grep -c '\$GIT_ENV git rev-parse --show-toplevel' /tmp/head.md     # 14 of those derive REPO_ROOT
-grep -c 'env -u GIT_DIR' skills/smart-commit/SKILL.md              # 21 literal restatements
-grep -cF 'REPO_ROOT=$(env -u GIT_DIR' skills/smart-commit/SKILL.md #  14 derive REPO_ROOT
+# ✗ never reproduced the baseline — these read committed HEAD, which never held that working tree
+# git show HEAD:skills/smart-commit/SKILL.md > /tmp/head.md
+#   grep -c 'env -u GIT_DIR' /tmp/head.md                            # was 20; returns 21 today
+#   grep -c 'GIT_ENV="env -u' /tmp/head.md                           # was 14; returns 0 today
+#   grep -c '\$GIT_ENV ' /tmp/head.md                                # was 33; returns 0 today
+#   grep -c '\$GIT_ENV git rev-parse --show-toplevel' /tmp/head.md   # was 14; returns 0 today
+
+# ✓ the current column, re-derivable at any time
+grep -c 'env -u GIT_DIR' skills/smart-commit/SKILL.md               # 21 literal restatements
+grep -cF 'REPO_ROOT=$(/usr/bin/env -u GIT_DIR' skills/smart-commit/SKILL.md  # 14 derive REPO_ROOT
 ```
 
-HEAD's 39 = 33 via `$GIT_ENV` (32 git, 1 bash) + 6 written literally; 39 − 14 derivations = 25.
+The baseline's 39 = 33 via `$GIT_ENV` (32 git, 1 bash) + 6 written literally; 39 − 14 derivations
+= 25. Read it as the recorded figure it is — a figure whose original derivation is **unavailable**.
+The struck-through commands above are not that derivation and never were; they are what someone
+later assumed it must have been.
 The table this replaced read `20 → 7` against a HEAD row of `0` derivations, which was wrong twice:
 HEAD derived `REPO_ROOT` fourteen times too — every one of them prefixed — so a cost that did not
 change was presented as newly introduced, and the 20 it compared against counted assignments rather
-than applications. The real movement is **25 → 7**, which is larger than the figure it replaced and
-correctly based; the seven are four printed `git commit`/`add` commands, two lines of printed
+than applications. The real movement is **25 → 7**, larger than the figure it replaced — but based on the **recorded**
+25, not on a re-derivable one: only the 7 can be inspected today, and the paragraph above says
+why 25 cannot be. Calling the comparison "correctly based" would claim precisely the knowledge
+that paragraph retracts. The seven are four printed `git commit`/`add` commands, two lines of printed
 checklist text, and one `bash -p --` delegation, so "on a git command" was never quite the label
 either.
 
@@ -1728,8 +1773,11 @@ the previous shape failed **open** at exit 0 with a wrong signing verdict (§ 2.
 point a test can pin, against a prefix that had already drifted from the executor's list (§ 3);
 `:(literal)` applied per operand where no call site can forget it; `--untracked-files=all` (§ 9);
 and the keyed, unforgeable `identity` contract (§ 10). The accurate summary is *"the policy got a
-single enforcement point and a test, at +38.2% on the instruction surface"* — not "less weight".
-That figure has now been restated five times as the rounds added rows to Step 1c and Step 1d, and
+single enforcement point and a test, at the instruction-surface increase the table above measures"*
+— not "less weight". The percentage is deliberately **not** restated here: it was cached in this
+sentence as `+38.2%` and went stale the moment the table moved, which is the same defect one
+paragraph later, at the same cost. A pointer cannot drift; a copied number always can.
+That measurement has now been restated five times as the rounds added rows to Step 1c and Step 1d, and
 each restatement was meant to be a correction rather than a drift — except the fourth one wasn't:
 it recorded 35 rows / 4,785 bytes for a segment that, run against the file at the time, was already
 48 rows / 6,773 bytes. The derivation command was correct; its output was not re-run before being
