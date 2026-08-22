@@ -1738,7 +1738,7 @@ const INCLUDED_FIXTURE = (rows) => ['| Category | Count | Examples |', '|---|---
 const COVERAGE_ROWS = [
   '| Plugin install | Claude Code | Full (99 bundled skills, hooks) |',
   '| `npx skills add` | Codex CLI | Skills only (99 public skills) |',
-  '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |',
+  '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |',
 ];
 const INCLUDED_ROWS = [
   '| Skills | 99 public (99 bundled) | `/project-setup`, `/deep-research` |',
@@ -2110,7 +2110,7 @@ const DOC_FIXTURE = (strays = {}) => [
   COVERAGE_FIXTURE([
     `| Plugin install | Claude Code | Full (101 bundled skills${strays['INSTALL-COVERAGE'] || ''}) |`,
     '| `npx skills add` | Codex CLI | Skills only (97 public skills) |',
-    '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |',
+    '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |',
   ]),
   '<!-- END:INSTALL-COVERAGE -->',
   '<!-- BEGIN:WHATS-INCLUDED-COUNT -->',

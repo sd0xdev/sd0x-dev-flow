@@ -241,7 +241,7 @@ function buildInstallCoverage({ publicCount, bundledCount }) {
     '|--------|-------|----------|',
     `| Plugin install | Claude Code | Full (${bundledCount} bundled skills, hooks, rules, auto-loop) |`,
     `| \`npx skills add\` | Codex CLI, Cursor, Windsurf, Aider | Skills only (${publicCount} public skills) |`,
-    '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + git hooks |',
+    '| `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |',
   ].join('\n');
 }
 
