@@ -227,9 +227,16 @@ const gitEnvPath = resolve(__dirname, '../../skills/smart-commit/references/git-
 // whole string becomes one command name and every fence died at its first line. The pattern
 // admits only `-u NAME` tokens so a line that merely STARTS with the prefix and then runs a
 // command cannot be mistaken for the declaration.
+// Round 39 made the leading word `/usr/bin/env`, absolutely, and the anchor moved with it. The
+// slash is the whole point, not house style: a bare `env` is a command word without one, so bash
+// resolves an imported `BASH_FUNC_env%%` function ahead of the binary, and a forged function
+// honours no `-u` at all — measured, a child behind `env -u GIT_DIR` still received
+// `GIT_DIR=/attacker/repo.git`. `command env` is no better; `command` is a builtin and functions
+// outrank builtins. Only a word containing `/` is immune, because bash refuses to import a
+// function whose name contains one. Anchoring on `^env ` here would pin the unsafe spelling.
 const CANONICAL_PREFIX = (() => {
-  const m = readFileSync(gitEnvPath, 'utf8').match(/^(env -u GIT_DIR(?: -u [A-Z_]+)+)$/m);
-  assert.ok(m, 'git-environment.md § 1 must declare the canonical env -u prefix on a line of its own');
+  const m = readFileSync(gitEnvPath, 'utf8').match(/^(\/usr\/bin\/env -u GIT_DIR(?: -u [A-Z_]+)+)$/m);
+  assert.ok(m, 'git-environment.md § 1 must declare the canonical /usr/bin/env -u prefix on a line of its own');
   return m[1];
 })();
 
@@ -237,7 +244,11 @@ const CANONICAL_PREFIX = (() => {
 // sweep over `GIT_ENV="…"` assignments, which could only see the declaration and would now see
 // nothing at all — a sweep that matches nothing passes, which is the failure mode F1d's
 // `found.length >= 1` was already written to catch once.
-const PREFIX_RUNS = (text) => text.match(/env -u GIT_DIR(?: -u [A-Z_]+)*/g) || [];
+// `/usr/bin/` is OPTIONAL in the pattern and mandatory in the value it is compared against, and
+// that asymmetry is the guard: a call site that regressed to a bare `env` is still *found* here
+// and then fails the byte-for-byte equality below. Requiring the slash in the pattern instead
+// would make the very spelling this change exists to ban invisible to the sweep.
+const PREFIX_RUNS = (text) => text.match(/(?:\/usr\/bin\/)?env -u GIT_DIR(?: -u [A-Z_]+)*/g) || [];
 
 // The retired form, described by SHAPE rather than by name. Round 84: the first version of this
 // guard tested `/\$GIT_ENV\b/`, which is one spelling of a defect that has three — `${GIT_ENV}`
@@ -370,13 +381,30 @@ test('F1d: the canonical git environment is defined once and quoted identically 
   // copy — the paste-ready recovery commands — is covered by F1f, not by matching nothing here.
   for (const [path, label] of [
     [skillPath, 'SKILL.md'],
-    [gitEnvPath, 'git-environment.md'], [hardeningSpec, 'smart-commit-hardening/2-tech-spec.md'],
+    [gitEnvPath, 'git-environment.md'],
   ]) {
     const found = PREFIX_RUNS(readFileSync(path, 'utf8'));
     assert.ok(found.length >= 1, `${label} must write the prefix at least once`);
     for (const run of found) {
       assert.equal(run, CANONICAL_PREFIX,
         `${label} must write the canonical prefix byte-for-byte at every call site`);
+    }
+  }
+  // The hardening spec is held to a WEAKER duty, and the weakening is the point rather than a
+  // concession. `doc-metadata.js` classifies `2-tech-spec*` as a **design record**: it states
+  // what was designed at a point in time, so drift from today's code is the record working, not
+  // a finding (`skills/update-docs/SKILL.md` § Step 1.5). Its fences still carry the retired
+  // `GIT_ENV="env -u …"` construction for exactly that reason. Demanding today's spelling there
+  // would order a record rewritten to mirror later code — which is what freezing records forbids.
+  // What is still owed, and is checked, is that nobody quietly SHORTENS the variable list in the
+  // document that argued for it: the leading word is free, the list is not.
+  {
+    const found = PREFIX_RUNS(readFileSync(hardeningSpec, 'utf8'));
+    assert.ok(found.length >= 1, 'smart-commit-hardening/2-tech-spec.md must write the prefix at least once');
+    const canonicalNames = CANONICAL_PREFIX.match(/-u [A-Z_]+/g).join(' ');
+    for (const run of found) {
+      assert.equal(run.match(/-u [A-Z_]+/g).join(' '), canonicalNames,
+        'the hardening spec may keep its historical leading word, but not a shortened variable list');
     }
   }
   // The variable is gone, so nothing may reintroduce it — in any spelling. One copied fence
@@ -768,7 +796,7 @@ test('F1e: the shipped prefix actually runs — env stops parsing options at an 
   const ok = spawnSync('/bin/sh', ['-c', `${CANONICAL_PREFIX} true`], { encoding: 'utf8' });
   assert.equal(ok.status, 0,
     `the canonical prefix must be executable as written; got ${ok.status}: ${ok.stderr}`);
-  assert.ok(!/=/.test(CANONICAL_PREFIX.replace(/^env /, '')),
+  assert.ok(!/=/.test(CANONICAL_PREFIX.replace(/^\/usr\/bin\/env /, '')),
     'the prefix must contain no assignment — a later -u would be taken as the command');
 
   // The opt-in form: assignment AFTER the flags, and it must survive the earlier -u.

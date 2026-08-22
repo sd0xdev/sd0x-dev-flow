@@ -21,11 +21,27 @@ not strip for itself; a helper that strips the same list internally is **not** p
 prefix, written out **literally**:
 
 ```bash
-env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR
+/usr/bin/env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR
 ```
 
 Test IDs below live in two suites with separate namespaces: `F*` in
 `test/scripts/smart-commit.test.js`, `P*` in `test/scripts/smart-commit-inspect.test.js`.
+
+**Spelled `/usr/bin/env`, absolutely.** A bare `env` contains no slash, so bash resolves an
+imported `BASH_FUNC_env%%` function before `/usr/bin/env` — and a forged function ignores every
+`-u`, which is the whole prefix. `command env` is no better: `command` is a builtin and functions
+outrank builtins. A word containing `/` cannot be **imported** as a function name — bash refuses,
+with `error importing function definition for '/usr/bin/env'` — so the absolute path is the only
+spelling that survives a function arriving through the *environment*.
+
+That is the boundary, and it is not immunity. Measured 2026-08-22: a `$BASH_ENV` file containing
+`function /usr/bin/env { … }` is sourced before the first line of a non-interactive shell, defines
+that exact name in **that** shell, and intercepts the prefix — the child printed `HIJACKED`. Only
+`bash -p` refuses the sourcing (measured `SAFE`), and a fence in a skill document cannot choose its
+interpreter's flags. The residual is bounded rather than alarming: a shell already sourcing
+attacker-chosen code forges `git` at the same cost, so nothing a fence asserts survives that world
+anyway. What the prefix buys is the vector an unrelated parent process can reach — which is the one
+that actually gets reached.
 
 **Literally, and never through a variable.** `GIT_ENV="env -u …"` followed by `$GIT_ENV git …` <!-- retired-form-ok -->
 reads better and does not work: zsh does not split an unquoted expansion into words, so the whole
@@ -49,9 +65,9 @@ that would lift the limit but is deliberately not used: 4-implementation.md § 2
 Every fence derives the root once and pins each command to it:
 
 ```bash
-REPO_ROOT=$(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
+REPO_ROOT=$(/usr/bin/env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR git rev-parse --show-toplevel && printf .) || { echo "⚠️ could not resolve the repository root — aborting" >&2; exit 1; }
 REPO_ROOT=${REPO_ROOT%.}; REPO_ROOT=${REPO_ROOT%$'\n'}
-env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR git -C "$REPO_ROOT" <subcommand> …
+/usr/bin/env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_NAMESPACE -u GIT_CEILING_DIRECTORIES -u GIT_GLOB_PATHSPECS -u GIT_ICASE_PATHSPECS -u GIT_NOGLOB_PATHSPECS -u GIT_LITERAL_PATHSPECS -u GIT_CONFIG -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_COUNT -u GIT_CONFIG_NOSYSTEM -u GIT_CONFIG_GLOBAL -u GIT_CONFIG_SYSTEM -u GIT_IMPLICIT_WORK_TREE -u GIT_GRAFT_FILE -u GIT_SHALLOW_FILE -u GIT_PREFIX -u GIT_NO_REPLACE_OBJECTS -u GIT_REPLACE_REF_BASE -u GIT_EXTERNAL_DIFF -u ALLOW_AI_COAUTHOR git -C "$REPO_ROOT" <subcommand> …
 ```
 
 so planning, staging, diff reading, validation, the commit and the post-commit read-back all name
@@ -64,7 +80,7 @@ so planning, staging, diff reading, validation, the commit and the post-commit r
 | `-C "$REPO_ROOT"` on **every** command, not just the ones that print | The single exception is the `rev-parse --show-toplevel` that derives it. Paths collected root-relative and then consumed by a command running elsewhere is the same defect as printing them unanchored — it just fails inside the skill instead of in the user's shell |
 | The prefix goes on the **delegation** when the helper does not strip for itself | `git-profile.sh` runs its own git commands under the caller's environment; stripping at the boundary is what makes it and the fallback answer about the same repository |
 | …and is **omitted** when the helper strips the same list itself | `smart-commit-inspect.sh` and `smart-commit-execute.sh` open with an `unset` of this exact list, each pinned **identical** to it by its own test — `P1` in `smart-commit-inspect.test.js` for the inspector, `F1i` in `smart-commit.test.js` for the executor. Prefixing them too would state one policy in two places, and the second is the one nobody maintains. Which kind a call site is depends on the **callee**, never on the call site |
-| Applied to **all** of them, never some | Partial application replaces "the policy source was repointed" with "the policy source and the thing it protects are two different repositories" — see `create-pr-stacked/2-tech-spec.md` items 36–37 |
+| Applied to **all** of them, never some | Partial application replaces "the policy source was repointed" with "the policy source and the thing it protects are two different repositories" — see `create-pr-stacked/2-tech-spec/1-core-logic.md` items 36–37 |
 
 Each rule below states what to do; the measurement it was derived from is one table in
 [4-implementation.md § 7](../../../docs/features/smart-commit-hardening/4-implementation.md).
@@ -263,7 +279,7 @@ directions: 4-implementation.md § 4.
 | Git | `':(literal)<path>'` + the four `-u …_PATHSPECS` | Every operand is an exact path, and the magic is scoped to that operand — nothing is exported into hooks or other children git launches. The cost is deliberate: `--scope` takes a path, never a glob |
 
 **Unconditional.** The prefix is never made conditional on those variables being set at planning
-time — the wrong shell and the wrong moment. See `create-pr-stacked/2-tech-spec.md` item 40.
+time — the wrong shell and the wrong moment. See `create-pr-stacked/2-tech-spec/1-core-logic.md` item 40.
 
 Authority is not the question here — the user does own their shell — but a plan and an action that
 disagree about which repository, ancestry or identity they mean is a defect on either side of that

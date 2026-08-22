@@ -124,8 +124,13 @@ const makeRepo = (label) => {
 
 /** The canonical prefix, read from its single source of truth rather than restated here. */
 const CANONICAL_PREFIX = (() => {
-  const m = readFileSync(gitEnvPath, 'utf8').match(/^(env -u GIT_DIR(?: -u [A-Z_]+)+)$/m);
-  assert.ok(m, 'git-environment.md § 1 must declare the canonical env -u prefix on its own line');
+  // Round 39 spelled the prefix `/usr/bin/env`, absolutely, and the anchor moved with it. The
+  // absolute path is not cosmetic: a bare `env` is a command word without a slash, so bash
+  // resolves an imported `BASH_FUNC_env%%` function ahead of the binary and the forged function
+  // ignores every `-u`. Pinning `^env ` here would accept exactly the spelling that is unsafe.
+  const m = readFileSync(gitEnvPath, 'utf8')
+    .match(/^(\/usr\/bin\/env -u GIT_DIR(?: -u [A-Z_]+)+)$/m);
+  assert.ok(m, 'git-environment.md § 1 must declare the canonical /usr/bin/env -u prefix on its own line');
   return m[1];
 })();
 
@@ -137,7 +142,7 @@ test('P1: the script strips exactly the variables the canonical prefix strips', 
   const block = src.match(/^unset GIT_DIR[\s\S]*?ALLOW_AI_COAUTHOR$/m);
   assert.ok(block, 'the script must strip the environment in one locatable `unset` block');
   const unset = block[0].replace(/\\\n\s*/g, ' ').replace(/^unset /, '').trim().split(/\s+/);
-  const prefixed = CANONICAL_PREFIX.split(' ').filter((t) => t !== 'env' && t !== '-u');
+  const prefixed = CANONICAL_PREFIX.split(' ').filter((t) => t !== '/usr/bin/env' && t !== '-u');
   // Sets, compared BOTH ways: containment in either direction is the failure this catches.
   // A missing name is an unstripped variable; an extra one is a list nobody derived.
   assert.deepEqual([...unset].sort(), [...prefixed].sort(),
