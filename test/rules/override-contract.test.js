@@ -1352,7 +1352,8 @@ const CANONICAL_ANCHOR_REGISTER =
   'exceptions; `auto-loop.md` § Tiers: a security or data-integrity change is reviewed at ' +
   '`thorough` whatever tier is configured — overrides included (R8). 4. **Destructive git ' +
   'operations** — no `git add` / `commit` / `push` / `stash` / `reset --hard` / `rebase` outside ' +
-  'the enumerated approval workflows: `/push-ci` (push), `/smart-commit --execute` (add + commit), ' +
+  'the enumerated approval workflows: `/push-ci` (push, including `--force-with-lease` when that ' +
+  'flag is explicitly passed — never bare `--force`), `/smart-commit --execute` (add + commit), ' +
   '`/epic-merge` (rebase --onto, force-with-lease, squash-merge) — each only after the explicit ' +
   'per-use user approval its skill defines. Protected branches and the no-AI-attribution rule for ' +
   'commits/PRs are part of this anchor — the attribution rule\'s **sole exception**, itself part of ' +
