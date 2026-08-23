@@ -63,3 +63,11 @@ to be restated.
      hook-lightweighting — the model reads this heading; no hook injects anything. -->
 
 <!-- ## Think Harder: enabled -->
+
+## Review Thread Rotation
+
+<!-- R-a rotation threshold for reply-based review threads (review-common.md § Review Loop).
+     Range 2-6, bare integer, no trailing comment. Unset = 3. Counted behaviourally in
+     conversation per thread; no hook reads it, and review-state.js rounds does not participate. -->
+
+<!-- 3 -->

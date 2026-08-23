@@ -58,7 +58,7 @@ Every non-quality-gate AC must map to evidence.
 |----------|---------|-----------|
 | `✅ Adequate` | All ACs covered by evidence | Behavior-layer |
 | `⚠️ Adequate with exceptions` | Validated exceptions within cap | Behavior-layer |
-| `⚠️ Need Human` | Codex unavailable or inconclusive | Behavior-layer |
+| `⚠️ Need Human` | Every carrier exhausted (no validated verdict — behaviour-layer only), or the validated report is inconclusive | Behavior-layer |
 | `⛔ Inadequate` | Unverified/expired exception, cap breach, or prohibited domain | Behavior-layer |
 
 ## Execution
