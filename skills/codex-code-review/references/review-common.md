@@ -65,8 +65,32 @@ A `Blocked` result is routed by the **derived** sentinel × `gate_reason` pair (
 
 1. Remember the `threadId`
 2. Fix every **in-scope** (incl. `uncertain`) finding at or above the tier's blocking severity (`${BLOCKING}`) — sub-threshold and out-of-scope ones are logged, not fixed
-3. Re-review using `--continue <threadId>`
+3. Re-review using `--continue <threadId>` — unless a rotation condition below holds, in which case open a new thread instead
 4. Repeat until Ready — routing each round's result through Step 4.5 again
+
+### Thread Rotation (central contract)
+
+Every family's review loop references this section — code, doc, plan, test:coverage and
+test:ac-trace consume it via their loop templates; `necessity` is **excluded in v1** (its first
+dispatch is a constitutive debate pipeline, not a single template a fresh thread could rerun).
+A reply thread degrades as it grows; rotation replaces the reply with a fresh dispatch when either
+condition holds, checked before each re-review:
+
+| # | Condition | Measurement | Tier |
+|---|-----------|-------------|------|
+| R-a | The same thread has already carried **3** reply re-reviews (the next dispatch opens a new thread) | **Behaviour-layer per-thread count**: the orchestrator counts replies per thread in conversation and resets to zero on a new thread; the `[THREAD_ROTATED]` line is the counting anchor. `review-state.js`'s `rounds` does **not** participate — it carries no threadId and accumulates across threads, so it can neither anchor nor bound a per-thread count | Default — threshold set by `auto-loop-project.md ## Review Thread Rotation` (2–6; unset = 3) |
+| R-b | The context is judged too long to review well (early rotation) | Model judgment: batch bytes exceed the `resolve-review-profile.js` budget, or the report shows degradation signs (uncomparable findings, shrinking specificity). State the judgment when rotating on R-b | Default — the statement is the record |
+
+**Rotation procedure**:
+
+1. Fix the outstanding findings as usual — rotation never interrupts a fix in progress.
+2. Open the new thread with the family's **first-dispatch template**: the full independent-research contract of `@rules/codex-invocation.md` applies again exactly as on round one. The frozen scope baseline (file list) rides in the prompt — metadata the invocation contract already allows; the baseline is **not** recomputed (`@rules/scope-discipline.md` § Scope Baseline).
+3. The old thread's unclosed findings and dispositions carry issue text and **never enter the new prompt** — feeding them anchors the reviewer. After the fresh report arrives, reconcile on the orchestration side: map old unclosed findings and currently valid dispositions onto the new report via § Finding Identity, then re-derive the gate per `@rules/scope-discipline.md` § Gate Derivation. A mapping that fails is fail-closed: the unmatched finding returns to the gate.
+4. Record `[THREAD_ROTATED] plane=<plane> old=<threadId> new=<threadId> reason=<rounds|context> | <ISO8601>` at column 0 (reporting convention — greppable, nothing parses it) and reset the per-thread count; subsequent replies use the new thread.
+
+The rotation unit is the **batch's thread**: one-thread-per-batch is unchanged — a rotation swaps
+which thread that is, never how many run at once. Stall streaks and round caps are **not** reset by
+rotation; they measure the change, not the thread.
 
 ## Sub-Threshold Findings
 
@@ -159,7 +183,7 @@ When a finding is verified via `/seek-verdict`, output:
 - [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: codex|toolkit|both]
 ```
 
-> Note: `[source: ...]` is required under `--dual` and omitted in single-reviewer mode, which is the default. The four scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
+> Note: `[source: ...]` is required under `--dual` aggregation (Codex healthy) and omitted in single-reviewer mode — the default Codex dispatch **and** the fallback-alone path alike: no carrier prompt requests the tag, so a fallback report carries none, and its provenance rides on `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record instead. The four scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
 
 ## AC Coverage Format (Spec-Driven Review)
 
@@ -179,15 +203,18 @@ When `SPEC_CHECKLIST` is injected (feature has request doc with ACs), review out
 - `⛔ Blocked` — Failed (code review)
 
 These sentinels are **behaviour-layer prose contracts** — they ride in the reviewer's own output,
-and nothing mechanical parses them (hook-lightweighting § 3.3). What records the verdict is the
+and on the Codex path nothing mechanical parses them (hook-lightweighting § 3.3). The one
+mechanical reader is the fallback path: a fallback carrier's **raw report** must pass
+`scripts/validate-family-sentinel.js <contract>` before its verdict may be adopted (§ Degradation
+Matrix) — validation gates adoption, it still records nothing. What records the verdict is the
 model's self-note (`SKILL.md` § Step 4.5): `note code_review pass` on Ready, `note code_review
 fail` on Blocked. The note is an attestation the conversation can audit, never a gate.
 
 ## Dual Reviewer Aggregation (opt-in)
 
-**This whole section applies only under `/codex-review-branch --dual`.** The default everywhere is a single reviewer (Codex). Without the flag, none of the mapping, deduplication or degradation logic below runs — Codex's findings are the output as-is.
+**This section's aggregation machinery — severity mapping, deduplication, source merge — applies only under `/codex-review-branch --dual`.** The default everywhere is a single reviewer (Codex); without the flag none of that merge logic runs — Codex's findings are the output as-is. **One subsection is expressly exempt from that scope: § Degradation Matrix** is the all-family central authority, consumed by every family's loop (single-reviewer included) with or without the flag — `rules/auto-loop.md` § Review Dispatch points here.
 
-When `--dual` is passed, two reviewers run in parallel and **the merge happens in conversation** — there is no aggregate plane, no mode field and no state write. Which reviewers ran is a fact of the transcript, and the next invocation starts single again unless the flag is passed again. This section defines how to merge their results.
+When `--dual` is passed **and Codex is healthy**, two reviewers run in parallel and **the merge happens in conversation** — there is no aggregate plane, no mode field and no state write. Which reviewers ran is a fact of the transcript, and the next invocation starts single again unless the flag is passed again. This section defines how to merge their results on that path; when Codex is out, nothing here merges — § Degradation Matrix and § Review Loop below define the fallback-alone rules that govern instead.
 
 ### Severity Mapping (toolkit → standard)
 
@@ -222,24 +249,50 @@ Normalize each reviewer's findings **fail-closed first** (§ Scope Fields), then
 
 ### Degradation Matrix
 
+The central degradation authority for **every family**, not only `--dual`: a single-reviewer loop
+consumes the Codex-❌ rows below directly (it simply has no Secondary column to aggregate).
+Carrier order per family is decided by `scripts/lib/review-dispatch.js` (`FALLBACK_CARRIERS`):
+
+| Contract | Priority 1 | Priority 2 | Priority 3 | Priority 4 |
+|----------|-----------|-----------|-----------|------------|
+| `code` | Codex MCP | `strict-reviewer` (repo-owned, frontmatter-pinned opus/high) | `pr-review-toolkit:code-reviewer` (plugin; pin best-effort at call site) | exhausted — no validated verdict |
+| `doc` / `plan` / `test:coverage` / `test:ac-trace` | Codex MCP | `contract-neutral-reviewer` | `contract-neutral-reviewer` (one retry, fresh instance) | exhausted — no validated verdict |
+| `necessity` | Codex MCP | — excluded from fallback in v1 (constitutive debate pipeline) | — | ⚠️ Need Human directly |
+
+Each carrier runs the family's **first-dispatch template**, and its raw report must pass
+`scripts/validate-family-sentinel.js <contract>` before adoption; a failing report moves to the
+next carrier, sticky per change (`@rules/auto-loop.md` § Review Dispatch). Validation accepts only
+terminals the dispatched producer is **authorized to emit**: for `plan` the orchestration-owned
+forms — `⚠️ Plan Needs Human` (round-cap derivation, owning skill), `[PLAN_REVIEW_DEGRADED]`
+(Priority-4 / secret-detected, dispatcher) and `[PLAN_REVIEW_SKIPPED]` (explicit user intent,
+owning skill) — fail carrier validation even though they are plan-family terminals, and they are
+rejected **anywhere in unquoted prose**, not only as verdict lines (the owning skill reads machine
+tokens before verdict markers; fenced, blockquoted and inline-code occurrences are masked as data
+first), so a defective carrier cannot fake exhaustion, a skip, or a round-cap hand-off and dodge
+the P3 retry.
+
+The secondary's status belongs to the first two rows only (`--dual`, Codex healthy). Once Codex is out, the carrier chain above is what advances or exhausts — a secondary succeeding never substitutes for a carrier, and a secondary failing never exhausts the chain:
+
 | Scenario | Behavior | Gate Source | Output |
 |----------|----------|------------|--------|
-| Codex ✅ + Secondary ✅ | Union aggregation | `codex+toolkit` | Full dual findings |
-| Codex ✅ + Secondary ❌ | Codex-only + degradation warning | `codex-only` | `⚠️ Secondary reviewer unavailable` |
-| Codex ❌ + Secondary ✅ | `⛔ Blocked` + `⚠️ Need Human`; report the secondary's findings as advisory | `none` | `⚠️ Codex MCP unavailable — secondary cannot carry the gate` |
-| Both ❌ | `⛔ Blocked` + `⚠️ Need Human` | `none` | Both reviewers failed |
+| Codex ✅ + Secondary ✅ (`--dual`) | Union aggregation | `codex+toolkit` | Full dual findings |
+| Codex ✅ + Secondary ❌ (`--dual`) | Codex-only + degradation warning | `codex-only` | `⚠️ Secondary reviewer unavailable` |
+| Codex ❌ → carrier report passes validation | **Fallback carries the gate** (contract-aware dispatch — `@rules/auto-loop.md` § Review Dispatch): the carrier runs the family's first-dispatch template and its raw report passed `scripts/validate-family-sentinel.js <contract>` | `fallback:<agent>` | `[REVIEWER_FALLBACK]` record + the fallback reviewer's full report |
+| Codex ❌ → carrier report fails validation | That dispatch failed — move to the next carrier in the table above (sticky per change); the failing report is never adopted | — | `[REVIEWER_FALLBACK]` record; no verdict from that carrier |
+| Codex ❌ + every fallback carrier invalid/exhausted (independent of secondary status) | Priority 4: **no validated verdict exists** — the gate stays open; surface behaviour-layer `⚠️ Need Human`, emit no gate sentinel | `none` | `[REVIEWER_FALLBACK]` record(s) for the failed dispatches; no gate sentinel |
 
-**Codex failing never degrades to a passing gate**, in either mode. It is the gate everywhere — `--dual` adds a second set of eyes, not a second authority — so a secondary-only result is advisory findings plus `⚠️ Need Human`, matching what the READMEs say happens when Codex is absent. The row above used to read `toolkit-only`, which let a review pass on a reviewer the rest of this skill calls non-authoritative.
+**Codex failing never hands the gate to an unvalidated reviewer.** What changed (review-loop-resilience, 2026-08-23) is who may carry the gate when Codex is out: a fallback reviewer's report, validated fail-closed against the family's own terminal contract, is a **real gate verdict** with `gate_source=fallback:<agent>` — not advisory. Only the Codex-❌ rows were replaced; the `--dual` aggregation semantics above (severity mapping, field-level merge, conservative scope) are untouched, and `--dual` with Codex healthy still aggregates exactly as before. With every carrier exhausted (Priority 4) no report survived validation — carriers may have run and failed the family contract — so nothing is adopted and nothing is noted: a missing or invalid report never becomes a forged verdict.
 
 ### Source Attribution
 
-Every finding includes a source tag:
+Every finding in a **dual aggregate** (Codex healthy) includes a source tag:
 
 | Source | Meaning |
 |--------|---------|
 | `codex` | Found by Codex MCP only |
 | `toolkit` | Found by secondary reviewer only |
 | `both` | Found by both reviewers (deduplicated) |
+| *(fallback — record-level, not a finding tag)* | When a fallback carrier holds the gate (with or without `--dual`) there is no aggregate and the report stays in single-reviewer format with **no** per-finding tags — no carrier prompt requests one. Provenance is `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record |
 
 Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: both]`
 
@@ -250,6 +303,25 @@ Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...>
 | Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context |
 | Secondary | Re-dispatched every iteration (fresh context), for as long as `--dual` stays in effect for this review session |
 
-Codex gate is authoritative for timing. Secondary runs non-blocking in background. Aggregation reconciled at pre-precommit checkpoint. Any code edit resets the review cycle — both reviewers must re-run.
+On the **Codex-healthy path** the Codex gate is authoritative for timing: the secondary runs
+non-blocking in background and aggregation is reconciled at the pre-precommit checkpoint. When
+Codex is out (the Codex-❌ rows in § Degradation Matrix), the validated fallback report **is** the
+gate — in single-reviewer format, provenance on `gate_source=fallback:<agent>` (§ Source
+Attribution) — and there is no aggregation to wait on: a secondary already running is not awaited
+and never merges into the fallback's gate derivation; whenever its report arrives it falls under
+the parent skill's Codex-down secondary policy (Step 3.5 Codex-failure path) — blocking findings
+escalate conservatively, but its `Ready` notes nothing and never substitutes for a validated
+fallback verdict or closes a Priority-4 exhaustion — never silently merged or dropped. Any code
+edit resets the review cycle — every reviewer carrying the gate must re-run.
 
-Without `--dual` the loop is just Codex: `--continue <threadId>` on the same thread until the gate passes. There is no secondary to reconcile and no pre-precommit checkpoint to wait on.
+Without `--dual` the loop has three executable paths, resolved in a fixed order. **R-b is judged
+first, behaviour-layer** — it is a context-quality judgment (§ Thread Rotation) that
+`scripts/lib/review-dispatch.js` cannot represent: the dispatcher's state has no context-overrun
+field and its `rotate` branch tests only `threadRounds >= threshold` (R-a). Only when R-b does not
+hold does the dispatcher decide among the rest: **continue** — Codex healthy and under the R-a
+threshold → `--continue <threadId>` on the same thread (this is the sole path where same-thread
+re-review is lawful: neither rotation condition holds); **rotate** — R-a holds → fresh first
+dispatch on a new thread (the same fresh-dispatch contract an R-b rotation enters by the model's
+own call); **fallback** — the change is sticky on a fallback carrier → stateless re-dispatch of
+the family's first-dispatch template each round (no thread exists, so rotation does not apply).
+In every path there is no secondary to reconcile and no pre-precommit checkpoint to wait on.

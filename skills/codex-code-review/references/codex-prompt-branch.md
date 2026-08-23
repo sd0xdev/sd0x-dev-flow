@@ -190,8 +190,11 @@ Same reporting convention as above: fixed field order, nothing parses it. Never 
 
 This is a branch review, which runs at the \`thorough\` tier: **P0, P1 and P2 all block.** Only a Nit is sub-threshold. The gate has **two axes** — severity and scope:
 
-- ✅ Ready: no blocking finding on either axis
-- ⛔ Blocked: an **in-scope** (incl. uncertain) P0, P1 or P2, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+- \`✅ Ready\`: no blocking finding on either axis
+- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) P0, P1 or P2, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+
+State the verdict with the terminal at the START of its own line (trailing text allowed), never
+as a list item and never both terminals on one line.
 
 End the Gate section with exactly one line:
 

@@ -137,7 +137,8 @@ The plan draft already exists in the session transcript (it is in-context text),
 
 - First Codex call: `mcp__codex__codex` with `references/codex-prompt-plan.md`. Config: `sandbox: 'read-only'`, `approval-policy: 'never'`. **Save the threadId.**
 - Re-review rounds: `mcp__codex__codex-reply` with `references/review-loop-plan.md`.
-- Secondary — **only under `--dual`**: Task agent (`Explore` or `strict-reviewer`), prompt follows the same independent-research mandate; runs in background, does not block the Codex gate; a late secondary P0/P1 re-opens the loop. Without the flag there is no secondary and Codex is the gate; if Codex itself is unreachable there is nothing to degrade to — emit `[PLAN_REVIEW_DEGRADED]` and hand the plan to the user.
+- Secondary — **only under `--dual`**: Task agent (`Explore` or `strict-reviewer`), prompt follows the same independent-research mandate; runs in background, does not block the Codex gate; a late secondary P0/P1 re-opens the loop. Without the flag there is no secondary and Codex is the gate.
+- **Codex unreachable → fallback carries the gate** (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'plan'`), record `[REVIEWER_FALLBACK] plane=plan from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-plan.md` as the governing template (P3 = one retry on a fresh instance), and validate the raw report fail-closed with `node scripts/validate-family-sentinel.js plan` before adopting its verdict. Only when **every** carrier is exhausted does the run degrade: emit `[PLAN_REVIEW_DEGRADED]` and hand the plan to the user — that marker means "no validated verdict exists", never "a fallback reviewed it".
 - The plan text is handed over as a **candidate artifact to attack** — never as "Claude's conclusion to confirm" (per `rules/codex-invocation.md`).
 
 ### Step 4: Convergence (independent budget)
@@ -172,7 +173,7 @@ Default output before ExitPlanMode (3 columns minimum):
 
 | Source | Action |
 |--------|--------|
-| Reviewer unreachable (connection error / 401 / timeout) | Max 1 retry → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
+| Reviewer unreachable (connection error / 401 / timeout) | Max 1 retry → **fallback dispatch first** (Step 3: `contract-neutral-reviewer` + `references/codex-prompt-plan.md`, validated via `validate-family-sentinel.js plan`); only with every carrier exhausted → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
 | High-confidence secret in plan (Step 2) | NO reviewer send → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
 
 Degradation never blocks plan mode: the plan is always delivered to the user in the same turn, with a grep-able degradation marker.

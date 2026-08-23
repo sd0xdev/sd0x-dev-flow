@@ -140,8 +140,11 @@ Same reporting convention as above: fixed field order, nothing parses it. Never 
 
 Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}). The gate has **two axes** — severity and scope:
 
-- ✅ Ready: no blocking finding on either axis — sub-threshold and deferred out-of-scope findings included
-- ⛔ Blocked: an **in-scope** (incl. uncertain) finding at or above ${BLOCKING}, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+- \`✅ Ready\`: no blocking finding on either axis — sub-threshold and deferred out-of-scope findings included
+- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) finding at or above ${BLOCKING}, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+
+State the verdict with the terminal at the START of its own line (trailing text allowed), never
+as a list item and never both terminals on one line.
 
 End the Gate section with exactly one line:
 

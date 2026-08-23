@@ -87,8 +87,10 @@ List optional boundary case tests.
 
 ### Gate
 
-- No 🔴 items: ✅ Tests sufficient
-- Has 🔴 items: ⛔ Tests need supplementation`,
+End the report with the verdict terminal ALONE at the start of the final line — never inside a
+list item or sentence:
+- No 🔴 items → end with \`✅ Tests sufficient\`
+- Has 🔴 items → end with \`⛔ Tests need supplementation\``,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
@@ -96,7 +98,11 @@ List optional boundary case tests.
 
 ## Re-review Prompt
 
-Used with `mcp__codex__codex-reply`:
+Used with `mcp__codex__codex-reply` — same thread only. Rotation: per the central contract
+(`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation), at the
+R-a threshold (3 replies on this thread; `## Review Thread Rotation` override, 2–6) or on R-b
+judged context overrun, dispatch the first-review prompt above on a **new** thread instead — no
+old findings fed; reconcile orchestration-side; record `[THREAD_ROTATED]`.
 
 ```typescript
 mcp__codex__codex-reply({

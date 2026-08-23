@@ -41,7 +41,7 @@ End your reply with the line \`## Plan Review\` followed by exactly ONE verdict 
 
 | Rule | Detail |
 |------|--------|
-| Same thread | Always `codex-reply` with the saved `threadId` — context preservation across rounds |
+| Same thread — until rotation | `codex-reply` with the saved `threadId` preserves context across rounds, **but** the central rotation contract applies (`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation): at the R-a threshold (3 replies on this thread; `## Review Thread Rotation` override, 2–6) or on R-b judged context overrun, dispatch `codex-prompt-plan.md` afresh on a **new** thread (redacted plan as candidate artifact, no old findings fed), reconcile prior-round resolution status orchestration-side, and record `[THREAD_ROTATED] plane=plan …` (plan has no state plane; the record lives in the transcript) |
 | Verify, not confirm | Ask "is it resolved?" + "did fixes introduce new issues?" — never "are my fixes correct?" |
 | Redaction every round | `REVISED_PLAN_TEXT` re-passes the Step 2 redaction contract before each send |
 | Round budget | The round counter lives in the conversation — state "round n/max" in each dispatch so the count survives in the transcript; cap = `max_rounds` (default 5, `auto-loop-project.md ## Plan Review Max Rounds`) |

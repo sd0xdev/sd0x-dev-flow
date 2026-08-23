@@ -48,7 +48,7 @@ Dual dispatch adds a second reviewer, and is opt-in:
 
 **Default: Codex alone.** Do not launch a secondary reviewer. One reviewer, one verdict, noted in Step 4.5 — there is no mode field, no aggregate plane and no state machine behind this choice: which reviewers ran is a fact of the conversation, not of a store (hook-lightweighting § 3.3).
 
-**`--dual` (Branch variant only):** adds a second reviewer **in parallel**, and the merge is yours to perform in conversation (Step 4). A second opinion for releases, security-sensitive changes and public API surfaces — nothing persists it, nothing blocks on it, and the next invocation starts single again unless the flag is passed again.
+**`--dual` (Branch variant only):** adds a second reviewer **in parallel**; on the Codex-healthy path the merge is yours to perform in conversation (Step 4). A second opinion for releases, security-sensitive changes and public API surfaces — nothing persists it, nothing blocks on it, and the next invocation starts single again unless the flag is passed again. When Codex is out, there is no merge: the validated fallback report carries the gate alone (Step 3.5 Codex-failure path).
 
 | Variant | `--dual` accepted? |
 |---------|--------------------|
@@ -194,16 +194,29 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 **Case B: Loop review (has `--continue`)**
 
-- **Codex**: Use `mcp__codex__codex-reply` with re-review template from `references/review-common.md`
+- **Rotation check first**: before each reply, apply `references/review-common.md` § Review Loop — Thread Rotation (central contract): at the R-a threshold (3 replies on this thread; `auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, do **not** reply — dispatch Case A's first-review template on a **new** thread (frozen baseline only; old findings and dispositions reconciled orchestration-side after the fresh report) and record `[THREAD_ROTATED]`.
+- **Codex**: otherwise use `mcp__codex__codex-reply` with re-review template from `references/review-common.md`
+- **Under fallback** (sticky carrier for this change): agents are stateless — every re-review is a fresh Step 3.5-style dispatch to the same carrier, so rotation is automatically satisfied; validate each report the same way before noting.
 - **Secondary** (`--dual` only): re-dispatch in parallel, fresh context. Cycle resets on any code edit.
 
 ### Step 3.5: Await Results
 
 **Single reviewer (default dispatch):** await Codex. Its verdict is the gate *for this dispatch*. Go to Step 4.
 
-If Codex itself is unavailable there is nothing to degrade to — the one reviewer *is* the gate. Emit `⛔ Blocked` + `⚠️ Need Human` and stop; do not silently substitute a subagent, because that would swap the reviewer the gate was defined against without the user having asked for it.
+If Codex is unavailable (quota, network, MCP unreachable, timeout — detected by the dispatch call itself failing), the gate does **not** stop: a contract-aware fallback carries it (`@rules/auto-loop.md` § Review Dispatch). Named steps, in order:
 
-**`--dual`:** Codex is the **blocking** reviewer — await its result for the initial gate. Secondary runs in background (`run_in_background: true`) and is **non-blocking**:
+1. **Decide** — call `scripts/lib/review-dispatch.js` (`node -e "console.log(JSON.stringify(require('./scripts/lib/review-dispatch.js').decide({contract:'code',probe:'codex_fail',sticky:'none'})))"` shape) for the next action. Record `[REVIEWER_FALLBACK] plane=code_review from=codex to=<agent> reason=<quota|timeout|error> | <ISO8601>`; the selection is **sticky for this change** — re-reviews do not re-probe, the next change probes Codex afresh.
+2. **Dispatch** the carrier via Task with this variant's own prompt template and the frozen `SCOPE_BASELINE` (the same template Codex would have received — the template is the contract):
+
+   | Priority | Carrier | Depth guarantee |
+   |----------|---------|-----------------|
+   | 2 | `strict-reviewer` | Repo-owned agent; frontmatter pinned by `test/agents/frontmatter.test.js` |
+   | 3 | `pr-review-toolkit:code-reviewer` | Plugin agent — the pin cannot reach it, so the call-site MUST explicitly request `model: opus`, `effort: high` (best-effort) |
+
+3. **Validate fail-closed** — pipe the carrier's raw report to `node scripts/validate-family-sentinel.js code`. Exit 0 (exactly one of `✅ Ready` / `⛔ Blocked`, no foreign family terminal) → the report **is** the gate verdict with `gate_source=fallback:<agent>`; note it as usual. Exit 1 → this carrier's dispatch failed; move to the next priority. A terminal is never translated across contracts.
+4. **Priority 4 — both carriers exhausted**: no validated verdict exists — carriers may have run, but no report survived the family contract. Emit **no** gate sentinel, surface behaviour-layer `⚠️ Need Human`, and note nothing.
+
+**`--dual` (Codex-healthy path):** Codex is the **blocking** reviewer — await its result for the initial gate. Secondary runs in background (`run_in_background: true`) and is **non-blocking**:
 
 | Secondary Status | Action |
 |-----------------|--------|
@@ -212,11 +225,15 @@ If Codex itself is unavailable there is nothing to degrade to — the one review
 | Still running at precommit | Proceed with Codex gate (authoritative); a late result is normalized fail-closed, merged conservatively, and its derived pair routed through the Step 4.5 matrix — a late in-scope blocking finding re-opens the fix loop, a late out-of-scope critical finding is E1, never a silent re-open |
 | Failed/timed out | Apply degradation matrix per `references/review-common.md § Dual Reviewer Aggregation` |
 
+**`--dual` (Codex-failure path):** when the probe fails under `--dual`, the same fallback chain above carries the gate **alone** — the validated fallback report is the gate verdict, no aggregation is waited on or built, and no Codex thread exists to continue. The healthy-path table above does **not** apply, and the secondary's report — whether it completed before Codex failed, before precommit, or after — is never merged into the fallback's gate derivation **and never carries the gate itself**. Handle it under the **Codex-down secondary policy**: normalize it fail-closed on arrival, then act on its blocking findings only, conservatively — a secondary in-scope blocking finding re-opens the fix loop; a secondary out-of-scope critical finding is E1 — while a secondary `✅ Ready` is advisory and notes **nothing**: it never substitutes for a validated fallback verdict, and Step 4.5's `✅ Ready × NONE` row is indexed only by the gate carrier's own report, never by a secondary's. In particular, at Priority 4 (every fallback carrier exhausted — no validated verdict exists) the gate stays open with behaviour-layer `⚠️ Need Human` **whatever the secondary reported**. Nothing is silently merged or dropped. The pre-precommit checkpoint below is likewise Codex-healthy-only — on this path there is no aggregate to reconcile and no Codex gate to proceed with.
+
 ### Step 4: Consolidate Output
 
 **Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate (dual-axis): first normalize every finding's scope fields fail-closed (`references/review-common.md § Scope Fields`), then BLOCKED ⇔ an in-scope (incl. `uncertain`) finding at or above the tier's blocking severity, **or** an out-of-scope critical finding (P0 / security / data-integrity) with no valid `[USER_SKIPPED]`; else READY with `gate_reason=NONE` (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
 
-**`--dual`:**
+**Fallback carrier (Codex out — with or without `--dual`):** the validated fallback report proceeds unchanged through the single-reviewer gate derivation above and on to Step 4.5 — single-reviewer mode, so per-finding `[source: ...]` tags are omitted exactly as on the Codex path; provenance rides on `gate_source=fallback:<agent>` and the `[REVIEWER_FALLBACK]` record, not on finding tags. It is never merged with a secondary; a secondary report that exists is handled by the Codex-down secondary policy (Step 3.5 Codex-failure path) — blocking findings escalate, its `Ready` never notes.
+
+**`--dual` (Codex-healthy path only):**
 
 1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...>` — the four scope fields survive normalization; a source that omitted them gets `uncertain` (fail-closed), never a blank
    - Codex findings: already in standard format
@@ -297,7 +314,7 @@ See `references/review-common.md` for:
 
 A `⛔ Blocked` enters this loop only through the Step 4.5 routing matrix — `Blocked × IN_SCOPE_BLOCKING` with the breaker untriggered. `OUT_OF_SCOPE_CRITICAL`, `BOTH`, and a triggered breaker route to their human exits instead; sending a critical out-of-scope finding through this loop is exactly the sweep `@rules/scope-discipline.md` closes.
 
-Blocked → fix the in-scope blocking findings → `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`) → repeat until Ready.
+Blocked → fix the in-scope blocking findings → re-review by the path the round dispatches to: same-thread `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`); a fresh first dispatch on a new thread when rotation R-a/R-b holds (`references/review-common.md § Thread Rotation`); or a stateless re-dispatch of the first-dispatch template when the change is sticky on a fallback carrier → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
 Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
@@ -308,14 +325,15 @@ This loop converges on the **review result**. Reaching Ready ends it — a stale
 
 | Reviewer | Loop Behavior |
 |----------|---------------|
-| Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context |
+| Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context; rotation R-a/R-b (`references/review-common.md § Thread Rotation`) swaps in a fresh first dispatch on a new thread |
+| Fallback carrier (Codex out, sticky per change) | Stateless → the family's first-dispatch template is re-dispatched each round; no thread exists, rotation does not apply |
 | Secondary (`--dual` only) | Re-dispatched every iteration, fresh context |
 
 Any code edit resets the review cycle — the reviewer must re-run.
 
-### Pre-precommit Checkpoint (`--dual` only)
+### Pre-precommit Checkpoint (`--dual`, Codex-healthy path only)
 
-Before triggering `/precommit`, reconcile any pending secondary result:
+On the Codex-failure path this checkpoint does not run — the fallback report carries the gate alone, and any secondary result follows Step 3.5's Codex-down secondary policy: blocking findings escalate, its `Ready` notes nothing and never closes a gate. Before triggering `/precommit` on the healthy path, reconcile any pending secondary result:
 
 A late secondary result goes through the same normalization and field-level merge as Step 4 (fail-closed scope fields, conservative aggregate), and its outcome routes through the Step 4.5 matrix — a late out-of-scope critical finding is E1, not a silent re-open of the fix loop:
 
@@ -357,5 +375,5 @@ Input: /codex-review-branch origin/develop --dual
 Action: branch diff + history → Codex + Task parallel → merge findings → Rating table + Findings + Gate → note verdict
 
 Input: /codex-review-fast (Codex unavailable)
-Action: ⛔ Blocked + ⚠️ Need Human — the single reviewer is the whole gate, so there is nothing to degrade to
+Action: [REVIEWER_FALLBACK] → strict-reviewer (P2) runs the fast template → validate-family-sentinel.js code → validated report carries the gate (gate_source=fallback:strict-reviewer)
 ```

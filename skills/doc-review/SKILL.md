@@ -1,7 +1,7 @@
 ---
 name: doc-review
 description: "Document review via Codex MCP. Use when: reviewing .md docs, tech spec audit, document quality check. Not for: code review (use codex-code-review), test review (use test-review). Output: 5-dimension rating table + gate."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
+allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(node:*), Read, Grep, Glob, Task
 context: fork
 agent: Explore
 ---
@@ -66,10 +66,12 @@ establishes, and the reviewer is free to raise one.
 hands the reviewer a defect when the deletion *is* the change. Its review copy is
 `git show HEAD:<path>`, and the prompt says so per file.
 
-`node` is deliberately **not** in `allowed-tools`. `allowed-tools` is pre-approval, not a capability
-boundary — an omitted tool stays reachable through the normal permission flow, so Steps 2 and 3 ask
-for permission when they run. What the omission buys is that a `node` invocation this workflow never
-names cannot run silently under a review's grant.
+`Bash(node:*)` and `Task` are in `allowed-tools` since review-loop-resilience (2026-08-23): the
+fallback dispatch below names `scripts/lib/review-dispatch.js` and `scripts/validate-family-sentinel.js`
+as steps of this workflow, and a named step should not stall on a permission prompt mid-review. The
+earlier deliberate omission protected against *unnamed* `node` invocations riding a review's grant;
+the boundary is now behavioural — this workflow invokes `node` only for the scripts its steps name
+(the link check, the profile resolver, the dispatch decision, the sentinel validator, the state note).
 **Advisory input, not a gate**: it always exits 0, and its output is fed to the reviewer as
 *findings already established* so the LLM does not spend a pass rediscovering them. `markdownlint`
 does not resolve links, so nothing else answers this.
@@ -113,7 +115,9 @@ Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
 **Save the returned `threadId`** — one per batch.
 
-**Loop review**: `mcp__codex__codex-reply` with the re-review template. See `references/review-loop-doc.md`.
+**Loop review**: `mcp__codex__codex-reply` with the re-review template. See `references/review-loop-doc.md` — its Loop Rules carry the thread-rotation clause (central contract).
+
+**Codex unavailable → fallback carries the gate** (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'doc'`), record `[REVIEWER_FALLBACK] plane=doc_review from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>` (sticky for this change), dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-doc.md` as the governing template — batch manifest, profiles and frozen file list included (P3 = one retry on a fresh instance) — and validate the raw report with `node scripts/validate-family-sentinel.js doc` before adopting the verdict (exactly one of `✅ Mergeable` / `⛔ Needs revision`, no foreign terminal). Fallback agents are stateless, so each loop round is a fresh dispatch. Carriers exhausted → no gate sentinel, behaviour-layer `⚠️ Need Human`, nothing noted.
 
 Stop `cat`-ing whole existing files into the prompt. Codex has sandbox access; the prompt carries the
 file list, each file's profile, and what that profile says to read.

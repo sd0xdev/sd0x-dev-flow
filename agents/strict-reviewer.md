@@ -68,7 +68,15 @@ effort: high
 
 ## Merge Gate
 
-✅ Ready (no P0/P1) / ⛔ Blocked (has P0/P1)
+End with exactly one of `✅ Ready` / `⛔ Blocked` alone at the start of the final line
+(no P0/P1 → Ready; otherwise Blocked). Never place both terminals on one line.
 ```
+
+**Attached template wins.** When the dispatching prompt attaches a family review template (the
+fallback-carrier path — `skills/codex-code-review/references/review-common.md` § Degradation
+Matrix), that template's output format, scope-field contract (`origin`/`scope_reason`/`scope`/
+`evidence`), tier blocking severity, and `gate_reason` derivation govern verbatim; the Output and
+Merge Gate sections above are the standalone default only. The fixed "no P0/P1 → Ready" rule in
+particular must not override the attached template's tier.
 
 > Canonical definitions: `skills/codex-code-review/references/review-common.md`

@@ -57,9 +57,11 @@ For each manual exception:
 - domain_check: <ALLOWED | PROHIBITED>
 
 Final summary:
-- gate: Adequate | Adequate_with_exceptions | Need_Human | Inadequate
 - gaps: [list of uncovered AC numbers]
-- exception_count: <N> / <cap>`,
+- exception_count: <N> / <cap>
+
+Then end the report with exactly one unbulleted gate line, alone as the final line:
+gate: Adequate | Adequate_with_exceptions | Need_Human | Inadequate`,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
@@ -90,7 +92,17 @@ Provide only the raw AC text with checkbox state. Do NOT include Claude's eviden
 
 ## Continue Review Prompt
 
-Used with `mcp__codex__codex-reply` when re-verifying after gap closure:
+Used with `mcp__codex__codex-reply` when re-verifying after gap closure — same thread only.
+Rotation: per the central contract (`skills/codex-code-review/references/review-common.md`
+§ Review Loop — Thread Rotation), at the R-a threshold (3 replies on this thread;
+`## Review Thread Rotation` override, 2–6) or on R-b judged context overrun, dispatch the initial
+verification prompt above on a **new** thread instead — no old findings fed; reconcile
+orchestration-side; record `[THREAD_ROTATED]`.
+
+Raw → public mapping: the raw `gate:` line this prompt requires is what
+`scripts/validate-family-sentinel.js test:ac-trace` validates (for any carrier — Codex or
+fallback); the public sentinels (`✅ Adequate` …) are derived from it exclusively by
+`../SKILL.md` § Step 6, never emitted raw by the reviewer.
 
 ```typescript
 mcp__codex__codex-reply({

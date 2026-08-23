@@ -200,12 +200,14 @@ For every 🟡 and ⚪ above, emit one line here, starting at column 0:
 [NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-doc | <ISO8601 UTC>
 \`\`\`
 
-That tag and field order are parsed out of this output by a hook and stored with a TTL, which is what stops the same item being raised again next session. Field 2 is the issue text, field 3 the reason — do not reorder them, and do not use a different tag. Omit this section entirely if there are no 🟡 or ⚪ items.
+That tag and field order are a **reporting convention** — nothing parses or persists these lines (hook-lightweighting): the durable record is this report and the conversation, they stay greppable there, and the same item may legitimately be re-found by a later deep review. Field 2 is the issue text, field 3 the reason — do not reorder them, and do not use a different tag. Omit this section entirely if there are no 🟡 or ⚪ items.
 
 ### Gate
 
-- ✅ Mergeable: No 🔴 items
-- ⛔ Needs revision: Has 🔴 items`,
+End the report with the verdict terminal ALONE at the start of the final line — never inside a
+list item or sentence:
+- No 🔴 items → end with \`✅ Mergeable\`
+- Has 🔴 items → end with \`⛔ Needs revision\``,
   sandbox: 'read-only',
   'approval-policy': 'never',
 });
