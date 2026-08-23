@@ -481,8 +481,10 @@ const CANONICAL_AUTO_LOOP_OVERRIDE =
   'Default | | `## Git Memory` | Setting — post-compact git-context nudge (printed by default ' +
   'since hook-lightweighting; heading kept for compatibility) | Default | | `## Think Harder` | ' +
   'Setting — § Cap Diagnostic Protocol after a compaction, read by the model (no hook injects it) ' +
-  '| Default | No row is a section replacement: `## Tier` is deliberately **not** this file\'s `## ' +
-  'Tiers`, and the other five name no section at all. A user who does want a section replacement ' +
+  '| Default | | `## Review Thread Rotation` | Setting — the R-a rotation threshold (2–6, unset = ' +
+  '3) read behaviourally by `review-common.md` § Review Loop; counted in conversation, no hook ' +
+  'reads it | Default | No row is a section replacement: `## Tier` is deliberately **not** this ' +
+  'file\'s `## Tiers`, and the other six name no section at all. A user who does want a section replacement ' +
   'restates that section\'s exact heading — the mechanism is available, the scaffold just does not ' +
   'ship one.';
 
@@ -1117,6 +1119,7 @@ test('auto-loop mapping table when parsed → covers preamble plus every templat
     '`## Plan Review Max Rounds`',
     '`## Git Memory`',
     '`## Think Harder`',
+    '`## Review Thread Rotation`',
   ], 'the mapping is closed: exactly these rows, in template order');
   assert.equal(new Set(headings).size, headings.length, 'no duplicate mapping rows');
   for (const [heading, , tier] of rows) {
@@ -1125,7 +1128,7 @@ test('auto-loop mapping table when parsed → covers preamble plus every templat
   // Completeness against the template on disk: every ## heading in the template (live or
   // commented) must have a mapping row — a heading added to the template without a row fails.
   const tplHeadings = templateHeadings(autoLoopTpl);
-  assert.deepEqual(tplHeadings, ['Tier', 'Max Rounds', 'Plan Review', 'Plan Review Max Rounds', 'Git Memory', 'Think Harder'],
+  assert.deepEqual(tplHeadings, ['Tier', 'Max Rounds', 'Plan Review', 'Plan Review Max Rounds', 'Git Memory', 'Think Harder', 'Review Thread Rotation'],
     'template heading inventory drifted — update the mapping table AND this test together');
   for (const h of tplHeadings) {
     assert.ok(headings.includes(`\`## ${h}\``), `template heading "${h}" missing from the mapping table`);

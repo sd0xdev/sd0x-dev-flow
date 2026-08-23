@@ -111,16 +111,20 @@ test('tracked CLAUDE files carry no command table', () => {
 
 // Non-registration consumers: allowed to read CLAUDE*.md because they pin prose contracts
 // (rule references, sanitization wording, terminal-gate routing) — not command registration.
+// Keyed by repo-relative path, not basename: basenames repeat across test/ subtrees
+// (test/skills/review-dispatch.test.js vs test/scripts/lib/review-dispatch.test.js), and a
+// basename key would let either file inherit the other's exemption.
 const ALLOWED_CLAUDE_READERS = new Set([
-  'claude-health.test.js',             // pins claude-health S2.5, whose check #3 names `.claude/CLAUDE.md` as a detection input (R8)
-  'claude-md-coverage.test.js',        // this file — terminal-gate routing below
-  'context-management-rule.test.js',   // pins @rules/context-management.md references
-  'create-pr-sanitization.test.js',    // pins Development Rules #3 wording
-  'discretion-tiers.test.js',          // pins @rules/discretion.md import in the two tracked CLAUDE templates (R7)
-  'remind.test.js',                    // pins /remind extraction targets (section headings, not registration)
-  'scope-discipline.test.js',          // pins the closed-list human-exit union sentence (auto-loop + scope-discipline) in both tracked CLAUDE templates
-  'review-dispatch.test.js',           // pins {TEST_COMMAND} placeholder + comments-only honesty prose
-  'testing-rules.test.js',             // pins testing-project.md references
+  'test/skills/claude-health.test.js',             // pins claude-health S2.5, whose check #3 names `.claude/CLAUDE.md` as a detection input (R8)
+  'test/skills/claude-md-coverage.test.js',        // this file — terminal-gate routing below
+  'test/skills/context-management-rule.test.js',   // pins @rules/context-management.md references
+  'test/skills/create-pr-sanitization.test.js',    // pins Development Rules #3 wording
+  'test/rules/discretion-tiers.test.js',           // pins @rules/discretion.md import in the two tracked CLAUDE templates (R7)
+  'test/skills/remind.test.js',                    // pins /remind extraction targets (section headings, not registration)
+  'test/rules/scope-discipline.test.js',           // pins the closed-list human-exit union sentence (auto-loop + scope-discipline) in both tracked CLAUDE templates
+  'test/skills/review-dispatch.test.js',           // pins {TEST_COMMAND} placeholder + comments-only honesty prose
+  'test/rules/review-loop-resilience.test.js',     // pins the fallback sentence in § Auto-Loop of the tracked CLAUDE surfaces
+  'test/skills/testing-rules.test.js',             // pins testing-project.md references
 ]);
 
 // Anchored to a trailing quote (', ", or `) so all three JS string-literal quote styles
@@ -131,7 +135,11 @@ const READER_PATTERN = /CLAUDE(?:\.template)?\.md['"`]/;
 function allTestFiles() {
   return readdirSync(resolve(root, 'test'), { recursive: true, withFileTypes: true })
     .filter((d) => d.isFile() && d.name.endsWith('.test.js'))
-    .map((d) => ({ name: d.name, path: resolve(d.parentPath || d.path, d.name) }));
+    .map((d) => {
+      const path = resolve(d.parentPath || d.path, d.name);
+      const rel = path.slice(root.length + 1).split('\\').join('/');
+      return { name: d.name, rel, path };
+    });
 }
 
 test('no test file asserts on the removed command quick-reference section', () => {
@@ -146,8 +154,8 @@ test('no test file asserts on the removed command quick-reference section', () =
 test('every test file reading a tracked CLAUDE file is a classified non-registration consumer', () => {
   const readers = allTestFiles()
     .filter(({ path }) => READER_PATTERN.test(readFileSync(path, 'utf8')))
-    .map(({ name }) => name);
-  const unclassified = readers.filter((name) => !ALLOWED_CLAUDE_READERS.has(name));
+    .map(({ rel }) => rel);
+  const unclassified = readers.filter((rel) => !ALLOWED_CLAUDE_READERS.has(rel));
   assert.deepStrictEqual(unclassified, [],
     'these test files read CLAUDE.md/CLAUDE.template.md but are not classified as '
     + 'non-registration consumers. Command registration assertions (bare-command regexes, '
@@ -174,13 +182,15 @@ test('READER_PATTERN classifies all three string-literal quote styles and ignore
 
 test('the classified non-registration consumers still exist and still read CLAUDE files', () => {
   // Pins the allowlist itself: an entry that stops reading (or is deleted) is stale and must be
-  // removed, so the classification stays a live decision rather than an inert list.
-  const byName = new Map(allTestFiles().map(({ name, path }) => [name, path]));
-  for (const name of ALLOWED_CLAUDE_READERS) {
-    const path = byName.get(name);
-    assert.ok(path, `ALLOWED_CLAUDE_READERS entry no longer exists: ${name}`);
+  // removed, so the classification stays a live decision rather than an inert list. Entries are
+  // repo-relative paths, so a basename shared by another subtree's file cannot keep a dead
+  // entry alive or lend the exemption to an unclassified file.
+  const byRel = new Map(allTestFiles().map(({ rel, path }) => [rel, path]));
+  for (const rel of ALLOWED_CLAUDE_READERS) {
+    const path = byRel.get(rel);
+    assert.ok(path, `ALLOWED_CLAUDE_READERS entry no longer exists: ${rel}`);
     assert.ok(READER_PATTERN.test(readFileSync(path, 'utf8')),
-      `ALLOWED_CLAUDE_READERS entry no longer reads a tracked CLAUDE file — remove the stale entry: ${name}`);
+      `ALLOWED_CLAUDE_READERS entry no longer reads a tracked CLAUDE file — remove the stale entry: ${rel}`);
   }
 });
 

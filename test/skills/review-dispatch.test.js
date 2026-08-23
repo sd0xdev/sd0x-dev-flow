@@ -213,10 +213,19 @@ test('SKILL.md carries no aggregate-gate emission — the machinery retired with
     'dual must be stated as ephemeral — the property that replaced the aggregate gate');
 });
 
-test('SKILL.md refuses to substitute a subagent when Codex is unavailable in single mode', () => {
+test('SKILL.md never swaps the reviewer silently — a fallback is declared, validated and labelled', () => {
+  // Policy change (review-loop-resilience, 2026-08-23): Codex unavailable no longer dead-ends at
+  // "nothing to degrade to" — a fallback carrier takes the gate. What survives from the old pin is
+  // the spirit: the swap must never be silent. The carrier is declared ([REVIEWER_FALLBACK]),
+  // its raw report validated fail-closed, and its verdict labelled with its source.
   const content = read('skills/codex-code-review/SKILL.md');
-  assert.match(content, /nothing to degrade to/,
-    'in single mode the one reviewer IS the gate; silently swapping it changes what the gate means');
+  assert.ok(!content.includes('nothing to degrade to'), 'the old dead-end clause must be gone');
+  assert.match(content, /\[REVIEWER_FALLBACK\] plane=code_review from=codex to=<agent>/,
+    'the swap is declared in a fixed record, never implicit');
+  assert.match(content, /validate-family-sentinel\.js code/,
+    'the carrier report is validated fail-closed before it may carry the gate');
+  assert.match(content, /gate_source=fallback:<agent>/,
+    'a fallback verdict is labelled with its source — the gate meaning is never silently changed');
 });
 
 test('SKILL.md still requires a late secondary P0/P1 to re-open the loop', () => {

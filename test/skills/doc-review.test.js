@@ -97,9 +97,12 @@ test('skills/doc-review/SKILL.md declares its name and a non-empty description',
     'the description is the dispatcher discovery interface — an empty one hides the skill');
 });
 
-test('node is the only instructed binary left ungranted, and that is deliberate', () => {
-  assert.deepEqual(ungrantedBinaries(SKILL), ['node'],
-    'git must stay granted; a second ungranted binary is an unintended prompt mid-review');
+test('every instructed binary is granted — node joined the grants with the fallback dispatch', () => {
+  // review-loop-resilience (2026-08-23): the fallback branch names review-dispatch.js and
+  // validate-family-sentinel.js as workflow steps, so node moved from deliberately-ungranted to
+  // granted. An ungranted binary would now be an unintended prompt mid-review.
+  assert.deepEqual(ungrantedBinaries(SKILL), [],
+    'a named workflow step must not stall on a permission prompt mid-review');
 });
 
 test('the pairing check fails on an ungranted binary and passes on a granted one', () => {
@@ -114,13 +117,15 @@ test('the pairing check fails on an ungranted binary and passes on a granted one
   assert.deepEqual(ungrantedBinaries(granted), []);
 });
 
-test('Bash(node:*) is withheld, so Steps 2-3 ask for permission when they run', () => {
-  assert.ok(!allowedTools(SKILL).includes('Bash(node:*)'),
-    'pre-approval is not needed to run node — omitting it only removes the silent grant');
+test('Bash(node:*) and Task are granted, and the grant is explained in the skill body', () => {
+  assert.ok(allowedTools(SKILL).includes('Bash(node:*)'),
+    'the fallback dispatch and sentinel validation are named steps — they must not stall on a prompt');
+  assert.ok(allowedTools(SKILL).includes('Task'),
+    'the fallback carrier is dispatched via Task');
   assert.ok(instructedBinaries(SKILL).includes('node'),
-    'the omission is only meaningful while the workflow still instructs node commands');
-  assert.match(SKILL, /`allowed-tools` is pre-approval, not a capability/,
-    'an unexplained missing grant reads as an oversight and gets "fixed" back in');
+    'the grant is only meaningful while the workflow still instructs node commands');
+  assert.match(SKILL, /the boundary is now behavioural/,
+    'an unexplained grant flip reads as an oversight and gets "fixed" back — the body must say why');
 });
 
 test('every script the workflow instructs exists in this checkout', () => {
