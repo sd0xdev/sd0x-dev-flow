@@ -13,7 +13,7 @@ v4 讓 Claude 在一組封閉、由測試釘死的 anchor 集合內擁有裁量�
 在 Claude Code 上提供完整 control plane；對 Codex CLI 與其他相容 agent 則以 skills-only 形式發佈。
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — 僅佔 Claude context window 的 ~4%
+99 bundled · 99 public skills · 16 agents — 僅佔 Claude context window 的 ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook（pre-push 護欄為 opt-in） |
 <!-- END:INSTALL-COVERAGE -->
 
-**需求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 與 `post-edit-format` 用它解析 hook payload——沒有 `jq` 時兩者都直接 exit 0，敏感路徑防護與自動格式化等於默默關閉）| [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝，但 `/codex-*` review gate 必須有——Codex 本身就是那位唯一的 reviewer，未安裝時 review 會直接輸出 `⛔ Blocked` + `⚠️ Need Human`，沒有可降級的對象）
+**需求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 與 `post-edit-format` 用它解析 hook payload——沒有 `jq` 時兩者都直接 exit 0，敏感路徑防護與自動格式化等於默默關閉）| [Codex MCP](https://github.com/openai/codex)（安裝 plugin 可不裝；它是 `/codex-*` review gate 的預設 reviewer——Codex 不可用時，由契約感知的 fallback reviewer 以同一機制承接 gate，依 family contract fail-closed 並記錄 `[REVIEWER_FALLBACK]`；唯有所有備援 reviewer 都無法產生有效判定時，review 才輸出 `⚠️ Need Human` 而非 verdict）
 
 ### 註冊 Codex MCP
 
@@ -119,11 +119,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-一切繞著一條規則運轉——**terminal completion invariant**：唯有當某項改動的 change class 所需的每個 gate，都在*該 class 的最後一次編輯之後*通過，這項改動才能被宣告完成。程式碼編輯需要一次獨立的 Codex review，接著 `/precommit`；`.md` 文件需要 `/codex-review-doc`。何時執行、如何批次編輯、review 要多深，都是模型的決定——invariant 約束的是終點狀態，不是編排過程。
+一切繞著一條規則運轉——**terminal completion invariant**：唯有當某項改動的 change class 所需的每個 gate，都在*該 class 的最後一次編輯之後*通過，這項改動才能被宣告完成。程式碼編輯需要一次獨立的 review——預設由 Codex 執行，Codex 不可用時由通過驗證的契約感知 fallback reviewer 承接——接著 `/precommit`；`.md` 文件需要 `/codex-review-doc`。何時執行、如何批次編輯、review 要多深，都是模型的決定——invariant 約束的是終點狀態，不是編排過程。
 
 Hooks 回報的是**事實，不是命令**：它們印出提醒與一行 `[AUTO_LOOP_STATE]` 事實（change class、各 plane 的 verdict 狀態），決定權在模型。什麼算 blocking 由 tier 決定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低於該門檻的 findings 只記錄下來，loop 繼續往前，不再多開一輪。卡關——連續三輪 review 都沒關掉任何 finding，由模型自行計數——或作為最後防線的輪次上限觸頂，會觸發結構化的自我診斷（架構問題？文件太長？注意力發散？）與一次有界調整，然後 loop 繼續，而不是自動交接；無論由哪一個 trigger 發動，人類出口都仍然有效（安全性與資料完整性改動完全跳過診斷；被診斷為架構層級或需求歧義的停滯則交給人類）。
 
-沒有強制執行模式（hook-lightweighting，2026-08-13）：每個 review 層 hook 都是以 exit 0 結束的提醒。Verdict 只在模型記錄它時才存在（`node scripts/review-state.js note <plane> <pass|fail>`，綁定 digest——一次編輯就會重新打開該 plane），而讓提醒安靜下來的誠實做法，是真的跑完 gate 並記下結果。review 層以外的護欄仍然保有牙齒：pre-edit-guard 仍會阻擋敏感路徑編輯（需要 `jq`，缺 jq 時護欄不會啟動），而已安裝的 git 層級護欄維持硬性（commit-msg-guard 預設安裝、pre-push-gate 為 opt-in）。
+沒有強制執行模式（hook-lightweighting，2026-08-13）：每個 review 層 hook 都是以 exit 0 結束的提醒。建立 verdict 的是 reviewer 的報告；模型再記錄它（`node scripts/review-state.js note <plane> <pass|fail>`，綁定 digest——一次編輯就會重新打開該 plane）讓提醒退場。沒被記錄的 verdict 依然成立——只是提醒會一直響——而讓提醒安靜下來的誠實做法，是真的跑完 gate 並記下結果。review 層以外的護欄仍然保有牙齒：pre-edit-guard 仍會阻擋敏感路徑編輯（需要 `jq`，缺 jq 時護欄不會啟動），而已安裝的 git 層級護欄維持硬性（commit-msg-guard 預設安裝、pre-push-gate 為 opt-in）。
 
 第二位 reviewer 走 `/codex-review-branch --dual`，預設不啟用。Hook 與相依細節詳見 [docs/hooks.md](docs/hooks.md)。
 
@@ -146,8 +146,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt R-a 門檻（3 次 reply；override 2–6）或 R-b 上下文過長
+            C->>X: 在新 thread 上全新首次分派（凍結 baseline 隨行）
+            X-->>C: 全新報告
+            C->>C: 於編排側將舊 findings 對映到新報告並重新推導 gate
+            C->>C: 記錄 [THREAD_ROTATED]（old → new threadId）
+        else 未達門檻
+            C->>X: --continue threadId
+            X-->>C: 重新驗證
+        end
+        Note over C,X: 輪替保留凍結的 scope baseline；stall 連續計數與輪次上限不重置
     end
 
     C->>C: /precommit (auto)
@@ -268,10 +276,10 @@ flowchart TD
 | 類別 | 數量 | 範例 |
 |------|------|------|
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小的 Context 佔用

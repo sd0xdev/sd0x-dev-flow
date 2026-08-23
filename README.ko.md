@@ -13,7 +13,7 @@ v4는 테스트로 고정된 닫힌 anchor 집합 안에서 Claude에게 재량�
 Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기타 호환 에이전트에는 skills-only 배포를 제공합니다.
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — Claude context window의 ~4%만 사용
+99 bundled · 99 public skills · 16 agents — Claude context window의 ~4%만 사용
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md 커널 + commit-msg hook (pre-push 게이트는 opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
-**요구 사항**: Claude Code 2.1+ | Node.js 18+ | `jq`(`pre-edit-guard`와 `post-edit-format`이 hook 페이로드를 이것으로 파싱합니다 — `jq`가 없으면 둘 다 exit 0 하므로, 민감 경로 가드와 자동 포매팅이 조용히 꺼집니다) | [Codex MCP](https://github.com/openai/codex)(플러그인 설치에는 선택 사항이지만 `/codex-*` 리뷰 게이트에는 필수 — Codex가 바로 그 유일한 리뷰어이므로, 미설치 시 폴백하지 않고 `⛔ Blocked` + `⚠️ Need Human`을 냅니다)
+**요구 사항**: Claude Code 2.1+ | Node.js 18+ | `jq`(`pre-edit-guard`와 `post-edit-format`이 hook 페이로드를 이것으로 파싱합니다 — `jq`가 없으면 둘 다 exit 0 하므로, 민감 경로 가드와 자동 포매팅이 조용히 꺼집니다) | [Codex MCP](https://github.com/openai/codex)(플러그인 설치에는 선택 사항입니다. `/codex-*` 리뷰 게이트의 기본 리뷰어이며, Codex를 사용할 수 없으면 컨트랙트를 인지하는 폴백 리뷰어가 같은 메커니즘으로 게이트를 이어받아 패밀리 컨트랙트에 따라 fail-closed로 동작하고 `[REVIEWER_FALLBACK]`을 기록합니다. 모든 대체 리뷰어가 유효한 판정을 내리지 못한 경우에만 리뷰가 판정 대신 `⚠️ Need Human`을 냅니다)
 
 ### Codex MCP 등록
 
@@ -119,11 +119,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-모든 것은 하나의 규칙을 중심으로 돌아갑니다 — **종결 완료 불변식(terminal completion invariant)**: 어떤 변경에 대한 작업은, 해당 변경 클래스가 요구하는 모든 gate가 *그 클래스의 마지막 편집 이후* 통과했을 때에만 완료로 선언될 수 있습니다. 코드 편집은 독립적인 Codex 리뷰 후 `/precommit`을 요구하고, `.md` 문서는 `/codex-review-doc`을 요구합니다. 언제 실행할지, 편집을 어떻게 배치할지, 얼마나 깊이 리뷰할지는 모델의 판단입니다 — 불변식은 choreography가 아니라 최종 상태를 제약합니다.
+모든 것은 하나의 규칙을 중심으로 돌아갑니다 — **종결 완료 불변식(terminal completion invariant)**: 어떤 변경에 대한 작업은, 해당 변경 클래스가 요구하는 모든 gate가 *그 클래스의 마지막 편집 이후* 통과했을 때에만 완료로 선언될 수 있습니다. 코드 편집은 독립적인 리뷰 — 기본은 Codex, Codex를 사용할 수 없으면 검증된 컨트랙트 인지 폴백 리뷰어 — 후 `/precommit`을 요구하고, `.md` 문서는 `/codex-review-doc`을 요구합니다. 언제 실행할지, 편집을 어떻게 배치할지, 얼마나 깊이 리뷰할지는 모델의 판단입니다 — 불변식은 choreography가 아니라 최종 상태를 제약합니다.
 
 Hooks는 **명령이 아니라 사실**을 보고합니다: reminder와 `[AUTO_LOOP_STATE]` 사실 라인(변경 클래스, plane별 verdict 상태)을 출력하고, 결정은 모델이 소유합니다. 무엇이 blocking인지는 tier가 결정합니다(`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2). 그 기준 아래의 findings는 기록만 하고 루프는 새 라운드를 여는 대신 그대로 진행합니다. 정체 — 아무것도 닫지 못한 리뷰 라운드 3회 연속, 모델이 직접 셉니다 — 또는 백스톱으로서의 라운드 상한 도달이 구조화된 자가 진단(아키텍처 문제인가? 문서가 너무 긴가? 주의 분산인가?)과 한 번의 제한된 조정을 촉발하고, 그 뒤 루프가 재개됩니다 — 자동으로 사람에게 인계하는 것이 아닙니다. 어느 trigger로 발화했든 human exit는 그대로 유효합니다 (보안과 데이터 무결성 변경은 진단을 아예 건너뛰고, 아키텍처 수준이나 요구사항 모호성으로 진단된 정체는 사람에게 갑니다).
 
-강제(enforcement) 모드는 없습니다 (hook-lightweighting, 2026-08-13): 모든 리뷰 레이어 hook은 exit 0으로 끝나는 reminder입니다. Verdict는 모델이 기록할 때 존재하며(`node scripts/review-state.js note <plane> <pass|fail>`, digest 바인딩 — 편집하면 해당 plane이 다시 열립니다), reminder를 정직하게 잠재우는 방법은 gate를 실행하고 결과를 기록하는 것입니다. 리뷰 레이어 밖의 가드는 여전히 유효합니다: pre-edit-guard는 민감 경로 편집을 여전히 차단하고(`jq`가 있을 때 — 없으면 가드가 작동하지 않음), 설치된 git 레벨 가드는 그대로 강제됩니다(commit-msg-guard는 기본, pre-push-gate는 opt-in).
+강제(enforcement) 모드는 없습니다 (hook-lightweighting, 2026-08-13): 모든 리뷰 레이어 hook은 exit 0으로 끝나는 reminder입니다. Verdict를 확립하는 것은 리뷰어의 리포트이며, 모델은 그것을 기록하여(`node scripts/review-state.js note <plane> <pass|fail>`, digest 바인딩 — 편집하면 해당 plane이 다시 열립니다) reminder를 닫습니다. 기록되지 않은 verdict도 여전히 유효하며, 단지 reminder가 계속 울릴 뿐입니다. reminder를 정직하게 잠재우는 방법은 gate를 실행하고 결과를 기록하는 것입니다. 리뷰 레이어 밖의 가드는 여전히 유효합니다: pre-edit-guard는 민감 경로 편집을 여전히 차단하고(`jq`가 있을 때 — 없으면 가드가 작동하지 않음), 설치된 git 레벨 가드는 그대로 강제됩니다(commit-msg-guard는 기본, pre-push-gate는 opt-in).
 
 두 번째 리뷰어는 `/codex-review-branch --dual`로 쓸 수 있고 기본값은 비활성입니다. Hook과 의존성에 대한 자세한 내용은 [docs/hooks.md](docs/hooks.md)를 참조하세요.
 
@@ -146,8 +146,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt R-a 임계값(리플라이 3회; override 2–6) 또는 R-b 컨텍스트 초과
+            C->>X: 새 스레드에서 새 첫 디스패치(동결 baseline 동반)
+            X-->>C: 새 리포트
+            C->>C: 이전 findings를 새 리포트에 대조하고 gate 재도출
+            C->>C: [THREAD_ROTATED] 기록(old → new threadId)
+        else 임계값 미만
+            C->>X: --continue threadId
+            X-->>C: 재검증
+        end
+        Note over C,X: 로테이션은 동결된 scope baseline을 유지; 스톨 연속 카운트와 라운드 상한은 리셋되지 않음
     end
 
     C->>C: /precommit (auto)
@@ -268,10 +276,10 @@ flowchart TD
 | 카테고리 | 수량 | 예시 |
 |----------|------|------|
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 최소한의 Context 사용량

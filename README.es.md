@@ -13,7 +13,7 @@ v4 da a Claude discreción dentro de un conjunto cerrado de anchors fijado por t
 Control plane completo en Claude Code. Distribución solo de skills para Codex CLI y otros agentes compatibles.
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — ~4% de la ventana de contexto de Claude
+99 bundled · 99 public skills · 16 agents — ~4% de la ventana de contexto de Claude
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | Kernel AGENTS.md + hook commit-msg (la puerta pre-push es opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin, obligatorio para los gates de review `/codex-*` — Codex *es* el reviewer único, así que sin él la review emite `⛔ Blocked` + `⚠️ Need Human` en vez de degradarse)
+**Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin; es el reviewer por defecto de los gates de review `/codex-*` — cuando Codex no está disponible, un reviewer de respaldo consciente del contrato asume el gate con el mismo mecanismo, fail-closed según el contrato de cada familia y registrando `[REVIEWER_FALLBACK]`; solo cuando ningún revisor alternativo produce un veredicto válido la review emite `⚠️ Need Human` en lugar de un veredicto)
 
 ### Registro de Codex MCP
 
@@ -119,11 +119,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-Todo orbita alrededor de una sola regla — el **terminal completion invariant** (invariante de terminación): el trabajo sobre un cambio solo puede declararse completo cuando todo gate que su clase de cambio requiere ha pasado *después de la última edición en esa clase*. Las ediciones de código requieren un review independiente de Codex y luego `/precommit`; los docs `.md` requieren `/codex-review-doc`. Cuándo ejecutarlos, cómo agrupar las ediciones y con qué profundidad revisar son decisiones del modelo — el invariante restringe el estado final, no la coreografía.
+Todo orbita alrededor de una sola regla — el **terminal completion invariant** (invariante de terminación): el trabajo sobre un cambio solo puede declararse completo cuando todo gate que su clase de cambio requiere ha pasado *después de la última edición en esa clase*. Las ediciones de código requieren un review independiente — de Codex por defecto, o de un reviewer de respaldo consciente del contrato y validado cuando Codex no está disponible — y luego `/precommit`; los docs `.md` requieren `/codex-review-doc`. Cuándo ejecutarlos, cómo agrupar las ediciones y con qué profundidad revisar son decisiones del modelo — el invariante restringe el estado final, no la coreografía.
 
 Los hooks reportan **hechos, no órdenes**: imprimen recordatorios y una línea de hechos `[AUTO_LOOP_STATE]` (clase de cambio, estado de veredicto por plano) y el modelo es dueño de la decisión. Qué bloquea lo decide el tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); los hallazgos por debajo de esa línea se registran y el bucle continúa en lugar de abrir otra ronda. Un estancamiento — tres rondas de revisión que no cierran nada, contadas por el modelo — o, como red de seguridad, alcanzar el tope de rondas dispara un autodiagnóstico estructurado (¿problema de arquitectura? ¿doc demasiado largo? ¿difusión de atención?) y un ajuste acotado antes de que el bucle se reanude, en lugar de un traspaso automático; las salidas humanas siguen vigentes sea cual sea el disparador (los cambios de seguridad e integridad de datos se saltan el diagnóstico por completo; un estancamiento diagnosticado como de nivel de arquitectura o como ambigüedad de requisitos va al humano).
 
-No hay modo de enforcement (hook-lightweighting, 2026-08-13): todo hook de la capa de review es un recordatorio que sale con 0. Un veredicto existe cuando el modelo lo anota (`node scripts/review-state.js note <plane> <pass|fail>`, ligado al digest — una edición reabre su plano), y la manera honesta de silenciar un recordatorio es ejecutar el gate y anotar el resultado. Los guards fuera de la capa de review conservan su fuerza: pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (con `jq` disponible; sin jq, el guard no se activa), y los guards a nivel de git instalados siguen siendo duros (commit-msg-guard por defecto, pre-push-gate opt-in).
+No hay modo de enforcement (hook-lightweighting, 2026-08-13): todo hook de la capa de review es un recordatorio que sale con 0. El informe del reviewer es lo que establece el veredicto; el modelo luego lo anota (`node scripts/review-state.js note <plane> <pass|fail>`, ligado al digest — una edición reabre su plano) para retirar el recordatorio. Un veredicto sin anotar sigue en pie — solo mantiene vivo su recordatorio —, y la manera honesta de silenciar un recordatorio es ejecutar el gate y anotar el resultado. Los guards fuera de la capa de review conservan su fuerza: pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (con `jq` disponible; sin jq, el guard no se activa), y los guards a nivel de git instalados siguen siendo duros (commit-msg-guard por defecto, pre-push-gate opt-in).
 
 Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene desactivado por defecto. Ver [docs/hooks.md](docs/hooks.md) para detalles de hooks y dependencias.
 
@@ -146,8 +146,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt Umbral R-a (3 replies; override 2–6) o desbordamiento de contexto R-b
+            C->>X: Nuevo primer dispatch en un thread nuevo (la baseline congelada viaja con él)
+            X-->>C: Informe nuevo
+            C->>C: Reconciliar los findings antiguos con el informe nuevo y re-derivar el gate
+            C->>C: Registrar [THREAD_ROTATED] (old → new threadId)
+        else Bajo el umbral
+            C->>X: --continue threadId
+            X-->>C: Re-verificación
+        end
+        Note over C,X: La rotación conserva la scope baseline congelada; las rachas de stall y los topes de rondas no se reinician
     end
 
     C->>C: /precommit (auto)
@@ -268,10 +276,10 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 | Categoría | Cantidad | Ejemplos |
 |-----------|----------|----------|
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Mínimo consumo de context

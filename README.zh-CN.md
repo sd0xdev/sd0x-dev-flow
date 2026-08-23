@@ -13,7 +13,7 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 完整控制平面运行在 Claude Code 上。对 Codex CLI 与其他兼容 agent 提供 skills-only 分发。
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — 仅占 Claude context window 的 ~4%
+99 bundled · 99 public skills · 16 agents — 仅占 Claude context window 的 ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook（pre-push 守卫为 opt-in） |
 <!-- END:INSTALL-COVERAGE -->
 
-**环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装，但 `/codex-*` review gate 必须有——Codex 本身就是那位唯一的 reviewer，未安装时 review 会直接输出 `⛔ Blocked` + `⚠️ Need Human`，没有可降级的对象）
+**环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装；它是 `/codex-*` review gate 的默认 reviewer——Codex 不可用时，由契约感知的 fallback reviewer 以同一机制承接 gate，按 family contract fail-closed 并记录 `[REVIEWER_FALLBACK]`；只有当所有备用 reviewer 均无法给出有效判定时，review 才输出 `⚠️ Need Human` 而非 verdict）
 
 ### 注册 Codex MCP
 
@@ -119,11 +119,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-一切都围绕一条规则——**终态完成不变量**：一项改动只有在其 change class 所要求的每一道 gate 都于*该类的最后一次编辑之后*通过时，才可以宣告完成。代码编辑需要一次独立的 Codex review 再加 `/precommit`；`.md` 文档需要 `/codex-review-doc`。何时执行、如何批处理编辑、审查多深，都是模型的决定——不变量约束的是终态，不是编排。
+一切都围绕一条规则——**终态完成不变量**：一项改动只有在其 change class 所要求的每一道 gate 都于*该类的最后一次编辑之后*通过时，才可以宣告完成。代码编辑需要一次独立的 review——默认由 Codex 执行，Codex 不可用时由通过验证的契约感知 fallback reviewer 承接——再加 `/precommit`；`.md` 文档需要 `/codex-review-doc`。何时执行、如何批处理编辑、审查多深，都是模型的决定——不变量约束的是终态，不是编排。
 
 Hooks 报告的是**事实，不是命令**：它们打印提醒和一行 `[AUTO_LOOP_STATE]` 事实（change class、各 plane 的 verdict 状态），决策权归模型。什么算 blocking 由 tier 决定（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）；低于该门槛的 findings 只记录下来，loop 继续往前，不再多开一轮。卡壳——连续三轮 review 没有关掉任何 finding，由模型自行计数——或作为兜底，触发轮次上限——会启动一次结构化自我诊断（架构问题？文档过长？注意力发散？）与一次有边界的调整，然后 loop 继续，而不是自动移交；无论由哪个 trigger 发动，人类出口都仍然有效（安全与数据完整性改动完全跳过诊断；被诊断为架构级或需求歧义的停滞交给人类）。
 
-不存在强制执行模式（hook-lightweighting，2026-08-13）：每个审查层 hook 都是以 exit 0 结束的提醒。Verdict 只有在模型记录它时才存在（`node scripts/review-state.js note <plane> <pass|fail>`，与 digest 绑定——一次编辑会重新打开其 plane），而让提醒安静下来的诚实方式是把 gate 跑完并记录结果。审查层之外的守卫仍然保有约束力：pre-edit-guard 仍会阻断敏感路径编辑（需要 `jq`，缺 jq 时守卫不会启动），而已安装的 git 层守卫仍然是硬性的（commit-msg-guard 默认安装、pre-push-gate 为 opt-in）。
+不存在强制执行模式（hook-lightweighting，2026-08-13）：每个审查层 hook 都是以 exit 0 结束的提醒。建立 verdict 的是 reviewer 的报告；模型再记录它（`node scripts/review-state.js note <plane> <pass|fail>`，与 digest 绑定——一次编辑会重新打开其 plane）让提醒退场。未被记录的 verdict 依然成立——只是提醒会一直响——而让提醒安静下来的诚实方式是把 gate 跑完并记录结果。审查层之外的守卫仍然保有约束力：pre-edit-guard 仍会阻断敏感路径编辑（需要 `jq`，缺 jq 时守卫不会启动），而已安装的 git 层守卫仍然是硬性的（commit-msg-guard 默认安装、pre-push-gate 为 opt-in）。
 
 第二位 reviewer 走 `/codex-review-branch --dual`，默认不启用。Hook 与依赖详情见 [docs/hooks.md](docs/hooks.md)。
 
@@ -146,8 +146,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt R-a 阈值（3 次 reply；override 2–6）或 R-b 上下文过长
+            C->>X: 在新 thread 上全新首次分派（冻结 baseline 随行）
+            X-->>C: 全新报告
+            C->>C: 在编排侧将旧 findings 对映到新报告并重新推导 gate
+            C->>C: 记录 [THREAD_ROTATED]（old → new threadId）
+        else 未达阈值
+            C->>X: --continue threadId
+            X-->>C: 重新验证
+        end
+        Note over C,X: 轮换保留冻结的 scope baseline；stall 连续计数与轮次上限不重置
     end
 
     C->>C: /precommit (auto)
@@ -268,10 +276,10 @@ flowchart TD
 | 类别 | 数量 | 示例 |
 |------|------|------|
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| 代理 | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| 代理 | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | 钩子 | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | 规则 | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| 脚本 | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| 脚本 | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 极小的 Context 占用

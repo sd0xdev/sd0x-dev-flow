@@ -13,7 +13,7 @@ v4 は、テストで固定された閉じた Anchor セットの内側で Claud
 Claude Code ではフルコントロールプレーン。Codex CLI やその他の互換エージェントにはスキルのみを配布します。
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — Claude の context window のわずか ~4%
+99 bundled · 99 public skills · 16 agents — Claude の context window のわずか ~4%
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md カーネル + commit-msg フック（pre-push ゲートはオプトイン） |
 <!-- END:INSTALL-COVERAGE -->
 
-**必要環境**: Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` と `post-edit-format` が hook のペイロードをこれで解析します — `jq` が無いと両者とも exit 0 するため、センシティブパスのガードと自動フォーマットが黙って無効になります）| [Codex MCP](https://github.com/openai/codex)（プラグインのインストールには不要ですが、`/codex-*` のレビューゲートには必須です — Codex がその唯一のレビューアーなので、未インストール時はフォールバックせず `⛔ Blocked` + `⚠️ Need Human` を出します）
+**必要環境**: Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` と `post-edit-format` が hook のペイロードをこれで解析します — `jq` が無いと両者とも exit 0 するため、センシティブパスのガードと自動フォーマットが黙って無効になります）| [Codex MCP](https://github.com/openai/codex)（プラグインのインストールには不要です。`/codex-*` レビューゲートの既定のレビューアーであり、Codex が利用できないときはコントラクトを理解するフォールバックレビューアーが同じ仕組みでゲートを引き継ぎ、ファミリーコントラクトに従ってフェイルクローズドで動作し `[REVIEWER_FALLBACK]` を記録します。すべての担い手が尽きたときにのみ、レビューは判定の代わりに `⚠️ Need Human` を出します）
 
 ### Codex MCP の登録
 
@@ -119,11 +119,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-すべては 1 つのルール — **terminal completion invariant** — を中心に回ります：ある変更の作業は、その変更クラスが要求するすべてのゲートが*そのクラスの最後の編集の後に*パスして初めて完了と宣言できます。コード編集には独立した Codex レビューとその後の `/precommit` が、`.md` ドキュメントには `/codex-review-doc` が必要です。いつ実行するか、編集をどうバッチするか、どれだけ深くレビューするかはモデルの判断です — invariant が制約するのは最終状態であって、手順の振り付けではありません。
+すべては 1 つのルール — **terminal completion invariant** — を中心に回ります：ある変更の作業は、その変更クラスが要求するすべてのゲートが*そのクラスの最後の編集の後に*パスして初めて完了と宣言できます。コード編集には独立したレビュー——既定では Codex、Codex が利用できないときは検証済みのコントラクト対応フォールバックレビュアー——とその後の `/precommit` が、`.md` ドキュメントには `/codex-review-doc` が必要です。いつ実行するか、編集をどうバッチするか、どれだけ深くレビューするかはモデルの判断です — invariant が制約するのは最終状態であって、手順の振り付けではありません。
 
 フックは**命令ではなくファクト**を報告します：リマインダーと `[AUTO_LOOP_STATE]` のファクト行（変更クラス、プレーンごとの verdict 状態）を出力し、判断はモデルが持ちます。何が blocking かは tier が決めます（`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2）。その閾値を下回る findings は記録され、追加のラウンドを開かずにループは先へ進みます。ストール — finding を 1 つも閉じないレビューラウンドが 3 回続くこと。モデルが数えます — あるいはバックストップとしてのラウンド上限到達により、自動ハンドオフではなく、構造化された自己診断（アーキテクチャの問題？ ドキュメントが長すぎる？ 注意の拡散？）と 1 回の限定的な調整を経てループが再開します。どの trigger で発火しても human exit は有効なままです（セキュリティとデータ整合性の変更は診断を完全にスキップして人間へ。アーキテクチャレベルまたは要件の曖昧さと診断されたストールも人間へ向かいます）。
 
-強制モードは存在しません（hook-lightweighting、2026-08-13）：レビュー層のフックはすべて exit 0 で終了するリマインダーです。verdict はモデルが note した時点で存在し（`node scripts/review-state.js note <plane> <pass|fail>`、digest に束縛 — 編集するとそのプレーンが再オープン）、リマインダーを黙らせる正直な方法は、ゲートを実行して結果を note することです。レビュー層の外のガードは効力を保ちます：pre-edit-guard は機密パスへの編集を引き続きブロックし（`jq` がある場合。無いとガードは作動しない）、インストール済みの git レベルのガードはハードなままです（commit-msg-guard は既定、pre-push-gate はオプトイン）。
+強制モードは存在しません（hook-lightweighting、2026-08-13）：レビュー層のフックはすべて exit 0 で終了するリマインダーです。verdict を確立するのはレビュアーのレポートであり、モデルはそれを記録して（`node scripts/review-state.js note <plane> <pass|fail>`、digest に束縛 — 編集するとそのプレーンが再び開きます）リマインダーを閉じます。note されなかった verdict も有効なままで、リマインダーが鳴り続けるだけです。リマインダーを黙らせる正直な方法は、ゲートを実行して結果を note することです。レビュー層の外のガードは効力を保ちます：pre-edit-guard は機密パスへの編集を引き続きブロックし（`jq` がある場合。無いとガードは作動しない）、インストール済みの git レベルのガードはハードなままです（commit-msg-guard は既定、pre-push-gate はオプトイン）。
 
 2 人目のレビューアーは `/codex-review-branch --dual` から利用でき、デフォルトでは無効です。フックと依存関係の詳細は [docs/hooks.md](docs/hooks.md) を参照してください。
 
@@ -146,8 +146,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt R-a しきい値（リプライ 3 回；override 2–6）または R-b コンテキスト超過
+            C->>X: 新しいスレッドで新規の初回ディスパッチ（凍結ベースラインを同送）
+            X-->>C: 新規レポート
+            C->>C: 旧 findings を新レポートに突き合わせゲートを再導出
+            C->>C: [THREAD_ROTATED] を記録（old → new threadId）
+        else しきい値未満
+            C->>X: --continue threadId
+            X-->>C: 再検証
+        end
+        Note over C,X: ローテーションは凍結スコープベースラインを保持；ストール連続数とラウンド上限はリセットされない
     end
 
     C->>C: /precommit (auto)
@@ -268,10 +276,10 @@ flowchart TD
 | カテゴリ | 数 | 例 |
 |----------|-----|-----|
 | スキル | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| エージェント | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| エージェント | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | フック | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | ルール | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| スクリプト | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| スクリプト | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 極小の Context 使用量

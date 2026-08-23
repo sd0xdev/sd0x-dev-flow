@@ -13,7 +13,7 @@ v4 gives Claude discretion inside a closed, test-pinned anchor set; hooks are di
 Full control plane on Claude Code. Skills-only distribution for Codex CLI and other compatible agents.
 
 <!-- BEGIN:HERO-COUNT -->
-99 bundled · 99 public skills · 15 agents — ~4% of Claude's context window
+99 bundled · 99 public skills · 16 agents — ~4% of Claude's context window
 <!-- END:HERO-COUNT -->
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![npm](https://img.shields.io/badge/npx-skills%20add-blue)](https://www.npmjs.com/package/skills)
@@ -50,7 +50,7 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook (pre-push gate opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requirements**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` and `post-edit-format` parse their hook payload with it — without `jq` both exit 0, so the sensitive-path guard and auto-formatting are silently off) | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin, required for the `/codex-*` review gates — Codex *is* the single reviewer, so without it a review emits `⛔ Blocked` + `⚠️ Need Human` rather than degrading)
+**Requirements**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` and `post-edit-format` parse their hook payload with it — without `jq` both exit 0, so the sensitive-path guard and auto-formatting are silently off) | [Codex MCP](https://github.com/openai/codex) (optional to install the plugin; the default reviewer for the `/codex-*` review gates — when Codex is unavailable the gate is carried by a contract-aware fallback reviewer under the same mechanism, fail-closed per family contract with `[REVIEWER_FALLBACK]` recorded, and only when every carrier is exhausted does the review surface `⚠️ Need Human` instead of a verdict)
 
 ### Codex MCP registration
 
@@ -134,11 +134,11 @@ flowchart LR
     S -.- S1["/smart-commit<br/>/push-ci<br/>/create-pr<br/>/pr-review"]
 ```
 
-Everything orbits one rule — the **terminal completion invariant**: work on a change may be declared complete only when every gate its change class requires has passed *after the last edit in that class*. Code edits require an independent Codex review then `/precommit`; `.md` docs require `/codex-review-doc`. When to run them, how to batch edits, and how deep to review are the model's calls — the invariant constrains the end state, not the choreography.
+Everything orbits one rule — the **terminal completion invariant**: work on a change may be declared complete only when every gate its change class requires has passed *after the last edit in that class*. Code edits require an independent review — Codex by default, or a validated contract-aware fallback reviewer when Codex is unavailable — then `/precommit`; `.md` docs require `/codex-review-doc`. When to run them, how to batch edits, and how deep to review are the model's calls — the invariant constrains the end state, not the choreography.
 
 Hooks report **facts, not orders**: they print reminders and an `[AUTO_LOOP_STATE]` fact line (change class, per-plane verdict state) and the model owns the decision. What blocks comes from the tier (`fast` P0 · `standard` P0/P1 · `thorough` P0/P1/P2); findings below that line are logged and the loop proceeds rather than opening another round. A stall — three review rounds that close nothing, counted by the model — or, as a backstop, hitting the round cap triggers a structured self-diagnosis (architecture problem? doc too long? attention diffusion?) and one bounded adjustment before the loop resumes, rather than an automatic hand-off; the human exits stay in force whichever trigger fired (security and data-integrity changes skip the diagnosis entirely; a stall diagnosed as architecture-level or requirement ambiguity goes to the human).
 
-There is no enforcement mode (hook-lightweighting, 2026-08-13): every review-layer hook is a reminder that exits 0. A verdict exists when the model notes it (`node scripts/review-state.js note <plane> <pass|fail>`, digest-bound — an edit re-opens its plane), and the honest way to silence a reminder is to run the gate and note the outcome. The guards outside the review layer keep their teeth: pre-edit-guard still blocks sensitive-path edits (when `jq` is available; without it the guard does not fire), and the git-level guards remain hard where installed (commit-msg-guard by default, pre-push-gate opt-in).
+There is no enforcement mode (hook-lightweighting, 2026-08-13): every review-layer hook is a reminder that exits 0. The reviewer's report is what establishes the verdict; the model then records it (`node scripts/review-state.js note <plane> <pass|fail>`, digest-bound — an edit re-opens its plane) to retire the reminder. A verdict never noted still stands — it just keeps its reminder alive — and the honest way to silence a reminder is to run the gate and note the outcome. The guards outside the review layer keep their teeth: pre-edit-guard still blocks sensitive-path edits (when `jq` is available; without it the guard does not fire), and the git-level guards remain hard where installed (commit-msg-guard by default, pre-push-gate opt-in).
 
 A second reviewer is available via `/codex-review-branch --dual` and is off by default. See [docs/hooks.md](docs/hooks.md) for hook and dependency details.
 
@@ -161,8 +161,16 @@ sequenceDiagram
 
     alt Blocking findings
         C->>C: Fix them (sub-threshold: log and move on)
-        C->>X: --continue threadId
-        X-->>C: Re-verify
+        alt R-a threshold (3 replies; override 2–6) or R-b context overrun
+            C->>X: Fresh first dispatch on a new thread (frozen baseline rides along)
+            X-->>C: Fresh report
+            C->>C: Reconcile old findings onto the fresh report, re-derive the gate
+            C->>C: Record [THREAD_ROTATED] (old → new threadId)
+        else Under threshold
+            C->>X: --continue threadId
+            X-->>C: Re-verify
+        end
+        Note over C,X: Rotation keeps the frozen scope baseline; stall streaks and round caps continue unreset
     end
 
     C->>C: /precommit (auto)
@@ -283,10 +291,10 @@ Real-world scenarios showing which skills to combine and in what order.
 | Category | Count | Examples |
 |----------|-------|---------|
 | Skills | 99 public (99 bundled) | `/project-setup`, `/codex-review-fast`, `/verify`, `/smart-commit`, `/deep-research` |
-| Agents | 15 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
+| Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 21 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Minimal Context Footprint
