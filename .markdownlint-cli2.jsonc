@@ -9,10 +9,29 @@
     "MD036": false,
     "MD040": false,
     "MD041": false,
-    "MD060": false
+    "MD060": false,
+    // Deliberate conventions in this repo's docs — do not "fix" (2026-08-23):
+    // MD038: leading/trailing spaces inside code spans are semantic (e.g. `git ` prefix,
+    //        attestation clauses appended after a question mark). --fix mangled Anchor-pinned
+    //        docs (skills/epic-merge/SKILL.md digest test caught it).
+    "MD038": false,
+    // MD028/MD012: records and specs use separated blockquotes and deliberate blank spacing.
+    "MD028": false,
+    "MD012": false,
+    // MD010: hard tabs inside code fences can be semantic (heredoc <<-).
+    "MD010": false,
+    // MD046/MD048/MD049: mixed fence/emphasis styles are deliberate (nested fence demos, zh prose).
+    "MD046": false,
+    "MD048": false,
+    "MD049": false
   },
   "ignores": [
     "node_modules/**",
-    ".git/**"
+    ".git/**",
+    // Plugin-managed mirror + generated cache + personal memory log — not authored Markdown.
+    ".claude/**",
+    // Records are frozen (create-request Phase 4.5); lint must not press for rewrites.
+    "docs/features/*/requests/**",
+    "docs/features/*/review-log-*.md"
   ]
 }
