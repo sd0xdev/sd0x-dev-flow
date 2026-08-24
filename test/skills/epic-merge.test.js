@@ -2973,7 +2973,11 @@ test('the canonical env prefix when a transport variable is exported → git nev
     write(resolve(dir, 'hijack.sh'), `#!/bin/sh\nprintf 'INVOKED %s\\n' "$*" >> ${JSON.stringify(rec)}\nexit 128\n`);
     const git = (...a) => spawnSync('git', ['-C', repo, ...a], { encoding: 'utf8' });
     spawnSync('git', ['init', '-q', repo], { encoding: 'utf8' });
-    git('commit', '-q', '--allow-empty', '-m', 'seed', '--no-gpg-sign');
+    // Identity inline, as every other temp repo in this suite pins it: a CI runner carries no
+    // global git identity, so a bare seed commit fails there, HEAD never exists, and the push
+    // dies client-side before the transport — which makes the hijack precondition below read
+    // vacuously empty instead of measuring anything (the 2026-08-24 CI red).
+    git('-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'seed', '--no-gpg-sign');
 
     const PATH = `${bin}:${process.env.PATH}`;
     const URL = 'ssh://approved.example/team/approved.git';
@@ -3034,8 +3038,9 @@ test('an inherited GIT_SSH_VARIANT → the canonical prefix keeps the URL port i
       `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(rec)}\nexit 128\n`);
     require('node:fs').chmodSync(resolve(bin, 'ssh'), 0o755);
     spawnSync('git', ['init', '-q', repo], { encoding: 'utf8' });
-    spawnSync('git', ['-C', repo, 'commit', '-q', '--allow-empty', '-m', 'seed', '--no-gpg-sign'],
-      { encoding: 'utf8' });
+    // Identity inline for the same reason as the transport test above: no HEAD, no push, no argv.
+    spawnSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid',
+      'commit', '-q', '--allow-empty', '-m', 'seed', '--no-gpg-sign'], { encoding: 'utf8' });
 
     const URL = 'ssh://approved.example:2222/team/approved.git';
     const run = (stripped) => {

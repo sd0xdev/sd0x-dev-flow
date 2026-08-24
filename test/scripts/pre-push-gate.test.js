@@ -1476,28 +1476,46 @@ test('the two authorized skills strip the variable this hook cannot', () => {
 // ── round-38: the argv credential, challenged and measured ────────────────────
 
 // Doc review round 38 argued that `$BASH_ENV` — which a non-interactive bash sources BEFORE line 1
-// — can run `set -- a b c` and so forge the argument count the credential rests on. It cannot, and
-// this pins WHY rather than merely that: bash assigns the script's positional parameters when it
-// begins executing the script file, which is AFTER the startup file has been sourced, so the
-// startup file's `set --` rewrites a set that is then replaced. Pinned as a passing test because
-// the alternative is re-litigating the same claim every round — and because a future bash that
-// changed the ordering would make this the first thing to go red.
+// — can run `set -- a b c` and so forge the argument count the credential rests on. The refutation
+// this comment used to carry ("bash assigns the script's positional parameters after the startup
+// file has been sourced, so the forge is replaced") is **bash 3.2 behaviour, not bash behaviour**:
+// measured 2026-08-24 with the marker-carrying probe below, bash 3.2.57 prints `1|2|origin` —
+// the startup file RAN (its exported marker survived) and only its forged arguments were papered
+// over — while bash 5.3.15 — and every Linux CI runner — prints `1|3|forged1`, the `set --`
+// surviving into the script too. The prediction this pin shipped with ("a future bash that
+// changed the ordering would make this the first thing to go red") fired on the first CI run
+// that executed it under a modern bash. So the pin no longer rests on ordering: what protects
+// the hook is its own shebang, `#!/usr/bin/env -S bash -p` — under `-p` the $BASH_ENV file is
+// not processed at all (measured `unset|2|origin` on 3.2.57 and 5.3.15 alike), which is the
+// defense this test now measures. The dated
+// correction to the round-39 F1 record lives in
+// `docs/features/push-gate-optin/review-log-push-gate-optin.md`.
 test('a BASH_ENV that rewrites the positional parameters → the hook still sees git\'s two arguments', () => {
   const dir = mkdtempSync(resolve(tmpdir(), 'sd0x-argvforge-'));
   try {
     const rc = resolve(dir, 'forge.sh');
     writeFileSync(rc,
-      'set -- forged1 forged2 forged3\nSD0X_PRIV_REEXEC=1\nset -o privileged\nunset BASH_ENV\n');
+      'export SD0X_ARGVFORGE_RAN=1\n'
+      + 'set -- forged1 forged2 forged3\nSD0X_PRIV_REEXEC=1\nset -o privileged\nunset BASH_ENV\n');
 
-    // The mechanism, read directly: a probe that prints what it was given.
+    // The defense, read directly: a probe that prints what it was given, run the way the hook's
+    // shebang runs it — under `-p`, where $BASH_ENV is never processed. The positional parameters
+    // alone cannot carry this assertion: on bash 3.2 the script's own arguments overwrite the
+    // forge AFTER the startup file has run, so `2|origin` there is compatible with the file
+    // having executed. The exported marker is what discriminates — `1|2|origin` means the file
+    // ran and was papered over (bash 3.2 without -p), `unset|2|origin` means it never ran, which
+    // is the only outcome `-p` permits on either version (measured 2026-08-24 on 3.2.57 and
+    // 5.3.15).
     const probe = resolve(dir, 'probe.sh');
-    writeFileSync(probe, 'printf "%s|%s" "$#" "$1"\n');
-    const seen = spawnSync('/bin/bash', [probe, 'origin', 'https://example.invalid/r.git'], {
+    writeFileSync(probe, 'printf "%s|%s|%s" "${SD0X_ARGVFORGE_RAN-unset}" "$#" "$1"\n');
+    const seen = spawnSync('/bin/bash', ['-p', probe, 'origin', 'https://example.invalid/r.git'], {
       encoding: 'utf8', env: { ...process.env, BASH_ENV: rc },
     });
-    assert.equal(seen.stdout, '2|origin',
-      'the startup file must not reach the script\'s positional parameters — if this ever prints '
-      + `3, the credential below is forgeable and must change; got: ${seen.stdout}`);
+    assert.equal(seen.stdout, 'unset|2|origin',
+      'under -p the startup file must never run: a leading 1 means $BASH_ENV executed (its '
+      + 'exported marker survived even where 3.2 replaced the forged arguments), and a 3 means '
+      + `the forged parameters reached the script — either way -p stopped suppressing $BASH_ENV `
+      + `and the credential must change; got: ${seen.stdout}`);
 
     // And the consequence, end to end: the forged marker cannot reach the second pass.
     assert.notEqual(runGateFile(scriptPath, { BASH_ENV: rc }).status, 0,

@@ -1154,9 +1154,14 @@ test('the script when it does run a rebase → is reported, whatever the source 
 //                                          — a wrong answer, not a failure
 //   `${DROP[-1]}`                        → `bad array subscript`; under `set -u` it aborted the
 //                                          whole `--base` mode, the one that produces the command
-// Neither is visible to a reader and neither breaks on the maintainer's Bash 5. Only running the
-// script under the interpreter its shebang names finds them, which is why these assertions live
-// next to the harness rather than in a linter.
+// Neither is visible to a reader and neither breaks on the maintainer's Bash 5. Running the
+// script under the interpreter its shebang names finds them — on a host where /bin/bash IS
+// Bash 3.2. On Linux CI /bin/bash is Bash 5, both constructs run correctly there, and the
+// execution-based half of this section proves nothing (measured 2026-08-24: the reintroduction
+// mutants completed with correct output and the run stayed green). So the detection is two
+// halves: execution below for the 3.2 host, and the lexical scan `bash4Constructs` in the
+// mutant test for every host — which is why these assertions still live next to the harness
+// rather than in a linter, but no longer rely on the harness alone.
 
 test('the analysis script under the Bash its shebang names → completes both modes with real output', () => {
   const shebang = readFileSync(scriptPath, 'utf8').split('\n')[0];
@@ -1183,11 +1188,34 @@ test('the analysis script under the Bash its shebang names → completes both mo
     `--base mode must run clean under Bash 3.2; got: ${based.stderr}`);
 });
 
+// A Bash 4-only construct in a non-comment line, found lexically. Execution alone cannot carry
+// this detection everywhere — /bin/bash is 3.2 on macOS but 5.x on Linux CI, where `mapfile` and
+// negative subscripts run fine and a reintroduced construct completes with correct output.
+// Comment-only lines are skipped because the script documents both constructs by name (as the
+// things it must not contain) while carrying neither as code.
+function bash4Constructs(src) {
+  const hits = [];
+  for (const line of src.split('\n')) {
+    if (/^\s*#/.test(line)) continue;
+    if (/\bmapfile\b|\breadarray\b/.test(line)) hits.push(`bash4 builtin: ${line.trim()}`);
+    // `\s*` because whitespace is legal in an arithmetic subscript: `${DROP[ -1 ]}` is the same
+    // Bash 4-only construct as `${DROP[-1]}` (measured: bash 5.3 returns the element, bash 3.2
+    // raises `bad array subscript`), and anchoring `-` directly to `[` would wave it through.
+    if (/\$\{[A-Za-z_][A-Za-z0-9_]*\[\s*-/.test(line)) hits.push(`negative subscript: ${line.trim()}`);
+  }
+  return hits;
+}
+
 test('the portability check when a Bash 4 construct is reintroduced → the run turns red', () => {
   // Both directions in one place: the constructs that broke it, and the portable forms that must
   // keep passing. Without the second half this test is green on the day it lands and cannot say
   // whether it still detects anything.
   const source = readFileSync(scriptPath, 'utf8');
+
+  // The standing guard, and on a Bash 5 host the only line here that turns red on a real
+  // reintroduction: the execution checks below discriminate nothing where the constructs work.
+  assert.deepEqual(bash4Constructs(source), [],
+    'the shipped script must carry no Bash 4-only construct outside comment lines');
 
   const regressions = {
     // Replaces the guarded read of the commit list with the Bash 4 builtin, exactly as it was
@@ -1203,7 +1231,11 @@ test('the portability check when a Bash 4 construct is reintroduced → the run 
     assert.notEqual(mutated, source, `the fixture must actually differ from the script: ${label}`);
     const auto = runAnalyze(['--target', 'origin/main'], mutated);
     const based = runAnalyze(['--target', 'origin/main', '--base', 'aaaa1111'], mutated);
-    const broke = auto.status !== 0 || based.status !== 0
+    // Lexical OR behavioural: the scan catches the construct on every host; the runtime half
+    // additionally proves the breakage where /bin/bash is 3.2 (measured 2026-08-24 — on Linux CI
+    // the runtime half alone read every mutant as healthy).
+    const broke = bash4Constructs(mutated).length > 0
+      || auto.status !== 0 || based.status !== 0
       || /"status":\s*"up-to-date"/.test(auto.stdout)
       || !/"rebase_command"/.test(based.stdout);
     assert.ok(broke, `a Bash 4-only construct went undetected: ${label}`);
