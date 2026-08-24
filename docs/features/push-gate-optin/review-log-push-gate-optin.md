@@ -3463,3 +3463,32 @@ block 仍不等於**可達**、非註解行仍不等於**呼叫**。三輪都在
 七筆全部**開著、未修**。兩個平面的 verdict 都記為 `fail`。`/precommit`、Adequacy Gate、Doc Sync
 在這一輪都沒有抵達——依 `rules/auto-loop.md` 的終局完成不變式，這份變更**尚未完成**，只是停在一個
 可交接的位置。
+
+---
+
+## 2026-08-24 更正 — Round 39 F1 的反駁只在 bash 3.2 上成立
+
+**對象**：Round 39 F1（`test/scripts/pre-push-gate.test.js` 的 BASH_ENV probe pin）。當時的記錄
+說「startup file 的 `set -- forged1 forged2` 會被 script 的 positional parameter 賦值蓋掉，所以
+這條偽造路徑打不進 gate」，並以 probe 斷言 `2|origin` 把這個行為 pin 住。
+
+**事實更正**：那是 **bash 3.2 的行為，不是 bash 的行為**。實測（2026-08-24，probe 印
+`marker|$#|$1`，rc 檔先 `export` 一個 marker 再 `set --`——只看位置參數無法分辨「rc 有跑但被蓋掉」
+與「rc 完全沒跑」，這正是 3.2 上舊反駁看似成立的原因）：
+
+| 直譯器 | `bash probe`（BASH_ENV 指向含 `set --` 的 rc） | `bash -p probe` |
+|---|---|---|
+| `/bin/bash` 3.2.57（macOS） | `1\|2\|origin` — rc **有執行**（marker 存活），只是它偽造的參數其後被 script 參數賦值蓋掉 | `unset\|2\|origin` |
+| bash 5.3.15（Homebrew；Linux CI 的 `/bin/bash` 同系） | `1\|3\|forged1` — rc 執行且其 `set --` **存活** | `unset\|2\|origin` |
+
+Round 39 記錄裡 pin 自帶的預測——「若未來 bash 改了順序，這會是第一個變紅的東西」——在 Linux CI
+（bash 5.x）上如實觸發：run 32683208931 與 32584870299 均紅在這一條。順序不是「未來改的」，是
+3.2 與 5.x 本來就不同；當時只在 3.2 上量過。
+
+**處置**（同日，`test/scripts/pre-push-gate.test.js`）：probe 改為在 `-p` 下執行並斷言
+`unset|2|origin`——`-p` 下 `$BASH_ENV` 一律不處理，兩個版本皆然，這才是 hook 真正的防線（shebang
+`#!/usr/bin/env -S bash -p`）所對應的可攜斷言。斷言必須同時鎖 marker 與參數：開頭出現 `1`
+（rc 執行了，即使 3.2 隨後把偽造參數蓋掉）或 argc 為 `3`（偽造參數打進 script），**任一**出現
+都代表 `-p` 不再抑制 `$BASH_ENV`，憑證本身必須換——只斷 `2|origin` 在 3.2 上無鑑別力，正是
+舊反駁犯的錯。端到端斷言（gate 檔案本體在 BASH_ENV 偽造下仍拒絕）不動。本節為更正記錄；
+Round 39 原文依記錄慣例不改寫。
