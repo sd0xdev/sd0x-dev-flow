@@ -767,8 +767,51 @@ function sectionAt(text, level, name) {
   return body.join('\n');
 }
 
+// Splits on DELIMITER pipes only, and the test for that is backslash PARITY, not "is the previous
+// character a backslash". The distinction is the whole helper: `\|` is a literal pipe inside a
+// cell, `\\|` is a rendered backslash followed by a real delimiter, `\\\|` is a backslash plus a
+// literal pipe, and so on by odd/even. A lookbehind answers the wrong question and gets every even
+// case backwards — measured: `| A | B \\| 777 … | 99 … |` merged two cells, so a guard reading the
+// third cell read the excess fourth one and passed on a row publishing 777.
+//
+// Both error directions are silent in their own way. Inventing a boundary lets a guard read the
+// correct half of a wrong cell; missing one shifts every later index, so the row a guard looks for
+// is simply not found. A row must also END on a delimiter — anything left after the final pipe
+// means that pipe was escaped, and the line is not a table row.
+function tableCells(line) {
+  const t = line.trim();
+  if (!t.startsWith('|')) return null;
+  const cells = [];
+  let cur = '';
+  let backslashes = 0;
+  let sawDelimiter = false;
+  for (let i = 1; i < t.length; i += 1) {
+    const ch = t[i];
+    if (ch === '|' && backslashes % 2 === 0) {
+      cells.push(cur);
+      cur = '';
+      backslashes = 0;
+      sawDelimiter = true;
+      continue;
+    }
+    cur += ch;
+    backslashes = ch === '\\' ? backslashes + 1 : 0;
+  }
+  // A lone `|` is ordinary Markdown text, not an empty row: without this it parses to `[]` and the
+  // arity predicates below reject it for the wrong stated reason.
+  if (cur !== '' || !sawDelimiter) return null;
+  // Splitting only — the cell is returned as SOURCE. Resolving `\\` and `\|` here as well left two
+  // layers each rendering escapes, and the second could not see what the first had consumed:
+  // `\\\`` (a rendered backslash then an ESCAPED backtick, so no code span) arrived at
+  // `renderInline` as `\\``, which reads as a rendered backslash then a LIVE delimiter — and the
+  // emphasis it then shielded was a contradicting claim the reader could see. `renderInline` is
+  // the single renderer; identity cells are compared as published.
+  return cells.map((c) => c.trim());
+}
+
 module.exports = {
   sectionAt,
+  tableCells,
   structuralViolations,
   commentedLines,
   indentWidth,

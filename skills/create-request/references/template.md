@@ -1,6 +1,6 @@
 # Create Request Template
 
-**Budget: ~100 lines, AC ≤ 8, Background ≤ 10 lines.** Progress cells are overwritten on each update,
+**Budget: ~100 lines, ≤ 8 substantive AC (gate receipts excluded), Background ≤ 10 lines.** Progress cells are overwritten on each update,
 never appended to — a ticket that accumulates rounds is a review log. See `../SKILL.md`
 § Write-Time Budget, and § Phase 4.5 for what happens once the ticket closes.
 
@@ -62,8 +62,6 @@ never appended to — a ticket that accumulates rounds is a review log. See `../
 | Testing    | -      |      |
 | Acceptance | -      |      |
 
-**Status**: Pending / In Progress / Candidate Complete / Completed (canonical lifecycle — see SKILL.md §Phase 4 Auto-Update Items for transition rules)
-
 ## References
 
 - Tech Spec: [xxx](../2-tech-spec.md)
@@ -119,11 +117,11 @@ See [SKILL.md §Phase 4 Auto-Update Items](../SKILL.md) for transition rules. `B
 
 | Metric | Target | Action if exceeded |
 |--------|--------|--------------------|
-| Acceptance Criteria | ≤ 8 per request | Consider splitting by layer or functional area |
+| Acceptance Criteria | ≤ 8 **substantive** per request; gate receipts are excluded from the budget and remain live lifecycle ACs | Consider splitting by layer or functional area |
 | Related Files layers | 1 concern layer | Split behavior-layer (.md rules/skills) from code-layer (.sh/.js hooks/scripts) |
 | Estimated effort | ≤ 3 days | Split by deliverable |
 
-Quality-gate ACs matching `Pass /<review-or-precommit-command>` don't count toward the ≤8 target. Canonical list: `/codex-review-fast`, `/codex-review-doc`, `/codex-review`, `/precommit`, `/precommit-fast`, `/pr-review`.
+Quality-gate ACs don't count toward the ≤8 target — excluded from the budget only, never from the lifecycle count that decides `Candidate Complete`. **What counts as one is decided by `../SKILL.md` § Quality-Gate AC Classifier and nowhere else**: it recognizes more than `Pass /<command>` (a trailing `pass`, `round N`, named verdict sentinels, bounded pending/superseded tails, `tracked below`), so restating a shorter grammar here would give this reference a different budget from Phase 1.5. `Pass /codex-review-fast` and `Pass /precommit` are examples, not the definition.
 
 ## Dependencies (conditional)
 
