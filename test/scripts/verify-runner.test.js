@@ -186,3 +186,50 @@ test('verify zero runnable scripts → PASS with all steps skipped', () => {
   assert.ok(summary.steps.length > 0, 'skips must be recorded, not dropped');
   assert.ok(summary.steps.every(step => step.status === 'skip'));
 });
+
+// --- lint-argument injection ------------------------------------------------------------------
+//
+// verify-runner carried the same defect as precommit-runner: it appended ESLint's CLI flags and
+// source globs to whatever `lint` script the repo declared. Its existing fixtures use `./pass.sh`,
+// which ignores argv, so a revert to unconditional injection would not have failed anything here.
+// These two record what the script actually received, in both directions.
+
+function argvRecorder(dir, name) {
+  const p = join(dir, name);
+  writeFileSync(p, '#!/bin/sh\nprintf \'%s\\n\' "$@" > argv.txt\nexit 0\n');
+  chmodSync(p, 0o755);
+  return `./${name}`;
+}
+
+test('a non-eslint lint script receives no injected arguments', () => {
+  const dir = createTempRepo({
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { lint: './markdownlint-cli2', test: './pass.sh' },
+  });
+  writeScript(dir, 'pass.sh', 0);
+  argvRecorder(dir, 'markdownlint-cli2');
+
+  const { stdout } = runVerify(dir, ['--mode', 'fast']);
+  assert.match(stdout, /no lintArgMode set for this script role/,
+    'the runner says why it injected nothing');
+  const argv = readFileSync(join(dir, 'argv.txt'), 'utf8').split('\n').filter(Boolean);
+  assert.deepEqual(argv, [], 'no ESLint flags and no globs may reach a non-eslint linter');
+});
+
+test('an opted-in lint script receives its flags and globs, with no stray separator', () => {
+  const dir = createTempRepo({
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { lint: './eslint', test: './pass.sh' },
+    sd0x: { lintArgMode: { lint: 'eslint' } },
+  });
+  writeScript(dir, 'pass.sh', 0);
+  argvRecorder(dir, 'eslint');
+
+  runVerify(dir, ['--mode', 'fast']);
+  const argv = readFileSync(join(dir, 'argv.txt'), 'utf8').split('\n').filter(Boolean);
+  assert.ok(argv.length > 0, 'the opted-in path must receive arguments');
+  assert.equal(argv[0], '--ignore-pattern', 'no stray separator leads the vector');
+  assert.ok(argv.includes('--no-error-on-unmatched-pattern'), 'the flags arrive as flags');
+});

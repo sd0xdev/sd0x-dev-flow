@@ -383,6 +383,135 @@ const DEFAULT_VERIFY_LINT_GLOBS = [
   '*.{ts,js}',
 ];
 
+const LINT_ARG_MODES = new Set(['eslint', 'none']);
+
+/** Describe a rejected config value by TYPE, never content: these warnings reach the runner's
+ * stdout, and a diagnostic cannot know whether the field it echoes holds a secret
+ * (`rules/security.md`, `rules/logging.md`). Role, source and expected values are enough to act on.
+ * @param {*} v the rejected value
+ * @returns {string} a content-free description
+ */
+function describeRejected(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return `array(${v.length})`;
+  if (typeof v === 'string') return `string(${v.length} chars)`;
+  return typeof v;
+}
+
+// The runner used to append ESLint's flags (`--ignore-pattern`, `--no-error-on-unmatched-pattern`)
+// and JS/TS globs to whatever `lint`/`lint:fix` a repo declares. markdownlint-cli2 treats every
+// unrecognised argument as a FILE GLOB, so under `--fix` it rewrote JavaScript as Markdown:
+// `branch.split('/')[1]` became `branch.split['/'](1)`. One `/precommit` run on this repo corrupted
+// 71 files that were clean at HEAD, five into syntax errors.
+//
+// Detecting "is this really ESLint?" from the script text was tried and abandoned: four grammars,
+// each shown to misclassify toward injection — package specs (`npx @scope/eslint`), aliases
+// (`eslint@npm:markdownlint-cli2`), wrapper options taking an operand (`npx --package eslint <cmd>`),
+// package-script dispatch (`pnpm eslint` resolving to a markdownlint script), compound commands
+// whose tail is the real recipient. The space is every package manager's CLI and it moves.
+//
+// So: no detection, and no injection by default. A declared script is already a complete command
+// stating its own scope. A repo that wants the globs says so **per script role**, because `lint`
+// and `lint:fix` routinely run different engines and one shared switch would force the arguments
+// into whichever the author was not thinking about:
+//
+//   package.json               → { "sd0x": { "lintArgMode": { "lint:fix": "eslint" } } }
+//   .claude/runner-config.json → { "lintArgMode": { "lint": "eslint" } }
+
+/** Decide what to append to a repo-declared lint script.
+ *
+ * @param {string[]} globs resolved lint globs
+ * @param {{lintArgMode?: string, globsConfigured?: boolean, warn?: (msg: string) => void}} [opts]
+ *   `lintArgMode` is already resolved for THIS script role by `loadLintConfig(root, role)`.
+ */
+function lintArgsFor(globs, opts = {}) {
+  const warn = typeof opts.warn === 'function' ? opts.warn : () => {};
+  let mode = opts.lintArgMode;
+  if (mode !== undefined && !LINT_ARG_MODES.has(mode)) {
+    warn(`ignoring lintArgMode (${describeRejected(mode)}): expected one of ${[...LINT_ARG_MODES].join(', ')}`);
+    mode = undefined;
+  }
+  if (mode === 'eslint') {
+    return {
+      args: [
+        '--ignore-pattern',
+        'node_modules/**',
+        '--ignore-pattern',
+        '**/node_modules/**',
+        '--no-error-on-unmatched-pattern',
+        ...globs,
+      ],
+      skipped: false,
+      reason: null,
+    };
+  }
+  const tail = opts.globsConfigured
+    ? '; configured lintGlobs are ignored until lintArgMode is set for this script role'
+    : '';
+  return {
+    args: [],
+    skipped: true,
+    reason: mode === 'none'
+      ? 'lintArgMode=none: injection disabled by config'
+      : `no lintArgMode set for this script role; running the script as declared${tail}`,
+  };
+}
+
+/** Read the lint-argument config for ONE script role, from the two places `loadLintGlobs` reads:
+ *  `.claude/runner-config.json`, then `package.json` → `sd0x`.
+ *
+ *  `lintArgMode` must be an object keyed by script role — `{"lint": "eslint"}` — never a bare
+ *  string. `lint` and `lint:fix` routinely run different engines (this repo runs markdownlint for
+ *  `lint:fix`), and one shared value would force eslint arguments into whichever of them the user
+ *  was not thinking about. A string is rejected rather than guessed at.
+ *
+ * @param {string} repoRoot
+ * @param {string} role 'lint' or 'lint:fix'
+ * @param {(msg: string) => void} [warn]
+ */
+function loadLintConfig(repoRoot, role, warn = () => {}) {
+  const out = { lintArgMode: undefined, globsConfigured: false };
+  const read = (src, where) => {
+    if (!src || typeof src !== 'object') return;
+    if (Array.isArray(src.lintGlobs)) out.globsConfigured = true;
+    if (src.lintArgMode === undefined || out.lintArgMode !== undefined) return;
+    if (typeof src.lintArgMode === 'string') {
+      warn(`ignoring lintArgMode in ${where}: it must be keyed by script role, e.g. {"${role}": "eslint"}`);
+      return;
+    }
+    if (typeof src.lintArgMode !== 'object' || src.lintArgMode === null || Array.isArray(src.lintArgMode)) {
+      // Every unusable SHAPE reports, not just the two that happened to be handled. `false`, `[]`,
+      // `null` and numbers fell through in silence — and that silence lands on the safety path: a
+      // malformed `.claude` value written to suppress a lower-priority opt-in would let that
+      // opt-in through with nothing said.
+      warn(`ignoring lintArgMode in ${where}: expected an object keyed by script role, e.g. {"${role}": "eslint"}`);
+      return;
+    }
+    {
+      const v = src.lintArgMode[role];
+      if (v === undefined) return;
+      // Validate HERE, not after both sources are read. Storing an invalid value would make
+      // `out.lintArgMode !== undefined` and veto a valid lower-priority value — an unusable setting
+      // silently overriding a usable one is the opposite of "reported and ignored".
+      if (typeof v !== 'string' || !LINT_ARG_MODES.has(v)) {
+        warn(`ignoring lintArgMode.${role} (${describeRejected(v)}) in ${where}: expected one of ${[...LINT_ARG_MODES].join(', ')}`);
+        return;
+      }
+      out.lintArgMode = v;
+    }
+  };
+  try {
+    read(
+      JSON.parse(fs.readFileSync(path.join(repoRoot, '.claude', 'runner-config.json'), 'utf8')),
+      '.claude/runner-config.json'
+    );
+  } catch { /* absent or unreadable — defaults stand */ }
+  try {
+    read(JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).sd0x, 'package.json#sd0x');
+  } catch { /* absent or unreadable — defaults stand */ }
+  return out;
+}
+
 function loadLintGlobs(repoRoot, fallbackGlobs) {
   // Priority 1: .claude/runner-config.json → lintGlobs
   try {
@@ -394,7 +523,12 @@ function loadLintGlobs(repoRoot, fallbackGlobs) {
     }
   } catch (e) {
     if (e.code !== 'ENOENT') {
-      process.stderr.write(`[runner] Warning: failed to parse .claude/runner-config.json: ${e.message}\n`);
+      // Content-free: `JSON.parse` quotes the offending source in its message, so writing
+      // `e.message` publishes whatever is in the file (`"S3CR3T99" is not valid JSON`). Same rule
+      // as describeRejected() — the path and the error class are actionable, the content is not.
+      process.stderr.write(
+        `[runner] Warning: cannot read .claude/runner-config.json (${e.name || 'Error'}); using defaults\n`
+      );
     }
   }
   // Priority 2: package.json → sd0x.lintGlobs
@@ -433,6 +567,7 @@ function buildRecipes(pkg, pm) {
 }
 
 module.exports = {
+  describeRejected,
   nowISO,
   sha1,
   safeSlug,
@@ -459,6 +594,8 @@ module.exports = {
   pmCommand,
   DEFAULT_LINT_GLOBS,
   DEFAULT_VERIFY_LINT_GLOBS,
+  lintArgsFor,
+  loadLintConfig,
   loadLintGlobs,
   buildRecipes,
 };

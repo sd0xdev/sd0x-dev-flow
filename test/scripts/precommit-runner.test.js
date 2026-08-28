@@ -6,6 +6,8 @@ const {
   chmodSync,
   rmSync,
   readFileSync,
+  readdirSync,
+  existsSync,
 } = require('node:fs');
 const { join, resolve } = require('node:path');
 const { tmpdir } = require('node:os');
@@ -1493,4 +1495,358 @@ test('git-dir terminal fallback resolves a linked worktree .git FILE even when -
   );
   assert.equal(check.precommit.digest_match, true);
   assert.equal(check.precommit.passed, true);
+});
+
+// --- lint-argument injection -----------------------------------------------------------------
+//
+// The runner used to append ESLint's own CLI flags and source globs to whatever `lint:fix` the
+// repo declared. markdownlint-cli2 treats every unrecognised argument as a FILE GLOB, so under
+// `--fix` it rewrote JavaScript as Markdown: `branch.split('/')[1]` became `branch.split['/'](1)`.
+// One run against this repo corrupted 71 files that were clean at HEAD, five into syntax errors.
+
+const { lintArgsFor, loadLintConfig } = require('../../scripts/lib/utils.js');
+const { sectionAt, liveText } = require('../helpers/markdown-structure.js');
+
+test('nothing is appended to a lint script unless the repo opts in', () => {
+  const globs = ['src/**/*.{ts,tsx,js,jsx}'];
+  const ESLINT_ARGS = [
+    '--ignore-pattern', 'node_modules/**',
+    '--ignore-pattern', '**/node_modules/**',
+    '--no-error-on-unmatched-pattern',
+    ...globs,
+  ];
+
+  // Default: nothing. A declared script is already a complete command. Detecting "is this really
+  // eslint?" from the script text was tried through four grammars and each was shown to
+  // misclassify toward injection — package specs, aliases, wrapper options taking an operand,
+  // package-script dispatch, compound commands. There is no detection left to get wrong.
+  const off = lintArgsFor(globs);
+  assert.deepEqual(off.args, [], 'no arguments are appended by default');
+  assert.equal(off.skipped, true);
+  assert.match(off.reason, /no lintArgMode set for this script role/);
+
+  assert.deepEqual(lintArgsFor(globs, { lintArgMode: 'eslint' }).args, ESLINT_ARGS,
+    'the per-role opt-in is what turns injection on');
+  assert.equal(lintArgsFor(globs, { lintArgMode: 'none' }).skipped, true, 'and none is explicit');
+
+  const w = [];
+  assert.equal(lintArgsFor(globs, { lintArgMode: 'yes-please', warn: (m) => w.push(m) }).skipped, true,
+    'an invalid mode is not treated as an opt-in');
+  assert.match(w.join(' '), /ignoring lintArgMode/, 'and is reported');
+
+  const ignored = lintArgsFor(globs, { globsConfigured: true });
+  assert.match(ignored.reason, /configured lintGlobs are ignored until lintArgMode is set/,
+    'configured globs that cannot apply are named, not silently dropped');
+});
+
+// Precedence must not be decided before validity: storing an unusable value made
+// `out.lintArgMode !== undefined`, which vetoed a valid lower-priority one — an invalid setting
+// silently overriding a usable one is the opposite of "reported and ignored".
+test('an invalid mode in the higher-priority source falls through to the valid one', () => {
+  const dir = createTempRepo({
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { lint: './pass.sh' },
+    sd0x: { lintArgMode: { lint: 'eslint' } },
+  });
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  writeFileSync(
+    join(dir, '.claude', 'runner-config.json'),
+    JSON.stringify({ lintArgMode: { lint: 'typo' } })
+  );
+
+  const warnings = [];
+  const cfg = loadLintConfig(dir, 'lint', (m) => warnings.push(m));
+  assert.equal(cfg.lintArgMode, 'eslint', 'the valid package.json value must still be reached');
+  assert.match(warnings.join(' '),
+    /ignoring lintArgMode\.lint \(string\(4 chars\)\) in \.claude\/runner-config\.json/,
+    'and the invalid one is reported by source, role and TYPE — never by content');
+  assert.ok(!warnings.join(' ').includes('typo'),
+    'the rejected value itself must not appear: these warnings reach the runner stdout, and a '
+      + 'diagnostic cannot know whether what it is echoing is a secret');
+
+  // A non-string role value is reported too, not silently declined.
+  writeFileSync(
+    join(dir, '.claude', 'runner-config.json'),
+    JSON.stringify({ lintArgMode: { lint: 42 } })
+  );
+  const w2 = [];
+  assert.equal(loadLintConfig(dir, 'lint', (m) => w2.push(m)).lintArgMode, 'eslint');
+  assert.match(w2.join(' '), /ignoring lintArgMode\.lint \(number\) in/);
+});
+
+// The opt-in contract lives in two places that must agree: the code that reads it and the guidance
+// that tells users how to write it. Making lintGlobs inert without lintArgMode silently broke the
+// documented path until this was pinned.
+/** The JSON example as a reader would receive it: masked document first, fences preserved. */
+function guidanceExample(raw) {
+  const section = sectionAt(liveText(raw, { fencesCount: true }), 2, 'Lint Argument Injection');
+  const fence = section.match(/```json\n([\s\S]*?)\n```/);
+  return fence ? JSON.parse(fence[1]) : null;
+}
+
+/** The two operative paragraphs, pinned whole.
+*
+* Flattening soft wrapping is right; flattening the WHOLE section is not. An unanchored search over
+* a flattened section could not tell the operative sentence from a blank-paragraph split inside it,
+* from an `unless …` qualifier appended to it, or from a reversed mapping sitting beside a correct
+* historical decoy elsewhere in the section. So: locate exactly one paragraph carrying each claim,
+* then compare that paragraph's normalized text for EQUALITY. Any qualifier, decoy or reversal
+* changes the string, which is the property a substring search cannot have.
+*/
+// The JSON example in § Lint Argument Injection is something a user copies into package.json, so
+// it must PARSE — a `//` comment inside a json fence once made the documented example unusable —
+// and must opt in by role, the only shape the loader accepts.
+test('the documented lint-config example is valid JSON in the shape the loader accepts', () => {
+  const raw = readFileSync(resolve(__dirname, '../../skills/generate-runner/SKILL.md'), 'utf8');
+  const example = guidanceExample(raw);
+  assert.ok(example, 'the section must carry a parseable json example');
+  assert.equal(example.sd0x.lintArgMode['lint:fix'], 'eslint', 'the example opts in for a role');
+  assert.ok(Array.isArray(example.sd0x.lintGlobs), 'and shows lintGlobs beside it');
+});
+
+test('lintArgMode is scoped to a script role, and a bare string is refused', () => {
+  const dir = createTempRepo({
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { lint: 'node ./tools/eslint.js', 'lint:fix': 'markdownlint-cli2 --fix' },
+    sd0x: { lintArgMode: { lint: 'eslint' } },
+  });
+  const forFix = loadLintConfig(dir, 'lint:fix');
+  const forLint = loadLintConfig(dir, 'lint');
+  assert.equal(forLint.lintArgMode, 'eslint', 'the role it was set for opts in');
+  assert.equal(forFix.lintArgMode, undefined, 'the other role does not');
+  assert.equal(lintArgsFor(['g'], forFix).skipped, true, 'so the markdown script keeps running as declared');
+  assert.equal(lintArgsFor(['g'], forLint).skipped, false, 'while the configured role does inject');
+
+  // A bare string cannot say which role it means, so it is reported and ignored.
+  const strDir = createTempRepo({
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { 'lint:fix': 'markdownlint-cli2 --fix' },
+    sd0x: { lintArgMode: 'eslint' },
+  });
+  const warnings = [];
+  const cfg = loadLintConfig(strDir, 'lint:fix', (m) => warnings.push(m));
+  assert.equal(cfg.lintArgMode, undefined, 'a bare string is not honoured');
+  assert.match(warnings.join(' '), /must be keyed by script role/, 'and the shape is explained');
+});
+
+// npm's own separator is inserted by pmCommand. A second `--` reaches the script, where eslint
+// reads it as its end-of-options marker and every injected flag arrives as a positional file
+// pattern — so the ESLint path this fix is meant to preserve was itself broken.
+test('an eslint script receives exactly the injected flags, with no stray separator', () => {
+  const pkg = {
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { 'lint:fix': './fake-eslint.sh', 'test:unit': './pass.sh' },
+  };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  const fake = join(dir, 'fake-eslint.sh');
+  // The name is incidental now — injection is decided by lintArgMode alone, not by the script
+  // token. The fixture asserts what the child actually receives.
+  writeFileSync(fake, '#!/bin/sh\nprintf \'%s\\n\' "$@" > argv.txt\nexit 0\n');
+  chmodSync(fake, 0o755);
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({
+      ...pkg,
+      scripts: { ...pkg.scripts, 'lint:fix': './eslint' },
+      sd0x: { lintArgMode: { 'lint:fix': 'eslint' } },
+    })
+  );
+  const eslintBin = join(dir, 'eslint');
+  writeFileSync(eslintBin, '#!/bin/sh\nprintf \'%s\\n\' "$@" > argv.txt\nexit 0\n');
+  chmodSync(eslintBin, 0o755);
+
+  runPrecommit(dir, 'fast');
+  const argv = readFileSync(join(dir, 'argv.txt'), 'utf8').split('\n').filter(Boolean);
+  assert.ok(argv.length > 0, 'the eslint path must still receive its arguments');
+  assert.notEqual(argv[0], '--', 'no stray separator may lead the argument vector');
+  assert.equal(argv[0], '--ignore-pattern', 'the first argument is the first injected flag');
+  assert.ok(argv.includes('--no-error-on-unmatched-pattern'), 'and the flags arrive as flags');
+});
+
+test('a non-eslint lint:fix script receives no injected arguments', () => {
+  const pkg = {
+    name: 'temp',
+    version: '1.0.0',
+    scripts: { 'lint:fix': './record-argv.sh', 'test:unit': './pass.sh' },
+  };
+  const dir = createTempRepo(pkg);
+  writeScript(dir, 'pass.sh', 0);
+  // Records everything it was handed, so the assertion is about the real invocation rather than
+  // about the helper in isolation.
+  const rec = join(dir, 'record-argv.sh');
+  writeFileSync(rec, '#!/bin/sh\nprintf \'%s\\n\' "$@" > argv.txt\nexit 0\n');
+  chmodSync(rec, 0o755);
+
+  const { summary, stdout } = runPrecommit(dir, 'fast');
+  assert.ok(summary.steps.some((step) => step.name === 'lint_fix'), 'the lint step still runs');
+  assert.match(stdout, /no lintArgMode set for this script role/,
+    'and the runner says why it injected nothing');
+
+  const argv = readFileSync(join(dir, 'argv.txt'), 'utf8').split('\n').filter(Boolean);
+  assert.deepEqual(argv, [], 'no ESLint flags and no globs may reach a non-eslint linter');
+});
+
+// The lint-injection fix changed plugin source, but /precommit, /precommit-fast and /verify execute
+// the INSTALLED copy at .claude/scripts/, on sight, and only install when one is absent. A consumer
+// who installed before the fix therefore keeps running the version that passes ESLint-only flags
+// into whatever linter the repo declares — against a file-rewriting non-ESLint linter those flags
+// are read as paths and the run edits sources. Putting the check only in the install path does not
+// close that: nothing makes a consumer re-install. So it is published once and applied at both the
+// install path and every execution entry point, and these guards hold that shape.
+const REPO = resolve(__dirname, '../..');
+const readSkill = (rel) => readFileSync(resolve(REPO, rel), 'utf8');
+
+test('generate-runner may invoke the tools its own workflow requires', () => {
+  const doc = readSkill('skills/generate-runner/SKILL.md');
+  const allow = doc.match(/^allowed-tools:\s*(.+)$/m);
+  assert.ok(allow, 'the skill must declare allowed-tools');
+  const declared = allow[1];
+  // Each operation the workflow names, and the tool it needs to perform it.
+  for (const [operation, tool] of [
+    ['AskUserQuestion', 'AskUserQuestion'],
+    ['chmod', 'Bash(chmod:*)'],
+    ['bash -n', 'Bash(bash:*)'],
+    ['Write', 'Write'],
+  ]) {
+    if (!new RegExp(operation.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).test(doc)) continue;
+    assert.ok(declared.includes(tool),
+      `the workflow names ${operation} but allowed-tools omits ${tool} — an agent following this `
+      + 'skill literally cannot perform the step');
+  }
+});
+
+// Precedence between two VALID values was neither documented nor tested: every existing case had at
+// most one usable value, so a mutation that let `package.json` overwrite `.claude` passed the whole
+// suite. That direction matters because `"none"` in `.claude` is how a project suppresses an opt-in
+// its package.json declares — and it only works if the first *valid* value wins.
+// These warnings are written to the runner's stdout, so echoing a rejected value publishes it.
+// `rules/security.md` and `rules/logging.md` forbid logging secrets, and a diagnostic has no way to
+// know whether the field it is echoing holds one — so it never echoes.
+test('a rejected lint configuration value is never echoed', () => {
+  const { loadLintConfig, lintArgsFor } = require('../../scripts/lib/utils.js');
+  const dir = mkdtempSync(join(tmpdir(), 'lint-canary-'));
+  tempDirs.push(dir);
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  const CANARY = 'canary-secret-do-not-log';
+
+  for (const value of [CANARY, { token: CANARY }, [CANARY], CANARY.repeat(20)]) {
+    const warnings = [];
+    writeFileSync(join(dir, '.claude', 'runner-config.json'),
+      JSON.stringify({ lintArgMode: { 'lint:fix': value } }));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0' }));
+    loadLintConfig(dir, 'lint:fix', (m) => warnings.push(m));
+    const text = warnings.join(' ');
+    assert.ok(warnings.length >= 1, `an invalid ${typeof value} must still be reported`);
+    assert.ok(!text.includes(CANARY), `the rejected value must not appear: ${text.slice(0, 120)}`);
+    assert.match(text, /expected one of/, 'and the diagnostic must still say what was expected');
+  }
+
+  // The same rule at the other warning site.
+  const argWarnings = [];
+  lintArgsFor(['x'], { lintArgMode: CANARY, warn: (m) => argWarnings.push(m) });
+  assert.ok(argWarnings.length === 1 && !argWarnings[0].includes(CANARY),
+    'lintArgsFor must not echo its rejected mode either');
+});
+
+test('lint config precedence: first valid value wins, per role', () => {
+  const { loadLintConfig } = require('../../scripts/lib/utils.js');
+  const dir = mkdtempSync(join(tmpdir(), 'lint-prec-'));
+  tempDirs.push(dir); // the after() hook cleans only what is registered here
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+  const write = (claudeCfg, pkgSd0x) => {
+    writeFileSync(join(dir, '.claude', 'runner-config.json'), JSON.stringify(claudeCfg));
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'x', version: '1.0.0', sd0x: pkgSd0x }));
+  };
+
+  // Two valid values in conflict: the higher-priority source wins, and the suppression works.
+  write({ lintArgMode: { 'lint:fix': 'none' } }, { lintArgMode: { 'lint:fix': 'eslint' } });
+  assert.equal(loadLintConfig(dir, 'lint:fix').lintArgMode, 'none',
+    '`.claude` outranks package.json, which is what makes "none" able to suppress an opt-in');
+
+  // Fallback when the higher-priority source says nothing about this role.
+  write({ lintArgMode: { lint: 'eslint' } }, { lintArgMode: { 'lint:fix': 'eslint' } });
+  assert.equal(loadLintConfig(dir, 'lint:fix').lintArgMode, 'eslint', 'the other source is a fallback');
+  assert.equal(loadLintConfig(dir, 'lint').lintArgMode, 'eslint', 'and roles are independent');
+
+  // An INVALID higher-priority value must warn and fall through, never latch — an unusable setting
+  // silently vetoing a usable one is the opposite of "reported and ignored".
+  const warnings = [];
+  write({ lintArgMode: { 'lint:fix': 'yolo' } }, { lintArgMode: { 'lint:fix': 'eslint' } });
+  assert.equal(loadLintConfig(dir, 'lint:fix', (m) => warnings.push(m)).lintArgMode, 'eslint',
+    'an invalid higher-priority value falls through to the valid lower-priority one');
+  assert.equal(warnings.length, 1, 'and is reported rather than silently dropped');
+
+  // Container shapes that are not role-keyed objects. These fell through in SILENCE, and the
+  // silence lands on the safety path: a malformed `.claude` value written to suppress a
+  // lower-priority opt-in let that opt-in through with nothing reported.
+  for (const shape of [false, [], null, 42, 'eslint']) {
+    warnings.length = 0;
+    write({ lintArgMode: shape }, { lintArgMode: { 'lint:fix': 'eslint' } });
+    assert.equal(loadLintConfig(dir, 'lint:fix', (m) => warnings.push(m)).lintArgMode, 'eslint',
+      `an unusable lintArgMode (${JSON.stringify(shape)}) must fall through`);
+    assert.equal(warnings.length, 1, `and must be reported: ${JSON.stringify(shape)}`);
+  }
+
+  // A bare string is the documented mistake and must not latch either.
+  warnings.length = 0;
+  write({ lintArgMode: 'eslint' }, { lintArgMode: { 'lint:fix': 'none' } });
+  assert.equal(loadLintConfig(dir, 'lint:fix', (m) => warnings.push(m)).lintArgMode, 'none',
+    'a bare string does not latch');
+  assert.match(warnings[0], /keyed by script role/, 'and says what the shape should be');
+});
+
+// The claim about silence was written from `loadLintConfig()`'s catch blocks and was wrong about
+// the path a user actually travels: each runner calls `loadLintGlobs()` first, and that one warns.
+test('the documented silence matches the runner path, not one loader in isolation', () => {
+  const { loadLintGlobs, readPackageJson } = require('../../scripts/lib/utils.js');
+  const dir = mkdtempSync(join(tmpdir(), 'lint-silence-'));
+  tempDirs.push(dir); // the after() hook cleans only what is registered here
+  mkdirSync(join(dir, '.claude'), { recursive: true });
+
+  // A malformed `.claude/runner-config.json` is NOT silent on the runner path.
+  writeFileSync(join(dir, '.claude', 'runner-config.json'), '{ not json');
+  // It writes to process.stderr, not console.warn — captured here rather than assumed, because
+  // assuming which channel a warning uses is how this claim went wrong in the first place.
+  const warned = [];
+  const origWrite = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => {
+    warned.push(String(chunk));
+    return origWrite(chunk, ...rest);
+  };
+  try {
+    loadLintGlobs(dir, ['x']);
+  } finally {
+    process.stderr.write = origWrite;
+  }
+  assert.ok(warned.some((w) => /runner-config\.json/.test(w)),
+    'loadLintGlobs warns for a .claude config it cannot parse');
+  // …and the warning is content-free. `JSON.parse` quotes the offending source in its message, so
+  // writing `e.message` published the file: `"S3CR3T99" is not valid JSON`. Same rule as
+  // describeRejected() — the path and the error class are actionable, the content never is.
+  const CANARY = 'S3CR3T99-do-not-log';
+  writeFileSync(join(dir, '.claude', 'runner-config.json'), CANARY);
+  const leaked = [];
+  const restore = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk, ...rest) => {
+    leaked.push(String(chunk));
+    return restore(chunk, ...rest);
+  };
+  try {
+    loadLintGlobs(dir, ['x']);
+  } finally {
+    process.stderr.write = restore;
+  }
+  const text = leaked.join(' ');
+  assert.ok(!text.includes(CANARY), `the malformed source must not be echoed: ${text.slice(0, 160)}`);
+  assert.match(text, /cannot read \.claude\/runner-config\.json/, 'but the failure is still reported');
+
+  // A malformed package.json is silent — readPackageJson swallows it and returns null.
+  writeFileSync(join(dir, 'package.json'), '{ also not json');
+  assert.equal(readPackageJson(dir), null, 'readPackageJson returns null rather than reporting');
+
 });

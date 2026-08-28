@@ -17,7 +17,6 @@ Used for `node-npm`, `node-yarn`, `node-pnpm` template IDs.
 const { execSync } = require('child_process');
 
 const pm = '${PM}'; // npm | yarn | pnpm
-const lintGlobs = ${LINT_GLOBS_JSON};
 
 // Steps: lint:fix → build → test
 const steps = [
@@ -32,7 +31,6 @@ const steps = [
 | Variable | Source | Default |
 |----------|--------|---------|
 | `PM` | Lock file detection | `npm` |
-| `LINT_GLOBS_JSON` | `.claude/runner-config.json` or defaults | `["src/**/*.{ts,tsx,js,jsx}", ...]` |
 | `HAS_LINT` | `package.json` scripts has `lint:fix` | `false` |
 | `HAS_BUILD` | `package.json` scripts has `build` | `false` |
 | `TEST_SCRIPT` | Best available: `test:ci` > `test` > `test:fast` | `test` |
