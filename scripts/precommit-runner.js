@@ -50,6 +50,8 @@ const {
   hasScript,
   pmCommand,
   loadLintGlobs,
+  lintArgsFor,
+  loadLintConfig,
   buildRecipes,
 } = require('./lib/utils');
 
@@ -703,15 +705,18 @@ async function main() {
 
     // lint:fix
     if (hasScript(pkg, 'lint:fix')) {
-      const [cmd, baseArgs] = pmCommand(pm, 'lint:fix', [
-        '--',
-        '--ignore-pattern',
-        'node_modules/**',
-        '--ignore-pattern',
-        '**/node_modules/**',
-        '--no-error-on-unmatched-pattern',
-        ...lintGlobs,
-      ]);
+      // No extra `--`: pmCommand already inserts npm's separator. A second one reaches the script,
+      // and eslint reads it as its own end-of-options marker — every injected flag then arrives as
+      // a positional file pattern. The bug predates this change; the fix must not carry it forward.
+      const warnLint = (msg) => process.stdout.write(`> lint_fix: ${msg}\n`);
+      const lintInject = lintArgsFor(lintGlobs, {
+        ...loadLintConfig(repoRoot, 'lint:fix', warnLint),
+        warn: warnLint,
+      });
+      if (lintInject.skipped) {
+        process.stdout.write(`> lint_fix: ${lintInject.reason}\n`);
+      }
+      const [cmd, baseArgs] = pmCommand(pm, 'lint:fix', lintInject.args);
       steps.push({
         name: 'lint_fix',
         cmd,

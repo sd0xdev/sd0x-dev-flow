@@ -30,6 +30,8 @@ const {
   hasScript,
   pmCommand,
   loadLintGlobs,
+  lintArgsFor,
+  loadLintConfig,
   DEFAULT_VERIFY_LINT_GLOBS,
 } = require('./lib/utils');
 
@@ -110,19 +112,19 @@ async function main() {
   const pkg = readPackageJson(repoRoot);
 
   const lintGlobs = loadLintGlobs(repoRoot, DEFAULT_VERIFY_LINT_GLOBS);
-  const lintExtraArgs = [
-    '--ignore-pattern',
-    'node_modules/**',
-    '--ignore-pattern',
-    '**/node_modules/**',
-    '--no-error-on-unmatched-pattern',
-    ...lintGlobs,
-  ];
-
   const steps = [];
   const commands = [];
 
   if (hasScript(pkg, 'lint')) {
+    const warnLint = (msg) => process.stdout.write(`> lint: ${msg}\n`);
+    const lintInject = lintArgsFor(lintGlobs, {
+      ...loadLintConfig(repoRoot, 'lint', warnLint),
+      warn: warnLint,
+    });
+    if (lintInject.skipped) {
+      process.stdout.write(`> lint: ${lintInject.reason}\n`);
+    }
+    const lintExtraArgs = lintInject.args;
     const [cmd, cmdArgs] = pmCommand(pm, 'lint', lintExtraArgs);
     steps.push({
       name: 'lint',
