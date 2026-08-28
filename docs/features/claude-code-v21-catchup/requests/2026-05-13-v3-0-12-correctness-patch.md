@@ -70,7 +70,7 @@
 | Analysis | Done | `/best-practices` audit 完成；Nash equilibrium R3 達成 |
 | Development | Done | 2026-05-13 — hook 解析統一改成 normalize Bash `{stdout}` / MCP `{content}` / string；manifest description 移除硬編碼數字；generator 加入 `bundledCount` 並更新 6 份 README；版號 `3.0.11 → 3.0.12` |
 | Testing | Done | 開發機本地執行結果：`test/hooks/post-tool-review-state.test.js` 54/54 pass；full suite 1923/1923 pass + 2 skipped；regression test 涵蓋三種 tool_response shape + 空欄位診斷 + precedence + Bash 結構化 stdout。**CI hotfix（push 後）**：`scripts/generate-readme-catalog.js` 原以 `fs.readdirSync(SKILLS_DIR)` 計算 `bundledCount`，包含本地未追蹤的 `readme-i18n-sync` / `update-readme` 兩個 project-internal skill，導致 CI clone（96 tracked）與本地（98 fs）`--check` 不一致；改用 `git ls-files --cached skills/` 後 bundled = public = 96，6 份 README 同步從 `98 bundled` 改為 `96 bundled` |
-| Acceptance | Candidate Complete | AC `[x]` 為**啟發式 + Codex review** 結果（thread `019e2069-70b2-7a12-9ba9-4e235108292d`，最終 0 findings）；test suite pass 為本地開發機執行結果，未經 `--verify-ac` 獨立 Codex evidence trace；建議後續 PR 上 CI 跑時再做 closure-grade 認定 |
+| Acceptance | Done | 2026-08-27 `--verify-ac`，**未達 closure-grade**：本次驗證涵蓋 7 條實質 AC，本票共 **9** 條（另兩條為 `Pass /codex-review-fast`、`Pass /precommit` 兩張 gate receipt，未經獨立驗證）。決策表要求每一條 AC 各有一筆結果，故報告為 unaccounted；全部 checkbox 已勾，依規則 2 得 `Candidate Complete`。已驗證的 7 條為 7/7 High：AC1–AC4 `Complete (later removed)`：實作 `002a069`，存續至 2026-08-13 hook-lightweighting（`0b3b8f5` 刪 hook、`91b5fc9` 刪測試）。AC5–AC7 對**現行工作樹**重跑通過：generator 140/140、`hooks-json-registry` 9/9、`plugin-manifest` 18/18。兩項留存差異記錄而不追改：「54/54 pass」為 commit 紀錄（hook 與測試皆已刪除，無法重跑）；`hooks-json-registry.test.js:92` 已被反轉為斷言 `hooks.json` **不得**引用 `post-tool-review-state`，今日通過的理由與 2026-05 相反。README 計數由 generator 推導，96 → 99 為設計內漂移 |
 
 ## References
 
