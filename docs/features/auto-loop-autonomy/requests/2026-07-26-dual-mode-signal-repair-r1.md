@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking.
 > **Created**: 2026-07-26
-> **Status**: Candidate Complete
+> **Status**: In Progress
 > **Note**: 本張為既有缺陷修正，非新功能。與 R2/R3/R4 的自主性升級無依賴，可獨立先行。父 tech spec 尚未建立（見 References）。AC 全數具證據（測試釘樁 + 兩份 Codex review + 現場 Stop hook 輸出），但未跑 `--verify-ac`，故不逕標 Completed
 > **Priority**: P0
 > **Brainstorm threadId**: `019f9d77-5c89-75f1-b610-00a2262e5dc3`
@@ -48,7 +48,7 @@
 
 ## Acceptance Criteria
 
-- [x] `review_mode=dual` 且 `aggregate_gate.executed=false` 時，Stop 回報的**事實**為待決聚合義務（R2 落地後表述為 `pending_obligations=aggregate_gate`，進入點置於 `suggested_route`），且不含 `/codex-review-fast`
+- [ ] `review_mode=dual` 且 `aggregate_gate.executed=false` 時，Stop 回報的**事實**為待決聚合義務（R2 落地後表述為 `pending_obligations=aggregate_gate`，進入點置於 `suggested_route`），且不含 `/codex-review-fast`
 - [x] 迴歸測試證明：dual + 已通過的 `code_review.passed=true` + aggregate 未完成 → 不再要求 fast review
 - [x] `single` 模式的 `MISSING` 行為完全不變（既有測試全綠）
 - [x] 新增測試釘樁 `session-init.sh` 目前**不**重設 `review_mode` 的實際行為，測試名稱標明此為已知缺陷
@@ -65,9 +65,8 @@
 | Analysis | Done | Codex 辯論 R3 定位，Claude 獨立驗證 `stop-guard.sh:936`、`session-init.sh:617-624` |
 | Development | Done | `stop-guard.sh` +148 行：`_sidecar_event_any` / `SIDECAR_EVENT_NORETRY` / `_AGG_OBLIGATION` 路由 + `AGG_OBLIGATION_NOTE`；三個終端出口加 non-retry 分支 |
 | Testing | Done | `stop-guard.test.js` 208 項、`review-dispatch.test.js` 34 項、`session-init.test.js` 釘樁；全庫 precommit ✅ PASS |
-| Acceptance | Done | 程式碼 review ✅ Ready（無 P0/P1）、文件 review ✅ Mergeable（4 輪，7 個 P1 全修）；AC1 另有現場 Stop hook 輸出佐證 |
+| Acceptance | In Progress | **開頭 metadata 的 `Note` 記錄的是驗證前狀態**（其「未跑 `--verify-ac`，故不逕標 Completed」一句在 2026-08-27 之後已不成立）；該欄位不在 `--update` 的四欄位可變集內，故保留原文不改寫，以本欄為現行紀錄。程式碼 review ✅ Ready（無 P0/P1）、文件 review ✅ Mergeable（4 輪，7 個 P1 全修）。2026-08-27 `--verify-ac`：實作落於 `b984ff3`（R1+R2 squash）。**AC1 判定為 `Partial` / confidence `High`**——verdict 與 confidence 是兩個維度：本文 AC1 字面要求的 `pending_obligations` 與 `suggested_route` 兩個欄位名從未實作（交付形式為 `[AUTO_LOOP_STATE]` 上的 `pending=aggregate_gate` 加 `MISSING` 帶進入點），這是有直接證據的已知缺口，屬「確信其只達成一半」而非「不確定是否達成」。**AC1 的取消勾選不屬於這次 `--verify-ac` 執行**。報告為 unaccounted，依決策表該次執行**不得變更任何 checkbox**，事實上它也沒有變更任何一個——這兩件事必須分開記，否則會讀成同一次呼叫既受該規則約束又違反它。取消勾選是 2026-08-28 人工複核本票時，依直接實作證據所做的一般更新：AC1 字面要求的兩個欄位名經查證從未實作。本票為 `In Progress`（開啟中），AC 勾選狀態在其可變集內，所以這次更新有欄位權限；但欄位權限只回答「可以改哪個欄位」，不回答「依哪條規則改」——後者是實作證據，不是驗證裁決，也不是 Phase 4.5 例外（該例外明文不得變更 AC 勾選狀態）——AC1 字面要求的兩個欄位名經查證從未實作，這是關於本票內容的事實。本次 2026-08-27 的驗證只涵蓋 9 條中的 7 條（兩張 gate receipt 未驗），依全量 AC 規則屬 unaccounted，而 unaccounted 報告依規定不得變更任何 checkbox，故不能用它為 AC1 的取消勾選背書。更正後 AC1 為未勾，報告仍為 unaccounted，依決策表「報告無效且任一 AC 未勾」該列得 Status `In Progress`。**待人工裁決**：AC1 的括號原文為「R2 落地後表述為…」，可能本就是對 R2 的前瞻描述而非 R1 的硬性要求；若判定為規格誤植，**不得以 Phase 4.5 例外改寫 AC 文字**——該例外只涵蓋非生命週期的記錄事實與未填佔位字串；改寫 AC 需要另行取得明確的記錄更正授權，或另開一張取代本票的票。此判斷不由自動流程代為決定。AC2/AC3/AC4 `Complete (later removed)`（`3c063ed` 改寫 stop-guard、`91b5fc9` 刪兩份測試、`0b3b8f5` 刪 session-init）。**AC5 亦為史料佐證**——僅其否定條款在現行工作樹成立（`grep -rn "for the rest of the session" skills/ rules/` 零命中）；其肯定敘述已被 hook-lightweighting 推翻（`codex-review-branch/SKILL.md:31`、`codex-code-review/SKILL.md:49`、`review-common.md:217` 今日皆敘明「無 mode field、無 state write、下次呼叫回到 single」）。**AC6/AC7 同為史料佐證**。另記錄兩處事實更正（Phase 4.5 例外）：(1) AC6 所載 transition 寫入點 `:2203` / `:2277`，pre-fix tree 實為 `:2312` / `:2386`（constructor 的 `:279` / `:831` 正確）；(2) 文末原有一行未填的樣板圖例（非 `parseRequestStatus()` 讀取的欄位），已**刪除**——改寫成當前狀態值會製造第二個非權威的 Status 欄位，既不在 parser 契約內，後續更新也不會維護它；刪除才是這個佔位字串應得的更正 |
 
-**Status**: Pending / In Progress / Candidate Complete / Completed
 
 ## References
 
