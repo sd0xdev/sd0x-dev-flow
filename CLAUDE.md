@@ -2,7 +2,7 @@
 
 **How binding is a line in this file?** Three tiers: **Anchor** (never deviate), **Default** (the normal call; deviate by stating a `[DEVIATION]` line that cites a fact signal, then *keep working*), **Guidance** (advisory). This file's own baseline is **Default** and lines above that baseline are marked inline — @rules/discretion.md classifies the plugin-managed `rules/*.md`, not this file, but its **Anchor Register is the authority everywhere**: a line here that hits the Register is Anchor no matter how it is worded or where it is restated.
 
-Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask — the human exits are the union of the ones enumerated in @rules/auto-loop.md and @rules/scope-discipline.md; those two enumerations are the closed list, not this sentence.
+Judgment inside the Default range is the expected behaviour, not a tolerated exception: decide from the change in front of you and continue. Uncertainty alone is not a reason to stop and ask — the human exits are the union of the ones enumerated in @rules/auto-loop.md and, for scope, in the contract @rules/scope-discipline.md points to (`skills/codex-code-review/references/scope-contract.md` § Human Exits); those two enumerations are the closed list, not this sentence.
 
 ## Required Checks (Stop Hook reminded)
 
