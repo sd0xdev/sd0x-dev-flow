@@ -345,3 +345,19 @@ Recurring corrections, recorded so the class stops repeating. Format and rules: 
   或**輸出區塊裡有一行，你在腳本裡指不出是哪個指令印的**。後者是機械可查的：逐行問「這行的
   producer 是哪一條指令」。
 - **Source**: 2026-08-22 — push-gate-optin round 81 doc review（三份副本 + 一份不自洽的重現腳本）
+
+### L17 — 把文字搬出某個檔案，會靜默地解除所有「綁定該檔案」的守衛
+
+- **Context**: rules-residency 抽取把程序散文從 `rules/auto-loop.md`、`rules/scope-discipline.md` 搬到隨用契約，三個守衛仍指著舊檔案。
+- **Error pattern**: 改動測試的檔案 binding（或放著不動）而沒有問「這個守衛原本證明什麼？現在還有什麼在證明它？」。第 4 輪：把 `scope-discipline.test.js` 的斷言改指契約，等於移除 Anchor Register #1/#2/#3 **常駐性**的唯一釘定。第 5 輪：`discretion-tiers.test.js` 的 review-grant 掃描只讀 `rules/auto-loop.md`，因此在搬走的契約裡加一句「模型可略過 review」能通過全部 4192 個測試。同一輪我已在 `auto-loop-behaviour.test.js` 修過這個形狀，卻沒有推廣。
+- **Correct approach**: 文字搬移時，列舉覆蓋它的守衛，各自改用明確的 **carrier 清單**（如 `REVIEW_POLICY_CARRIERS`）而非單一路徑，讓守衛隨內容移動。若 `rules/discretion.md` § File Baselines 把某條規則綁定到具名檔案，釘定就必須留在**那個檔案**，不可跟著散文走。
+- **Prevention**: 每搬一塊，就把該守衛存在的理由所對應的缺陷**種進新位置**確認轉紅。只在舊位置轉紅的守衛，已經什麼都沒守。
+- **Source**: 2026-08-29 — rules-residency r1，code review 第 4、5 輪。
+
+### L18 — 沒有跑到真正程式路徑的反向控制，是「因為錯誤的理由而綠」
+
+- **Context**: 同一變更。`test/rules/contract-routing.test.js` 在五輪審核中每一輪都被點名。
+- **Error pattern**: 同一錯誤的四種變體。(1) 控制直接呼叫 helper，而餵給真正檢查的 regex 一個都沒配對到——57 個引用中 0 個。(2)「抽出來」的 scanner 其實是 forward test 迴圈的**複本**，所以弱化真迴圈時控制仍綠。(3) 反向控制斷言在區域 `String#replace` 的結果上，而非測試實際呼叫的函式。(4) 控制挑的 fixture 在突變後**同樣**不會配對，於是兩種情況都成立。
+- **Correct approach**: 一份實作，測試與其控制都呼叫它。然後突變**真正的程式碼**——不是它的複本——確認轉紅。單一 fixture 無法辨別時，改為斷言突變會改變的**集合**（候選數量），而非其中一個成員。
+- **Prevention**: 宣稱守衛有效前先跑突變測試。`rules/testing.md` § Guards 已經寫了判準——「刪掉守衛；若既有案例全數維持綠，它就沒有反向控制」——這四次都通過了對該句的**解讀**，卻沒通過該句本身。
+- **Source**: 2026-08-29 — rules-residency r1，code review 第 1–5 輪。
