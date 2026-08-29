@@ -84,6 +84,22 @@ El núcleo no negociable vive en un **Anchor Register cerrado** (`rules/discreti
 
 El modelo posee el camino. El harness posee la evidencia y los límites no negociables. El humano conserva la autoridad irreversible.
 
+## Novedades en 4.4
+
+> Si tras actualizar a **4.4.0** notas una caída en la calidad de review — defectos reales que se cuelan, o revisiones que convergen demasiado pronto — por favor [abre un issue](https://github.com/sd0xdev/sd0x-harness/issues). Esta versión cambia el **criterio** del review, y los reportes de campo son la única forma de validarlo.
+
+**En lenguaje llano**: el auto-loop permitía que las reviews excavaran sin límite — el reviewer señalaba un test débil, el fix añadía un guard más fuerte, la siguiente ronda atacaba ese guard, y así recursivamente. Medimos un caso real: 9 rondas de review donde 7 de 8 hallazgos bloqueantes atacaban la **solidez de los propios test guards**, y ninguno el cambio entregado. 4.4 traza la línea: una vez que una propiedad queda demostrada en ambas direcciones sobre su ruta real, el endurecimiento adicional de esa propiedad es no bloqueante salvo que un AC o un invariante de seguridad lo exija.
+
+| Cambio | Antes | Después |
+|--------|-------|---------|
+| Límite de assurance | A un guard siempre se le podía exigir un guard del guard | Un test que rechaza prueba ambas direcciones sobre la ruta real — **esa prueba representativa es el límite**; endurecimiento adicional queda como Nit no bloqueante salvo que un AC o invariante de seguridad lo exija |
+| El campo Prevention | Se leía como "cada fix debe añadir otro artefacto de defensa" — la semilla de la espiral | Una **explicación** de qué control existente atrapa esa clase; normalmente el test de regresión que el fix ya incluye |
+| Review dispatch | Los re-dispatches podían acumular directivas de "ataca X ahora", anclando al reviewer cada vez más hondo | **Contrato fijo de tres partes**: tarea congelada (tarea, baseline, ACs, focus del usuario), hechos actuales, contrato de review fijo — las listas de ataque son patrón prohibido |
+| Encuadre del reviewer | "Céntrate en encontrar problemas" | "Céntrate en **defectos materiales**" — más un assurance boundary y un boundary check en lugar del gap check abierto |
+| Pensamiento de diseño | Delegado al review, con el código ya escrito | Nudge al escribir: cuando la forma no es obvia, nombra el diseño más simple elegido y por qué — preguntas, no cuotas |
+
+**Por qué creemos que es correcto** (y por qué aun así pedimos reportes): [IFScale](https://arxiv.org/abs/2507.11538) mide la degradación del seguimiento por modelo al subir la densidad de 10 a 500 instrucciones simultáneas; la investigación de [context rot](https://www.trychroma.com/research/context-rot) encuentra que contextos más largos y distractores temáticamente afines reducen la fiabilidad; y [Vercel agent evals](https://vercel.com/blog/agents-md-outperforms-skills-in-our-agent-evals) midió que un índice de documentación siempre presente alcanzó el 100% frente al 79% de una skill con instrucciones de activación explícitas — la carga de instrucciones y los contratos difusos tienen costes medibles. El núcleo del auto-loop queda intacto: el terminal completion invariant, edit-reopens-gate, la disciplina sub-threshold, el diagnóstico de estancamiento y todos los anchors de seguridad permanecen exactamente igual.
+
 ## Lo que hace este harness
 
 > [Harness engineering](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) es la disciplina de diseñar todo lo que rodea al LLM — tool loops, gestión de contexto, hooks, state machines, capas de seguridad — en lugar de entrenar el modelo en sí. Mitchell Hashimoto acuñó el término en febrero de 2026; [Anthropic engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) y [Martin Fowler](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) han publicado al respecto; [arXiv 2603.05344](https://arxiv.org/html/2603.05344v1) lo formaliza.
