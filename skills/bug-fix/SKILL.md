@@ -55,6 +55,7 @@ gh issue      Grep    Edit     /verify          /precommit
 |-----------|-------------|
 | Minimal changes | Only modify what is necessary |
 | No new issues | Confirm changes don't affect other features |
+| Design preserved | Choose the smallest root-cause fix that keeps current responsibilities. If the fix moves a boundary or adds an abstraction, say which shape you chose and why — "direct fix; existing design retained" is the expected common answer |
 
 ## Phase 3: Add Regression Test ⚠️
 

@@ -38,6 +38,13 @@ Requirements → Design → Implement → Test + Review → Precommit Gate → D
                                   /codex-review-fast
 ```
 
+**Design before code**: for a non-trivial change, briefly consider who owns each responsibility,
+the simplest shape that fits the existing code, and why — and say what you chose when the choice
+is non-obvious. Principles (clear names, small cohesive functions, dependency direction,
+composition where it reduces coupling) are questions, not quotas: never add an abstraction to
+demonstrate design. `/codex-architect` is for genuinely hard trade-offs (cross-module boundaries,
+new public APIs, durable abstractions), not every feature.
+
 ## Commands
 
 | Phase | Command | Description |

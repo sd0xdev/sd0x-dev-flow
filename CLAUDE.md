@@ -34,7 +34,7 @@ Skill discovery: no command table here by design — each skill's frontmatter `d
 
 Tier is marked per rule; the unmarked ones are Default and you may deviate with a stated signal.
 
-1. *(Guidance)* **Reference existing code** -- find similar files first, keep style consistent
+1. *(Guidance)* **Reference existing code** -- find similar files first, keep style consistent; when the shape is non-obvious, name the simplest design chosen and why
 2. **Test command** -- `npm test`（`node --test $(find test -name '*.test.js')` — npm scripts 走 `/bin/sh`，`**` glob 不展開巢狀目錄，勿用 `test/**/*.test.js`）
 3. **⚓ Anchor** — **Author attribution** -- use developer's GitHub username, never AI names (exception: `/smart-commit --ai-co-author`). Forbidden patterns in commit messages **and PR title/body** (canonical source: `scripts/commit-msg-guard.sh`): Co-Authored-By AI, Generated-by tags, emoji robot tags. Commits: install `commit-msg-guard.sh` via `/install-scripts`. PRs: `/create-pr` Step 4b enforces sanitization automatically.
 4. **⚓ Anchor** — **No auto-commit** -- Claude must not run `git add`, `git commit`, `git push` (exception: `/push-ci` may execute `git push` after user approval; `/smart-commit --execute` may execute `git add` + `git commit` after user approval)

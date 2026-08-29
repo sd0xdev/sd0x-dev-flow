@@ -45,6 +45,7 @@ Do NOT blindly trust the context above. You must think and verify on your own.
 Before writing any code, answer these questions to yourself:
 - What exactly does this item need to do?
 - What existing code will it call or be called by?
+- What is the simplest shape that fits the existing system — who owns each responsibility, and is a named pattern genuinely useful here, or is direct code clearer? Prefer composition when it reduces coupling; never add an abstraction only to satisfy a principle
 - What are the edge cases and failure modes?
 - What tests are needed to prove it works?
 
