@@ -48,7 +48,7 @@ uncommitted, so "shipped" would overstate them.
 ## 1. `/smart-rebase` analysis fetch safety
 
 Scope note: `skills/smart-rebase/` entered the `push-gate-optin` task through an explicit scope
-expansion (`@rules/scope-discipline.md` § Closed-Set Options, option 1), which is why these findings
+expansion (`skills/codex-code-review/references/scope-contract.md` § Closed-Set Options, option 1), which is why these findings
 were first recorded inside `docs/features/push-gate-optin/4-implementation.md` rather than in a
 feature directory of their own. They are no longer there: on 2026-08-20 the class was diagnosed as
 `ARCHITECTURE` and extracted into this directory.

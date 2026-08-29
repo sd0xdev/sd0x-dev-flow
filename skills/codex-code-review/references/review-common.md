@@ -27,7 +27,7 @@ The report's Gate section carries one line `gate_reason=<NONE|IN_SCOPE_BLOCKING|
 
 ## Scope Fields (fail-closed)
 
-Every finding carries four scope fields (contract: `@rules/scope-discipline.md` § Gate Derivation), judged against the **frozen** `SCOPE_BASELINE` from Step 1 — never recomputed:
+Every finding carries four scope fields (contract: `skills/codex-code-review/references/scope-contract.md` § Gate Derivation), judged against the **frozen** `SCOPE_BASELINE` from Step 1 — never recomputed:
 
 ```
 origin=<in-diff|pre-existing|uncertain>
@@ -84,8 +84,8 @@ condition holds, checked before each re-review:
 **Rotation procedure**:
 
 1. Fix the outstanding findings as usual — rotation never interrupts a fix in progress.
-2. Open the new thread with the family's **first-dispatch template**: the full independent-research contract of `@rules/codex-invocation.md` applies again exactly as on round one. The frozen scope baseline (file list) rides in the prompt — metadata the invocation contract already allows; the baseline is **not** recomputed (`@rules/scope-discipline.md` § Scope Baseline).
-3. The old thread's unclosed findings and dispositions carry issue text and **never enter the new prompt** — feeding them anchors the reviewer. After the fresh report arrives, reconcile on the orchestration side: map old unclosed findings and currently valid dispositions onto the new report via § Finding Identity, then re-derive the gate per `@rules/scope-discipline.md` § Gate Derivation. A mapping that fails is fail-closed: the unmatched finding returns to the gate.
+2. Open the new thread with the family's **first-dispatch template**: the full independent-research contract of `@rules/codex-invocation.md` applies again exactly as on round one. The frozen scope baseline (file list) rides in the prompt — metadata the invocation contract already allows; the baseline is **not** recomputed (`skills/codex-code-review/references/scope-contract.md` § Scope Baseline).
+3. The old thread's unclosed findings and dispositions carry issue text and **never enter the new prompt** — feeding them anchors the reviewer. After the fresh report arrives, reconcile on the orchestration side: map old unclosed findings and currently valid dispositions onto the new report via § Finding Identity, then re-derive the gate per `skills/codex-code-review/references/scope-contract.md` § Gate Derivation. A mapping that fails is fail-closed: the unmatched finding returns to the gate.
 4. Record `[THREAD_ROTATED] plane=<plane> old=<threadId> new=<threadId> reason=<rounds|context> | <ISO8601>` at column 0 (reporting convention — greppable, nothing parses it) and reset the per-thread count; subsequent replies use the new thread.
 
 The rotation unit is the **batch's thread**: one-thread-per-batch is unchanged — a rotation swaps
@@ -153,7 +153,7 @@ Please verify:
 
 > The re-review deliberately does **not** ask for a status roll-call of sub-threshold findings. They were already logged as `[NIT_DEFERRED]` and are not what the loop is converging on; asking re-surfaces them and buys another round.
 
-`DISPOSITIONS` is the currently valid `[OUT_OF_SCOPE_DEFERRED]` / `[USER_SKIPPED]` lines for this task — carried by the model from the conversation and the prior reports (reporting conventions, nothing persists them). Validity is checked per `@rules/scope-discipline.md` § Closed-Set Options before a line is included.
+`DISPOSITIONS` is the currently valid `[OUT_OF_SCOPE_DEFERRED]` / `[USER_SKIPPED]` lines for this task — carried by the model from the conversation and the prior reports (reporting conventions, nothing persists them). Validity is checked per `skills/codex-code-review/references/scope-contract.md` § Closed-Set Options before a line is included.
 
 ## Dismiss Verdict Format
 

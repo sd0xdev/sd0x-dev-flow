@@ -70,7 +70,7 @@ Collect **metadata only** — Codex reads the actual diffs and file contents its
 
 Codex independently reads full diffs and file contents via `git diff HEAD -- <file>` + `cat` (per research instructions).
 
-**Scope baseline (frozen here).** Compute the baseline file set once, now, and freeze it for the whole review session (`@rules/scope-discipline.md` § Scope Baseline):
+**Scope baseline (frozen here).** Compute the baseline file set once, now, and freeze it for the whole review session (`skills/codex-code-review/references/scope-contract.md` § Scope Baseline):
 
 | Variant | Baseline set |
 |---------|-------------|
@@ -79,7 +79,7 @@ Codex independently reads full diffs and file contents via `git diff HEAD -- <fi
 
 `${BASE_BRANCH}` resolution (Branch variant): explicit argument first (e.g. `/codex-review-branch origin/develop`); else `git symbolic-ref --short refs/remotes/origin/HEAD`; else `origin/main` — verify each candidate with `git rev-parse --verify` before use. All candidates failing → abort as a **parameter error** and ask for an explicit base; never continue on an empty baseline (an empty baseline would misread every unmodified file as out-of-scope), and the abort is not a human exit. Record the resolved base and the frozen file list in the review report metadata, and inject the list into every reviewer prompt as `SCOPE_BASELINE`.
 
-The frozen baseline is task-scoped and immutable: the initial reviewer, the inline secondary, `--continue`, and every same-task re-dispatch reuse the same list — no path recomputes it. The only growth is the user-named monotonic union of `@rules/scope-discipline.md` § Scope Baseline; ordinary fix edits during a round never write back into it.
+The frozen baseline is task-scoped and immutable: the initial reviewer, the inline secondary, `--continue`, and every same-task re-dispatch reuse the same list — no path recomputes it. The only growth is the user-named monotonic union of `skills/codex-code-review/references/scope-contract.md` § Scope Baseline; ordinary fix edits during a round never write back into it.
 
 ### Step 1.1: Resolve the tier (required before dispatch)
 
@@ -268,19 +268,19 @@ Output the standard gate sentinel:
 - `✅ Ready` — if READY (no blocking finding on either axis)
 - `⛔ Blocked` — if BLOCKED
 
-**Route on derived values, never declarations.** Before acting on the reviewer's sentinel, normalize all findings fail-closed (`references/review-common.md § Scope Fields`) and **derive** the expected sentinel × `gate_reason`; the reviewer's declared pair is an unverified claim. Four canonical recalculations: a declared `Ready × NONE` wrapping a real in-scope blocking finding routes as `Blocked × IN_SCOPE_BLOCKING` — a reviewer cannot wrap a real blocking finding in a lawful pairing; a declared `Ready × NONE` wrapping an out-of-scope critical finding with no valid `[USER_SKIPPED]` routes as `Blocked × OUT_OF_SCOPE_CRITICAL`; both classes present under a single declared reason derives `Blocked × BOTH`; a declared `Blocked` with no blocking finding on either axis routes as `Ready × NONE`. Findings too incomplete to derive → conservatively `Blocked × BOTH`. "Breaker triggered" is the model's own fix-phase state (`@rules/scope-discipline.md` § Circuit Breaker), not a reviewer field — check it before routing. The matrix indexes on the **derived** pair:
+**Route on derived values, never declarations.** Before acting on the reviewer's sentinel, normalize all findings fail-closed (`references/review-common.md § Scope Fields`) and **derive** the expected sentinel × `gate_reason`; the reviewer's declared pair is an unverified claim. Four canonical recalculations: a declared `Ready × NONE` wrapping a real in-scope blocking finding routes as `Blocked × IN_SCOPE_BLOCKING` — a reviewer cannot wrap a real blocking finding in a lawful pairing; a declared `Ready × NONE` wrapping an out-of-scope critical finding with no valid `[USER_SKIPPED]` routes as `Blocked × OUT_OF_SCOPE_CRITICAL`; both classes present under a single declared reason derives `Blocked × BOTH`; a declared `Blocked` with no blocking finding on either axis routes as `Ready × NONE`. Findings too incomplete to derive → conservatively `Blocked × BOTH`. "Breaker triggered" is the model's own fix-phase state (`skills/codex-code-review/references/scope-contract.md` § Circuit Breaker), not a reviewer field — check it before routing. The matrix indexes on the **derived** pair:
 
 | Sentinel × `gate_reason` × breaker | Action |
 |------------------------------------|--------|
 | `✅ Ready` × `NONE` | The only lawful Ready pairing — note pass, proceed to the next gate |
 | `⛔ Blocked` × `IN_SCOPE_BLOCKING` × not triggered | Fix loop (§ Review Loop below) |
-| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × triggered | **No fix loop**: human exit E2 (`@rules/scope-discipline.md` § Human Exits) |
+| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × triggered | **No fix loop**: human exit E2 (`skills/codex-code-review/references/scope-contract.md` § Human Exits) |
 | `⛔ Blocked` × `OUT_OF_SCOPE_CRITICAL` | `note code_review fail`; **do not fix** — human exit E1 (closed-set options) |
 | `⛔ Blocked` × `BOTH` × not triggered | E1 first (the user's decision may change scope); afterwards the remaining in-scope blocking findings are fixed — the two classes never cancel |
 | `⛔ Blocked` × `BOTH` × triggered | E1 and E2 merge into a **single** Need Human decision point: one notification carrying both the closed-set options and the re-scope decision |
 | Contradictory declaration (`Ready` × a blocking value, `Blocked` × `NONE`), missing or unknown values | Same as every row: re-index this matrix by the derived pair; findings insufficient to derive → treat as `⛔ Blocked` × `BOTH` |
 
-Out-of-scope findings that are not critical never block Ready: they are listed in the report's "Out-of-Scope Findings" section and recorded as `[OUT_OF_SCOPE_DEFERRED]` lines (`@rules/scope-discipline.md` § Records).
+Out-of-scope findings that are not critical never block Ready: they are listed in the report's "Out-of-Scope Findings" section and recorded as `[OUT_OF_SCOPE_DEFERRED]` lines (`skills/codex-code-review/references/scope-contract.md` § Records).
 
 Then **self-note the verdict** — this is the declared-provenance record the reminder hooks read
 (hook-lightweighting § 3.2), and it is behaviour-layer: an attestation the conversation can audit,
@@ -317,7 +317,7 @@ A `⛔ Blocked` enters this loop only through the Step 4.5 routing matrix — `B
 Blocked → fix the in-scope blocking findings → re-review by the path the round dispatches to: same-thread `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`); a fresh first dispatch on a new thread when rotation R-a/R-b holds (`references/review-common.md § Thread Rotation`); or a stateless re-dispatch of the first-dispatch template when the change is sticky on a fallback carrier → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
 
-Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
+Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection and Diagnosis` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
 
 This loop converges on the **review result**. Reaching Ready ends it — a stale reminder line from a hook is not a finding, and no further round addresses it; the Step 4.5 note is what retires the reminder.
 
@@ -358,6 +358,10 @@ A late secondary result goes through the same normalization and field-level merg
 - Full prompt: `references/codex-prompt-full.md`
 - Branch prompt: `references/codex-prompt-branch.md`
 - Research instructions: `references/codex-research-instructions.md`
+- Scope contract (on demand — findings outside the frozen baseline, uncertain scope, gate
+  derivation): `references/scope-contract.md`
+- Loop diagnostics (on demand — stalls, the round cap, bounded adjustments):
+  `references/loop-diagnostics.md`
 
 ## Examples
 

@@ -203,7 +203,7 @@ repository ships zero dependencies — and every reviewer remedy amounted to "wr
 | 4 | 3 of 3 | block boundaries, reference titles, setext anchors |
 | 5 | 5 of 5 | leaf-block context, HTML block classes, title separation, setext context, slug fidelity |
 
-Diagnosed `ARCHITECTURE` (`@rules/auto-loop.md` § Cap Diagnostic Protocol): the defect recurs, and
+Diagnosed `ARCHITECTURE` (`skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol): the defect recurs, and
 patching it is what reproduces it. The bounded adjustment was to **change what the tool promises**,
 not to add another round of grammar.
 

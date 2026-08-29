@@ -115,6 +115,10 @@ test('tracked CLAUDE files carry no command table', () => {
 // (test/skills/review-dispatch.test.js vs test/scripts/lib/review-dispatch.test.js), and a
 // basename key would let either file inherit the other's exemption.
 const ALLOWED_CLAUDE_READERS = new Set([
+  // Scans tracked markdown for contract references; names the CLAUDE files only to bound the
+  // scan set, and asserts nothing about command registration.
+  'test/rules/contract-routing.test.js',
+
   'test/skills/claude-health.test.js',             // pins claude-health S2.5, whose check #3 names `.claude/CLAUDE.md` as a detection input (R8)
   'test/skills/claude-md-coverage.test.js',        // this file — terminal-gate routing below
   'test/skills/context-management-rule.test.js',   // pins @rules/context-management.md references
