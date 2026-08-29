@@ -84,6 +84,22 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 
 模型拥有路径。Harness 拥有证据与不可协商的边界。人类保留不可逆的决定权。
 
+## 4.4 的新变化
+
+> 升级到 **4.4.0** 后若发现 review 质量下降——真缺陷漏网、或收敛得太急——请[提 issue](https://github.com/sd0xdev/sd0x-harness/issues)反馈。这个版本改的是 review 的**判断方式**，只有实际使用反馈能验证它。
+
+**白话版**：过去 auto-loop 允许 review 无限往深挖——reviewer 指出测试太弱、修复加了更强的守卫、下一轮攻击那个守卫……如此递归。我们测到一个真实案例：9 轮 review 里 8 个 blocking 发现有 7 个在攻击**测试守卫本身的强度**，没有一个关于交付的变更。4.4 划下界线：一个性质在实际路径上完成双向证明后，对它的进一步加固即为非阻断，除非 AC 或安全不变量明文要求。
+
+| 变更 | 之前 | 之后 |
+|------|------|------|
+| Assurance 边界 | 守卫永远可以被要求再加守卫 | 拒绝型测试在实际路径上双向证明——**代表性证明即为边界**；更深的加固降为非阻断 Nit，除非 AC 或安全不变量明文要求 |
+| Prevention 字段 | 被读成「每次修复都要再加一个防护物」——螺旋的种子 | 是**说明**：哪个既有控制会拦住这类问题，通常就是这次修复附带的回归测试 |
+| Review dispatch | 重派可以累积「下轮攻击 X」的指示，逐轮锚定 reviewer 越挖越深 | **固定三段式契约**：冻结任务（任务、baseline、AC、用户提供的 focus）＋当前事实＋固定审核契约——攻击清单列为禁止模式 |
+| Reviewer 框架 | 「专注找问题」 | 「专注**实质缺陷**」——加上 assurance boundary，开放式 gap check 换成 boundary check |
+| 设计思维 | 留给 review，在代码已存在之后 | 在动笔时提示：形状不明显时，说出所选的最简设计与理由——是问句，不是配额 |
+
+**为什么我们相信这是对的**（也为什么仍需要你的反馈）：[IFScale](https://arxiv.org/abs/2507.11538) 测量了指令密度从 10 条升到 500 条时各模型的遵循度衰退曲线；[context rot](https://www.trychroma.com/research/context-rot) 研究发现更长的 context 与主题相关的干扰内容会降低可靠性；[Vercel agent evals](https://vercel.com/blog/agents-md-outperforms-skills-in-our-agent-evals) 则测到常驻的文档索引达成 100%，而带明确触发指示的 skill 只有 79%——指令负载与模糊契约都有可测量的成本。auto-loop 核心完全未动：terminal completion invariant、编辑重开闸门、sub-threshold 纪律、停滞诊断与所有安全 anchor 原样保留。
+
 ## 这个 harness 做了什么
 
 > [Harness engineering](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) 是一门专注于工程化 LLM 周边一切的学科 — tool loops、context management、hooks、state machines、safety layers — 而不是训练模型本身。Mitchell Hashimoto 在 2026 年 2 月首次提出这个词；[Anthropic engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) 与 [Martin Fowler](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) 都已发表相关文章；[arXiv 2603.05344](https://arxiv.org/html/2603.05344v1) 则对其做了形式化定义。

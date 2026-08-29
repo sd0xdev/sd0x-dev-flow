@@ -84,6 +84,22 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 
 モデルは経路を所有します。harness は証拠と交渉不可能な境界を所有します。人間は不可逆の権限を保持します。
 
+## 4.4 の新機能
+
+> **4.4.0** へのアップグレード後に review の品質低下——実際の欠陥の見逃し、あるいは収束が早すぎる——に気づいた場合は、[issue を開いて](https://github.com/sd0xdev/sd0x-harness/issues)ご報告ください。このリリースは review の**判断そのもの**を変えるため、実運用からの報告だけが検証手段です。
+
+**平たく言うと**：これまで auto-loop は review を際限なく深掘りさせていました——reviewer がテストの弱さを指摘し、修正がより強いガードを追加し、次のラウンドがそのガードを攻撃する……という再帰です。実測した事例では、9 ラウンドの review のうち blocking な指摘 8 件中 7 件が**テストガード自体の強度**への攻撃で、納品物への指摘はゼロでした。4.4 は線を引きます：ある性質が実パス上で双方向に証明された後は、その性質へのさらなる強化は AC やセキュリティ不変量が要求しない限り非ブロッキングとして扱います。
+
+| 変更点 | 以前 | 以後 |
+|--------|------|------|
+| Assurance の境界 | ガードには常に「ガードのガード」を要求できた | 拒否型テストが実パス上で双方向を証明——**代表的証明が境界**。それ以上の強化は AC やセキュリティ不変量が明示的に要求しない限り非ブロッキングの Nit |
+| Prevention 欄 | 「修正のたびに防御物をもう一つ追加せよ」と読めた——スパイラルの種 | どの既存コントロールがこのクラスを捕捉するかの**説明**。通常は修正に同梱される回帰テスト |
+| Review dispatch | 再ディスパッチが「次は X を攻撃」の指示を蓄積し、ラウンドごとに reviewer を深くへ誘導 | **固定三部構成の契約**：凍結タスク（タスク・baseline・AC・ユーザー指定 focus）＋現在の事実＋固定レビュー契約——攻撃リストは禁止パターン |
+| Reviewer の姿勢 | 「問題を見つけることに集中」 | 「**実質的な欠陥**に集中」——assurance boundary を追加し、開放的な gap check を boundary check に置換 |
+| 設計思考 | コードが存在した後の review 任せ | 書く時点でのナッジ：形が自明でないときは、選んだ最もシンプルな設計と理由を一言で——問いであってノルマではない |
+
+**正しいと考える根拠**（それでも報告が必要な理由）：[IFScale](https://arxiv.org/abs/2507.11538) は同時指示数を 10 から 500 まで増やしたときのモデル別遵守度低下を測定し、[context rot](https://www.trychroma.com/research/context-rot) の研究はより長い context とトピックが近い撹乱コンテンツが信頼性を下げることを示し、[Vercel agent evals](https://vercel.com/blog/agents-md-outperforms-skills-in-our-agent-evals) は常駐のドキュメント索引が 100% を達成する一方、明示的なトリガー指示つきの skill は 79% にとどまることを測定しました——指示の負荷と不明瞭な契約には測定可能なコストがあります。auto-loop のコアは無変更です：terminal completion invariant、編集によるゲート再開、sub-threshold の規律、停滞診断、すべての安全 anchor はそのままです。
+
 ## この harness は何をするのか
 
 > [Harness engineering](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) とは、モデル自体を学習させるのではなく、LLM の周辺にあるすべて（tool loop、context management、hooks、state machine、safety layer）を工学的に構築する分野です。Mitchell Hashimoto が 2026 年 2 月にこの用語を提唱し、[Anthropic engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) と [Martin Fowler](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) が論考を発表、[arXiv 2603.05344](https://arxiv.org/html/2603.05344v1) が形式化しています。

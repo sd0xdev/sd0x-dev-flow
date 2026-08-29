@@ -99,6 +99,38 @@ The non-negotiable core lives in a **closed Anchor Register** (`rules/discretion
 
 The model owns the path. The harness owns the evidence and non-negotiable boundaries. The human retains irreversible authority.
 
+## What's New in 4.4
+
+> If you notice review quality drop after upgrading to **4.4.0** — real defects slipping through, or reviews converging too eagerly — please
+> [open an issue](https://github.com/sd0xdev/sd0x-harness/issues). This release changes review
+> *judgment*, and field reports are the only way to validate it.
+
+**The plain-language version**: the auto-loop used to let reviews dig ever deeper — a reviewer
+would flag a weak test, the fix added a stronger guard, the next round attacked that guard, and so
+on. We measured a real case: 9 review rounds where 7 of 8 blocking findings were about the *test
+guards' own strength*, and none were about the delivered change. 4.4 draws a line: once a property is
+demonstrated in both directions on its real path, further hardening of that property is
+non-blocking unless an AC or security invariant requires it.
+
+| What changed | Before | After |
+|--------------|--------|-------|
+| Where assurance stops | A guard could always be asked to guard the guard | A refusing test proves both directions on the actual path — that **representative proof is the boundary**; deeper hardening is a non-blocking Nit unless an AC or security invariant demands it |
+| The "Prevention" field | Read as "every fix must add another guard artifact" — the seed of the spiral | An **explanation** of which existing control catches the class; usually the regression test the fix already ships |
+| Review dispatch | Re-dispatches could accumulate "attack X next" directions, anchoring reviewers deeper each round | A **fixed three-part contract**: frozen task (task, baseline, ACs, user-supplied focus), current facts, fixed review contract — attack lists are a prohibited pattern |
+| Reviewer framing | "Focus on finding issues" | "Focus on **material defects**" — plus an assurance boundary and a boundary check replacing the open-ended gap check |
+| Design thinking | Left to review, after the code exists | Nudged at write time: when the shape is non-obvious, name the simplest design chosen and why — questions, not quotas |
+
+**Why we believe this is right** (and why we still want your reports):
+[IFScale](https://arxiv.org/abs/2507.11538) measures model-specific adherence degradation as
+instruction density rises from 10 to 500 simultaneous instructions;
+[context-rot](https://www.trychroma.com/research/context-rot) research finds longer contexts and
+topically related distractors reduce reliability; and
+[Vercel's agent evals](https://vercel.com/blog/agents-md-outperforms-skills-in-our-agent-evals)
+found an always-present documentation index scored 100% where a skill with explicit trigger
+instructions scored 79% — instruction load and unclear contracts have measurable costs.
+The auto-loop core is untouched: the terminal completion invariant, edit-reopens-gate, sub-threshold
+discipline, stall diagnosis, and every safety anchor remain exactly as they were.
+
 ## What This Harness Does
 
 > [Harness engineering](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) is the discipline of engineering everything around the LLM — tool loops, context management, hooks, state machines, safety layers — as opposed to training the model itself. Mitchell Hashimoto coined the term in Feb 2026; [Anthropic engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents) and [Martin Fowler](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html) have published on it; [arXiv 2603.05344](https://arxiv.org/html/2603.05344v1) formalizes it.

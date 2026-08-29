@@ -84,6 +84,22 @@ claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
 
 모델은 경로를 소유합니다. Harness는 증거와 양보할 수 없는 경계를 소유합니다. 사람은 되돌릴 수 없는 권한을 보유합니다.
 
+## 4.4의 새로운 변화
+
+> **4.4.0**으로 업그레이드한 후 review 품질 저하——실제 결함이 통과하거나, 수렴이 지나치게 빨라지는 현상——를 발견하면 [issue를 열어](https://github.com/sd0xdev/sd0x-harness/issues) 알려주세요. 이 릴리스는 review의 **판단 방식** 자체를 바꾸므로, 실사용 보고만이 검증 수단입니다.
+
+**쉽게 말하면**: 지금까지 auto-loop는 review가 한없이 깊게 파고들도록 허용했습니다——reviewer가 약한 테스트를 지적하면, 수정이 더 강한 가드를 추가하고, 다음 라운드가 그 가드를 공격하는 재귀였습니다. 실측 사례: 9라운드 review에서 blocking 지적 8건 중 7건이 **테스트 가드 자체의 강도**에 대한 것이었고, 납품된 변경에 대한 지적은 없었습니다. 4.4는 선을 긋습니다: 어떤 성질이 실제 경로에서 양방향으로 증명된 뒤에는, 그 성질에 대한 추가 강화를 AC나 보안 불변식이 요구하지 않는 한 비차단으로 취급합니다.
+
+| 변경 | 이전 | 이후 |
+|------|------|------|
+| Assurance 경계 | 가드에는 언제나 '가드의 가드'를 요구할 수 있었음 | 거부형 테스트가 실제 경로에서 양방향을 증명——**대표적 증명이 경계**. 그 이상의 강화는 AC나 보안 불변식이 명시적으로 요구하지 않는 한 비차단 Nit |
+| Prevention 필드 | '수정마다 방어물을 하나 더 추가하라'로 읽힘——나선의 씨앗 | 어떤 기존 컨트롤이 이 클래스를 잡는지에 대한 **설명**. 보통은 수정에 동봉되는 회귀 테스트 |
+| Review dispatch | 재파견이 '다음엔 X를 공격' 지시를 누적하며 라운드마다 reviewer를 더 깊이 유도 | **고정 3부 계약**: 동결된 작업(작업·baseline·AC·사용자 지정 focus) + 현재 사실 + 고정 리뷰 계약——공격 리스트는 금지 패턴 |
+| Reviewer 프레이밍 | '문제 찾기에 집중' | '**실질적 결함**에 집중'——assurance boundary 추가, 개방형 gap check를 boundary check로 교체 |
+| 설계 사고 | 코드가 존재한 뒤 review에 위임 | 작성 시점의 넛지: 형태가 자명하지 않으면 선택한 가장 단순한 설계와 이유를 한 줄로——질문이지 할당량이 아님 |
+
+**옳다고 믿는 근거** (그럼에도 보고가 필요한 이유): [IFScale](https://arxiv.org/abs/2507.11538)은 동시 지시 수를 10에서 500까지 늘렸을 때의 모델별 준수도 저하를 측정했고, [context rot](https://www.trychroma.com/research/context-rot) 연구는 더 긴 context와 주제가 유사한 방해 콘텐츠가 신뢰성을 낮춘다는 것을 밝혔으며, [Vercel agent evals](https://vercel.com/blog/agents-md-outperforms-skills-in-our-agent-evals)는 상시 로드되는 문서 색인이 100%를 기록한 반면 명시적 트리거 지시가 붙은 skill은 79%에 그쳤음을 측정했습니다——지시 부하와 불명확한 계약에는 측정 가능한 비용이 있습니다. auto-loop 코어는 그대로입니다: terminal completion invariant, 편집 시 게이트 재개방, sub-threshold 규율, 정체 진단, 모든 안전 anchor가 원형 그대로 유지됩니다.
+
 ## 이 harness가 하는 일
 
 > [Harness engineering](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html)은 LLM 모델 자체를 학습시키는 것이 아니라, LLM 주변의 모든 것 — tool loop, context 관리, hook, 상태 머신, 안전 레이어 — 을 엔지니어링하는 분야입니다. Mitchell Hashimoto가 2026년 2월에 이 용어를 만들었고, [Anthropic engineering](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents)과 [Martin Fowler](https://martinfowler.com/articles/exploring-gen-ai/harness-engineering.html)가 이를 주제로 글을 발표했으며, [arXiv 2603.05344](https://arxiv.org/html/2603.05344v1)가 이를 형식화합니다.
