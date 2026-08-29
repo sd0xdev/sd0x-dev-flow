@@ -140,3 +140,34 @@ test('prompt templates when scanned → no TTL narrative remains, replacement wo
       `${name}: replacement wording missing — the negative assertion above would be vacuous`);
   }
 });
+
+// ── Assurance boundary (over-thinking guard, 2026-08-29) ─────────────────────────────────────
+// The boundary is what stops review depth growing round over round into guards-of-guards: a
+// blocking guard finding needs a violated behavior/AC/invariant plus a counterexample on the real
+// path; hardening a demonstrated property is Nit. Both first-dispatch templates must carry it
+// (the fallback and rotated paths inherit it from them), and the re-review contract mirrors it.
+// Derived from the existing `prompts` fixture above — deliberately no separate template registry.
+
+test('assurance boundary when dispatched → both first-dispatch templates and the re-review mirror carry it', () => {
+  // The task contract binds EVERY dispatch path — fast, full, and branch alike (a branch review
+  // without the task can approve a coherent implementation of the wrong thing). The
+  // material-defects framing and the Assurance Boundary are deliberately fast/full-scoped: those
+  // two are the auto-loop first-dispatch templates the converged package named.
+  for (const [name, body] of Object.entries(prompts)) {
+    assert.match(body, /## Task \(frozen\)\n\$\{TASK_DESCRIPTION\}/,
+      `${name}: every dispatch carries the frozen task contract — metadata without the task lets a coherent but task-incorrect change pass`);
+  }
+  for (const [name, body] of Object.entries({ fast: prompts.fast, full: prompts.full })) {
+    assert.match(body, /material defects rather than praise/,
+      `${name}: the opening frames the review at material defects, not issue-finding volume`);
+    assert.match(body, /## Assurance Boundary/, `${name} template must carry the boundary heading`);
+    assert.match(body, /concrete counterexample on the\s+guard's actual execution path/,
+      `${name}: a blocking guard finding needs a real-path counterexample`);
+    assert.match(body, /Never turn a hardening\s+suggestion into a requirement/,
+      `${name}: hardening suggestions must not escalate`);
+  }
+  assert.match(common, /assurance boundary from the first dispatch still applies/,
+    're-review must mirror the boundary without a growth channel');
+  assert.match(common, /never appends\s*\n?> round-specific attack directions/,
+    'the re-review ask is fixed across rounds');
+});

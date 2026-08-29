@@ -19,7 +19,7 @@ Execution: Integration/E2E defaults to running a single file only; use `/verify`
 | Assertion | `assert/strict` (or ecosystem equivalent); no empty assertions |
 | Size | ≤ 7 assertions per test case |
 | Data | Realistic inputs; no `"test"`, `"foo"`, `123` without justification |
-| Guards | A test that *refuses* something ships with both directions in the same commit: the case that must fail, **and** the case using the same words as ordinary data that must pass. A one-directional guard is green on the day it lands and false-positives later, where it reads as a new defect rather than a missing control. Check it by deleting the guard — if every existing case stays green, it has no negative control |
+| Guards | A test that *refuses* something exercises the **actual guard path** in both directions, in the same commit: a representative forbidden case that must fail, and the same words as ordinary data that must pass. Test and controls invoke the same implementation — prove the negative by deleting or mutating the production guard on its actual execution path, never a test-only helper, duplicate, or proxy. That **representative proof is where assurance stops**: it does not require guards-of-guards, exhaustive mutation batteries, or completeness floors, unless an explicit AC or a security/data-integrity invariant demands them |
 
 ## Evidence Model
 

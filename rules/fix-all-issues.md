@@ -13,7 +13,7 @@ Fix the root cause, not the symptom, and fix it when you find it rather than que
 | **What** | The specific symptom |
 | **Why** | The root cause, not the surface one |
 | **How** | The change you made |
-| **Prevention** | What would catch this class next time |
+| **Prevention** | Which **existing or just-added** control catches this class next time — usually the regression test this fix ships with. An explanation, never an obligation to add another guard artifact |
 
 ## Exceptions
 

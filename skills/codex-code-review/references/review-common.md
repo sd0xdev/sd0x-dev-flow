@@ -147,7 +147,12 @@ Please verify:
 1. Have the previously identified blocking issues been correctly fixed?
 2. Did the fixes introduce new issues?
 3. Keep the scope fields on every finding (origin / scope_reason / scope / evidence), judged against the frozen baseline above
-4. Update Merge Gate status, including the gate_reason line`,
+4. The assurance boundary from the first dispatch still applies: a blocking guard finding needs a violated behavior/AC/invariant plus a counterexample on the real path; further hardening of demonstrated properties is Nit
+5. Update Merge Gate status, including the gate_reason line`,
+
+> These five items are the whole re-review ask — fixed across rounds. The dispatcher never appends
+> round-specific attack directions here (`rules/codex-invocation.md` § Prohibited patterns, cumulative
+> attack list).
 });
 ```
 

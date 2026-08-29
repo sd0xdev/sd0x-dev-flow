@@ -8,10 +8,15 @@ Used with `mcp__codex__codex`:
 mcp__codex__codex({
   prompt: `You are a senior Code Reviewer. Comprehensively review all changes in this feature branch.
 
+## Task (frozen)
+${TASK_DESCRIPTION}
+
 ## Branch Info
 - Current branch: ${CURRENT_BRANCH}
 - Base branch: ${BASE_BRANCH}
 - Commit count: ${COMMIT_COUNT}
+
+${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}  <!-- FOCUS: user/task-supplied only, frozen at first dispatch; never synthesized from review findings (rules/codex-invocation.md) -->
 
 ## Changed Files
 ${CHANGED_FILES}
@@ -21,8 +26,6 @@ ${DIFF_STAT}
 
 ## Scope Baseline (frozen)
 ${SCOPE_BASELINE}
-
-${DISPOSITIONS ? `## Active Dispositions\n${DISPOSITIONS}` : ''}
 
 ${SPEC_CHECKLIST ? `## Specification Checklist
 
@@ -178,7 +181,7 @@ That tag and field order are a **reporting convention** — nothing parses or pe
 
 ### Out-of-Scope Findings
 
-For every finding whose derived scope is out-of-scope and that does **not** block (not P0, not security/data-integrity — or covered by a valid [USER_SKIPPED] in Active Dispositions), emit one line here, starting at column 0:
+For every finding whose derived scope is out-of-scope and that does **not** block (not P0, not security/data-integrity), emit one line here, starting at column 0 (valid [USER_SKIPPED] records are applied orchestration-side after your report — do not attempt to apply them):
 
 \`\`\`
 [OUT_OF_SCOPE_DEFERRED] <file:line> | <issue> | <suggested-ticket> | <ISO8601 UTC>
@@ -191,7 +194,7 @@ Same reporting convention as above: fixed field order, nothing parses it. Never 
 This is a branch review, which runs at the \`thorough\` tier: **P0, P1 and P2 all block.** Only a Nit is sub-threshold. The gate has **two axes** — severity and scope:
 
 - \`✅ Ready\`: no blocking finding on either axis
-- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) P0, P1 or P2, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) P0, P1 or P2, **or** an **out-of-scope** P0/security/data-integrity finding (valid [USER_SKIPPED] records, if any, are applied orchestration-side after your report)
 
 State the verdict with the terminal at the START of its own line (trailing text allowed), never
 as a list item and never both terminals on one line.
