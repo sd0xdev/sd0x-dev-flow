@@ -6,10 +6,13 @@ Used with `mcp__codex__codex`:
 
 ```typescript
 mcp__codex__codex({
-  prompt: `You are a senior Code Reviewer. Perform a comprehensive review of the code changes in this project.
+  prompt: `You are a senior Code Reviewer. Perform a comprehensive review of the code changes in this project, focused on material defects rather than praise.
 
 ## Local Check Results
 ${LOCAL_CHECKS || 'Skipped (--no-tests)'}
+
+## Task (frozen)
+${TASK_DESCRIPTION}
 
 ## Changed Files
 ${CHANGED_FILES}
@@ -20,9 +23,7 @@ ${DIFF_STAT}
 ## Scope Baseline (frozen)
 ${SCOPE_BASELINE}
 
-${DISPOSITIONS ? `## Active Dispositions\n${DISPOSITIONS}` : ''}
-
-${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}
+${FOCUS ? `## Focus Area\nPay special attention to: ${FOCUS}` : ''}  <!-- FOCUS: user/task-supplied only, frozen at first dispatch; never synthesized from review findings (rules/codex-invocation.md) -->
 
 ${SPEC_CHECKLIST ? `## Specification Checklist
 
@@ -93,7 +94,7 @@ Wait. Before assigning severity levels, independently verify each finding:
 2. **Context check**: Did you read enough surrounding code to understand intent?
 3. **False positive check**: Could this be intentional design? Check for comments, tests, or docs.
 4. **Severity check**: Is the severity right — in **both** directions? Could this be worse than you assessed, and could it be *less* than you assessed?
-5. **Gap check**: What related issues might you have overlooked?
+5. **Boundary check**: Is this finding about delivered behavior or an existing requirement — or only about a stronger assurance layer that could be extended indefinitely?
 
 Only report findings that survive all 5 checks.
 
@@ -107,6 +108,17 @@ Classify every finding against the frozen Scope Baseline above — do NOT recomp
 - \`evidence\` — a \`file:line\` call-site citation for one-hop; a \`git blame\`/\`git log -L\` line for branch-introduced; \`pre-existing-outside\` requires the **complete negative case**: not in the baseline, no one-hop call site from a changed symbol, not introduced by this branch
 
 One hop only: a direct caller or direct callee of a symbol the diff modified, with the call site cited — no transitive expansion. If you cannot cite the evidence, use \`uncertain\`; it is read as in-scope. Non-code files (\`.md\`, config, data): only baseline membership and branch introduction apply.
+
+
+## Assurance Boundary
+
+Review test and guard code like any other code — but a **blocking** finding about a guard must
+name the explicit behavior, AC, or invariant violated **and** a concrete counterexample on the
+guard's actual execution path. Once a property is demonstrated in both directions, further
+guards-of-guards, mutation batteries, completeness floors, and speculative hardening are **Nit**
+unless an explicit AC or security/data-integrity invariant requires them. Never turn a hardening
+suggestion into a requirement. Group counterexamples sharing one violated property into a single
+root-cause finding.
 
 ## Severity Levels
 
@@ -138,8 +150,8 @@ Every finding line ends with its scope fields: \`| origin=<...> scope_reason=<..
 #### P2
 - [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> evidence=<...>
 
-### Tests Recommendation
-- Suggested new test cases
+### Tests Recommendation (only when tied to a concrete finding or an explicit AC — otherwise omit the section)
+- Suggested new test cases, each naming the finding or AC it covers
 
 ${SPEC_CHECKLIST ? `### AC Coverage
 
@@ -159,7 +171,7 @@ That tag and field order are a **reporting convention** — nothing parses or pe
 
 ### Out-of-Scope Findings
 
-For every finding whose derived scope is out-of-scope and that does **not** block (not P0, not security/data-integrity — or covered by a valid [USER_SKIPPED] in Active Dispositions), emit one line here, starting at column 0:
+For every finding whose derived scope is out-of-scope and that does **not** block (not P0, not security/data-integrity), emit one line here, starting at column 0 (valid [USER_SKIPPED] records are applied orchestration-side after your report — do not attempt to apply them):
 
 \`\`\`
 [OUT_OF_SCOPE_DEFERRED] <file:line> | <issue> | <suggested-ticket> | <ISO8601 UTC>
@@ -172,7 +184,7 @@ Same reporting convention as above: fixed field order, nothing parses it. Never 
 Blocking severities for this review: **${BLOCKING}** (tier: ${TIER}). The gate has **two axes** — severity and scope:
 
 - \`✅ Ready\`: no blocking finding on either axis
-- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) finding at or above ${BLOCKING}, **or** an **out-of-scope** P0/security/data-integrity finding with no valid [USER_SKIPPED]
+- \`⛔ Blocked\`: an **in-scope** (incl. uncertain) finding at or above ${BLOCKING}, **or** an **out-of-scope** P0/security/data-integrity finding (valid [USER_SKIPPED] records, if any, are applied orchestration-side after your report)
 
 State the verdict with the terminal at the START of its own line (trailing text allowed), never
 as a list item and never both terminals on one line.

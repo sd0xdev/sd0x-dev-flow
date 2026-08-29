@@ -24,6 +24,15 @@ Give **metadata** (changed file list, diff stats, the task) and mandate explorat
 
 Config for review operations: `sandbox: 'read-only'`, `'approval-policy': 'never'`. Use the prompt template from `@skills/*/references/` rather than composing one ad hoc.
 
+**A dispatch carries exactly three parts, and nothing migrates between them across rounds**:
+(1) the **frozen task contract** — task description, frozen scope baseline, original ACs, and
+`FOCUS` only if the *user or original task* supplied it, frozen at first dispatch (the dispatcher
+never synthesizes or expands `FOCUS` from review findings — that is the cumulative-attack pattern
+through a side door); (2) **current facts** — changed-file list, diff stats, local check results,
+and on a same-thread reply the new diff plus currently valid dispositions (convergence state, not
+attack directions); (3) the **fixed review contract** from the template. Old findings, reviewer
+interpretations, and "we fixed X, now attack Y" belong to none of the three.
+
 ## Prohibited patterns
 
 | Pattern | Example | Why it's wrong |
@@ -34,6 +43,7 @@ Config for review operations: `sandbox: 'read-only'`, `'approval-policy': 'never
 | Leading question | `"I think the problem is caching, verify?"` | Anchors Codex to your hypothesis |
 | Scope restriction | `"Only look at src/service/"` | Prevents discovery in related files, which is where the second opinion pays |
 | Confirmation prompt | `"These fixes look good, right?"` | Invites agreement, not analysis |
+| Cumulative attack list | Each re-dispatch or fallback dispatch appends prior findings or aims the reviewer at named tests/guards/mutations | Feeding attack directions is feeding conclusions in mirror image — review depth grows round over round. Every first, fallback, and rotated dispatch is the fixed template plus current task metadata; dispatcher-authored attack programmes stay out |
 
 The shared shape: every one of these narrows what Codex can find to what you already believe. If the prompt could not possibly produce a finding that surprises you, it is not a review.
 

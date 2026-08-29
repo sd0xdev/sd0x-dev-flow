@@ -62,6 +62,11 @@ See `@rules/auto-loop.md § Review Dispatch` for why single is the default.
 
 Collect **metadata only** — Codex reads the actual diffs and file contents itself via sandbox access.
 
+`TASK_DESCRIPTION` is the original task in one or two sentences, captured here and **frozen for
+the whole review session** — every first, fallback, and rotated dispatch carries the same value,
+and it is never rewritten from review findings (`rules/codex-invocation.md`, the three-part
+dispatch shape).
+
 | Variant | Collection Method |
 |---------|-------------------|
 | Fast    | `CHANGED_FILES`: `git diff --name-only HEAD` + `DIFF_STAT`: `git diff --stat HEAD` |
@@ -188,8 +193,8 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
    Group by severity. Include a final gate: ✅ Ready or ⛔ Blocked, with one line
    gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH> — Blocked ⇔ an
    in-scope (incl. uncertain) finding at or above ${BLOCKING}, or an out-of-scope
-   P0/security/data-integrity finding with no valid [USER_SKIPPED]; NONE pairs only
-   with Ready.
+   P0/security/data-integrity finding (valid [USER_SKIPPED] records, if any, are
+   applied orchestration-side after your report); NONE pairs only with Ready.
    ```
 
 **Case B: Loop review (has `--continue`)**
