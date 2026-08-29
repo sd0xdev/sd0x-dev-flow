@@ -480,7 +480,9 @@ const CANONICAL_AUTO_LOOP_OVERRIDE =
   'Review Max Rounds` | Setting — `/plan-review` loop bookkeeping, counted in conversation | ' +
   'Default | | `## Git Memory` | Setting — post-compact git-context nudge (printed by default ' +
   'since hook-lightweighting; heading kept for compatibility) | Default | | `## Think Harder` | ' +
-  'Setting — § Cap Diagnostic Protocol after a compaction, read by the model (no hook injects it) ' +
+  'Setting — the diagnosis protocol after a compaction, read by the model (no hook injects ' +
+  'it); § Stall Detection and Diagnosis routes to `loop-diagnostics.md` § Cap Diagnostic ' +
+  'Protocol, which carries the checklist ' +
   '| Default | | `## Review Thread Rotation` | Setting — the R-a rotation threshold (2–6, unset = ' +
   '3) read behaviourally by `review-common.md` § Review Loop; counted in conversation, no hook ' +
   'reads it | Default | No row is a section replacement: `## Tier` is deliberately **not** this ' +

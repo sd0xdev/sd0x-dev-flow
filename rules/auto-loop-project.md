@@ -58,7 +58,8 @@ to be restated.
 ## Think Harder
 
 <!-- "enabled" asks the model to re-run the Cap Diagnostic checklist in full
-     (auto-loop.md § Cap Diagnostic Protocol) after a compaction when the change's round
+     (`skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol, reached
+     from auto-loop.md § Stall Detection and Diagnosis) after a compaction when the change's round
      count is at or past the round-10 checkpoint. Behaviour-layer only since
      hook-lightweighting — the model reads this heading; no hook injects anything. -->
 

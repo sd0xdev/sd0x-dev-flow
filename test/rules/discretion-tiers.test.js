@@ -534,14 +534,34 @@ test('review-grant patterns when self-tested → hit every grant fixture and no 
   }
 });
 
-test('auto-loop.md when scanned → carries no review-optional wording that would contradict the anchors', () => {
-  // Bracketed sentinel tokens ([PLAN_REVIEW_SKIPPED], [NIT_DEFERRED], …) are hook-protocol
-  // vocabulary, not prose granting discretion — strip them so they cannot false-positive.
-  const autoLoop = readFileSync(resolve(root, 'rules/auto-loop.md'), 'utf8').replace(/\[[A-Z_]+\]/g, '');
-  for (const pat of REVIEW_GRANT_PATTERNS) {
-    assert.ok(!pat.test(autoLoop), `review-optional wording found in rules/auto-loop.md: ${pat}`);
+// Every file the loop's own policy prose lives in. A guard scoped to ONE file stops guarding the
+// moment that prose moves — measured twice in the rules-residency extraction (2026-08-29): a grant
+// sentence appended to `rules/auto-loop.md` fails the suite, and the identical sentence appended to
+// the contract it was moved into passed. Register #6(b) ("tier decides review depth only — never
+// whether the loop runs") is exactly what a moved `/refactor` constraint table or `TIER_MISMATCH`
+// row would be tempting to soften, so the list travels with the prose. Add a carrier here in the
+// same commit that moves loop policy into it.
+const REVIEW_POLICY_CARRIERS = [
+  'rules/auto-loop.md',
+  'skills/codex-code-review/references/loop-diagnostics.md',
+];
+
+test('review policy carriers when scanned → none carries review-optional wording that would contradict the anchors', () => {
+  // Floor: dropping the contract from this list and then adding a review-optional sentence to it
+  // passes the full suite — an Anchor Register #6(b) violation in the governing file with nothing
+  // red. Add a carrier here in the same commit that moves loop policy into it.
+  assert.ok(REVIEW_POLICY_CARRIERS.length >= 2,
+    'every file the loop policy lives in must be scanned, not just the resident one');
+  for (const file of REVIEW_POLICY_CARRIERS) {
+    // Bracketed sentinel tokens ([PLAN_REVIEW_SKIPPED], [NIT_DEFERRED], …) are hook-protocol
+    // vocabulary, not prose granting discretion — strip them so they cannot false-positive.
+    const body = readFileSync(resolve(root, file), 'utf8').replace(/\[[A-Z_]+\]/g, '');
+    for (const pat of REVIEW_GRANT_PATTERNS) {
+      assert.ok(!pat.test(body), `review-optional wording found in ${file}: ${pat}`);
+    }
   }
-  // The bounding sentence the judgment clause hangs off must survive verbatim.
+  // The bounding sentence the judgment clause hangs off must survive verbatim, resident.
+  const autoLoop = readFileSync(resolve(root, 'rules/auto-loop.md'), 'utf8');
   assert.match(autoLoop, /tier decides review \*\*depth\*\* only|the invariant constrains the end state/);
 });
 

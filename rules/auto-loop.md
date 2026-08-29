@@ -22,67 +22,35 @@ The configured tier (`auto-loop-project.md ## Tier`, unset → `standard`) is a 
 | `standard` **(default)** | Ordinary features and bug fixes | P0, P1 | 15 |
 | `thorough` | Security, data integrity, releases, public API | P0, P1, P2 | 30 |
 
-These caps are a runaway backstop, deliberately loose: **a cap cannot tell a converging loop from a churning one**. § Stall Detection is what tells them apart, on evidence, usually many rounds earlier.
+These caps are a runaway backstop, deliberately loose: **a cap cannot tell a converging loop from a churning one**. § Stall Detection and Diagnosis is what tells them apart, on evidence, usually many rounds earlier.
 
-An explicit `## Max Rounds` (3–50) in `auto-loop-project.md` overrides the tier's cap. The bookkeeping is yours: count review rounds in conversation; the one mechanical fact is the state slot's `rounds` count (`review-state.js check --format=json`) — it counts failed verdicts on the current change, not your conversational rounds (reset on `pass`): a floor, never the whole story. At the cap → § Cap Diagnostic Protocol. Architecture-level changes, feature removal, or the user asking to stop exit to ⛔ Need Human at any point. **80 is a passing grade.** When the remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round.
+An explicit `## Max Rounds` (3–50) in `auto-loop-project.md` overrides the tier's cap. The bookkeeping is yours: count review rounds in conversation; the one mechanical fact is the state slot's `rounds` count (`review-state.js check --format=json`) — it counts failed verdicts on the current change, not your conversational rounds (reset on `pass`): a floor, never the whole story. At the cap → § Stall Detection and Diagnosis. Architecture-level changes, feature removal, or the user asking to stop exit to ⛔ Need Human at any point. **80 is a passing grade.** When the remaining findings are all below the tier's blocking severity, the correct move is `/precommit`, not another round.
 
 Gate sequence: review Ready (no blocking findings) → `/precommit`; precommit Pass → Adequacy Gate → Doc Sync; a precommit failure is fixed and re-run. Adequacy Gate: when a request doc with `## Acceptance Criteria` maps to the change, run `/codex-test-review --ac-trace <request-path>`; mode from `testing-project.md ## Adequacy Mode` (advisory by default). Doc Sync: sync the **current-authority** docs, append status/outcome to the **records** (never rewritten to mirror later code); review them all in **one** `/codex-review-doc` dispatch, with reading depth and batching from `scripts/resolve-review-profile.js`.
 
-## Stall Detection
+## Stall Detection and Diagnosis
 
-A cap answers "how long has this gone on"; what matters is "is anything moving". Since hook-lightweighting nothing counts this for you — you answer it from the review reports in front of you.
+A cap answers "how long has this gone on"; what matters is "is anything moving". A **stall round**
+is one where findings are outstanding and the round closed none of them — counted by finding
+*identity*, not by severity or count. **3** consecutive stall rounds is the signal to stop fixing
+and diagnose; closing a finding — or leaving none outstanding — resets the streak, and a round you
+cannot compare per-finding holds it where it was (**absence is not a signal**). `✅ Ready` with only sub-threshold findings is not a
+stall; it is `/precommit`.
 
-A **stall round** is one where findings are outstanding and the round closed none of them. Count findings, not severities — a round left correctly unfixed because all of it is sub-threshold still counts. **3** consecutive stall rounds is the signal to stop fixing and diagnose. Closing a finding — or leaving none outstanding — resets the streak; a round you cannot compare per-finding holds it where it was (**absence is not a signal**).
+On that signal — or at the round cap, or at the round-10 checkpoint — diagnose, make **one bounded
+adjustment** declared before it is made, and return to the loop. Security and data-integrity changes
+skip the protocol entirely: any trigger → ⚠️ Need Human. Budgets, kept by you in conversation:
+**1** diagnosis per change for the cap, **3** per change for stalls.
+The same change hitting the cap a **second** time → ⚠️ Need Human, no second diagnosis.
+A **fourth** stall on the same change → ⚠️ Need Human, no fourth diagnosis.
+Never re-try an adjustment recorded as failed — state each one's class, action and outcome in the
+conversation so a compact summary carries it.
 
-On the signal, run § Cap Diagnostic Protocol — the same three steps, at the point the evidence appeared rather than at an arbitrary round. Nothing blocks. `✅ Ready` with only sub-threshold findings is not a stall; it is `/precommit`.
-
-### Stall Memory
-
-Trying the same adjustment twice is the failure this prevents. Once a bounded adjustment has resolved — or failed to — **state it in the conversation** in a form a compact summary will carry: the class, what was tried, and the outcome (e.g. "stall adjustment: ATTENTION_DIFFUSION — split the 6-file batch into 2 — closed 3 of 5, streak reset"). Nothing persists this for you anymore; the conversation and the compact summary are the record, which is why the statement must be explicit rather than implied by the diff.
-
-**Never re-try an adjustment recorded as failed.** A class appearing twice with two failed adjustments is itself the signal — the class is probably wrong, or it is `ARCHITECTURE` under another name. The record is scoped to the change: a new change starts clean.
-
-## Cap Diagnostic Protocol
-
-Reached from any trigger — a stall (evidence), the round cap (budget), or the round-10 checkpoint below — and from none for security or data-integrity changes, which skip this protocol entirely: **any** trigger → ⚠️ Need Human directly. Otherwise all are diagnosis points, not automatic hand-offs, and all are behaviour-layer: you keep the count, you call the trigger.
-
-The checkpoint fires at round 10 on the same change: run this same protocol once — diagnose, one bounded adjustment, back to the loop. Once per change; it is a checkpoint, not a cap — nothing blocks and the round budget is untouched. It catches the loop that circles without ever producing a clean no-progress streak (round 10 sits inside the budget at `standard`/`thorough`, past it at `fast`).
-
-1. **Diagnose** — classify the stall as exactly one class from the closed table below; state the class and its observed signals in a short block, not free prose.
-2. **One bounded adjustment** — declared *before* it is made: name the scope (which files), the nature (the class's direction column), and the size (a single split, a single re-scope, or ≤ 5 focused edits). An adjustment must never grow into a rewrite mid-loop; if the diagnosis itself shows architecture-level change is needed, exit ⛔ Need Human instead of adjusting.
-3. **Return to the loop** — re-enter review with the adjustment as the change under review.
-
-**Anti-loop budget.** The cap and the stall are budgeted separately, because they mean different things:
-
-| Trigger | Budget | On exhaustion |
-|---------|--------|---------------|
-| Round cap | **1** diagnosis per change | The same change hitting the cap a **second** time → ⚠️ Need Human, no second diagnosis |
-| Stall | **3** per change | A **fourth** stall on the same change → ⚠️ Need Human, no fourth diagnosis |
-
-A stall may recur where a cap hit may not: the cap fires at a fixed number, so a second hit says the adjustment bought nothing, whereas a stall re-arms only after real progress, so a second one says the loop moved and stopped again — still addressable. Past three it stops being true — a fourth is not the answer.
-
-Both budgets are yours to keep, in conversation — nothing counts rounds or streaks for you — so this rule is the only enforcement; treat it as binding.
-
-**What the diagnosis is made of.** Compare consecutive review reports by finding *identity* — closed, persisted, new. Counts alone cannot tell "fixed one, introduced one" from "nothing moved". A report you cannot compare per-finding is not evidence — **absence is not a signal**; never read an uncomparable round as "nothing closed". Rounds closing nothing with findings outstanding is the churn signature (`ATTENTION_DIFFUSION` or `ARCHITECTURE`); steady closing says keep going. That hand-read run and a stall call are the same observation: one streak, one diagnosis.
-
-| Class | Signals | Bounded direction |
-|-------|---------|-------------------|
-| `ARCHITECTURE` | Same defect recurs across files; fixing A breaks B | Stop patching; back to design, re-scope |
-| `DOC_TOO_LONG` | Target exceeds the `@rules/docs-numbering.md` limit; reviewer repeatedly flags inconsistency | Prune dead sections first, then merge; `/refactor --target <file>` **condenses** and splitting is manual — `@rules/docs-numbering.md` § Size Limit |
-| `ATTENTION_DIFFUSION` | Fixes introduce new defects; the same fact is recorded wrong repeatedly | Shrink the batch; verify each item before merging — `/refactor --target <churning files>` when the diffusion is structural |
-| `UNVERIFIED_CLAIM` | Blocking findings cluster on unmeasured claims | Measure first; write the derivation command into the doc |
-| `TIER_MISMATCH` | Findings persistently below the blocking threshold | Converge per tier and move to the next gate |
-| `REQUIREMENT_AMBIGUITY` | Reviewer and implementer disagree on what "correct" means | Ask the human; stop guessing |
-
-**`/refactor` as a bounded adjustment** — available for those **two classes only**. The other four need something a refactor cannot deliver: `ARCHITECTURE` and `REQUIREMENT_AMBIGUITY` exit rather than adjust, `UNVERIFIED_CLAIM` needs a measurement, `TIER_MISMATCH` needs the loop to stop. Five constraints, none optional:
-
-| Constraint | Why |
-|-----------|-----|
-| `--target <paths>` always, never `--auto` | `--auto` scans the repo for up to 10 targets — the rewrite step 2 forbids growing into. The target list is the scope you declared |
-| It edits files, so the code gate re-opens | Anchor Register #6: prior verdicts are invalid and review re-runs. Re-entering the gate, not routing around it |
-| Its own internal quality check is **not** this loop's precommit gate | `/refactor` runs one per target. The loop's gate is still owed afterwards, on the whole change |
-| Excluded for security and data-integrity changes | Register #3 escalates those to `thorough`; a stalled security change goes to ⚠️ Need Human |
-| It consumes the diagnosis budget, never an extra one | A refactor *is* the one bounded adjustment for that stall |
+→ `skills/codex-code-review/references/loop-diagnostics.md` — the round-10 checkpoint, stall
+memory, what a diagnosis is made of, the
+closed class table (`ARCHITECTURE`, `DOC_TOO_LONG`, `ATTENTION_DIFFUSION`, `UNVERIFIED_CLAIM`,
+`TIER_MISMATCH`, `REQUIREMENT_AMBIGUITY`) with signals and bounded directions, and the five
+constraints on `/refactor` as a bounded adjustment.
 
 ## Sub-Threshold Findings
 
@@ -123,7 +91,7 @@ Two override kinds, and the distinction is load-bearing: a **section replacement
 | `## Plan Review` | Setting — `/plan-review` self-invocation in plan mode | Default |
 | `## Plan Review Max Rounds` | Setting — `/plan-review` loop bookkeeping, counted in conversation | Default |
 | `## Git Memory` | Setting — post-compact git-context nudge (printed by default since hook-lightweighting; heading kept for compatibility) | Default |
-| `## Think Harder` | Setting — § Cap Diagnostic Protocol after a compaction, read by the model (no hook injects it) | Default |
+| `## Think Harder` | Setting — the diagnosis protocol after a compaction, read by the model (no hook injects it); § Stall Detection and Diagnosis routes to `loop-diagnostics.md` § Cap Diagnostic Protocol, which carries the checklist | Default |
 | `## Review Thread Rotation` | Setting — the R-a rotation threshold (2–6, unset = 3) read behaviourally by `review-common.md` § Review Loop; counted in conversation, no hook reads it | Default |
 
 No row is a section replacement: `## Tier` is deliberately **not** this file's `## Tiers`, and the other six name no section at all. A user who does want a section replacement restates that section's exact heading — the mechanism is available, the scaffold just does not ship one.

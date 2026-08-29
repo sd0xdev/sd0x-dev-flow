@@ -82,7 +82,7 @@ permanent. Reachable only in the same past-the-cap window.
 | Auxiliary | `post-compact-auto-loop.sh` | compaction with `current_round >= threshold` | `## Think Harder: enabled` |
 
 Both read and write `iteration_history.strategic_reset_fired`, so whichever fires first silences the
-other. That is `rules/auto-loop.md` § Cap Diagnostic Protocol's **"Anti-loop cap: 1 diagnosis per
+other. That is `skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol's **"Anti-loop cap: 1 diagnosis per
 change"** expressed in state rather than restated as prose in two hooks.
 
 **Two sites clear the flag, and both are required** — each pairs it with a reset of `current_round`,
@@ -218,7 +218,7 @@ It adjudicates nothing and blocks nothing — it is a `[STRATEGIC_RESET]` fact l
 R2's neutral-fact emission model (`./requests/2026-07-26-factual-hook-signals-r2.md`). The cap is
 still enforced by `stop-guard.sh`; the disposition (diagnose → one bounded adjustment → back to the
 loop, or exit to ⚠️ Need Human) is still behaviour-layer and defined solely by
-`rules/auto-loop.md` § Cap Diagnostic Protocol.
+`skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol.
 
 `AUTO_LOOP_CHECKPOINT_ROUNDS` is digit-validated in both hooks before it reaches `[[ -ge ]]`. That
 is not defensive habit: bash expands command substitution inside an array subscript in arithmetic
@@ -356,7 +356,7 @@ all. Within the code plane it is still conditional: losing the lock to a stale-r
 failed jq or a failed rename each return before the emission, having already logged the skip on
 stderr. So a **missing** line means "no counted round happened", never "a round happened with
 nothing closed" — and since `closed=0` is the churn signature the diagnosis keys on, reading absence
-as `closed=0` inverts it. `rules/auto-loop.md` § Cap Diagnostic Protocol carries the same
+as `closed=0` inverts it. `skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol carries the same
 qualification, because that is where the model reads it.
 
 Counts only. Identities never cross into the record: a finding's text is reviewer-controlled and the
@@ -370,12 +370,12 @@ findings at all, and its `closed`/`new` are not evidence of anything. Check that
 `closed=0`.
 
 Otherwise, a run of `closed=0` with findings outstanding is the churn signature — stated in exactly
-those words here, in §2.4 and in `rules/auto-loop.md` § Cap Diagnostic Protocol, because an earlier
+those words here, in §2.4 and in `skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol, because an earlier
 draft added `new=0` to it in one place only. That extra condition inverts the signal: a round that
 closes nothing *and* introduces one is the worst case, not an exempt one. It is a **fact, not a verdict**:
 this hook does not decide whether the round was productive, and nothing blocks on it. Consistent
 with R2's neutral-fact model, the disposition belongs to the behaviour layer — which is what
-`rules/auto-loop.md` § Cap Diagnostic Protocol already defines, and why the round-10 checkpoint in
+`skills/codex-code-review/references/loop-diagnostics.md` § Cap Diagnostic Protocol already defines, and why the round-10 checkpoint in
 §1 is the natural place for the ledger to be read.
 
 ### 2.4 Interaction with the checkpoint
@@ -461,8 +461,9 @@ round would poison it.
 `current_round < max_rounds`. Past the cap the clear stops firing, so both survive into the next
 change until SessionStart. For the flag the consequence is silence — a checkpoint that will not fire
 again. For `stall_memory` it is not silence: change A's failed adjustments are **read back** under
-change B's first `[LOOP_STALL]` and presented as evidence about B. `rules/auto-loop.md` § Stall
-Detection says the memory is "cleared wherever `strategic_reset_fired` is", which is exactly true and
+change B's first `[LOOP_STALL]` and presented as evidence about B. `skills/codex-code-review/references/loop-diagnostics.md` § Stall
+Detection scopes the memory per change ("a new change starts clean"); the reset-clearing mechanism itself
+lives in the hook implementation, not in the rule prose and
 therefore inherits exactly this window. Recorded rather than fixed for the same reason §1.1 records
 its half: the guard is one condition shared by several fields, and narrowing it is its own change.
 
@@ -473,7 +474,8 @@ record is model-authored, which creates a problem `[NIT_DEFERRED]` does not have
 output stream the PostToolUse hook can see.** `tool_output` is the tool's, not the model's.
 
 Reading `tool_output` was the obvious design and it is unshippable. The record's format is
-documented in `rules/auto-loop.md` § Stall Detection, so a single `cat rules/auto-loop.md` would
+documented in `skills/codex-code-review/references/loop-diagnostics.md`
+§ Stall Detection, so reading that one file would
 put a well-formed record on that stream and forge one. A documented format that fabricates records
 when the documentation is read is not a format worth shipping. The command the model types is the
 closest thing to a model-authored stream that exists, so that is what the hook parses, and the full
