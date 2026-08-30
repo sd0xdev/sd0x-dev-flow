@@ -33,6 +33,11 @@ Parse args → Decompose → Collect context → Iterate items → Review loop �
 **Arguments without `--spec`**: Use directly as single item.
 **No arguments**: Ask user for requirement, target file, reference files.
 
+**Intent check**: identify the feature this work belongs to (from the spec, the task, or the
+paths) and read `docs/features/<key>/intent-<key>.md` if it exists — its `INV-*` invariants and
+Non-goals constrain every item; a planned item that contradicts one stops and asks the user
+(cite the line). No identifiable feature → nothing to load; proceed.
+
 Break into **implementation items** — each one logical unit (interface, method, endpoint), implementable in dependency order, small enough for one Codex call.
 
 Present plan before starting:

@@ -38,6 +38,12 @@ Requirements → Design → Implement → Test + Review → Precommit Gate → D
                                   /codex-review-fast
 ```
 
+**Load the intent first**: identify the feature this work belongs to (from the task, the
+spec/requirements being followed, or the paths being changed) and read
+`docs/features/<key>/intent-<key>.md` if it exists — it overrides your default approach. Work
+that contradicts one of its `INV-*` invariants or Non-goals stops and asks the user (cite the
+line; amending intent is their re-decision). No identifiable feature → nothing to load; proceed.
+
 **Design before code**: for a non-trivial change, briefly consider who owns each responsibility,
 the simplest shape that fits the existing code, and why — and say what you chose when the choice
 is non-obvious. Principles (clear names, small cohesive functions, dependency direction,

@@ -66,6 +66,11 @@ Request tickets are **work breakdown units** derived from `/tech-spec`, not requ
 
 A request ticket references its parent `/tech-spec` for technical detail and may optionally link to `1-requirements.md` for problem-space rationale (when `/req-analyze` was run).
 
+A feature directory may also carry `intent-<key>.md` (ancillary — Design record, written by
+`/req-analyze` or `/tech-spec`): constraints only — North star, Non-goals, `INV-*` invariants,
+acceptance sketch — read by both the designer and the implementer. Tickets never restate it; the
+implementing skills load it themselves before writing code.
+
 ### Anti-patterns to avoid
 
 | Anti-pattern | Correct approach |

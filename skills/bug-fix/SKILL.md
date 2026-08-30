@@ -37,6 +37,11 @@ gh issue      Grep    Edit     /verify          /precommit
 
 ## Phase 1: Investigation
 
+Before fixing: if the bug maps to a feature under `docs/features/`, read
+`docs/features/<key>/intent-<key>.md` when it exists — a fix that contradicts one of its `INV-*`
+invariants or Non-goals stops and asks the user (cite the line). No identifiable feature →
+nothing to load; proceed.
+
 | Source | Action |
 |--------|--------|
 | GitHub Issue | `gh issue view <number>` |

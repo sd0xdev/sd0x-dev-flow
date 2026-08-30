@@ -40,6 +40,12 @@ allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(bash:*), Write,
 | Update pattern | Document upsert | Status tracking (`scan` / `update` / `update-all` / `--verify-ac`) |
 | Audience | Designers, decision-makers | Executors, progress trackers |
 
+A third artifact sits beside these: `intent-<key>.md` (ancillary — Design record, written in
+Phase 5). Its discriminator vs. `1-requirements.md` is **content class**, not audience — it
+carries constraints only (North star, Non-goals, `INV-*` invariants, acceptance sketch), no
+analysis, and both the designer and the implementer read it: the designer skims it in two
+minutes, the implementer checks work against it before writing code.
+
 ### Workflow ordering
 
 ```
@@ -309,6 +315,15 @@ Integrate equilibrium findings back into Phase 3 output before writing.
 Write `docs/features/<key>/1-requirements.md` using the output template.
 
 See `references/output-template.md` for the full template.
+
+### Intent artifact
+
+After writing `1-requirements.md`, write `docs/features/<key>/intent-<key>.md` from
+`references/intent-template.md` **if absent** — a projection of Phase 1's 5-Why root problem and
+Goals/Non-Goals into North star / Non-goals / Invariants / Acceptance sketch (≤60 lines; nothing
+inferable from a diff). If it already exists, do **not** rewrite it: diff Phase 1's output against
+its invariants **and Non-goals** and report any tension — amending intent is a human re-decision,
+not a sync. A stray `intent-<other>.md` in the directory is surfaced, never adopted.
 
 ### Cross-References
 
