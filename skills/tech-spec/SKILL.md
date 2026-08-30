@@ -55,6 +55,10 @@ it to requirements here would put this skill out of step with the classifier rat
 `<key>` that resolved with `low` confidence and matches nothing, is **not** the same as "no spec
 exists" — say which of the two it was; do not silently drop into create mode.
 
+A fourth lookup resolves the **intent artifact**: exactly `intent-<key>.md` in the feature
+directory — the exact name, never a wildcard pick. A separate `Glob intent-*.md` only surfaces
+strays or wrong-key files (report them; never adopt one as the intent).
+
 | Filesystem State | Action |
 |-----------------|--------|
 | Canonical discovery finds exactly one spec | **Update mode**: read that file — at the path discovery returned, not at the literal `2-tech-spec.md` — research code changes since last update, incrementally update changed sections |
@@ -62,7 +66,16 @@ exists" — say which of the two it was; do not silently drop into create mode.
 | Glob 3 returns two or more | Gate: Need Human — ambiguous canonical spec, name the candidates |
 | Feature not resolved | Gate: Need Human |
 
-In **update mode**, focus on sections affected by recent code changes (use `git diff` to identify). Preserve unchanged sections.
+In **create mode**, if `intent-<key>.md` is absent, write it first from the intent template
+bundled with `/req-analyze` — distilled from the requirement clarification step (constraints
+only, ≤60 lines) — then write the spec. If present, read it before designing.
+
+In **update mode**, focus on sections affected by recent code changes (use `git diff` to identify). Preserve unchanged sections. If `intent-<key>.md` is absent, create it exactly as in
+create mode (projecting from `1-requirements.md` §§ 1–2 when present, else from the spec's
+requirement summary) — this is what lets the `next-step` advisory converge on features whose
+spec predates the intent mechanism. When it exists, read it: every spec section that contradicts
+an `INV-*` or Non-goal is a **conflict to surface to the user, not to paper over** — and never
+rewrite intent to match a spec; amending intent is a human re-decision.
 
 ## Workflow
 

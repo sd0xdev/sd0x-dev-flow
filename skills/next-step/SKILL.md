@@ -23,13 +23,13 @@ description: "Change-aware next step advisor. Use when: user asks what to do nex
 
 ## Script Integration
 
-The analyze script runs 17 deterministic heuristics against git state, review state, and feature context:
+The analyze script runs 18 deterministic heuristics against git state, review state, and feature context:
 
 | Priority | Heuristics | Meaning |
 |----------|-----------|---------|
-| P0 | Gate missing (code review, doc review, precommit), state drift | Required steps not completed |
-| P1 | Test gap, security hotspot, migration risk, doc-sync-needed, request-stale | Important oversights |
-| P2 | README missing, skill-lint needed, locale drift, mixed concerns, ac-incomplete | Quality improvements |
+| P0 | Gate missing (code review, doc review, precommit) | Required steps not completed |
+| P1 | Test gap, security hotspot, migration risk, doc-sync-needed, request-stale, corpus-unreadable | Important oversights |
+| P2 | README missing, skill-lint needed, locale drift, mixed concerns, ac-incomplete, intent-advisory (planning docs without exact intent-<key>.md) | Quality improvements |
 | P3 | Main branch warning, requirements-advisory, feature-complete | Informational |
 
 The script exits with code 0 (no P0/P1), 1 (has P1), or 2 (has P0).
