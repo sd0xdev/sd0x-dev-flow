@@ -572,6 +572,33 @@ function runHeuristics(inputs, files, gates, root, featureCtx) {
     });
   }
 
+  // 12c. intent-advisory: planning docs exist but the exact intent-<key>.md is absent.
+  // Exact name only (spec § 3.5): a stray intent-<other>.md is not presence — it is surfaced.
+  if (featureCtx && featureCtx.key && featureCtx.docs_path
+      && (featureCtx.has_tech_spec || featureCtx.has_requirements)) {
+    try {
+      // withFileTypes: presence means a regular FILE at the exact name — a directory named
+      // intent-<key>.md is not a readable artifact and must not suppress the advisory.
+      const entries = fs.readdirSync(path.join(root, featureCtx.docs_path), { withFileTypes: true });
+      const exact = `intent-${featureCtx.key}.md`;
+      if (!entries.some(e => e.name === exact && e.isFile())) {
+        const strays = entries
+          .filter(e => e.isFile() && e.name.startsWith('intent-') && e.name.endsWith('.md'))
+          .map(e => e.name)
+          .sort();
+        const strayNote = strays.length ? ` (stray intent file present: ${strays.join(', ')})` : '';
+        findings.push({
+          id: 'intent-advisory',
+          priority: 'P2',
+          message: `Feature "${featureCtx.key}" has planning docs but no ${exact}${strayNote} (advisory)`,
+          suggestion: featureCtx.has_requirements
+            ? `/req-analyze ${featureCtx.key}`
+            : `/tech-spec ${featureCtx.key}`,
+        });
+      }
+    } catch { /* unreadable dir: no advisory — this heuristic is a nudge, not a gate */ }
+  }
+
   // 13. doc-sync-needed: precommit passed + feature has tech-spec + code in diff
   if (gateState && gates.precommit.passed && featureCtx && featureCtx.key) {
     if (featureCtx.has_tech_spec) {

@@ -49,6 +49,14 @@
       "sync_handler": "generic"
     },
     {
+      "id": "intent",
+      "namespace": "ancillary",
+      "semantic_pattern": "^intent-",
+      "heading_signals": ["Intent", "意圖"],
+      "sync_handler": null,
+      "_ordering": "Must precede every other ancillary type: fp-brief/tech-brief patterns are suffix-anchored and adr's 'decision' is unanchored, so intent-fp-brief.md, intent-tech-brief.md and intent-decision-x.md are claimed by later entries unless intent comes first (first-match, doc-classifier.js step 4)"
+    },
+    {
       "id": "review-log",
       "namespace": "ancillary",
       "semantic_pattern": "^review-log-",
@@ -134,6 +142,13 @@
     "closed_set": ["Current authority", "Design record", "Work record", "History record"],
     "fallback": "Current authority",
     "path_defaults": [
+      {
+        "name": "intent-records",
+        "role": "Design record",
+        "scope": "relpath",
+        "pattern": "^(docs/features/[^/]+/)?intent-[^/]+\\.md$",
+        "note": "intent-<feature>.md — planner-written constraints the implementer checks work against; never enters /update-docs' rewrite path. FIRST and relpath-scoped: a feature legally named requests/adr-skill/4-implementation would otherwise hand its intent artifact to the segment rule matching the directory name. The alternation covers root-relative and feature-relative forms; nested requests/intent-*.md, skills/** references, and directories named intent-<x>.md all fall through"
+      },
       {
         "name": "work-records",
         "role": "Work record",

@@ -35,6 +35,14 @@ const BUILTIN_ROLE_CONFIG = {
   closed_set: ['Current authority', 'Design record', 'Work record', 'History record'],
   fallback: 'Current authority',
   path_defaults: [
+    // FIRST, and relpath-scoped, because segment rules cannot express "the artifact directly in
+    // a feature directory": a feature legally named `requests`, `adr-skill` or `4-implementation`
+    // would otherwise hand its intent artifact to whichever segment rule matches the DIRECTORY
+    // name. The alternation covers both path forms this function receives — root-relative
+    // (`docs/features/<key>/intent-<key>.md`) and feature-relative (`intent-<key>.md`) — while a
+    // nested `requests/intent-*.md`, a `skills/**` reference, and a directory named
+    // `intent-<x>.md` (anything after the anchored `.md$`) all fall through to the rules below.
+    { name: 'intent-records', role: 'Design record', scope: 'relpath', pattern: '^(docs/features/[^/]+/)?intent-[^/]+\\.md$' },
     { name: 'work-records', role: 'Work record', scope: 'segment', pattern: '^requests$' },
     { name: 'history-records', role: 'History record', scope: 'segment', pattern: '^(review-log-|adr-)' },
     { name: 'design-records', role: 'Design record', scope: 'segment', pattern: '^[0-3]-(feasibility|requirements|tech-spec|architecture)' },
@@ -302,10 +310,11 @@ function _headKeyMentions(source, key, taxonomy) {
 }
 
 /**
- * Path defaults, ordered, first match wins. Every rule is matched **per path segment**, so the
- * function works on a repo-relative path (`docs/features/x/requests/a.md`) or a feature-relative
- * one (`requests/a.md`) — which is what lets `scanFeatureDocs` classify entries it only knows
- * relatively. `first_segment` rules read the first segment alone.
+ * Path defaults, ordered, first match wins. A `segment` rule is matched **per path segment**, so
+ * the function works on a repo-relative path (`docs/features/x/requests/a.md`) or a
+ * feature-relative one (`requests/a.md`) — which is what lets `scanFeatureDocs` classify entries
+ * it only knows relatively. `first_segment` rules read the first segment alone; a `relpath` rule
+ * tests the whole normalized path (its pattern must cover both caller forms itself).
  *
  * That last sentence is exactly where the two path shapes stop being interchangeable, and
  * `rootRelative: false` is how a caller says which one it holds. `first_segment` means *repo root*
@@ -346,7 +355,12 @@ function roleFromPath(p, taxonomy, opts) {
     // let the remaining ones decide, which fails toward the deeper obligation.
     try { re = new RegExp(rule.pattern); } catch { continue; }
     if (rule.scope === 'first_segment' && !rootRelative) continue;
-    const scope = rule.scope === 'first_segment' ? [segments[0]] : segments;
+    // 'relpath' tests the whole normalized path, in whichever form the caller holds (root- or
+    // feature-relative) — a relpath pattern must therefore cover both forms itself, as the
+    // intent-records rule does with its optional prefix alternation.
+    const scope = rule.scope === 'first_segment' ? [segments[0]]
+      : rule.scope === 'relpath' ? [segments.join('/')]
+      : segments;
     if (scope.some((s) => re.test(s))) return rule.role;
   }
   return fallback;
