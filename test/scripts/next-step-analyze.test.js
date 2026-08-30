@@ -1540,3 +1540,78 @@ test('next_actions commands use qualified /sd0x-dev-flow: prefix', () => {
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// intent-advisory: planning docs exist, exact intent-<key>.md decides
+// ---------------------------------------------------------------------------
+test('intent-advisory — P2 when planning docs exist and exact intent-<key>.md is absent', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/intent-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', '2-tech-spec.md'), '# Tech Spec');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'intent-advisory');
+  assert.ok(f, 'intent-advisory should fire when planning docs exist without intent file');
+  assert.equal(f.priority, 'P2');
+  assert.ok(f.suggestion.includes('/tech-spec'), 'no requirements doc → /tech-spec creates the intent');
+});
+
+test('intent-advisory — absent when exact intent-<key>.md exists', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/intent-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', '2-tech-spec.md'), '# Tech Spec');
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', 'intent-intent-test.md'), '# Intent');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  assert.equal(output.findings.find(f => f.id === 'intent-advisory'), undefined,
+    'exact intent-<key>.md present → no advisory');
+});
+
+test('intent-advisory — a stray intent-<other>.md is not presence, and is surfaced', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/intent-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', '2-tech-spec.md'), '# Tech Spec');
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', 'intent-wrong-key.md'), '# stray');
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', 'intent-another.md'), '# stray 2');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir, [], { descendingReaddir: true });
+  const f = output.findings.find(f => f.id === 'intent-advisory');
+  assert.ok(f, 'stray wildcard hit must not suppress the advisory (exact-name contract)');
+  // Canonical order even under a descending readdir: the stray list is sorted, so the same
+  // repository yields the same advice on every filesystem (the "deterministic" contract).
+  assert.ok(f.message.includes('intent-another.md, intent-wrong-key.md'),
+    'strays are surfaced by name, in canonical sorted order');
+});
+
+test('intent-advisory — a directory named intent-<key>.md is not presence', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/intent-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', '2-tech-spec.md'), '# Tech Spec');
+  // A directory at the exact pathname: readdir name-membership would accept it, but no
+  // implementing skill can read it as the artifact — the advisory must stay present.
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test', 'intent-intent-test.md'), { recursive: true });
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  const f = output.findings.find(f => f.id === 'intent-advisory');
+  assert.ok(f, 'a directory at the exact name must not suppress the advisory');
+});
+
+test('intent-advisory — absent when no planning docs exist', () => {
+  const dir = createTempRepo();
+  execFileSync('git', ['checkout', '-b', 'feat/intent-test'], { cwd: dir, stdio: 'ignore' });
+  mkdirSync(join(dir, 'docs', 'features', 'intent-test'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'features', 'intent-test', 'README.md'), '# notes');
+  writeReviewState(dir);
+
+  const { output } = runAnalyze(dir);
+  assert.equal(output.findings.find(f => f.id === 'intent-advisory'), undefined,
+    'no tech-spec and no requirements → nothing to project intent from');
+});

@@ -130,6 +130,40 @@ for (const [file, expected] of [
   });
 }
 
+// --- classifyByPath: intent (first among ancillary types — ordering is the point) ---
+
+test('classifyByPath intent-x.md → intent (ancillary)', () => {
+  const r = classifyByPath('intent-x.md', taxonomy);
+  assert.equal(r.type, 'intent');
+  assert.equal(r.namespace, 'ancillary');
+});
+
+// The two live-key collisions that motivated inserting intent before every other ancillary
+// type: fp-brief/tech-brief patterns are suffix-anchored and match inside these names, and
+// adr's `decision` is unanchored. First-match order (step 4) is what decides all three.
+for (const [file, loser] of [
+  ['intent-fp-brief.md', 'fp-brief'],
+  ['intent-tech-brief.md', 'tech-brief'],
+  ['intent-decision-x.md', 'adr'],
+  ['intent-checklist-x.md', 'checklist'],
+  ['intent-runbook-x.md', 'runbook'],
+]) {
+  test(`classifyByPath ${file} → intent, not ${loser}`, () => {
+    assert.equal(classifyByPath(file, taxonomy).type, 'intent');
+  });
+}
+
+// …and the entries intent now precedes must still win on their own filenames.
+test('classifyByPath 2-tech-spec-fp-brief.md still → fp-brief (unchanged by the intent insertion)', () => {
+  assert.equal(classifyByPath('2-tech-spec-fp-brief.md', taxonomy).type, 'fp-brief');
+});
+
+// Negative: the numbered form is claimed by the lifecycle prefix fallback (step 5), which is
+// why rules/docs-numbering.md prohibits it — this pin documents the mis-typing, not approval.
+test('classifyByPath 1-intent.md → requirements (prefix fallback; prohibited name)', () => {
+  assert.equal(classifyByPath('1-intent.md', taxonomy).type, 'requirements');
+});
+
 test('classifyByPath adr-kafka-auth.md → adr', () => {
   const r = classifyByPath('adr-kafka-auth.md', taxonomy);
   assert.equal(r.type, 'adr');

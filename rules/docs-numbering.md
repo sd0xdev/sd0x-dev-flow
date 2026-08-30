@@ -36,7 +36,10 @@ Operational or supplementary artifacts that belong to no phase. `doc-classifier.
 | Runbook | `runbook-<topic>.md` | Handoff | `handoff-<topic>.md` |
 | Checklist | `checklist-<topic>.md` | Briefing | `briefing-<topic>.md` |
 | ADR | `adr-<number>-<title>.md` | FP Brief | `*-fp-brief.md` |
-| Review Log | `review-log-<topic>.md` | | |
+| Review Log | `review-log-<topic>.md` | Intent | `intent-<feature>.md` |
+
+The Intent basename is **exactly** `intent-<feature>.md` for the feature directory it sits in —
+consumers resolve that exact name; a wildcard scan only surfaces strays or ambiguity.
 
 ## Size Limit — 500 Lines
 
@@ -135,3 +138,5 @@ Relative paths only: `./2-tech-spec.md` at the same level, `../2-tech-spec.md` f
 | `5-runbook.md` | Ancillary docs use semantic prefixes, not phase numbers |
 | `2026-01-30-tech-spec.md` | Date prefixes belong to `requests/` only |
 | `2_Tech_Spec.md` | kebab-case, lowercase |
+| `1-intent.md` (any `[0-4]-intent.md`) | The numbered form mis-types via the classifier's prefix fallback (phase 1 → requirements); intent is ancillary, never numbered |
+| `intent.md` | Unclassifiable appendix — the basename must carry the feature key: `intent-<feature>.md` |

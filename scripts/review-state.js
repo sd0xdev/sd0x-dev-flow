@@ -89,7 +89,43 @@ function computeCheck() {
     const owed = dirty && !passed;
     planes[plane] = { noted, dirty, digest_match, verdict, rounds, passed, owed };
   }
-  return { planes, change: ['code', 'doc'].filter(p => tree.planes[p].partial || tree.planes[p].dirty.length > 0) };
+  return {
+    planes,
+    change: ['code', 'doc'].filter(p => tree.planes[p].partial || tree.planes[p].dirty.length > 0),
+    dirtyPaths: [...tree.planes.code.dirty, ...tree.planes.doc.dirty],
+    root,
+  };
+}
+
+// Exact-name intent mapping: a changed path under docs/features/<key>/ maps to that directory's
+// intent-<key>.md, and only when that exact file exists — a stray intent-<other>.md never hints.
+// A fact, never a verdict; emitted only on the state-backed line (the hook's git_status fallback
+// stays change-class-only by design).
+// The feature-key contract (scripts/lib/feature-resolver.js SLUG_RE, restated here rather than
+// required — the resolver pulls the whole classifier graph and this file stays light). It also
+// guards the OUTPUT: the fact line is one line with a space-separated field grammar, and a
+// directory named with a newline, space or comma would otherwise be interpolated into it verbatim
+// — git status paths keep raw control characters all the way here.
+const FEATURE_SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
+
+function intentHints(root, dirtyPaths) {
+  const hints = new Set();
+  for (const p of dirtyPaths) {
+    const m = /^docs\/features\/([^/]+)\//.exec(p);
+    if (!m) continue;
+    if (!FEATURE_SLUG_RE.test(m[1])) continue;
+    const hint = `docs/features/${m[1]}/intent-${m[1]}.md`;
+    try {
+      // Directory enumeration with exact byte name + Dirent type, not statSync/existsSync:
+      // statSync follows symlinks and a case-insensitive filesystem answers for `Intent-x.md`,
+      // so either could report a presence no implementing skill can deliver on. Dirent types are
+      // lstat-like (a symlink is isSymbolicLink, not isFile) and `name` comparison is
+      // byte-exact — same contract as next-step's advisory and doc-classifier's exclusion.
+      const entries = fs.readdirSync(path.join(root, 'docs', 'features', m[1]), { withFileTypes: true });
+      if (entries.some(e => e.name === `intent-${m[1]}.md` && e.isFile())) hints.add(hint);
+    } catch { /* absent or unreadable reads as no hint — a hint is a reminder, never an obligation */ }
+  }
+  return [...hints].sort();
 }
 
 function statusToken(p) {
@@ -101,7 +137,7 @@ function statusToken(p) {
 // One computation, three renderings (§3.2). md is the only rendering allowed
 // to be silent; fact and json always answer.
 function check(format) {
-  const { planes, change } = computeCheck();
+  const { planes, change, dirtyPaths, root } = computeCheck();
   if (format === 'json') {
     process.stdout.write(`${JSON.stringify(planes)}\n`);
     return;
@@ -110,7 +146,9 @@ function check(format) {
     const reviews = Object.entries(planes)
       .map(([name, p]) => `${name}:${statusToken(p)}${p.rounds > 0 ? `(r${p.rounds})` : ''}`)
       .join(',');
-    process.stdout.write(`[AUTO_LOOP_STATE] change=${change.length ? change.join(',') : 'none'} reviews=${reviews} source=state\n`);
+    const hints = intentHints(root, dirtyPaths);
+    const hintField = hints.length ? ` intent_hint=${hints.join(',')}` : '';
+    process.stdout.write(`[AUTO_LOOP_STATE] change=${change.length ? change.join(',') : 'none'} reviews=${reviews}${hintField} source=state\n`);
     return;
   }
   for (const [name, p] of Object.entries(planes)) {

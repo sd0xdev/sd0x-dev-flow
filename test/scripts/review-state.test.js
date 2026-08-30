@@ -316,3 +316,74 @@ test('repo-key: two same-named checkouts do not collide; a worktree stays isolat
   note(wt, home, 'code_review', 'pass');
   assert.equal(stateKeys(home).length, 3, 'a worktree neither shares nor clobbers its origin state');
 });
+
+// --- intent_hint: exact-name doc mapping on the state-backed fact line ---
+
+test('intent_hint: changed feature doc + exact intent-<key>.md → hint; stray name → none', () => {
+  const repo = makeRepo();
+  const home = tmp('rs-home-');
+  const feat = join(repo, 'docs', 'features', 'x');
+  mkdirSync(feat, { recursive: true });
+  writeFileSync(join(feat, 'intent-x.md'), '# Intent — x\n');
+  writeFileSync(join(feat, '2-tech-spec.md'), '# spec\n');
+  git(repo, 'add', '-A');
+  git(repo, 'commit', '-q', '-m', 'feature docs');
+
+  // Clean tree: no changed paths map, so no hint even though the intent file exists.
+  let fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /intent_hint=/, 'no change → no hint');
+
+  // A changed doc under the feature dir maps to the exact intent file.
+  writeFileSync(join(feat, '2-tech-spec.md'), '# spec v2\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.match(fact.stdout, /intent_hint=docs\/features\/x\/intent-x\.md/, 'mapped change → hint');
+  assert.match(fact.stdout, / source=state\n$/, 'hint rides the state-backed line only');
+
+  // Exact-name contract: a stray intent-<other>.md never hints (spec § 3.5).
+  const featY = join(repo, 'docs', 'features', 'y');
+  mkdirSync(featY, { recursive: true });
+  writeFileSync(join(featY, 'intent-z.md'), '# stray\n');
+  writeFileSync(join(featY, '2-tech-spec.md'), '# spec\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /intent-z\.md/, 'stray name must not hint');
+  assert.match(fact.stdout, /intent_hint=docs\/features\/x\/intent-x\.md/, 'x still hints');
+
+  // A change outside docs/features/ maps nothing.
+  writeFileSync(join(repo, 'a.js'), 'const a = 9;\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.match(fact.stdout, /intent_hint=docs\/features\/x\/intent-x\.md/, 'unrelated code change does not add hints');
+
+  // A DIRECTORY named intent-<key>.md is not a readable artifact — no hint (Dirent contract).
+  const featW = join(repo, 'docs', 'features', 'w');
+  mkdirSync(join(featW, 'intent-w.md'), { recursive: true });
+  writeFileSync(join(featW, '2-tech-spec.md'), '# spec\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /intent-w\.md/, 'a directory at the exact name must not hint');
+
+  // A SYMLINK at the exact name is not the artifact either (Dirent types are lstat-like), and
+  // a case-alias must not satisfy the byte-exact name comparison on any filesystem.
+  const featV = join(repo, 'docs', 'features', 'v');
+  mkdirSync(featV, { recursive: true });
+  writeFileSync(join(featV, '2-tech-spec.md'), '# spec\n');
+  writeFileSync(join(featV, 'real.md'), '# target\n');
+  symlinkSync(join(featV, 'real.md'), join(featV, 'intent-v.md'));
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /intent-v\.md/, 'a symlink at the exact name must not hint');
+  const featU = join(repo, 'docs', 'features', 'u');
+  mkdirSync(featU, { recursive: true });
+  writeFileSync(join(featU, '2-tech-spec.md'), '# spec\n');
+  writeFileSync(join(featU, 'Intent-u.md'), '# wrong case\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /intent-u\.md/, 'a case-alias must not hint, even on a case-insensitive filesystem');
+
+  // A directory that is not a legal feature slug never reaches the fact line: the one-line
+  // field grammar is the output contract, and a name carrying a space (or worse) would be
+  // interpolated verbatim. Filesystem-valid, slug-invalid: `x bad`.
+  const featBad = join(repo, 'docs', 'features', 'x bad');
+  mkdirSync(featBad, { recursive: true });
+  writeFileSync(join(featBad, '2-tech-spec.md'), '# spec\n');
+  writeFileSync(join(featBad, 'intent-x bad.md'), '# not a slug\n');
+  fact = run(repo, home, ['check', '--format=fact']);
+  assert.doesNotMatch(fact.stdout, /x bad/, 'a non-slug directory must not reach the fact line');
+  assert.equal(fact.stdout.trim().split('\n').length, 1, 'the fact output stays exactly one line');
+});

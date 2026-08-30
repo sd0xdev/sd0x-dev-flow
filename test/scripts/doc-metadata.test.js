@@ -62,6 +62,43 @@ test('a taxonomy with no doc_roles block falls back to the built-in table, not t
   // the whole feature off in any repo running an older config.
   assert.equal(roleFromPath('docs/features/x/2-tech-spec.md', {}), 'Design record');
   assert.equal(roleFromPath('docs/features/x/requests/a.md', {}), 'Work record');
+  // intent-<key>.md is a Design record on the built-in fallback path too — without this row a
+  // taxonomy shipping no doc_roles would put intent into /update-docs' rewrite path.
+  assert.equal(roleFromPath('docs/features/x/intent-x.md', {}), 'Design record');
+});
+
+test('intent-<key>.md resolves to Design record from the shipped config', () => {
+  assert.equal(roleFromPath('docs/features/x/intent-x.md'), 'Design record');
+});
+
+test('the intent-records rule is scoped: instruction surfaces and directory names stay out', () => {
+  // Live counter-examples from this repo: instruction-surface references whose basenames start
+  // with intent- must stay Current authority (the relpath rule's anchored prefix cannot match
+  // a skills/** path, so the instruction-surface rule keeps them).
+  assert.equal(roleFromPath('skills/req-analyze/references/intent-template.md'), 'Current authority');
+  assert.equal(roleFromPath('skills/ask/references/intent-patterns.md'), 'Current authority');
+  // A feature DIRECTORY named intent-<x> must not claim its descendants (.md-anchored pattern).
+  assert.equal(roleFromPath('docs/features/intent-artifact/4-implementation.md'), 'Current authority');
+  assert.equal(roleFromPath('docs/features/intent-artifact/2-tech-spec.md'), 'Design record');
+  // Built-in fallback path agrees on all four.
+  assert.equal(roleFromPath('skills/req-analyze/references/intent-template.md', {}), 'Current authority');
+  assert.equal(roleFromPath('docs/features/intent-artifact/4-implementation.md', {}), 'Current authority');
+});
+
+test('a legal feature key matching a segment rule cannot steal its own intent artifact', () => {
+  // SLUG_RE admits keys like `requests`, `adr-skill` (a live feature) and `4-implementation`;
+  // segment-wide rules match those DIRECTORY names, so the relpath intent rule must come first
+  // or the artifact lands on the wrong role — Work/History record, or worst, Current authority
+  // (the /update-docs rewrite path, the exact treatment the Design-record role exists to block).
+  assert.equal(roleFromPath('docs/features/requests/intent-requests.md'), 'Design record');
+  assert.equal(roleFromPath('docs/features/adr-skill/intent-adr-skill.md'), 'Design record');
+  assert.equal(roleFromPath('docs/features/review-log-x/intent-review-log-x.md'), 'Design record');
+  assert.equal(roleFromPath('docs/features/4-implementation/intent-4-implementation.md'), 'Design record');
+  // The feature-relative form (rootRelative: false callers) resolves the same way…
+  assert.equal(roleFromPath('intent-adr-skill.md', undefined, { rootRelative: false }), 'Design record');
+  // …and a nested requests/intent-*.md is NOT the artifact: the Work-record rule keeps it.
+  assert.equal(roleFromPath('docs/features/x/requests/intent-x.md'), 'Work record');
+  assert.equal(roleFromPath('requests/intent-x.md', undefined, { rootRelative: false }), 'Work record');
 });
 
 test('config cannot invent a role, and one malformed rule does not take the scan down', () => {
