@@ -37,6 +37,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion
 | `--target <path>` | — | Specific file or directory (repo-relative) |
 | `--auto` | — | Auto-detect targets using inline metrics |
 | `--max-targets N` | 10 | Maximum targets per run |
+| `--mode reference-stability` | — | Narrow pointer-conversion pass (see § Reference-Stability Targets). Requires explicit `--target` files — repeat the flag for multiple files (`--target a.md --target b.js`, ≤ 5); incompatible with `--auto` |
 
 ## Workflow
 
@@ -48,6 +49,27 @@ Phase 0: Target Detection → Phase 2: Incremental Refactor Loop → Phase 3: Re
 ---
 
 ## Phase 0: Target Detection & Planning
+
+### `--mode reference-stability` Branch (checked first)
+
+When this mode is passed, Phase 0 takes this branch and **bypasses the generic pipeline
+below entirely** — no AI-artifact heuristic, no refactor-catalog classification, and no v2
+type skip (the mode accepts any maintained text file its transformation table covers: docs,
+code, tests, instruction surfaces — a `*.test.js` target is valid here even though the
+generic path skips test files as v2). In code and test files, **only comment and
+documentation regions are conversion candidates**: executable strings, assertion
+expectations, fixtures, snapshots, generated content, and ordinary data are never touched —
+that is INV-005's boundary, and it is what makes skipping the behavioral gate sound (an
+eligible **prose-only** comment cannot change runtime behavior — tool-consumed directives and
+pragmas such as lint/type-checker directives or source-map metadata are *not* eligible
+regions, since comments can carry machine semantics; anything that could change behavior is
+out of this mode's reach):
+
+1. Validate each `--target` path (same path-safety rules as below)
+2. Enumerate: more than **5** files (after resolving any directory) → `[REFACTOR_BLOCKED] <target>: reference-stability accepts at most 5 enumerated files`
+3. Reject `--auto`: `[REFACTOR_BLOCKED] --auto: incompatible with reference-stability`
+4. Determine each file's review plane (doc vs code) for step 3 of the mode's loop
+5. Proceed to § Reference-Stability Targets — never to the generic code/doc paths
 
 ### `--target` Mode
 
@@ -138,6 +160,31 @@ FOR EACH doc target:
   3. Mark as committable
 ```
 
+### Reference-Stability Targets (`--mode reference-stability`)
+
+A narrow pointer-conversion pass, typically dispatched as the bounded adjustment for an
+`ATTENTION_DIFFUSION / REFERENCE_DRIFT` stall (`@skills/codex-code-review/references/loop-diagnostics.md`
+§ Attention-Diffusion Subtypes and the Banking Sequence). Its contract is deliberately tighter
+than the generic doc/code paths above:
+
+| Rule | Detail |
+|------|--------|
+| Targets | At most **5** explicitly enumerated files, `--target` only — **never `--auto`**; a directory target only after it resolves to ≤ 5 named files |
+| Unit | The *file* is the blast-radius unit: each target gets one complete pass over its **eligible regions** (comments/doc prose — never executable strings, assertions, fixtures, snapshots, or data); the per-file eligible-pointer count is measured and reported before editing, not capped |
+| Transformation | Homogeneous only: replace bare `path:line` pointers with `path § heading` (docs), `path` + symbol/function (code), `path` + named test case (tests), or `path` + flag/config key (instruction surfaces). A numeric hint survives only as "around line N" paired with a semantic anchor — never the sole locator (`@rules/docs-writing.md` § Durable References) |
+| Forbidden | Unrelated prose cleanup, restructuring, renaming, or de-AI-flavor riding along. A file whose pointers need per-pointer factual reinterpretation is not a stabilization pass — reclassify (`DOC_TOO_LONG` / `UNVERIFIED_CLAIM`) or split by section |
+| Exempt content | Point-in-time records (requests, ADRs, review logs), review evidence, scope proofs, and generated report formats keep exact `file:line` — never "updated" |
+| Gate | Edits re-open the plane; this mode's internal review/precommit are evidence, **never** the outer terminal verdict. The outer gate is still owed on the whole change afterwards |
+| Git | This mode performs no mutating git operation and creates no checkpoint/stash; it may *suggest* the user create a stash/WIP branch first — advisory prose, never a step |
+
+```
+FOR EACH reference-stability target (≤ 5):
+  1. Measure: count eligible bare path:line pointers (comment/doc regions only), report per file
+  2. Convert: homogeneous anchor transformation only
+  3. /codex-review-doc or /codex-review-fast per file type (auto-loop, max 3 rounds)
+  4. Mark as converted — outer whole-change gate still owed
+```
+
 ### v2 Targets
 
 ```
@@ -168,7 +215,14 @@ If Phase 0 captured `/project-audit` baseline:
 
 ### User Handoff
 
-List committable files. Suggest `/smart-commit --execute` (no auto-commit per @rules/git-workflow.md).
+Generic refactors: list committable files. Suggest `/smart-commit --execute` (no auto-commit per @rules/git-workflow.md).
+
+**Reference-stability mode has its own handoff — no commit suggestion.** Report each target as
+*converted* with its pointer count, state that the **outer whole-change gate remains owed**,
+and return control. `/smart-commit --execute` may be offered only after that outer pass is
+noted (the banking sequence in `@skills/codex-code-review/references/loop-diagnostics.md`
+§ Attention-Diffusion Subtypes and the Banking Sequence); calling converted files
+"committable" here would offer the commit before the pass.
 
 ---
 
@@ -183,10 +237,21 @@ List committable files. Suggest `/smart-commit --execute` (no auto-commit per @r
 
 ## Verification Checklist
 
+Generic refactors:
+
 - [ ] All code targets passed behavioral gate (`/verify fast` PRESERVED)
 - [ ] All targets reviewed (`/codex-review-fast` or `/codex-review-doc`)
 - [ ] Skip log complete for all skipped/blocked targets
 - [ ] No `git add/commit/push` executed
+
+Reference-stability mode (the behavioral gate does not apply — the mode runs no `/simplify`):
+
+- [ ] Eligible-pointer counts (comment/doc regions only) measured and reported per file before editing
+- [ ] Every change is a homogeneous anchor conversion inside an eligible region; no executable strings, assertions, fixtures, snapshots or data touched; no unrelated edits
+- [ ] Exempt content (records, review evidence, scope proofs, report formats) untouched
+- [ ] Each target reviewed per its plane (`/codex-review-fast` or `/codex-review-doc`)
+- [ ] No mutating git operation; no checkpoint/stash created
+- [ ] Handoff states the outer whole-change gate is still owed — no commit suggestion
 
 ## Examples
 
@@ -196,4 +261,7 @@ List committable files. Suggest `/smart-commit --execute` (no auto-commit per @r
 /refactor --target src/                   # Refactor all code in directory
 /refactor --auto                          # Auto-detect up to 10 targets
 /refactor --auto --max-targets 5          # Auto with budget cap
+/refactor --mode reference-stability --target docs/features/<feature>/2-tech-spec.md --target scripts/lib/<module>.js
+                                          # Pointer conversion only; handoff reports
+                                          # "converted; outer gate owed" — no commit suggestion
 ```

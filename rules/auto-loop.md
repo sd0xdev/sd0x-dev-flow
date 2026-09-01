@@ -49,8 +49,11 @@ conversation so a compact summary carries it.
 → `skills/codex-code-review/references/loop-diagnostics.md` — the round-10 checkpoint, stall
 memory, what a diagnosis is made of, the
 closed class table (`ARCHITECTURE`, `DOC_TOO_LONG`, `ATTENTION_DIFFUSION`, `UNVERIFIED_CLAIM`,
-`TIER_MISMATCH`, `REQUIREMENT_AMBIGUITY`) with signals and bounded directions, and the five
-constraints on `/refactor` as a bounded adjustment.
+`TIER_MISMATCH`, `REQUIREMENT_AMBIGUITY`) with signals and bounded directions, the five
+constraints on `/refactor` as a bounded adjustment, the two `ATTENTION_DIFFUSION` subtypes —
+`SCATTER` (fix-batch partition inside one fix phase) and `REFERENCE_DRIFT`
+(reference-stability pass) — and the banking sequence (adjustment → gate pass → note →
+user-approved commit).
 
 ## Sub-Threshold Findings
 

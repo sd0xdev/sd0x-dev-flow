@@ -114,3 +114,46 @@ test('the rounds count is named as the one mechanical fact, honestly scoped', ()
   assert.match(autoLoop, /it counts failed verdicts on the current change, not your conversational rounds/,
     'the count must be scoped honestly — a floor, not the whole story');
 });
+
+// --- review-loop-recovery: ATTENTION_DIFFUSION subtypes + banking sequence ---
+// docs/features/review-loop-recovery/2-tech-spec.md § 3.2, § 3.4. The subtype names are
+// duplicated across the resident summary and the canonical contract, so they are pinned on
+// both carriers per this file's carrier discipline.
+
+test('both carriers name the two ATTENTION_DIFFUSION subtypes and no third', () => {
+  for (const [name, body] of Object.entries(STALL_POLICY_CARRIERS)) {
+    assert.match(body(), /`SCATTER`/, `${name} must name the SCATTER subtype`);
+    assert.match(body(), /`REFERENCE_DRIFT`/, `${name} must name the REFERENCE_DRIFT subtype`);
+  }
+  assert.match(loopDiagnostics, /not new diagnosis classes/,
+    'subtypes are adjustment directions — the closed class table must stay closed');
+});
+
+test('SCATTER is fix-side: one fix phase, no intermediate re-review, no prompt focus', () => {
+  assert.match(loopDiagnostics, /fix-side, inside one fix phase — no intermediate re-review/,
+    'the partition must live inside a single fix phase');
+  assert.match(loopDiagnostics, /only when \*\*every\*\*\s+known blocking finding is fixed does the ordinary whole-change re-review run/,
+    'every known blocking finding is fixed before the whole-change dispatch — the central contract holds');
+  assert.match(loopDiagnostics, /forbids\s+dispatcher-synthesized `FOCUS`/,
+    'the codex-invocation boundary is the stated reason no focus field exists');
+  assert.match(loopDiagnostics, /Fixing ≠ Verifying/,
+    'local per-batch checks are orchestrator evidence, never a review verdict');
+});
+
+test('banking sequence: gate pass precedes the user-approved commit, and git stays read-only', () => {
+  assert.match(loopDiagnostics, /bounded adjustment → outer gate pass at the post-adjustment digest/,
+    'the sequence starts with the adjustment and the pass');
+  assert.match(loopDiagnostics, /note the verdicts → user-approved\s+`\/smart-commit --execute`/,
+    'the commit comes after the pass and the note, via the existing approval contract');
+  assert.match(loopDiagnostics, /no mutating git operation and never creates a\s+checkpoint or stash/,
+    'the recovery adjustment itself must not mutate git state');
+  assert.match(loopDiagnostics, /a commit alone never\s+defines a change boundary/,
+    'increment boundaries cannot launder budgets — pass → note → commit → later edit');
+});
+
+test('stall-memory declaration forms exist for both subtypes', () => {
+  assert.match(loopDiagnostics, /ATTENTION_DIFFUSION \/ SCATTER — batches: A=\[/,
+    'SCATTER form must encode batch membership — what survives rotation/fallback');
+  assert.match(loopDiagnostics, /ATTENTION_DIFFUSION \/ REFERENCE_DRIFT — targets: </,
+    'REFERENCE_DRIFT form must encode targets and measured size');
+});
