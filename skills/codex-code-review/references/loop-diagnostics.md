@@ -8,19 +8,29 @@ review reports, what a diagnosis is made of, the closed class table, and the ant
 Load it when review rounds are failing to close findings, when a round cap or the round-10
 checkpoint is reached, or when a bounded adjustment is being chosen.
 
-Every rule here was resident prose until 2026-08-29 and **the move changed no policy**
+§ Stall Detection and § Cap Diagnostic Protocol were resident prose until 2026-08-29 and **the
+move changed no policy**
 (`docs/features/rules-residency/2-tech-spec.md` § 3.4). One prose edit was made in the move: the
 `/refactor` paragraph named "those two classes", whose antecedent did not travel, so the two are
-now named outright.
+now named outright. § Attention-Diffusion Subtypes and the Banking Sequence is **new content**
+(review-loop-recovery, 2026-09-01), not relocated prose — its tiers are assigned below, not
+inherited.
 
 **Tier.** This file sits outside `rules/discretion.md` § File Baselines, which assigns tiers to
-the 13 plugin-managed `rules/*.md` files. It inherits the tier each statement already had in
-`rules/auto-loop.md`, and that is **not uniform**:
+the 13 plugin-managed `rules/*.md` files. The relocated sections inherit the tier each statement
+already had in `rules/auto-loop.md`, the new section resolves its Register hits at step 0 and
+takes Default for the rest, and the result is **not uniform**:
 
 - **Anchor** — "It edits files, so the code gate re-opens" (§ Cap Diagnostic Protocol,
   `/refactor` constraints). `discretion.md` § File Baselines gives `auto-loop.md` "Register #5–#7
-  items → Anchor", and this is Register #6(a).
-- **Default** — everything else here, including the two statements about security and
+  items → Anchor", and this is Register #6(a). § Attention-Diffusion Subtypes and the Banking
+  Sequence carries four more direct Register hits, Anchor by step-0 resolution: Fixing ≠
+  Verifying (local batch checks are never a review verdict — Register #5); the whole-change
+  re-review after edits (Register #6); the `/smart-commit --execute` route as the only mutating
+  git path, under its per-use approval contract (Register #4); and the prohibition on mutating
+  git/checkpoint/stash during the recovery adjustment (Register #4).
+- **Default** — everything else here (the subtype choice, signals, budgets and bounded
+  directions included), and the two statements about security and
   data-integrity changes (they skip this protocol and go to ⚠️ Need Human; `/refactor` is excluded
   for them). These **cite** Register #3 but are not it: `discretion.md` scopes that hit to
   `auto-loop.md` **§ Tiers** — "a security or data-integrity change is reviewed at `thorough`
@@ -93,4 +103,45 @@ Both budgets are yours to keep, in conversation — nothing counts rounds or str
 | Its own internal quality check is **not** this loop's precommit gate | `/refactor` runs one per target. The loop's gate is still owed afterwards, on the whole change |
 | Excluded for security and data-integrity changes | Register #3 escalates those to `thorough`; a stalled security change goes to ⚠️ Need Human |
 | It consumes the diagnosis budget, never an extra one | A refactor *is* the one bounded adjustment for that stall |
+
+## Attention-Diffusion Subtypes and the Banking Sequence
+
+An `ATTENTION_DIFFUSION` diagnosis states its observed **subtype** at declaration time. These
+are adjustment directions under the existing class — not new diagnosis classes, and the closed
+class table above is unchanged.
+
+| Subtype | Signal | Bounded adjustment |
+|---------|--------|--------------------|
+| `SCATTER` | Findings move across a wide file surface; fixes introduce new defects; rounds close some findings, expose others | One declared **fix-batch partition inside a single fix phase** (below). Same tier, review prompts untouched, central loop contract untouched |
+| `REFERENCE_DRIFT` | Persistent findings are stale positional references in maintained docs/comments | One `/refactor --mode reference-stability` pass (`skills/refactor/SKILL.md` § Reference-Stability Targets): at most 5 explicitly enumerated files, never `--auto`, declared with measured pointer counts |
+
+**The `SCATTER` partition is fix-side, inside one fix phase — no intermediate re-review.** It
+sequences the fixing work: partition the outstanding blocking findings into coherent batches,
+fix batch A completely and verify it locally (targeted tests/lint on its files — orchestrator
+evidence, never a review verdict: Fixing ≠ Verifying), then batch B, and only when **every**
+known blocking finding is fixed does the ordinary whole-change re-review run. Review dispatch
+is untouched: every dispatch still sees the full changed-file list and the whole patch, and
+nothing is injected into review prompts — `rules/codex-invocation.md` forbids
+dispatcher-synthesized `FOCUS`, and a round-scoped focus field would be exactly that pattern.
+
+Either subtype consumes the diagnosis budget as usual. Each has its own stall-memory
+declaration form — for `SCATTER`, batch membership is what must survive rotation/fallback:
+
+```
+stall adjustment: ATTENTION_DIFFUSION / SCATTER — batches: A=[files…], B=[files…] — active: A — outcome: …
+stall adjustment: ATTENTION_DIFFUSION / REFERENCE_DRIFT — targets: <file — N refs, …> — size: K files, M replacements — outcome: …
+```
+
+**Banking sequence** — how recovered work is committed, and the order is the contract:
+bounded adjustment → outer gate pass at the post-adjustment digest (code: review Ready **and**
+required precommit PASS; docs: Mergeable) → note the verdicts → user-approved
+`/smart-commit --execute` under its normal full-plan, per-use approval contract. The pass
+before the commit is the whole point: committing work whose gates have not passed hides it
+from later dispatches (`git diff HEAD` shrinks) and silences reminders (a clean tree is not
+owed). The recovery adjustment itself performs no mutating git operation and never creates a
+checkpoint or stash — suggesting the user create one before a risky pass is advisory prose,
+never a step. Committing the passed digest does not re-open gates; a commit alone never
+defines a change boundary — the boundary is pass → note → commit → *later edit*, which opens
+a new change with a fresh first dispatch. Feature-wide obligations (AC trace, branch/PR
+integration review) are untouched by increment boundaries.
 

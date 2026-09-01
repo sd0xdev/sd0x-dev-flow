@@ -49,8 +49,9 @@ const CONTRACTS = [
   {
     path: 'skills/codex-code-review/references/loop-diagnostics.md',
     activatedBy: ['rules/auto-loop.md', 'skills/codex-code-review/SKILL.md'],
-    headings: ['Stall Detection', 'Cap Diagnostic Protocol'],
-    minHeadings: 2,
+    headings: ['Stall Detection', 'Cap Diagnostic Protocol',
+      'Attention-Diffusion Subtypes and the Banking Sequence'],
+    minHeadings: 3,
   },
 ];
 

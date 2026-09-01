@@ -47,6 +47,26 @@ The exemption covers the **contiguous run the directive heads**, not everything 
 
 Mechanical check: `node scripts/check-comment-blocks.js` (threshold 30 blocking / 25 warning, recursive over `hooks/ scripts/ skills/`). Comment syntax is resolved per language — `.sh` counts only `#`, so a shell `case "$1" in /*)` is not read as a C block-comment opener. Wired into `/precommit` as the `comment_blocks` step, which runs first (static and cheap) and **skips rather than fails** unless the repo checked the checker into its own `scripts/` — which also settles the scan dirs, since finding it there proves `scripts/` exists. The installed copy at `.claude/scripts/` deliberately does **not** count: `/install-scripts` puts it there in consuming projects, and the checker scans the *repo's* top-level `hooks/ scripts/ skills/`, so honouring it would judge someone else's code by this plugin's 30-line convention and could fail their precommit. Vendoring the checker into your own `scripts/` is how a project opts in.
 
+## Durable References
+
+Maintained docs and comments identify material by **semantic anchors**, not exact line numbers:
+a repository-relative path plus a heading (`rules/docs-writing.md` § Code Comments), a symbol
+or function name, a named test case, or a flag/config key. Exact line numbers drift with every edit above
+them, and each stale pointer becomes a review finding, a fix, and another round.
+
+| Form | Verdict |
+|------|---------|
+| `scripts/lib/utils.js:142` as the sole locator in a maintained doc | ❌ Rewrite as path + anchor |
+| `scripts/lib/utils.js` — the `stripAnsi` function (around line 141) | ✅ Anchor first, number as approximate hint |
+| `scripts/lib/utils.js:142` inside a review finding, request ticket, ADR or review log | ✅ Exempt — point-in-time evidence in a record |
+
+Exact `file:line` remains correct in **records and evidence**: review findings, diagnostics,
+generated reports, scope proofs, and point-in-time records (requests, ADRs, review logs) —
+rewriting those to match today's code would destroy the record. A numeric hint in a maintained
+doc is explicitly approximate ("around line N") and always paired with a semantic anchor —
+never the sole locator. Existing references convert on substantive edit or via a declared
+`/refactor --mode reference-stability` pass — never a mass rewrite.
+
 ## Locale-Aware Writing
 
 When writing in a specific language, use that locale's natural conventions:

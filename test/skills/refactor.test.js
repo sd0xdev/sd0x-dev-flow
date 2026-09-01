@@ -186,3 +186,31 @@ test('output-template.md has delta report format', () => {
   const content = readFileSync(refOutput, 'utf8');
   assert.match(content, /Delta Report/i, 'should have delta report section');
 });
+
+// --- Reference-Stability Mode (review-loop-recovery) ---
+// docs/features/review-loop-recovery/2-tech-spec.md § 3.3 — the mode's load-bearing bounds.
+
+test('reference-stability mode is declared with its flag and section', () => {
+  const content = readFileSync(skillPath, 'utf8');
+  assert.match(content, /`--mode reference-stability`/, 'flag row must exist');
+  assert.match(content, /### Reference-Stability Targets/, 'contract section must exist');
+});
+
+test('reference-stability mode carries the 5-file bound and the --auto prohibition', () => {
+  const content = readFileSync(skillPath, 'utf8');
+  assert.match(content, /At most \*\*5\*\* explicitly enumerated files/,
+    'the file bound is the blast-radius unit');
+  assert.match(content, /\*\*never `--auto`\*\*/, 'auto-detection is forbidden in this mode');
+  assert.match(content, /pointer count is measured and reported before editing, not capped/,
+    'pointers are observability, files are the cap');
+});
+
+test('reference-stability mode keeps the exemptions and the outer gate', () => {
+  const content = readFileSync(skillPath, 'utf8');
+  assert.match(content, /Point-in-time records \(requests, ADRs, review logs\), review evidence/,
+    'record-class content keeps exact file:line');
+  assert.match(content, /\*\*never\*\* the outer terminal verdict/,
+    'internal checks are evidence; the outer gate is still owed');
+  assert.match(content, /no mutating git operation and creates no checkpoint\/stash/,
+    'the mode must not mutate git state');
+});
