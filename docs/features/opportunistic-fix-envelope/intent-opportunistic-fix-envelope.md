@@ -13,8 +13,8 @@ never costing a review round of its own.
 
 ## Non-goals
 
-- No blast-radius scan and no overall risk score on the latch's path: the 2026-07-26 r4 equilibrium
-  that rejected `risk-analyze.js` auto-integration stands; `/risk-assess` stays a separate advisory skill.
+- No blast-radius scan, overall risk score, or new fact-collection script on the latch's path: the
+  model resolves it from git facts it cites; the r4 equilibrium (2026-07-26) rejecting `risk-analyze.js` stands.
 - No second path authority (`## Infra Paths` or similar): project path classification lives
   only in `scripts/config/sensitive-paths.json`.
 - No task-owned primary file set in v1: the dirty tree is the primary-risk union (conservative, measured).
@@ -37,9 +37,9 @@ never costing a review round of its own.
 - `INV-003`: No opportunistic-only review round: admission happens only during implementation
   before the first review or inside a fix phase a mandatory blocking finding already opened;
   a report that would be `✅ Ready` with only deferred candidates stays `✅ Ready`.
-- `INV-004`: Gate predicate: `⛔ Blocked ⇔ ∃ in-scope ∧ ≥ tier-blocking ∧ obligation ∈
-  {mandatory, admitted}` ∨ the existing out-of-scope-critical disjunct; `gate_reason` keeps its
-  four values; an admitted finding stays owed until fixed.
+- `INV-004`: Gate predicate: `⛔ Blocked ⇔ ∃ in-scope ∧ ((mandatory ∧ ≥ tier-blocking) ∨
+  admitted)` ∨ the existing out-of-scope-critical disjunct; `gate_reason` keeps its four
+  values; an admitted finding stays owed until fixed, whatever its severity.
 - `INV-005`: Reviewer independence: prompts request `change_relation` neutrally and never carry
   the envelope, the ceiling or a desired disposition; orchestration never rewrites a reviewer's
   `origin` or `change_relation` toward `independent`.

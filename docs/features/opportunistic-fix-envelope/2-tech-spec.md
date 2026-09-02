@@ -36,8 +36,8 @@
 - **Scope**: the resident guard and scope contract, the review skill's Step 1 / Step 4.5 / loop,
   `review-common.md` and every reviewer prompt surface (the three variant templates, the inline
   secondary prompt in `SKILL.md` § Step 3, the re-review template — fallback carriers reuse the
-  variant templates and need no surface of their own), a diff-only fact collector, a shared path
-  matcher with an optional `risk_class`, `fix-all-issues.md`, one
+  variant templates and need no surface of their own), an optional `risk_class` field in
+  `sensitive-paths.json`, `fix-all-issues.md`, one
   `auto-loop.md` sentence and override row, the project override scaffold, tests. Out of scope:
   the intent's Non-goals.
 
@@ -50,13 +50,13 @@
 | `skills/codex-code-review/SKILL.md` § Step 1, § Step 1.1, § Step 4.5, § Review Loop | Baseline and `TASK_DESCRIPTION` frozen once; tier resolved from change semantics; routing matrix indexes the derived pair (seven rows); loop re-enters only on `IN_SCOPE_BLOCKING` | Step 1 reuses or creates the envelope record; Step 4.5 derives `fix_obligation` before the pair; loop admits candidates only into an open fix phase |
 | `skills/codex-code-review/references/review-common.md` § Merge Gate, § Scope Fields, § Re-review Prompt Template | Four scope fields, fail-closed reading; re-review carries frozen baseline and active dispositions | Fifth field `change_relation`; obligation-aware gate; re-review re-evaluates the field |
 | `references/codex-prompt-{fast,full,branch}.md`; inline secondary prompt (`SKILL.md` § Step 3, `--dual`); re-review template (`review-common.md` § Re-review Prompt Template) | Findings format carries `origin / scope_reason / scope / evidence`; `[source: codex\|toolkit\|both]` only under `--dual`; fallback carriers re-dispatch the variant templates (provenance rides on `gate_source`) | Add the neutral `change_relation` request and hunk-evidence rule on all five surfaces; nothing about budget |
-| `skills/risk-assess/scripts/risk-analyze.js` | `parseDiffHunks`, `parseNumstat`, `parseNameStatus`, `parseRenames`, `scoreBreakingSurface`, `checkMigrationSafety` are diff-local; `scoreBlastRadius` greps the repo (12.1 s measured, r4); `computeOverall` ignores the migration flag | Extract the diff-local functions to `scripts/lib/change-risk-facts.js`; `risk-analyze.js` keeps its behaviour by importing them |
-| `scripts/resolve-review-profile.js` — `sensitivityHit` | Segment-anchored, exclude-wins, first-rule-wins, malformed → `unknown`; returns the rule name only; doc-plane consumer | Move the matcher to `scripts/lib/sensitive-paths.js`, return the rule object; resolver behaviour unchanged |
+| `skills/risk-assess/scripts/risk-analyze.js` | `scoreBlastRadius` greps the repo (12.1 s measured, r4); `computeOverall` ignores the migration flag; the skill disclaims security and correctness | **None** — stays a separate advisory skill; the latch never calls it |
+| `scripts/resolve-review-profile.js` — `sensitivityHit` | Segment-anchored, exclude-wins, first-rule-wins; checks `version === 1` and `rules` is an array up front, then validates each rule's `name`, `include` and optional `exclude` **lazily, in order, only until a rule matches** — a malformed rule after the first match is never inspected; `segmentList` accepts empty strings; fields it does not read (such as `risk_class`) pass through untouched (verified) | **None** — the model applies the same *matching* on the code plane, but validates the **whole** file up front and strictly (§ 3.2); no parity with the resolver's lazy checks is claimed |
 | `scripts/config/sensitive-paths.json` | Four example rules with `suggested_tier` / `suggested_route`; `_comment` pins "EXAMPLE only, not complete coverage" | Optional `risk_class` per rule; one example `rollout-sensitive` rule |
 | `rules/fix-all-issues.md` § Exceptions, § Precedence | Preamble: "pre-existing" is not a reason; seven exceptions each leaving a record | Preamble becomes "every **owed** in-scope blocking issue"; one new exception row |
 | `rules/auto-loop.md` § Sub-Threshold Findings, § Override Contract | On-the-spot one-line exception is unconditional; override table lists seven settings; file is 15,200 / 20,000 bytes | Origin-aware wording; one table row |
 | `rules/auto-loop-project.md` | Seven settings scaffold | `## Opportunistic Fix Ceiling` |
-| `docs/features/auto-loop-autonomy/requests/2026-07-26-sensitive-path-advisory-hints-r4.md` | Nash equilibrium: path rules over score; advisory only; `risk-analyze.js` auto-integration and `--no-blast` rejected | Honoured: the collector emits facts, no score, no repo scan |
+| `docs/features/auto-loop-autonomy/requests/2026-07-26-sensitive-path-advisory-hints-r4.md` | Nash equilibrium: path rules over score; advisory only; `risk-analyze.js` auto-integration and `--no-blast` rejected | Honoured: the model gathers diff facts with plain git commands — no score, no repo scan, no new script |
 
 ## 3. Technical Solution
 
@@ -71,7 +71,7 @@ flowchart TD
     R1 --> REC
     REC --> RV[Reviewer report: origin / scope_reason / scope / change_relation / evidence]
     RV --> N[Step 4.5 normalize fail-closed → fix_obligation per finding]
-    N --> G{Gate: ∃ in-scope ∧ ≥ blocking ∧ obligation ∈ mandatory,admitted?}
+    N --> G{"Gate: ∃ in-scope ∧ (mandatory ∧ ≥ blocking) ∨ admitted at any severity?"}
     G -->|no| RDY["✅ Ready × NONE — deferred candidates recorded"]
     G -->|yes| FIX[Fix phase: mandatory first; admit candidates within envelope]
     FIX --> RR[Re-review at new digest — reviewer re-emits change_relation]
@@ -91,8 +91,8 @@ can only shrink. **Monotone**: the effective class, which never rises.
 | Input | Source | Values |
 |-------|--------|--------|
 | `purpose` | Precedence: (1) the invoking skill — `/bug-fix` → `FIX`, `/refactor` → `REFACTOR`, `/feature-dev` → `FEATURE`; (2) the frozen `TASK_DESCRIPTION` — names a bug, error, regression or failing behaviour → `FIX`, a doc-only task → `DOC`, a feature → `FEATURE`; (3) otherwise `OTHER`. A description too ambiguous to place is `FIX` (the conservative value for the closing row). Findings never change it | `FIX \| FEATURE \| REFACTOR \| DOC \| OTHER` |
-| Diff-only facts | `opportunistic-facts.js` (§ 3.4): production files, top-level dirs, added/deleted lines, deletions, renames, removed/renamed exports, changed signatures, removed type fields / config keys, deleted modules, migration/schema presence | JSON facts; **no score** |
-| `path_risk` | shared matcher over `sensitive-paths.json` against every path in `S` | matched `risk_class` \| `none` \| `unknown` |
+| Diff-only facts | The model, from `git diff --numstat` / `--name-status` against `HEAD` (fast/full) or the resolved base (branch), and from reading the diff: production files, top-level dirs, added/deleted lines, deletions, renames, removed/renamed exports, changed signatures, removed type fields / config keys, deleted modules, migration/schema presence. **Untracked files** (`git ls-files --others --exclude-standard`) have no diff: each is read as a whole — every line counts as added, and its content is scanned for the same signals; a binary, unreadable or oversized (> 2,000 lines) untracked file is `unknown`. Every fact used is cited in the record's `facts=` (§ 3.4) | counts and named signals; **no score** |
+| `path_risk` | The model reads `sensitive-paths.json`, **validates the whole file up front** — every rule, before any matching, stricter than the resolver's lazy per-rule checks — then applies its `_matching` rule (root-relative, segment-anchored, exclude wins, first rule wins) to every path in `S` | matched `risk_class` \| `none` (no rule, or a rule without `risk_class`) \| `unknown` (file unreadable or not JSON, `version` ≠ 1, `rules` not an array, **any** rule missing `name` or `include`, any `include` or present `exclude` that is not a list of non-empty strings, or any `risk_class` value other than `rollout-sensitive` — whether or not an earlier rule would have matched) |
 | `semantic` | model judgment citing changed-file roles, interfaces, dependents, rollback | `contained \| shared \| rollout-sensitive \| unknown`; escalate-only above `path_risk` |
 | `ceiling` | `auto-loop-project.md ## Opportunistic Fix Ceiling` | `closed \| micro \| small`; unset = `small`; unknown = `closed` |
 
@@ -152,14 +152,17 @@ fix_obligation(f) ∈ {mandatory, admitted, deferred}
   mandatory — not a candidate, or evidence missing / contradictory
   admitted  — candidate, envelope capacity and footprint fit, an edit phase is already open
   deferred  — candidate blocked by closed | no-open-fix-phase | footprint | exhausted | breaker
-⛔ Blocked ⇔ ∃ f [in-scope ∧ severity ≥ tier_blocking ∧ obligation ∈ {mandatory, admitted}]
+⛔ Blocked ⇔ ∃ f [in-scope ∧ ((obligation=mandatory ∧ severity ≥ tier_blocking) ∨ obligation=admitted)]
            ∨ ∃ f [out-of-scope ∧ critical ∧ ¬valid_USER_SKIPPED]
 ```
 
 `gate_reason` keeps `NONE | IN_SCOPE_BLOCKING | OUT_OF_SCOPE_CRITICAL | BOTH`; `IN_SCOPE_BLOCKING`
-means *owed now*. Derived cases the contract pins: sole deferred candidate → `Ready × NONE`;
-mandatory + deferred → `Blocked × IN_SCOPE_BLOCKING`, fix the mandatory only; mandatory + admitted
-→ same pair, fix both in one phase; admitted persisting after the mandatory fix → still Blocked
+means *owed now*. An admitted finding is owed **whatever its severity**: admission is the model's
+own commitment inside an open fix phase, so an admitted P2 under `standard` (or Nit under
+`thorough`) blocks until fixed even though the same finding unadmitted would be sub-threshold.
+Derived cases the contract pins: sole deferred candidate → `Ready × NONE`; mandatory + deferred →
+`Blocked × IN_SCOPE_BLOCKING`, fix the mandatory only; mandatory + admitted → same pair, fix both
+in one phase; admitted persisting after the mandatory fix, sub-threshold or not → still Blocked
 (INV-004). The Step 4.5 matrix stays seven rows. The breaker keeps its contract: a triggered breaker
 sets `reason=breaker` on remaining candidates and E2 semantics for mandatory findings are untouched.
 Sub-threshold: a branch-introduced sub-threshold finding keeps the unconditional on-the-spot fix; a
@@ -168,13 +171,36 @@ under `closed` even a one-liner is `[NIT_DEFERRED]`. The re-review template adds
 asking the reviewer to re-evaluate `change_relation` against the current primary diff; a carried
 deferral whose new relation is `affected` / `uncertain` becomes mandatory.
 
-### 3.4 Scripts
+### 3.4 No new scripts (v1)
 
-| Script | Contract |
-|--------|----------|
-| `scripts/lib/change-risk-facts.js` | Pure diff parsers and fact derivation moved from `risk-analyze.js` (`parseDiffHunks`, `parseNumstat`, `parseNameStatus`, `parseRenames`, breaking-surface signal extraction, migration path test). No I/O beyond the diff text handed in. `risk-analyze.js` imports them; its output is byte-identical (pinned) |
-| `skills/codex-code-review/scripts/opportunistic-facts.js` | `bash scripts/run-skill.sh codex-code-review opportunistic-facts.js --json [--base <ref>]`. Collects `git diff --numstat / --name-status` against `HEAD` (fast/full) or the resolved merge base (branch) plus untracked files, runs the fact derivation and the shared path matcher, prints one JSON object: `{ status: "complete", files, production_files, top_level_dirs, lines_changed, deletions, renames, breaking: [...], migration: bool, path_risk }`. `path_risk` is one of `"none"` (no rule matched), `{ rule, class: null }` (a rule without `risk_class` matched — contributes nothing), `{ rule, class: "rollout-sensitive" }`, or `"unknown"` (config or class malformed). Any failure to collect — invalid base, a failing git command, unreadable untracked input, unparseable git output — prints `{ status: "incomplete", reason }` instead of partial facts, and Step 1 treats `incomplete` exactly as `unknown`: envelope `closed`. Never runs `grep -r` / `find` over the tree; a structural test asserts the absence and a latency backstop (< 1 s on this repo). Exit 0 in both shapes |
-| `scripts/lib/sensitive-paths.js` | `matchSensitivePath(filePath, config) → rule \| null \| 'unknown'` with the existing anchored-segment, exclude-wins, first-rule-wins semantics; `risk_class` optional per rule, recognised values `rollout-sensitive` only in v1, any other present value → `'unknown'`. `resolve-review-profile.js` consumes it and keeps its outputs |
+The latch is model-resolved, on purpose. What a collector script would buy — counting files and
+lines, spotting a removed export or a migration path, matching a path against the JSON — is
+reading a diff and applying a stated rule, which is the model's strength, not a regex's; and the
+repo's post-hook-lightweighting stance is that hooks remind and the model decides. What a script
+would cost is a second implementation of `sensitivityHit`, a byte-identical pin on
+`risk-analyze.js`, a fixture suite and a latency backstop — weight the decision does not need.
+
+Three obligations replace the script:
+
+- **Cite, don't assert.** `[OPPORTUNISTIC_BUDGET] facts=` lists every fact the class rests on —
+  `files=3,dirs=1,lines=42,breaking=export-removed:scripts/lib/x.js,migration=no,path=hooks` —
+  so a reader re-runs the same git commands and checks the derivation. Auditability comes from
+  the record, not from who computed it.
+- **Fail closed on any gap.** A base that does not resolve, a git command that errors, an
+  untracked file that cannot be read, or a `sensitive-paths.json` that fails any of the up-front
+  structural checks listed under `path_risk` in § 3.2 — each is `unknown`, and `unknown` is
+  `closed`. The latch is deliberately stricter than `sensitivityHit`: that resolver may return a
+  first match without ever reading a malformed later rule, which is fine for an advisory doc-review
+  depth and wrong for a budget. "I could not establish it" is never `small`.
+- **Path rules stay declarative.** `sensitive-paths.json` gains the optional `risk_class` field
+  and one example `rollout-sensitive` rule; the file's `_matching` prose is the rule the model
+  applies, and `resolve-review-profile.js` is untouched because it already ignores fields it does
+  not read.
+
+Reversal condition: if transcript audits show the model mis-counting facts or mis-matching paths
+often enough to change classes, a diff-only collector (`git diff --numstat` / `--name-status`, no
+repo-wide search, no score) becomes the v2 item — the r4 rejection of `risk-analyze.js` and
+`--no-blast` still stands either way.
 
 ### 3.5 Records and setting
 
@@ -214,7 +240,8 @@ gains "an opportunistic candidate is being admitted or deferred" as a sixth load
 | Path rules over-close (safe rename under an infra dir, fixture path containing `auth`) | Acceptable false positive — the cost is a deferred cleanup, never a skipped review; include/exclude tuning is the correction |
 | Dirty-tree union imports another task's migration | Documented conservative behaviour; measure over-closing before adding task-owned state |
 | Footprint numbers are initial policy values | Review after ~20–30 recorded changes; the records make the audit possible |
-| Transcript-only records lost in a poor compact | Consistent with hook-lightweighting; `[OPPORTUNISTIC_BUDGET]` is listed among compact-preservation items |
+| Model mis-counts a fact or mis-matches a path when resolving the envelope | `facts=` cites every input, so the derivation is re-runnable; a miss that would have closed the envelope is bounded by the reviewer's `change_relation` and the tier's blocking line. Reversal condition: § 3.4 (a diff-only collector as v2) |
+| Transcript-only records lost in a poor compact | Consistent with hook-lightweighting; the compact-preservation list carries the latest `[OPPORTUNISTIC_BUDGET]`, the cumulative `used=` count and every active `[OPPORTUNISTIC_FIX]` (admitted debt), so a compact between candidates neither restores capacity nor forgets an admission |
 | Byte cap on `rules/auto-loop.md` (15,200 / 20,000) | Only one sentence and one table row land there |
 | Test fixtures across six languages of README count rules | No rule-file count changes (no new rule file), so `project-setup` counts and READMEs are untouched |
 
@@ -229,10 +256,9 @@ Ordered so the first item alone closes the "always mandatory" hole with contract
 |---|------|-------|-------|
 | 1 | Reviewer field + obligation + gate predicate | `review-common.md` § Scope Fields / § Merge Gate / § Re-review Prompt Template; three `codex-prompt-*.md`; inline secondary prompt (`SKILL.md` § Step 3); `scope-contract.md` § Behavior Table / § Gate Derivation / new § Opportunistic Envelope; `SKILL.md` § Step 4.5 / § Review Loop; `scope-discipline.md` guard; `fix-all-issues.md` preamble + row | `scope-review-contract.test.js` (fifth field on all five surfaces — three templates, inline secondary, re-review; derivation cases; prompts carry no budget), `scope-discipline.test.js` (seven rows; five record literals; guard), `contract-routing.test.js` (`RECORD_LINE`), `seek-verdict` regression |
 | 2 | Envelope latch in the skill | `SKILL.md` § Step 1 (reuse or resolve; purpose freeze); `scope-contract.md` § Opportunistic Envelope (inputs, table, ratchet); `auto-loop.md` § Sub-Threshold origin-aware sentence; `context-management.md` compact list | `auto-loop-behaviour.test.js`, `review-dispatch.test.js` byte cap, purpose tests |
-| 3 | Diff-only collector and shared parsers | `scripts/lib/change-risk-facts.js`; `skills/codex-code-review/scripts/opportunistic-facts.js`; `risk-analyze.js` import refactor | New collector tests; `risk-assess.test.js` byte-identical output |
-| 4 | Shared path matcher + `risk_class` | `scripts/lib/sensitive-paths.js`; `resolve-review-profile.js`; `sensitive-paths.json` example rule + `_comment` | `resolve-review-profile.test.js` parity; malformed class → `unknown` |
-| 5 | Project ceiling | `auto-loop-project.md`; `auto-loop.md` § Override Contract row | `override-contract.test.js` heading inventories |
-| 6 | Doc sync | `docs/rules.md`, `README*` only if a sentence describes the fix loop; `docs/skill-catalog.yml` unchanged | `/codex-review-doc` |
+| 3 | Path `risk_class` | `sensitive-paths.json` — optional field, one example `rollout-sensitive` rule, `_comment` and `_matching` updated; no script change | `resolve-review-profile.test.js`: a rule carrying `risk_class` still matches, and a malformed rule still reads `unknown` |
+| 4 | Project ceiling | `auto-loop-project.md`; `auto-loop.md` § Override Contract row | `override-contract.test.js` heading inventories |
+| 5 | Doc sync | `docs/rules.md`, `README*` only if a sentence describes the fix loop; `docs/skill-catalog.yml` unchanged | `/codex-review-doc` |
 
 ## 6. Testing Strategy
 
@@ -245,11 +271,16 @@ Ordered so the first item alone closes the "always mandatory" hole with contract
   Blocked and admitted stays owed; re-review relation change invalidates a carried deferral;
   dual merge with one `uncertain` source → mandatory; a self-classified pre-review candidate
   under `closed` → `[OPPORTUNISTIC_DEFERRED] … source=self`, no edit; a ratchet whose accumulated
-  `S` enters a rollout-sensitive path → `closed` for every later candidate.
-- **Scripts**: collector fixtures for numstat / name-status / rename / deletion / breaking
-  signals / migration / untracked; structural absence of repo-wide search; latency backstop;
-  `risk-analyze.js` output byte-identical before and after the extraction; matcher parity with
-  the resolver's previous inline function; optional and malformed `risk_class`.
+  `S` enters a rollout-sensitive path → `closed` for every later candidate; an admitted P2 under
+  `standard` persisting after the mandatory fix → still Blocked; an untracked 300-line production
+  file → counted as 300 added lines, `micro`; an untracked binary → `unknown` → `closed`; a config
+  with `rules` not an array or a non-list `exclude` → `unknown` → `closed`; a valid first rule
+  that matches followed by a malformed later rule → the latch reads `unknown` → `closed` even
+  though `sensitivityHit` would have returned the first match; an `include` containing `""` →
+  `unknown` for the latch, accepted by the resolver — both pinned as the intended divergence.
+- **Config**: a `sensitive-paths.json` rule carrying `risk_class` passes `sensitivityHit`
+  unchanged; a malformed rule still reads `unknown`; the shipped example rule matches
+  `hooks/…` and not `docs/hooks/…`. No script tests — there is no new script.
 - **Guard tests** follow `rules/testing.md` § Conventions: the refusal path (deferral refused for
   `in-diff`, `uncertain`, P0, security, data-integrity) and the ordinary-data path (a proven
   candidate under `small` is admitted) exercise the same contract text.
@@ -263,5 +294,5 @@ Ordered so the first item alone closes the "always mandatory" hole with contract
    `small`. Decide after the first ten `FIX` records.
 2. Does `rollout-sensitive` need a sibling class (`shared`) in `risk_class`, or is the model's
    escalation enough for shared internal primitives? v1 ships one recognised value.
-3. Whether to accept a `purpose_hint` from the collector (e.g. `fix` in the branch name) or keep
-   purpose strictly task-derived. v1: strictly task-derived.
+3. Whether a branch name (`fix/…`) may hint `purpose` or purpose stays strictly task-derived.
+   v1: strictly task-derived.
