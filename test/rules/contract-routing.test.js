@@ -41,10 +41,10 @@ const CONTRACTS = [
     // (for an ad-hoc session that dispatched no skill) and the owning skill's own manifest.
     activatedBy: ['rules/scope-discipline.md', 'skills/codex-code-review/SKILL.md'],
     // Headings other files reference by `§`; each must survive in the contract.
-    headings: ['Scope Baseline', 'Scope Determination', 'Behavior Table', 'Records',
-      'Closed-Set Options', 'Helper-Sweep Ban', 'Circuit Breaker', 'Gate Derivation', 'Human Exits',
-      'Anchor Compatibility'],
-    minHeadings: 10,
+    headings: ['Scope Baseline', 'Scope Determination', 'Behavior Table', 'Opportunistic Envelope',
+      'Records', 'Closed-Set Options', 'Helper-Sweep Ban', 'Circuit Breaker', 'Gate Derivation',
+      'Human Exits', 'Anchor Compatibility'],
+    minHeadings: 11,
   },
   {
     path: 'skills/codex-code-review/references/loop-diagnostics.md',
@@ -146,7 +146,25 @@ const reachable = (src, path) => {
   return src.startsWith(`${owner}/`) && body.includes(path.slice(owner.length + 1));
 };
 
-const RECORD_LINE = /^\s*\[(DEVIATION|USER_SKIPPED|OUT_OF_SCOPE_DEFERRED|NIT_DEFERRED|REVIEWER_FALLBACK|THREAD_ROTATED)\]/;
+const RECORD_LINE = /^\s*\[(DEVIATION|USER_SKIPPED|OUT_OF_SCOPE_DEFERRED|NIT_DEFERRED|REVIEWER_FALLBACK|THREAD_ROTATED|OPPORTUNISTIC_BUDGET|OPPORTUNISTIC_FIX|OPPORTUNISTIC_DEFERRED)\]/;
+
+// The RECORD_LINE alternatives only matter if `scan` actually excludes such a line. A record whose
+// prose happens to carry a `path § heading` shape would otherwise be reported as a dangling
+// citation — and adding a token without an exclusion test is how that regression ships green.
+// Both directions, on the real function: the record is excluded, an ordinary line is not.
+test('record lines when scanned → the three opportunistic tokens are excluded, ordinary prose is not', () => {
+  const citation = 'skills/codex-code-review/references/scope-contract.md § No Such Heading';
+  for (const token of ['OPPORTUNISTIC_BUDGET', 'OPPORTUNISTIC_FIX', 'OPPORTUNISTIC_DEFERRED']) {
+    const record = `[${token}] key=x | reason=closed | see ${citation} | 2026-09-02T00:00:00Z`;
+    assert.deepEqual(scan(record), [],
+      `a [${token}] record must be excluded from citation scanning`);
+  }
+  // Positive control: the same citation outside a record line still reports, so the exclusion is
+  // doing the work rather than the scanner having stopped resolving anything.
+  const problems = scan(`Ordinary prose citing ${citation}.`);
+  assert.equal(problems.length, 1, 'a dangling citation in ordinary prose must still be reported');
+  assert.match(problems[0], /No Such Heading/);
+});
 
 function scan(text) {
   const problems = [];

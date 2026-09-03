@@ -105,7 +105,8 @@ Classify every finding against the frozen Scope Baseline above — do NOT recomp
 - \`origin=<in-diff|pre-existing|uncertain>\` — was the defect introduced by these changes?
 - \`scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>\`
 - \`scope=<in-scope|out-of-scope>\` — **derived, not free**: out-of-scope ⇔ origin=pre-existing ∧ scope_reason=pre-existing-outside
-- \`evidence\` — a \`file:line\` call-site citation for one-hop; a \`git blame\`/\`git log -L\` line for branch-introduced; \`pre-existing-outside\` requires the **complete negative case**: not in the baseline, no one-hop call site from a changed symbol, not introduced by this branch
+- \`change_relation=<affected|independent|uncertain>\` — does the primary diff change this defect's inputs, reachability, contract, error behaviour, state, or operational impact? Adjacency is not effect: a cited one-hop call site proves the defect is nearby, not that this change reaches it
+- \`evidence\` — a \`file:line\` call-site citation for one-hop; a \`git blame\`/\`git log -L\` line for branch-introduced; \`pre-existing-outside\` requires the **complete negative case**: not in the baseline, no one-hop call site from a changed symbol, not introduced by this branch; \`change_relation=independent\` on an in-scope finding requires the primary hunk(s) it is independent OF, cited as \`file:@@-a,b+c,d\` (plus the one-hop call site where that is the scope reason) — no hunk citation means \`uncertain\`
 
 One hop only: a direct caller or direct callee of a symbol the diff modified, with the call site cited — no transitive expansion. If you cannot cite the evidence, use \`uncertain\`; it is read as in-scope. Non-code files (\`.md\`, config, data): only baseline membership and branch introduction apply.
 
@@ -139,16 +140,16 @@ Do not inflate severity to make a point, and do not manufacture findings to fill
 
 ### Findings
 
-Every finding line ends with its scope fields: \`| origin=<...> scope_reason=<...> scope=<...> evidence=<...>\`
+Every finding line ends with its scope fields: \`| origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...>\`
 
 #### P0
-- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> evidence=<...>
+- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...>
 
 #### P1
-- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> evidence=<...>
+- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...>
 
 #### P2
-- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> evidence=<...>
+- [file:line] Issue -> Fix recommendation | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...>
 
 ### Tests Recommendation (only when tied to a concrete finding or an explicit AC — otherwise omit the section)
 - Suggested new test cases, each naming the finding or AC it covers

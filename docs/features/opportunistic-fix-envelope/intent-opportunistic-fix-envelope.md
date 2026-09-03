@@ -21,7 +21,7 @@ never costing a review round of its own.
 - No new Anchor Register item, gate sentinel, `gate_reason` value, or human exit.
 - No dismissal semantics: a deferral never claims the finding is non-actionable, never emits
   `[DISMISS_VERDICT]`, and leaves `/seek-verdict` untouched.
-- No persistence: the three records are transcript conventions like `[NIT_DEFERRED]`.
+- No persistence and no cross-round obligation carry (withdrawn 2026-09-03): records are transcript conventions; `fix_obligation` is derived afresh from every report.
 
 ## Invariants
 
@@ -38,8 +38,8 @@ never costing a review round of its own.
   before the first review or inside a fix phase a mandatory blocking finding already opened;
   a report that would be `✅ Ready` with only deferred candidates stays `✅ Ready`.
 - `INV-004`: Gate predicate: `⛔ Blocked ⇔ ∃ in-scope ∧ ((mandatory ∧ ≥ tier-blocking) ∨
-  admitted)` ∨ the existing out-of-scope-critical disjunct; `gate_reason` keeps its four
-  values; an admitted finding stays owed until fixed, whatever its severity.
+  admitted)` ∨ the existing out-of-scope-critical disjunct; `gate_reason` keeps its four values;
+  an admitted finding is owed for its fix phase whatever its severity — no re-dispatch while unfixed (amended 2026-09-03, no carry).
 - `INV-005`: Reviewer independence: prompts request `change_relation` neutrally and never carry
   the envelope, the ceiling or a desired disposition; orchestration never rewrites a reviewer's
   `origin` or `change_relation` toward `independent`.

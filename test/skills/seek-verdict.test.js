@@ -481,3 +481,33 @@ test('S15: verdict-triage-prompt.md includes DISMISS_CANDIDATE in both mapping a
     `verdict-triage-prompt.md has ${matches?.length || 0} DISMISS_CANDIDATE refs, expected >= 2 (mapping + verification)`
   );
 });
+
+// An opportunistic deferral says "this change does not owe the fix now"; a dismissal says "the
+// finding is not real". Collapsing the two would let a P1 leave the board on a P2's evidence bar,
+// bypassing the human gate `policy-mapping.md` puts on a P0/P1 dismiss. These pin the separation.
+test('S16: an opportunistic deferral is not a dismissal and never borrows the dismiss vocabulary', () => {
+  const contract = readFileSync(
+    resolve(root, 'skills/codex-code-review/references/scope-contract.md'), 'utf8');
+  const env = contract.slice(
+    contract.indexOf('## Opportunistic Envelope'), contract.indexOf('## Records'));
+  assert.ok(env.length > 0, 'the scope contract must carry an Opportunistic Envelope section');
+
+  assert.match(env, /Deferral is not dismissal/,
+    'the separation must be stated where the deferral is defined');
+  assert.match(env, /stays actionable/,
+    'a deferred finding is still a real finding');
+  assert.ok(!/DISMISS_VERIFIED|DISMISS_CANDIDATE/.test(env),
+    'the envelope must not reuse the dismiss result vocabulary');
+  assert.match(env, /carries no `\[DISMISS_VERDICT\]`/,
+    'a deferral emits no dismiss audit line');
+  assert.match(env, /needs no\s+`\/seek-verdict` blind check/,
+    'a deferral does not route through blind verification');
+
+  // …and the reverse direction: the P0/P1 human gate is untouched by any of this.
+  const policy = readFileSync(
+    resolve(root, 'skills/seek-verdict/references/policy-mapping.md'), 'utf8');
+  assert.match(policy, /Human confirmation required/,
+    'the P0/P1 dismiss gate must still require human confirmation');
+  assert.ok(!/OPPORTUNISTIC/.test(policy),
+    'seek-verdict policy must stay independent of the opportunistic axis');
+});

@@ -183,12 +183,17 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
    references/review-common.md § Scope Fields): origin=<in-diff|pre-existing|uncertain>,
    scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>,
    scope=<in-scope|out-of-scope> (derived: out-of-scope ⇔ pre-existing ∧
-   pre-existing-outside), evidence=<file:line call site, or a blame/log -L citation;
-   pre-existing-outside requires the complete negative case>. One hop only — no
+   pre-existing-outside), change_relation=<affected|independent|uncertain> (does the
+   primary diff change this defect's inputs, reachability, contract, error behaviour,
+   state, or operational impact? adjacency is not effect — a cited one-hop call site
+   proves the defect is nearby, not that this change reaches it),
+   evidence=<file:line call site, or a blame/log -L citation;
+   pre-existing-outside requires the complete negative case; change_relation=independent
+   on an in-scope finding requires the primary hunk(s) as file:@@-a,b+c,d>. One hop only — no
    transitive expansion; no citable evidence → uncertain.
 
    Output findings in this format:
-   - [P0/P1/P2/Nit] file:line issue description → fix recommendation | origin=... scope_reason=... scope=... evidence=...
+   - [P0/P1/P2/Nit] file:line issue description → fix recommendation | origin=... scope_reason=... scope=... change_relation=... evidence=...
 
    Group by severity. Include a final gate: ✅ Ready or ⛔ Blocked, with one line
    gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH> — Blocked ⇔ an
@@ -201,7 +206,7 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 - **Rotation check first**: before each reply, apply `references/review-common.md` § Review Loop — Thread Rotation (central contract): at the R-a threshold (3 replies on this thread; `auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, do **not** reply — dispatch Case A's first-review template on a **new** thread (frozen baseline only; old findings and dispositions reconciled orchestration-side after the fresh report) and record `[THREAD_ROTATED]`.
 - **Codex**: otherwise use `mcp__codex__codex-reply` with re-review template from `references/review-common.md`
-- **Under fallback** (sticky carrier for this change): agents are stateless — every re-review is a fresh Step 3.5-style dispatch to the same carrier, so rotation is automatically satisfied; validate each report the same way before noting.
+- **Under fallback** (sticky carrier for this change): agents are stateless — every re-review is a fresh Step 3.5-style dispatch to the same carrier, so rotation is automatically satisfied; validate each report the same way before noting. **Reconcile it like a rotated report** (`references/review-common.md` § Thread Rotation step 3): an old unclosed finding the fresh report omits is closed if its fix is in the diff, and otherwise re-enters this round with its identity and severity and `change_relation=uncertain` — a fresh carrier's silence never retires an unfixed owed finding.
 - **Secondary** (`--dual` only): re-dispatch in parallel, fresh context. Cycle resets on any code edit.
 
 ### Step 3.5: Await Results
@@ -227,20 +232,20 @@ If Codex is unavailable (quota, network, MCP unreachable, timeout — detected b
 |-----------------|--------|
 | Completed before Codex | Include in aggregation (Step 4) |
 | Completed after Codex, before precommit | Reconcile at pre-precommit checkpoint |
-| Still running at precommit | Proceed with Codex gate (authoritative); a late result is normalized fail-closed, merged conservatively, and its derived pair routed through the Step 4.5 matrix — a late in-scope blocking finding re-opens the fix loop, a late out-of-scope critical finding is E1, never a silent re-open |
+| Still running at precommit | Proceed with Codex gate (authoritative); a late result is normalized fail-closed, merged conservatively, and its derived pair routed through the Step 4.5 matrix — a late in-scope **owed** finding re-opens the fix loop (`fix_obligation=mandatory` at or above the blocking severity, or `admitted` at any severity), a late in-scope `deferred` candidate is recorded (`[OPPORTUNISTIC_DEFERRED]` at blocking severity, `[NIT_DEFERRED]` below it) and re-opens nothing, a late out-of-scope critical finding is E1, never a silent re-open |
 | Failed/timed out | Apply degradation matrix per `references/review-common.md § Dual Reviewer Aggregation` |
 
-**`--dual` (Codex-failure path):** when the probe fails under `--dual`, the same fallback chain above carries the gate **alone** — the validated fallback report is the gate verdict, no aggregation is waited on or built, and no Codex thread exists to continue. The healthy-path table above does **not** apply, and the secondary's report — whether it completed before Codex failed, before precommit, or after — is never merged into the fallback's gate derivation **and never carries the gate itself**. Handle it under the **Codex-down secondary policy**: normalize it fail-closed on arrival, then act on its blocking findings only, conservatively — a secondary in-scope blocking finding re-opens the fix loop; a secondary out-of-scope critical finding is E1 — while a secondary `✅ Ready` is advisory and notes **nothing**: it never substitutes for a validated fallback verdict, and Step 4.5's `✅ Ready × NONE` row is indexed only by the gate carrier's own report, never by a secondary's. In particular, at Priority 4 (every fallback carrier exhausted — no validated verdict exists) the gate stays open with behaviour-layer `⚠️ Need Human` **whatever the secondary reported**. Nothing is silently merged or dropped. The pre-precommit checkpoint below is likewise Codex-healthy-only — on this path there is no aggregate to reconcile and no Codex gate to proceed with.
+**`--dual` (Codex-failure path):** when the probe fails under `--dual`, the same fallback chain above carries the gate **alone** — the validated fallback report is the gate verdict, no aggregation is waited on or built, and no Codex thread exists to continue. The healthy-path table above does **not** apply, and the secondary's report — whether it completed before Codex failed, before precommit, or after — is never merged into the fallback's gate derivation **and never carries the gate itself**. Handle it under the **Codex-down secondary policy**: normalize it fail-closed on arrival, derive each finding's `fix_obligation` exactly as the gate carrier's report gets it (`references/scope-contract.md § Opportunistic Envelope`), then act on its **owed** blocking findings only, conservatively — a secondary in-scope `mandatory` blocking finding, or an `admitted` one at any severity, re-opens the fix loop; a secondary finding deriving `deferred` is recorded (`[OPPORTUNISTIC_DEFERRED]` at blocking severity, `[NIT_DEFERRED]` below it) and re-opens nothing; a secondary out-of-scope critical finding is E1 — while a secondary `✅ Ready` is advisory and notes **nothing**: it never substitutes for a validated fallback verdict, and Step 4.5's `✅ Ready × NONE` row is indexed only by the gate carrier's own report, never by a secondary's. In particular, at Priority 4 (every fallback carrier exhausted — no validated verdict exists) the gate stays open with behaviour-layer `⚠️ Need Human` **whatever the secondary reported**. Nothing is silently merged or dropped. The pre-precommit checkpoint below is likewise Codex-healthy-only — on this path there is no aggregate to reconcile and no Codex gate to proceed with.
 
 ### Step 4: Consolidate Output
 
-**Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate (dual-axis): first normalize every finding's scope fields fail-closed (`references/review-common.md § Scope Fields`), then BLOCKED ⇔ an in-scope (incl. `uncertain`) finding at or above the tier's blocking severity, **or** an out-of-scope critical finding (P0 / security / data-integrity) with no valid `[USER_SKIPPED]`; else READY with `gate_reason=NONE` (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
+**Single reviewer (default dispatch):** Codex's findings are the output as-is. Sort P0 → P1 → P2 → Nit. Gate (dual-axis): first normalize every finding's scope fields fail-closed (`references/review-common.md § Scope Fields`), derive each finding's `fix_obligation` (`references/scope-contract.md § Opportunistic Envelope`), then BLOCKED ⇔ an in-scope (incl. `uncertain`) `mandatory` finding at or above the tier's blocking severity, **or** an in-scope `admitted` finding at any severity, **or** an out-of-scope critical finding (P0 / security / data-integrity) with no valid `[USER_SKIPPED]`; else READY with `gate_reason=NONE` (see `references/review-common.md § Merge Gate`; `standard` is the default and blocks on P0/P1). The `[source: ...]` tag is omitted — there is only one source.
 
-**Fallback carrier (Codex out — with or without `--dual`):** the validated fallback report proceeds unchanged through the single-reviewer gate derivation above and on to Step 4.5 — single-reviewer mode, so per-finding `[source: ...]` tags are omitted exactly as on the Codex path; provenance rides on `gate_source=fallback:<agent>` and the `[REVIEWER_FALLBACK]` record, not on finding tags. It is never merged with a secondary; a secondary report that exists is handled by the Codex-down secondary policy (Step 3.5 Codex-failure path) — blocking findings escalate, its `Ready` never notes.
+**Fallback carrier (Codex out — with or without `--dual`):** the validated fallback report proceeds unchanged through the single-reviewer gate derivation above and on to Step 4.5 — single-reviewer mode, so per-finding `[source: ...]` tags are omitted exactly as on the Codex path; provenance rides on `gate_source=fallback:<agent>` and the `[REVIEWER_FALLBACK]` record, not on finding tags. It is never merged with a secondary; a secondary report that exists is handled by the Codex-down secondary policy (Step 3.5 Codex-failure path) — **owed** blocking findings escalate (mandatory at or above the blocking severity, or admitted at any severity), a `deferred` candidate is recorded and escalates nothing, and its `Ready` never notes.
 
 **`--dual` (Codex-healthy path only):**
 
-1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...>` — the four scope fields survive normalization; a source that omitted them gets `uncertain` (fail-closed), never a blank
+1. **Normalize** both sets of findings to unified format: `[severity] file:line description → fix | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...>` — the five scope fields survive normalization; a source that omitted them gets `uncertain` (fail-closed), never a blank
    - Codex findings: already in standard format
    - toolkit findings: apply Severity Mapping (see `references/review-common.md § Severity Mapping`)
    - strict-reviewer findings: already use P0/P1/P2/Nit
@@ -248,6 +253,7 @@ If Codex is unavailable (quota, network, MCP unreachable, timeout — detected b
 2. **Deduplicate & merge by field** using key = `file + canonical_issue_text` (ignore line ±5 difference). Normalize each reviewer's findings fail-closed **before** merging, then merge conservatively per field (`references/review-common.md § Deduplication Algorithm`):
    - severity: highest wins (P0 > P1 > P2 > Nit)
    - scope: any source `in-scope` or `uncertain` → `in-scope`; `out-of-scope` only when **every** source independently proves it
+   - change_relation: any source `affected` or `uncertain` → mandatory; `independent` only when **every** source independently reports it with primary-hunk evidence
    - origin / scope_reason: sources conflict → `uncertain`
    - security/data-integrity domain: any source hits → the aggregate keeps the critical domain
    - evidence: keep all — never discard with the losing severity
@@ -258,13 +264,13 @@ If Codex is unavailable (quota, network, MCP unreachable, timeout — detected b
 
 4. **Sort**: P0 → P1 → P2 → Nit
 
-5. **Gate decision** (dual-axis, on the conservative aggregate): an in-scope (incl. `uncertain`) finding at or above the tier's blocking severity, or an out-of-scope critical finding with no valid `[USER_SKIPPED]` → BLOCKED; else → READY with `gate_reason=NONE`
+5. **Gate decision** (dual-axis, on the conservative aggregate, after deriving `fix_obligation`): an in-scope (incl. `uncertain`) `mandatory` finding at or above the tier's blocking severity, an in-scope `admitted` finding at any severity, or an out-of-scope critical finding with no valid `[USER_SKIPPED]` → BLOCKED; else → READY with `gate_reason=NONE`
 
 Output format keeps the merged scope fields and adds the source tag:
 
 ```
-- [P0] file:line issue → fix | origin=in-diff scope_reason=diff-file scope=in-scope evidence=<...> [source: both]
-- [P1] file:line issue → fix | origin=uncertain scope_reason=uncertain scope=in-scope evidence=<...> [source: codex]
+- [P0] file:line issue → fix | origin=in-diff scope_reason=diff-file scope=in-scope change_relation=affected evidence=<...> [source: both]
+- [P1] file:line issue → fix | origin=uncertain scope_reason=uncertain scope=in-scope change_relation=uncertain evidence=<...> [source: codex]
 ```
 
 ### Step 4.5: Output the gate and note the verdict
@@ -273,19 +279,19 @@ Output the standard gate sentinel:
 - `✅ Ready` — if READY (no blocking finding on either axis)
 - `⛔ Blocked` — if BLOCKED
 
-**Route on derived values, never declarations.** Before acting on the reviewer's sentinel, normalize all findings fail-closed (`references/review-common.md § Scope Fields`) and **derive** the expected sentinel × `gate_reason`; the reviewer's declared pair is an unverified claim. Four canonical recalculations: a declared `Ready × NONE` wrapping a real in-scope blocking finding routes as `Blocked × IN_SCOPE_BLOCKING` — a reviewer cannot wrap a real blocking finding in a lawful pairing; a declared `Ready × NONE` wrapping an out-of-scope critical finding with no valid `[USER_SKIPPED]` routes as `Blocked × OUT_OF_SCOPE_CRITICAL`; both classes present under a single declared reason derives `Blocked × BOTH`; a declared `Blocked` with no blocking finding on either axis routes as `Ready × NONE`. Findings too incomplete to derive → conservatively `Blocked × BOTH`. "Breaker triggered" is the model's own fix-phase state (`skills/codex-code-review/references/scope-contract.md` § Circuit Breaker), not a reviewer field — check it before routing. The matrix indexes on the **derived** pair:
+**Route on derived values, never declarations.** Before acting on the reviewer's sentinel, normalize all findings fail-closed (`references/review-common.md § Scope Fields`), **derive each finding's `fix_obligation`** (`references/scope-contract.md § Opportunistic Envelope` — `mandatory` unless the finding is a proven opportunistic candidate; `admitted` or `deferred` per the envelope), then **derive** the expected sentinel × `gate_reason`; the reviewer's declared pair is an unverified claim. A finding whose obligation is `deferred` is recorded and does not block; one that is `admitted` blocks at **any** severity for the fix phase it was admitted into — that phase does not re-dispatch while it is unfixed; the verifying re-review derives it afresh. Four canonical recalculations: a declared `Ready × NONE` wrapping a real in-scope blocking finding routes as `Blocked × IN_SCOPE_BLOCKING` — a reviewer cannot wrap a real blocking finding in a lawful pairing; a declared `Ready × NONE` wrapping an out-of-scope critical finding with no valid `[USER_SKIPPED]` routes as `Blocked × OUT_OF_SCOPE_CRITICAL`; both classes present under a single declared reason derives `Blocked × BOTH`; a declared `Blocked` with no blocking finding on either axis routes as `Ready × NONE`. Findings too incomplete to derive → conservatively `Blocked × BOTH`. "Breaker triggered" is the model's own fix-phase state (`skills/codex-code-review/references/scope-contract.md` § Circuit Breaker), not a reviewer field — check it before routing. The matrix indexes on the **derived** pair:
 
 | Sentinel × `gate_reason` × breaker | Action |
 |------------------------------------|--------|
 | `✅ Ready` × `NONE` | The only lawful Ready pairing — note pass, proceed to the next gate |
-| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × not triggered | Fix loop (§ Review Loop below) |
+| `⛔ Blocked` × `IN_SCOPE_BLOCKING` × not triggered | Fix loop (§ Review Loop below). `IN_SCOPE_BLOCKING` means **owed now**: a mandatory finding at or above the blocking severity, or an admitted one at any severity |
 | `⛔ Blocked` × `IN_SCOPE_BLOCKING` × triggered | **No fix loop**: human exit E2 (`skills/codex-code-review/references/scope-contract.md` § Human Exits) |
 | `⛔ Blocked` × `OUT_OF_SCOPE_CRITICAL` | `note code_review fail`; **do not fix** — human exit E1 (closed-set options) |
 | `⛔ Blocked` × `BOTH` × not triggered | E1 first (the user's decision may change scope); afterwards the remaining in-scope blocking findings are fixed — the two classes never cancel |
 | `⛔ Blocked` × `BOTH` × triggered | E1 and E2 merge into a **single** Need Human decision point: one notification carrying both the closed-set options and the re-scope decision |
 | Contradictory declaration (`Ready` × a blocking value, `Blocked` × `NONE`), missing or unknown values | Same as every row: re-index this matrix by the derived pair; findings insufficient to derive → treat as `⛔ Blocked` × `BOTH` |
 
-Out-of-scope findings that are not critical never block Ready: they are listed in the report's "Out-of-Scope Findings" section and recorded as `[OUT_OF_SCOPE_DEFERRED]` lines (`skills/codex-code-review/references/scope-contract.md` § Records).
+Out-of-scope findings that are not critical never block Ready: they are listed in the report's "Out-of-Scope Findings" section and recorded as `[OUT_OF_SCOPE_DEFERRED]` lines (`skills/codex-code-review/references/scope-contract.md` § Records). An in-scope finding whose obligation derived to `deferred` likewise never blocks Ready — at or above the blocking severity it is recorded as `[OPPORTUNISTIC_DEFERRED]` (same section); below it, a non-admitted finding keeps `[NIT_DEFERRED]` exactly as before (one record per finding, chosen by severity and obligation together) — and, when it is the only blocking-severity finding, the derived pair is `✅ Ready × NONE`.
 
 Then **self-note the verdict** — this is the declared-provenance record the reminder hooks read
 (hook-lightweighting § 3.2), and it is behaviour-layer: an attestation the conversation can audit,
@@ -319,8 +325,10 @@ See `references/review-common.md` for:
 
 A `⛔ Blocked` enters this loop only through the Step 4.5 routing matrix — `Blocked × IN_SCOPE_BLOCKING` with the breaker untriggered. `OUT_OF_SCOPE_CRITICAL`, `BOTH`, and a triggered breaker route to their human exits instead; sending a critical out-of-scope finding through this loop is exactly the sweep `@rules/scope-discipline.md` closes.
 
-Blocked → fix the in-scope blocking findings → re-review by the path the round dispatches to: same-thread `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`); a fresh first dispatch on a new thread when rotation R-a/R-b holds (`references/review-common.md § Thread Rotation`); or a stateless re-dispatch of the first-dispatch template when the change is sticky on a fallback carrier → repeat until Ready.
+Blocked → fix the findings this change owes — every `fix_obligation=mandatory` finding at or above the blocking severity, plus every `admitted` one — → re-review by the path the round dispatches to: same-thread `/codex-review-fast --continue <threadId>` (the re-review prompt carries the frozen `SCOPE_BASELINE` and the active disposition list — `references/review-common.md § Re-review Prompt Template`); a fresh first dispatch on a new thread when rotation R-a/R-b holds (`references/review-common.md § Thread Rotation`); or a stateless re-dispatch of the first-dispatch template when the change is sticky on a fallback carrier → repeat until Ready.
 Ready with only sub-threshold findings → **log and proceed to `/precommit`**. No extra fix pass, no extra re-review — see `@rules/auto-loop.md § Sub-Threshold Findings` for what counts as sub-threshold at each tier.
+
+**Admission happens only inside a fix phase this loop already opened.** An opportunistic candidate may be taken into the round that a `mandatory` blocking finding put the change into, and never into a round of its own: a report deriving `✅ Ready` is not re-opened to fix a candidate, whatever the envelope still allows (`references/scope-contract.md` § Opportunistic Envelope). Admitting one makes it `admitted`, which holds this phase open until it is fixed; declining leaves it `deferred` and recorded. The re-review then derives every finding afresh — an admitted fix that did not take is reported again and is a candidate again, and recorded, only if the fresh report still proves it one (pre-existing, `independent` with hunks, not P0 / security / data-integrity); under any other fresh classification it derives `mandatory` — never blocking on the earlier admission alone, never dropped.
 
 Round cap comes from the tier — the table in `@rules/auto-loop.md § Tiers` owns the numbers, and restating them here is what let them drift last time. The cap is the backstop, not the stall detector: a stall (`@rules/auto-loop.md § Stall Detection and Diagnosis` — three consecutive rounds that close nothing, counted by the model from the review reports) normally shows first. Same issue recurring at the cap → report blocker, request intervention.
 
@@ -338,15 +346,15 @@ Any code edit resets the review cycle — the reviewer must re-run.
 
 ### Pre-precommit Checkpoint (`--dual`, Codex-healthy path only)
 
-On the Codex-failure path this checkpoint does not run — the fallback report carries the gate alone, and any secondary result follows Step 3.5's Codex-down secondary policy: blocking findings escalate, its `Ready` notes nothing and never closes a gate. Before triggering `/precommit` on the healthy path, reconcile any pending secondary result:
+On the Codex-failure path this checkpoint does not run — the fallback report carries the gate alone, and any secondary result follows Step 3.5's Codex-down secondary policy: **owed** blocking findings escalate (mandatory at or above the blocking severity, or admitted at any severity), a `deferred` candidate is recorded and escalates nothing, and its `Ready` notes nothing and never closes a gate. Before triggering `/precommit` on the healthy path, reconcile any pending secondary result:
 
 A late secondary result goes through the same normalization and field-level merge as Step 4 (fail-closed scope fields, conservative aggregate), and its outcome routes through the Step 4.5 matrix — a late out-of-scope critical finding is E1, not a silent re-open of the fix loop:
 
 | Condition | Action |
 |-----------|--------|
-| Task completed + the merged aggregate has a blocking finding on either axis (in-scope ≥ `${BLOCKING}`, or out-of-scope critical with no valid `[USER_SKIPPED]`) | Re-emit BLOCKED → route via the Step 4.5 matrix (fix loop only for `IN_SCOPE_BLOCKING`, breaker untriggered) |
-| Task completed + no blocking finding on either axis | Union aggregate → proceed to precommit |
-| Task still running | Proceed with Codex gate (authoritative); if the late result produces a blocking finding on either axis after merge, route it via the Step 4.5 matrix. Branch review is always `thorough`, so a late in-scope P2 counts |
+| Task completed + the merged aggregate has an **owed** blocking finding on either axis (in-scope ≥ `${BLOCKING}` with `fix_obligation=mandatory`, in-scope `admitted` at any severity, or out-of-scope critical with no valid `[USER_SKIPPED]`) | Re-emit BLOCKED → route via the Step 4.5 matrix (fix loop only for `IN_SCOPE_BLOCKING`, breaker untriggered) |
+| Task completed + no owed blocking finding on either axis (a `deferred` candidate is recorded, not blocking) | Union aggregate → proceed to precommit |
+| Task still running | Proceed with Codex gate (authoritative); if the late result produces an **owed** blocking finding on either axis after merge, route it via the Step 4.5 matrix; a `deferred` candidate is recorded, not routed. Branch review is always `thorough`, so a late in-scope P2 counts — and an `admitted` one counts at any severity |
 
 ## Verification
 

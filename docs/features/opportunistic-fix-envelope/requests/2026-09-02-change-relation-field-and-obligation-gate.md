@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc.
 > **Created**: 2026-09-02
-> **Status**: Pending
+> **Status**: Candidate Complete
 > **Note**: Work item 1 of 5 in the tech spec's § 5. Lands first because it closes the "always mandatory" hole with contract text and tests alone — no envelope latch, no config change, no script.
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) <- § 3.3 is the contract this ticket implements
@@ -59,25 +59,25 @@ the field, the obligation set, and the gate predicate. It ships no budget logic.
 
 ## Acceptance Criteria
 
-- [ ] `review-common.md` § Scope Fields defines `change_relation` with the hunk-evidence rule, and its fail-closed reading covers missing, unknown, `in-diff ∧ independent`, `branch-introduced ∧ independent`, and `independent` without hunks — each normalizing to `uncertain`
-- [ ] All five prompt surfaces (three variant templates, `SKILL.md` § Step 3 inline secondary, re-review template) request `change_relation` in neutral wording, and none contains "envelope", "ceiling" or a desired disposition; the re-review template carries the re-evaluation sentence
-- [ ] `scope-contract.md` states the candidate predicate, `fix_obligation ∈ {mandatory, admitted, deferred}`, and `⛔ Blocked ⇔ ∃ in-scope ∧ ((mandatory ∧ severity ≥ tier_blocking) ∨ admitted)` ∨ out-of-scope-critical; `gate_reason` keeps four values and `IN_SCOPE_BLOCKING` is defined as owed-now
-- [ ] `SKILL.md` § Step 4.5 derives obligation from normalized findings before indexing the (unchanged, seven-row) matrix; a sole deferred candidate derives `✅ Ready × NONE`; § Review Loop admits a candidate only inside a fix phase a mandatory finding opened
-- [ ] `rules/scope-discipline.md` carries the resident guard sentences and the three record literals; `rules/fix-all-issues.md` preamble says "owed" and its exception table has the Opportunistic budget deferral row with the never-applies list
-- [ ] Derivation fixtures pinned in `scope-review-contract.test.js`: one-hop independent → candidate; one-hop affected → mandatory; `in-diff ∧ independent` → mandatory; sole deferred → Ready; mandatory + admitted → Blocked; admitted P2 under `standard` persisting after the mandatory fix → still Blocked; dual merge with one `uncertain` source → mandatory
-- [ ] `scope-discipline.test.js` pins seven behavior rows and five resident record literals; `contract-routing.test.js` `RECORD_LINE` accepts the three new tokens; `seek-verdict.test.js` pins that a deferral is not a dismissal
-- [ ] `npm test` passes; `rules/auto-loop.md` is untouched by this ticket
-- [ ] Pass `/codex-review-fast` → `/precommit`
-- [ ] Pass `/codex-review-doc`
+- [x] `review-common.md` § Scope Fields defines `change_relation` with the hunk-evidence rule, and its fail-closed reading covers missing, unknown, `in-diff ∧ independent`, `branch-introduced ∧ independent`, and `independent` without hunks — each normalizing to `uncertain`
+- [x] All five prompt surfaces (three variant templates, `SKILL.md` § Step 3 inline secondary, re-review template) request `change_relation` in neutral wording, and none contains "envelope", "ceiling" or a desired disposition; the re-review template carries the re-evaluation sentence
+- [x] `scope-contract.md` states the candidate predicate, `fix_obligation ∈ {mandatory, admitted, deferred}`, and `⛔ Blocked ⇔ ∃ in-scope ∧ ((mandatory ∧ severity ≥ tier_blocking) ∨ admitted)` ∨ out-of-scope-critical; `gate_reason` keeps four values and `IN_SCOPE_BLOCKING` is defined as owed-now
+- [x] `SKILL.md` § Step 4.5 derives obligation from normalized findings before indexing the (unchanged, seven-row) matrix; a sole deferred candidate derives `✅ Ready × NONE`; § Review Loop admits a candidate only inside a fix phase a mandatory finding opened
+- [x] `rules/scope-discipline.md` carries the resident guard sentences and the three record literals; `rules/fix-all-issues.md` preamble says "owed" and its exception table has the Opportunistic budget deferral row with the never-applies list
+- [x] Derivation fixtures pinned in `scope-review-contract.test.js`: one-hop independent → candidate; one-hop affected → mandatory; `in-diff ∧ independent` → mandatory; sole deferred → Ready; mandatory + admitted → Blocked; admitted P2 under `standard` holds its phase open until fixed, and if re-reported by the verifying re-review derives afresh — `deferred` only while still a proven candidate, `mandatory` otherwise (amended 2026-09-03: no cross-round carry); dual merge with one `uncertain` source → mandatory
+- [x] `scope-discipline.test.js` pins seven behavior rows and five resident record literals; `contract-routing.test.js` `RECORD_LINE` accepts the three new tokens; `seek-verdict.test.js` pins that a deferral is not a dismissal
+- [x] `npm test` passes; `rules/auto-loop.md` is untouched by this ticket
+- [x] Pass `/codex-review-fast` → `/precommit`
+- [x] Pass `/codex-review-doc`
 
 ## Progress
 
 | Phase | Status | Note |
 | ---------- | ------ | ---- |
 | Analysis | Done | Spec § 3.3 and intent INV-001/004/005 fixed the contract; nothing left to decide |
-| Development | - | |
-| Testing | - | |
-| Acceptance | - | |
+| Development | Done | Contract text in 8 files; `rules/auto-loop.md` untouched (15,200 bytes) |
+| Testing | Done | `npm test` 4,230 / 4,222 pass / 0 fail / 8 skipped. Adequacy gate (`/codex-test-review --ac-trace`, 3 rounds): AC1–AC7 COVERED at High confidence, no gaps; AC8 INCONCLUSIVE and gate `⚠️ Need Human` because the reviewer's read-only sandbox cannot run the suite (`mkdtemp` EPERM) — an environment limit, not a repository failure; its other half (auto-loop.md untouched) was independently verified. Adequacy Mode is advisory, so this did not block |
+| Acceptance | Done | `/codex-review-fast` ✅ Ready × NONE at round 16 (3 thread rotations; round-10 checkpoint → ⚠️ Need Human → maintainer dropped the cross-round obligation carry 2026-09-03; cap diagnosis at round 15 → one ATTENTION_DIFFUSION/SCATTER adjustment: a cross-carrier guard rejecting the unconditional re-deferral sentence). `/precommit` ✅ PASS. `/codex-review-doc` ✅ Mergeable (round 2). Candidate Complete, not Completed: the adequacy gate's AC8 stayed INCONCLUSIVE for an environment reason (reviewer sandbox cannot run `npm test`); a closure-grade `--verify-ac` run is the remaining step |
 
 ## References
 
