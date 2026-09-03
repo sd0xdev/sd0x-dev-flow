@@ -20,25 +20,30 @@
 
 The gate has **two axes**. The severity axis is decided by the **tier's blocking severity** (see `@rules/auto-loop.md` § Tiers: `fast` blocks on P0, `standard` — the default — on P0/P1, `thorough` on P0/P1/P2), never a fixed list; the scope axis by `@rules/scope-discipline.md`. "Critical" below = P0, or a security/data-integrity finding.
 
-- **Blocked** ⇔ at least one finding that is "in-scope (incl. `uncertain`) ∧ at or above the tier's blocking severity" **or** "out-of-scope ∧ critical ∧ no valid `[USER_SKIPPED]`"
+Scope and severity decide what a finding *is*; `fix_obligation` decides whether this change owes it **now** (`skills/codex-code-review/references/scope-contract.md` § Opportunistic Envelope). It is derived orchestration-side, never reported by a reviewer: `mandatory` unless the finding is a proven opportunistic candidate, then `admitted` when the model takes it into an open fix phase and `deferred` when it does not.
+
+- **Blocked** ⇔ at least one finding that is "in-scope (incl. `uncertain`) ∧ `fix_obligation=mandatory` ∧ at or above the tier's blocking severity", **or** "in-scope ∧ `fix_obligation=admitted`" at **any** severity, **or** "out-of-scope ∧ critical ∧ no valid `[USER_SKIPPED]`"
 - **Ready**: no such finding — `gate_reason=NONE` is the only pairing lawful with Ready
 
-The report's Gate section carries one line `gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH>`. In-scope findings below the blocking line are **sub-threshold** (see `@rules/auto-loop.md` § Sub-Threshold Findings); out-of-scope non-critical findings are recorded as `[OUT_OF_SCOPE_DEFERRED]` and listed under the report's "Out-of-Scope Findings" section — neither blocks Ready.
+The report's Gate section carries one line `gate_reason=<NONE|IN_SCOPE_BLOCKING|OUT_OF_SCOPE_CRITICAL|BOTH>`. In-scope findings below the blocking line are **sub-threshold** (see `@rules/auto-loop.md` § Sub-Threshold Findings) — **unless `fix_obligation=admitted`**, which is owed at any severity for the fix phase it was admitted into; out-of-scope non-critical findings are recorded as `[OUT_OF_SCOPE_DEFERRED]` and listed under the report's "Out-of-Scope Findings" section — neither of those blocks Ready.
 
 ## Scope Fields (fail-closed)
 
-Every finding carries four scope fields (contract: `skills/codex-code-review/references/scope-contract.md` § Gate Derivation), judged against the **frozen** `SCOPE_BASELINE` from Step 1 — never recomputed:
+Every finding carries five scope fields (contract: `skills/codex-code-review/references/scope-contract.md` § Gate Derivation), judged against the **frozen** `SCOPE_BASELINE` from Step 1 — never recomputed:
 
 ```
 origin=<in-diff|pre-existing|uncertain>
 scope_reason=<diff-file|one-hop|branch-introduced|pre-existing-outside|uncertain>
 scope=<in-scope|out-of-scope>   # derived, not free: out-of-scope ⇔ origin=pre-existing ∧ scope_reason=pre-existing-outside
-evidence=<file:line call site, or a one-line blame/log -L citation; pre-existing-outside requires the complete negative case: not in the baseline, no one-hop call site, not branch-introduced>
+change_relation=<affected|independent|uncertain>   # does the primary diff change this defect's inputs, reachability, contract, error behaviour, state, or operational impact?
+evidence=<file:line call site, or a one-line blame/log -L citation; pre-existing-outside requires the complete negative case: not in the baseline, no one-hop call site, not branch-introduced; independent on an in-scope finding requires the primary hunk(s) as file:@@-a,b+c,d, plus the call site for one-hop>
 ```
 
 One hop only: a direct caller or direct callee of a symbol the diff modified, with the call site cited. No transitive expansion. Non-code files: only baseline membership and branch introduction apply.
 
-**Fail-closed reading** (the model applies this when consuming any report): a missing field, an unknown enum value, a contradictory combination (`origin=in-diff ∧ scope=out-of-scope`), or a `pre-existing-outside` whose evidence lacks the complete negative case ⇒ the finding is `uncertain` ⇒ **in-scope**. A reviewer that omits the fields degrades to today's behavior, never to something looser.
+`change_relation` answers a question the other four do not: `scope_reason=one-hop` proves *adjacency* — a cited call site — while `change_relation` asks whether the primary change actually reaches the defect. A pre-existing null check in a direct caller whose contract this diff never touches is `independent`; a caller that must change because this branch changed a signature is `affected`. The reviewer answers it from the same research it already does to classify `origin`; it is never told what the answer would be worth.
+
+**Fail-closed reading** (the model applies this when consuming any report): a missing field, an unknown enum value, a contradictory combination (`origin=in-diff ∧ scope=out-of-scope`, or `origin=in-diff ∧ change_relation=independent`, or `scope_reason=branch-introduced ∧ change_relation=independent`), a `pre-existing-outside` whose evidence lacks the complete negative case, or an `independent` on an in-scope finding whose evidence cites no primary hunk ⇒ the finding is `uncertain` ⇒ **in-scope** and `fix_obligation=mandatory`. A reviewer that omits the fields degrades to today's behavior, never to something looser. Orchestration may escalate a finding toward `mandatory` on stronger evidence; it may never rewrite `affected` or `uncertain` into `independent`.
 
 ## Codex Independent Research (Required)
 
@@ -64,7 +69,7 @@ Codex **must** perform its own research, not rely only on provided diff/context:
 A `Blocked` result is routed by the **derived** sentinel × `gate_reason` pair (parent `SKILL.md` Step 4.5), never by the bare sentinel: only `Blocked × IN_SCOPE_BLOCKING` with the breaker untriggered enters this fix loop; `OUT_OF_SCOPE_CRITICAL` is human exit E1 (do **not** fix), `BOTH` resolves E1 first, and a triggered breaker is E2. For the pairing that does enter:
 
 1. Remember the `threadId`
-2. Fix every **in-scope** (incl. `uncertain`) finding at or above the tier's blocking severity (`${BLOCKING}`) — sub-threshold and out-of-scope ones are logged, not fixed
+2. Fix every **owed** in-scope (incl. `uncertain`) finding: `fix_obligation=mandatory` at or above the tier's blocking severity (`${BLOCKING}`), plus every `admitted` one at any severity — sub-threshold, `deferred` and out-of-scope ones are logged, not fixed
 3. Re-review using `--continue <threadId>` — unless a rotation condition below holds, in which case open a new thread instead
 4. Repeat until Ready — routing each round's result through Step 4.5 again
 
@@ -85,7 +90,7 @@ condition holds, checked before each re-review:
 
 1. Fix the outstanding findings as usual — rotation never interrupts a fix in progress.
 2. Open the new thread with the family's **first-dispatch template**: the full independent-research contract of `@rules/codex-invocation.md` applies again exactly as on round one. The frozen scope baseline (file list) rides in the prompt — metadata the invocation contract already allows; the baseline is **not** recomputed (`skills/codex-code-review/references/scope-contract.md` § Scope Baseline).
-3. The old thread's unclosed findings and dispositions carry issue text and **never enter the new prompt** — feeding them anchors the reviewer. After the fresh report arrives, reconcile on the orchestration side: map old unclosed findings and currently valid dispositions onto the new report via § Finding Identity, then re-derive the gate per `skills/codex-code-review/references/scope-contract.md` § Gate Derivation. A mapping that fails is fail-closed: the unmatched finding returns to the gate.
+3. The old thread's unclosed findings and dispositions carry issue text and **never enter the new prompt** — feeding them anchors the reviewer. After the fresh report arrives, reconcile on the orchestration side: map old unclosed findings and currently valid dispositions onto the new report via § Finding Identity, then re-derive the gate per `skills/codex-code-review/references/scope-contract.md` § Gate Derivation. A mapping that fails is read by what the diff shows: an old finding **fixed since it was reported** that the fresh reviewer omits is **closed** (the omission is the verification); an old finding **not fixed** that the fresh reviewer omits is fail-closed — it returns to this round's finding set with its **identity and severity**, but its current-dependent fields are **stale evidence** and are reset: `change_relation` and its evidence re-enter as `uncertain`, which derives `mandatory`, until a reviewer re-classifies them against the current diff (orchestration may escalate a relation, never assert `independent` — § Scope Fields). No obligation is carried; the finding's identity is. A reviewer's silence alone never closes an unfixed finding, and a visible fix never needs the reviewer to confirm it by name. **The same reconciliation applies to every stateless fallback re-dispatch**: each is a fresh report exactly as a rotated thread's is, so its omissions are read the same way.
 4. Record `[THREAD_ROTATED] plane=<plane> old=<threadId> new=<threadId> reason=<rounds|context> | <ISO8601>` at column 0 (reporting convention — greppable, nothing parses it) and reset the per-thread count; subsequent replies use the new thread.
 
 The rotation unit is the **batch's thread**: one-thread-per-batch is unchanged — a rotation swaps
@@ -94,7 +99,7 @@ rotation; they measure the change, not the thread.
 
 ## Sub-Threshold Findings
 
-When review returns Ready with findings **below** the tier's blocking severity, they do **not** re-open the loop. Log them and move on:
+When review returns Ready with findings **below** the tier's blocking severity, they do **not** re-open the loop. Log them and move on — with one exception: a finding whose `fix_obligation` is `admitted` is **never** sub-threshold, whatever its severity. It was taken into an open fix phase deliberately, so it is owed for that phase and keeps it open until fixed (`skills/codex-code-review/references/scope-contract.md` § Opportunistic Envelope). And one exclusion in the other direction: the on-the-spot fixes `@rules/auto-loop.md` § Sub-Threshold Findings allows (a one-line fix in a file already open; a mis-severitized security or data-integrity defect) **never apply to a `deferred` opportunistic candidate** — fixing one on the spot would open the opportunistic-only round the contract forbids, so it is recorded and left; the security / data-integrity case is never a candidate in the first place.
 
 ```
 [NIT_DEFERRED] file:line | issue | reason: sub-threshold-<severity> | <ISO8601>
@@ -121,7 +126,14 @@ Used when comparing findings across rounds (to tell a persisting issue from a ne
 | Parse | Extract findings from Codex output (tag-based `[P2]`/`[Nit]` or section-based `#### P2`/`#### Nit`) |
 | Identity | Key = `file + canonicalized issue text` (line number approximate, may shift after fix) |
 | Dedupe | Same key across reviews counts as 1 item |
-| False-positive | Same key persists after a genuine fix → treat as `possible-false-positive`, log and defer |
+| False-positive | Same key persists after a genuine fix → treat as `possible-false-positive`, log and defer — a note about identity, never about obligation: what the finding is *owed* is derived from the fresh report (§ Opportunistic Envelope), and an owed finding is never deferred by this row |
+
+**`fix_obligation` is not carried across rounds.** It is derived afresh from every report — the
+first dispatch, a same-thread reply, a rotated thread, a stateless fallback re-dispatch alike —
+from that report's normalized findings and nothing else (`skills/codex-code-review/references/scope-contract.md`
+§ Opportunistic Envelope). A reviewer never reports it and no prompt ever carries it, so there is
+no per-key state to reconcile here: identity matching above tells a persisting finding from a new
+one, and the obligation of each is whatever the current report derives.
 
 ### Re-review Prompt Template
 
@@ -146,7 +158,7 @@ ${DISPOSITIONS || 'None'}
 Please verify:
 1. Have the previously identified blocking issues been correctly fixed?
 2. Did the fixes introduce new issues?
-3. Keep the scope fields on every finding (origin / scope_reason / scope / evidence), judged against the frozen baseline above
+3. Keep the scope fields on every finding (origin / scope_reason / scope / change_relation / evidence), judged against the frozen baseline above. Re-evaluate `change_relation` for every finding against the **current** primary diff
 4. The assurance boundary from the first dispatch still applies: a blocking guard finding needs a violated behavior/AC/invariant plus a counterexample on the real path; further hardening of demonstrated properties is Nit
 5. Update Merge Gate status, including the gate_reason line`,
 
@@ -185,10 +197,10 @@ When a finding is verified via `/seek-verdict`, output:
 ## Output Findings Format
 
 ```
-- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: codex|toolkit|both]
+- [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...> [source: codex|toolkit|both]
 ```
 
-> Note: `[source: ...]` is required under `--dual` aggregation (Codex healthy) and omitted in single-reviewer mode — the default Codex dispatch **and** the fallback-alone path alike: no carrier prompt requests the tag, so a fallback report carries none, and its provenance rides on `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record instead. The four scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
+> Note: `[source: ...]` is required under `--dual` aggregation (Codex healthy) and omitted in single-reviewer mode — the default Codex dispatch **and** the fallback-alone path alike: no carrier prompt requests the tag, so a fallback report carries none, and its provenance rides on `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record instead. The five scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
 
 ## AC Coverage Format (Spec-Driven Review)
 
@@ -245,6 +257,7 @@ Normalize each reviewer's findings **fail-closed first** (§ Scope Fields), then
 | Line tolerance | ±5 lines (ignore line number differences within range) |
 | severity | Same key → keep highest severity (P0 > P1 > P2 > Nit) |
 | scope | Any source `in-scope` or `uncertain` → aggregate `in-scope`; aggregate `out-of-scope` **only when every source independently proves it** with complete negative evidence |
+| change_relation | Any source `affected` or `uncertain` → aggregate `affected`/`uncertain` (both read `mandatory`); aggregate `independent` **only when every source independently reports it** with primary-hunk evidence |
 | origin / scope_reason | Sources conflict → aggregate `uncertain` |
 | security/data-integrity domain | Any source hits → the aggregate keeps the critical domain |
 | evidence | Keep all sources' evidence — never discard it with the losing severity |
@@ -299,7 +312,7 @@ Every finding in a **dual aggregate** (Codex healthy) includes a source tag:
 | `both` | Found by both reviewers (deduplicated) |
 | *(fallback — record-level, not a finding tag)* | When a fallback carrier holds the gate (with or without `--dual`) there is no aggregate and the report stays in single-reviewer format with **no** per-finding tags — no carrier prompt requests one. Provenance is `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record |
 
-Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...> scope=<...> evidence=<...> [source: both]`
+Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...> [source: both]`
 
 ### Review Loop (under `--dual`)
 
@@ -314,8 +327,10 @@ Codex is out (the Codex-❌ rows in § Degradation Matrix), the validated fallba
 gate — in single-reviewer format, provenance on `gate_source=fallback:<agent>` (§ Source
 Attribution) — and there is no aggregation to wait on: a secondary already running is not awaited
 and never merges into the fallback's gate derivation; whenever its report arrives it falls under
-the parent skill's Codex-down secondary policy (Step 3.5 Codex-failure path) — blocking findings
-escalate conservatively, but its `Ready` notes nothing and never substitutes for a validated
+the parent skill's Codex-down secondary policy (Step 3.5 Codex-failure path) — **owed** blocking findings
+escalate conservatively (`mandatory` at or above the blocking severity, or `admitted` at any
+severity — `skills/codex-code-review/references/scope-contract.md` § Opportunistic Envelope defines
+the term), a `deferred` candidate is recorded and escalates nothing, but its `Ready` notes nothing and never substitutes for a validated
 fallback verdict or closes a Priority-4 exhaustion — never silently merged or dropped. Any code
 edit resets the review cycle — every reviewer carrying the gate must re-run.
 

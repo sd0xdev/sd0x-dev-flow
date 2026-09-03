@@ -46,7 +46,7 @@
 | Artifact | Relevant behavior (verified 2026-09-02) | Change |
 |----------|------------------------------------------|--------|
 | `rules/scope-discipline.md` § Resident Guard | Three in-scope conditions; `uncertain` fails closed; records `[OUT_OF_SCOPE_DEFERRED]` / `[USER_SKIPPED]`; six semantics pinned resident | Add the envelope guard (§ 3.6) and three record literals |
-| `skills/codex-code-review/references/scope-contract.md` § Scope Determination, § Behavior Table, § Circuit Breaker, § Gate Derivation | Mechanical scope; breaker "stops expansion; never rewrites scope" with 5-file / second-directory thresholds marked provisional; `⛔ Blocked ⇔ in-scope ∧ ≥ blocking ∨ out-of-scope critical`; `gate_reason` four values | Add § Opportunistic Envelope; split the behavior table's first row by obligation; redefine `IN_SCOPE_BLOCKING` as owed-now |
+| `skills/codex-code-review/references/scope-contract.md` § Scope Determination, § Behavior Table, § Circuit Breaker, § Gate Derivation | Mechanical scope; breaker "stops expansion; never rewrites scope" with 5-file / second-directory thresholds marked provisional; `⛔ Blocked ⇔ in-scope ∧ ≥ blocking ∨ out-of-scope critical`; `gate_reason` four values | Add § Opportunistic Envelope; split the behavior table's first row by obligation; restate the breaker disposition table over the obligation (four rows); redefine `IN_SCOPE_BLOCKING` as owed-now |
 | `skills/codex-code-review/SKILL.md` § Step 1, § Step 1.1, § Step 4.5, § Review Loop | Baseline and `TASK_DESCRIPTION` frozen once; tier resolved from change semantics; routing matrix indexes the derived pair (seven rows); loop re-enters only on `IN_SCOPE_BLOCKING` | Step 1 reuses or creates the envelope record; Step 4.5 derives `fix_obligation` before the pair; loop admits candidates only into an open fix phase |
 | `skills/codex-code-review/references/review-common.md` § Merge Gate, § Scope Fields, § Re-review Prompt Template | Four scope fields, fail-closed reading; re-review carries frozen baseline and active dispositions | Fifth field `change_relation`; obligation-aware gate; re-review re-evaluates the field |
 | `references/codex-prompt-{fast,full,branch}.md`; inline secondary prompt (`SKILL.md` § Step 3, `--dual`); re-review template (`review-common.md` § Re-review Prompt Template) | Findings format carries `origin / scope_reason / scope / evidence`; `[source: codex\|toolkit\|both]` only under `--dual`; fallback carriers re-dispatch the variant templates (provenance rides on `gate_source`) | Add the neutral `change_relation` request and hunk-evidence rule on all five surfaces; nothing about budget |
@@ -125,7 +125,7 @@ envelope for every later candidate). A ratchet re-emits `[OPPORTUNISTIC_BUDGET]`
 
 ```
 change_relation=<affected|independent|uncertain>   # does the primary diff change this defect's inputs, reachability, contract, error behaviour, state or operational impact?
-evidence: independent on an in-scope finding must cite the primary hunk(s) as file:@@-a,b+c,d (and the call site for one-hop); no source snippets
+evidence: independent on an in-scope finding must cite the primary hunk(s) as file:@@-a,b+c,d (and the call site for one-hop)
 ```
 
 Fail-closed normalization (consumer side, extending the existing rule): missing or unknown
@@ -159,17 +159,37 @@ fix_obligation(f) ∈ {mandatory, admitted, deferred}
 `gate_reason` keeps `NONE | IN_SCOPE_BLOCKING | OUT_OF_SCOPE_CRITICAL | BOTH`; `IN_SCOPE_BLOCKING`
 means *owed now*. An admitted finding is owed **whatever its severity**: admission is the model's
 own commitment inside an open fix phase, so an admitted P2 under `standard` (or Nit under
-`thorough`) blocks until fixed even though the same finding unadmitted would be sub-threshold.
+`thorough`) holds its fix phase open until fixed even though the same finding unadmitted would be sub-threshold.
 Derived cases the contract pins: sole deferred candidate → `Ready × NONE`; mandatory + deferred →
 `Blocked × IN_SCOPE_BLOCKING`, fix the mandatory only; mandatory + admitted → same pair, fix both
-in one phase; admitted persisting after the mandatory fix, sub-threshold or not → still Blocked
-(INV-004). The Step 4.5 matrix stays seven rows. The breaker keeps its contract: a triggered breaker
-sets `reason=breaker` on remaining candidates and E2 semantics for mandatory findings are untouched.
+in one phase; an admitted finding whose fix did not take is reported again by the verifying re-review and derived afresh — `deferred` only if that report still proves it a candidate, `mandatory` under any other fresh classification
+(INV-004). The Step 4.5 matrix stays seven rows. The breaker keeps its contract, now stated over the
+obligation rather than over severity alone: a triggered breaker records
+`[OPPORTUNISTIC_DEFERRED] reason=breaker` on the remaining **blocking-severity** deferred
+candidates — a sub-threshold non-admitted one keeps `[NIT_DEFERRED]`, unchanged — and E2 covers
+what the change **owes** — `(mandatory ∧ ≥ blocking) ∨ admitted at any
+severity`. The severity-bounded form leaves an admitted sub-threshold finding matching no row at
+all, with neither an E2 route nor a lawful deferral (found in review, 2026-09-02).
 Sub-threshold: a branch-introduced sub-threshold finding keeps the unconditional on-the-spot fix; a
 pre-existing one is fixed on the spot only when the envelope admits it and an edit phase is open;
 under `closed` even a one-liner is `[NIT_DEFERRED]`. The re-review template adds one fixed sentence
-asking the reviewer to re-evaluate `change_relation` against the current primary diff; a carried
-deferral whose new relation is `affected` / `uncertain` becomes mandatory.
+asking the reviewer to re-evaluate `change_relation` against the current primary diff. The
+obligation itself is **derived afresh from every report and never carried across rounds** — a
+finding re-reported with `affected` / `uncertain` therefore derives `mandatory` on its own, and
+`admitted` is phase-scoped: owed for the fix phase it was admitted into, which does not re-dispatch
+while it is unfixed. A cross-round carry was tried during implementation and withdrawn on
+2026-09-03 (maintainer decision): it needed an eight-row precedence table that ten review rounds
+could not make total, for a property this ticket never required.
+
+What *is* reconciled across a **thread rotation or a stateless fallback re-dispatch** is findings,
+never obligations (`review-common.md` § Thread Rotation step 3): an old unclosed finding the fresh
+reviewer omits is **closed** if its fix is in the diff (the omission is the verification); one
+**not** fixed re-enters the round's finding set with its identity and severity only — its
+`change_relation` and evidence are stale, so they reset to `uncertain` and it derives `mandatory`
+until a reviewer re-classifies it. A reviewer's silence alone never retires an unfixed finding.
+Record selection is global, by severity and obligation together: a `deferred` candidate at or
+above the tier's blocking severity is recorded `[OPPORTUNISTIC_DEFERRED]`, one below it keeps
+`[NIT_DEFERRED]` — exactly one record per finding.
 
 ### 3.4 No new scripts (v1)
 
@@ -268,11 +288,11 @@ Ordered so the first item alone closes the "always mandatory" hole with contract
   secondary prompt or re-review template mentions envelope, ceiling or a desired disposition.
 - **Derivation fixtures**: one-hop independent → candidate; one-hop affected → mandatory;
   `in-diff ∧ independent` → mandatory; sole deferred → `Ready × NONE`; mandatory + admitted →
-  Blocked and admitted stays owed; re-review relation change invalidates a carried deferral;
+  Blocked and admitted stays owed; a re-reported finding whose relation is now `affected` derives mandatory afresh;
   dual merge with one `uncertain` source → mandatory; a self-classified pre-review candidate
   under `closed` → `[OPPORTUNISTIC_DEFERRED] … source=self`, no edit; a ratchet whose accumulated
   `S` enters a rollout-sensitive path → `closed` for every later candidate; an admitted P2 under
-  `standard` persisting after the mandatory fix → still Blocked; an untracked 300-line production
+  `standard` re-reported by the verifying re-review → derived afresh: `deferred` if still a proven candidate, `mandatory` if now `affected` / P0; an untracked 300-line production
   file → counted as 300 added lines, `micro`; an untracked binary → `unknown` → `closed`; a config
   with `rules` not an array or a non-list `exclude` → `unknown` → `closed`; a valid first rule
   that matches followed by a malformed later rule → the latch reads `unknown` → `closed` even

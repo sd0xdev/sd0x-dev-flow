@@ -21,6 +21,7 @@ const root = resolve(__dirname, '../..');
 const rule = readFileSync(resolve(root, 'rules/scope-discipline.md'), 'utf8');
 const contract = readFileSync(
   resolve(root, 'skills/codex-code-review/references/scope-contract.md'), 'utf8');
+const fixAll = readFileSync(resolve(root, 'rules/fix-all-issues.md'), 'utf8');
 
 function section(doc, heading) {
   const start = doc.indexOf(`## ${heading}`);
@@ -48,25 +49,92 @@ function parseTable(sectionText, expectedHeader) {
   return pipeLines.slice(2).map((l) => toCells(l, expectedHeader.length));
 }
 
-test('behavior table when parsed → exactly the six closed rows, in order', () => {
+test('behavior table when parsed → exactly the seven closed rows, in order', () => {
   const rows = parseTable(section(contract, 'Behavior Table'), ['Finding', 'Behavior']);
-  assert.equal(rows.length, 6, 'the behavior table is closed: exactly six data rows');
+  assert.equal(rows.length, 7, 'the behavior table is closed: exactly seven data rows');
   assert.deepEqual(rows.map((r) => r[0]), [
-    'in-scope ∧ ≥ tier blocking severity',
-    'in-scope ∧ sub-threshold',
+    'in-scope ∧ **owed** (§ Opportunistic Envelope: `mandatory` ∧ ≥ tier blocking severity, **or** `admitted` at any severity)',
+    'in-scope ∧ ≥ tier blocking severity ∧ `fix_obligation=deferred`',
+    'in-scope ∧ sub-threshold ∧ **not** `admitted`',
     'out-of-scope ∧ not critical',
     'out-of-scope ∧ critical ∧ no valid `[USER_SKIPPED]`',
     'out-of-scope ∧ critical ∧ valid `[USER_SKIPPED]`',
     'user explicitly says "fix it together"',
-  ], 'the six finding classes, in this order');
-  assert.match(rows[0][1], /zero tolerance unchanged/, 'in-scope blocking keeps fix-all-issues');
-  assert.match(rows[2][1], /does not block `✅ Ready`/, 'non-critical out-of-scope must not block');
-  assert.match(rows[3][1], /human exit E1/, 'critical out-of-scope routes to E1');
-  assert.match(rows[3][1], /a pass must not be noted/, 'no pass may be noted on the E1 row');
-  assert.match(rows[3][1], /does \*\*not\*\* enter the fix loop/, 'the model must not auto-fix the E1 row');
+  ], 'the seven finding classes, in this order');
+  assert.match(rows[0][1], /zero tolerance unchanged/, 'in-scope owed blocking keeps fix-all-issues');
+  assert.match(rows[1][1], /does not block `✅ Ready`/,
+    'a deferred opportunistic candidate must not block Ready');
+  assert.match(rows[1][1], /\[OPPORTUNISTIC_DEFERRED\]/, 'the deferred row names its record');
+  // The composed predicate, not merely the word: the fix row must reach an admitted finding at ANY
+  // severity, and the sub-threshold row must not claim it.
+  assert.match(rows[0][0], /`admitted` at any severity/,
+    'the fix row must cover an admitted finding whatever its severity');
+  assert.match(rows[2][1], /An `admitted` sub-threshold finding is \*\*not\*\* in this row — it is owed, and the fix row above routes it/,
+    'the sub-threshold row must route an admitted finding away, not merely mention it');
+  assert.match(rows[3][1], /does not block `✅ Ready`/, 'non-critical out-of-scope must not block');
+  assert.match(rows[4][1], /human exit E1/, 'critical out-of-scope routes to E1');
+  assert.match(rows[4][1], /a pass must not be noted/, 'no pass may be noted on the E1 row');
+  assert.match(rows[4][1], /does \*\*not\*\* enter the fix loop/, 'the model must not auto-fix the E1 row');
 });
 
-test('record formats when pinned → both literal field orders survive verbatim', () => {
+// The opportunistic axis: candidacy is narrow and fail-closed, deferral is not dismissal, and an
+// admitted finding is owed at any severity. Each of these three is a route by which a real defect
+// could otherwise leave the gate silently.
+test('the owed term when defined → stated once canonically, with the admitted disjunct unbounded', () => {
+  const env = section(contract, 'Opportunistic Envelope');
+  assert.match(env, /\*\*The term `owed` — defined canonically here, mirrored in the named carriers\.\*\*/,
+    'the term is defined canonically in one place and its mirrors are declared, not denied');
+  assert.match(env, /fix_obligation\(f\)=mandatory ∧ severity\(f\) ≥ tier_blocking/,
+    'the mandatory disjunct is severity-bounded');
+  assert.match(env, /∨\s+fix_obligation\(f\)=admitted\s*\)\s+-- admitted carries no severity bound/,
+    'the admitted disjunct must carry no severity bound');
+  assert.match(env, /\*\*mirror\*\* it in their own words/,
+    'the routing sites are declared mirrors, not restatements that drift unchecked');
+  assert.match(env, /this definition is the one each mirror is checked against/,
+    'the canonical form is the reference the mirrors are pinned to');
+  assert.match(env, /each prose copy is a chance to drop the `admitted` disjunct/,
+    'the reason duplication is banned must be stated, or it will be reintroduced');
+  // The two resident rules files are the deliberate exception, and saying so is what stops a later
+  // consolidation from stripping the expansion a session needs before it loads this contract.
+  assert.match(env, /two \*\*resident\*\* rules files/);
+  assert.match(env, /carries them before it has loaded this\s+contract/);
+});
+
+test('opportunistic envelope when read → candidacy fails closed and admission is owed at any severity', () => {
+  const env = section(contract, 'Opportunistic Envelope');
+  assert.match(env, /origin = pre-existing/, 'only pre-existing findings are candidates');
+  assert.match(env, /scope_reason ∈ \{diff-file, one-hop\}/, 'both in-scope reasons are candidates');
+  assert.match(env, /change_relation = independent, with the primary hunk\(s\) cited/,
+    'independence needs hunk evidence');
+  assert.match(env, /severity ∉ \{P0\} ∧ the finding is not a security or data-integrity defect/,
+    'critical findings are never candidates');
+  assert.match(env, /Everything else is `mandatory`/, 'the predicate fails closed');
+  assert.match(env, /origin=in-diff ∧ independent/, 'the in-diff contradiction is named');
+  assert.match(env, /branch-introduced ∧\s+independent/, 'the branch-introduced contradiction is named');
+  assert.match(env, /any source read\s+`affected` or `uncertain`/, 'the dual merge is conservative');
+  assert.match(env, /owed for the fix phase it was admitted into, whatever its severity/,
+    'an admitted finding holds its phase open regardless of severity');
+  assert.match(env, /the phase does not re-dispatch while it is unfixed \(Fixing ≠ Verifying/,
+    'an admitted finding must be fixed before the phase re-dispatches');
+  assert.match(env, /reported again and derived afresh — a candidate, \*\*recorded\*\*, if the fresh report still proves it\s+one, and `mandatory` under any other fresh classification/,
+    'an ineffective admitted fix is re-derived from the fresh report, conditionally, never dropped');
+  assert.match(env, /No opportunistic-only round/, 'the envelope never creates work');
+  assert.match(env, /never reach a `deferred` candidate either — a one-line candidate fixed "on the spot" is exactly the\s+opportunistic-only round in miniature/,
+    'the sub-threshold on-the-spot exception must not reach a deferred candidate');
+  assert.match(env, /only if that fresh report still proves it one \(pre-existing, independent with hunks, not P0 \/ security \/ data-integrity\); any other fresh classification derives `mandatory`/,
+    'a re-reported admitted finding is deferred only when freshly proven a candidate');
+  assert.match(env, /Deferral is not dismissal/, 'a deferral leaves the finding actionable');
+  assert.match(env, /no `\[DISMISS_VERDICT\]`|carries no `\[DISMISS_VERDICT\]`/,
+    'a deferral is not a seek-verdict dismissal');
+  assert.match(env, /the envelope is \*\*`closed`\*\*/,
+    'until capacity is defined the envelope is closed — every candidate defers');
+  const oblig = env.slice(env.indexOf('| `fix_obligation` | When |'));
+  for (const value of ['`mandatory`', '`admitted`', '`deferred`']) {
+    assert.ok(oblig.includes(value), `the obligation table must define ${value}`);
+  }
+});
+
+test('record formats when pinned → all five literal field orders survive verbatim', () => {
   assert.ok(
     rule.includes('[OUT_OF_SCOPE_DEFERRED] file:line | issue | suggested-ticket | <ISO8601>'),
     'OUT_OF_SCOPE_DEFERRED field order is a literal contract'
@@ -74,6 +142,18 @@ test('record formats when pinned → both literal field orders survive verbatim'
   assert.ok(
     rule.includes('[USER_SKIPPED] key=<file|canonical_issue> | authorized_at=<ISO8601> | scope=<task-id>'),
     'USER_SKIPPED field order is a literal contract'
+  );
+  assert.ok(
+    rule.includes('[OPPORTUNISTIC_BUDGET] class=<closed|micro|small> | ceiling=<closed|micro|small> | purpose=<FIX|FEATURE|REFACTOR|DOC|OTHER> | path_risk=<rule|none|unknown> | facts=<csv> | semantic=<contained|shared|rollout-sensitive|unknown> | base=<ref> | <ISO8601>'),
+    'OPPORTUNISTIC_BUDGET field order is a literal contract'
+  );
+  assert.ok(
+    rule.includes('[OPPORTUNISTIC_FIX] key=<file|canonical_issue> | severity=<P1|P2|Nit> | class=<micro|small> | relation=independent | source=<codex|toolkit|both|fallback:<agent>|self> | hunks=<file:hunk-range[,..]> | used=<findings>/<production-files> | <ISO8601>'),
+    'OPPORTUNISTIC_FIX field order is a literal contract'
+  );
+  assert.ok(
+    rule.includes('[OPPORTUNISTIC_DEFERRED] key=<file|canonical_issue> | severity=<P1|P2|Nit> | class=<closed|micro|small> | reason=<closed|no-open-fix-phase|footprint|exhausted|breaker> | relation=independent | source=<codex|toolkit|both|fallback:<agent>|self> | hunks=<file:hunk-range[,..]> | <ISO8601>'),
+    'OPPORTUNISTIC_DEFERRED field order is a literal contract'
   );
   assert.match(section(contract, 'Records (reporting conventions)'), /no TTL, no hook parsing, no\npersistence|no TTL, no hook parsing, no persistence/,
     'records are reporting conventions, not machine inputs');
@@ -136,7 +216,7 @@ test('scope baseline when frozen → immutable, monotonic union only, no redisco
   assert.match(base, /git rev-parse\s*\n?--verify|git rev-parse --verify/, 'each base candidate is verified');
 });
 
-test('circuit breaker when triggered → stops expansion only, root bucket exists, no blocking deferral', () => {
+test('circuit breaker when triggered → stops expansion only, defers candidates, escalates only what is owed', () => {
   const brk = section(contract, 'Circuit Breaker (stops expansion; never rewrites scope)');
   assert.match(brk, /counters are round-scoped/);
   assert.match(brk, /never write back into it/);
@@ -144,9 +224,36 @@ test('circuit breaker when triggered → stops expansion only, root bucket exist
   assert.match(brk, /\*\*only stops further expansion\*\*/);
   assert.match(brk, /\*\*no reclassifying force\*\*/);
   const rows = parseTable(brk, ['Remaining finding', 'Disposition']);
-  assert.equal(rows.length, 3, 'the breaker disposition table is closed: three rows');
-  assert.match(rows[1][1], /\*\*Must not be deferred\*\*/, 'in-scope blocking survives the breaker');
+  assert.equal(rows.length, 4, 'the breaker disposition table is closed: four rows');
+  assert.deepEqual(rows.map((r) => r[0]), [
+    'Independently out-of-scope (complete negative evidence)',
+    'in-scope (incl. `uncertain`) ∧ **owed**: (`fix_obligation=mandatory` ∧ ≥ blocking) ∨ `fix_obligation=admitted` at any severity',
+    'in-scope ∧ ≥ blocking ∧ `fix_obligation=deferred`',
+    'in-scope ∧ sub-threshold ∧ not `admitted`',
+  ], 'the four remaining-finding classes, in this order');
+  // What the breaker escalates is what the change OWES. An owed blocking finding still cannot be
+  // deferred — that is E2, unchanged. A proven candidate the change never owed is recorded, not
+  // escalated: routing it to E2 would ask a human to re-scope a task over a defect it does not owe.
+  assert.match(rows[1][1], /\*\*Must not be deferred\*\*/, 'an owed in-scope blocker survives the breaker');
   assert.match(rows[1][1], /human exit E2/);
+  // The partition must be total over owed findings. An admitted P2 under `standard` is owed but
+  // sub-threshold: with the owed row bounded by severity it would match no row at all — neither an
+  // E2 route nor a lawful deferral — and silently leave the gate. The owed row therefore carries
+  // the admitted disjunct unbounded by severity, and the sub-threshold row excludes admitted.
+  assert.match(rows[1][0], /`fix_obligation=admitted` at any severity/,
+    'the owed breaker row must cover an admitted finding whatever its severity');
+  assert.match(rows[3][0], /not `admitted`/, 'the sub-threshold row must exclude admitted');
+  assert.match(rows[3][1], /covered by the owed row above, never by this one/,
+    'the sub-threshold row must say where an admitted finding goes instead');
+  assert.match(rows[2][1], /\[OPPORTUNISTIC_DEFERRED\]/, 'a breaker-deferred candidate is recorded');
+  assert.match(rows[2][1], /reason=breaker/, 'the deferral names the breaker as its reason');
+  assert.match(rows[2][1], /does not reach E2/, 'a candidate never escalates to the human exit');
+  // The resident guard must say the same thing — it is what an ad-hoc session carries.
+  const guard = section(rule, 'Resident Guard');
+  assert.match(guard, /breaker-triggered in-scope blocking finding that this change \*\*owes\*\*/,
+    'the resident E2 route is owed-scoped too');
+  assert.match(guard, /breaker-deferred\s+candidate is recorded, not escalated/,
+    'the resident guard states the candidate exclusion from E2');
 });
 
 test('gate derivation when read → derived values outrank declarations, underivable is Blocked×BOTH', () => {
@@ -213,7 +320,7 @@ test('guard patterns when self-tested → hit the refusal fixtures and pass the 
 // negative control for the move: delete the guard and they fail, which is the failure the move
 // itself could otherwise cause silently — a rule file emptied into a reference nothing loads.
 
-test('resident guard when read → the six semantics survive resident, and point at the contract', () => {
+test('resident guard when read → the seven semantics survive resident, and point at the contract', () => {
   const guard = section(rule, 'Resident Guard');
   assert.match(guard, /baseline is frozen/i, 'freeze must be resident');
   assert.match(guard, /one hop/i, 'the one-hop condition must be resident');
@@ -223,6 +330,15 @@ test('resident guard when read → the six semantics survive resident, and point
   assert.match(guard, /human exit E1/, 'the critical out-of-scope route must be resident');
   assert.match(guard, /never\*\* exempts an\s+edit from re-review/,
     'Register #6 must be resident — an edit re-opens the plane whatever scope says');
+  // The opportunistic axis is emitted during a fix pass, possibly before the contract is loaded,
+  // so its four load-bearing sentences are resident too.
+  assert.match(guard, /Opportunistic candidates/, 'the candidate class must be resident');
+  assert.match(guard, /change_relation=independent/, 'the independence requirement must be resident');
+  assert.match(guard, /Deferral is not dismissal/, 'deferral-≠-dismissal must be resident');
+  assert.match(guard, /owed \*\*for that phase, whatever its\s+severity\*\*/,
+    'phase-scoped admission must be resident');
+  assert.match(guard, /no obligation is carried across rounds/, 'the no-carry rule must be resident');
+  assert.match(guard, /it is `closed`/, 'the interim closed envelope must be resident');
   // `rules/discretion.md` § File Baselines binds these three to THIS file by name, so the pin has
   // to be on the resident copy. Repointing this suite's other assertions to the contract removed
   // the only guard on their residency: deleting them from the guard left every suite green, where
@@ -238,7 +354,13 @@ test('resident guard when read → the six semantics survive resident, and point
 // The two directions of "move, not copy", hoisted so they can be floored — these strings are what
 // the ticket's AC offers as proof that the move was a move.
 const MOVED_TO_CONTRACT = ['Gate Derivation', 'Circuit Breaker', 'scope_reason', 'monotonic precise union'];
-const RESIDENT_ONLY = ['[OUT_OF_SCOPE_DEFERRED] file:line', '[USER_SKIPPED] key=<file'];
+const RESIDENT_ONLY = [
+  '[OUT_OF_SCOPE_DEFERRED] file:line',
+  '[USER_SKIPPED] key=<file',
+  '[OPPORTUNISTIC_BUDGET] class=<closed',
+  '[OPPORTUNISTIC_FIX] key=<file',
+  '[OPPORTUNISTIC_DEFERRED] key=<file',
+];
 
 test('resident guard when it defers → it names the contract file that carries the mechanics', () => {
   assert.match(rule, /skills\/codex-code-review\/references\/scope-contract\.md/,
@@ -248,7 +370,7 @@ test('resident guard when it defers → it names the contract file that carries 
   // re-adding a `## Gate Derivation` section to the resident rule passes the whole suite — the
   // split-brain this extraction exists to prevent, reachable with nothing red.
   assert.equal(MOVED_TO_CONTRACT.length, 4, 'the move-not-copy list must not shrink');
-  assert.equal(RESIDENT_ONLY.length, 2, 'the resident-only list must not shrink');
+  assert.equal(RESIDENT_ONLY.length, 5, 'the resident-only list must not shrink');
   for (const moved of MOVED_TO_CONTRACT) {
     assert.ok(!rule.includes(moved), `"${moved}" must live in the contract only, not in both`);
   }
@@ -260,4 +382,58 @@ test('resident guard when it defers → it names the contract file that carries 
     assert.ok(!contract.includes(resident),
       `"${resident}" must live in the resident guard only — the contract points at it, never restates it`);
   }
+});
+
+// ── rules/fix-all-issues.md (the third carrier) ───────────────────────────────────────────────
+// The obligation axis is stated in three files and an executor may read any one of them alone.
+// Until this test existed, reverting every change in fix-all-issues.md left the suite green — so
+// the file that actually tells an executor what to fix was the one nothing guarded.
+
+test('fix-all-issues when read → the obligation is owed-scoped and admitted survives the threshold', () => {
+  // Preamble: the sentence an executor reads first.
+  assert.match(fixAll, /Every \*owed\* in-scope blocking issue gets fixed/,
+    'the headline obligation must be owed-scoped');
+  assert.match(fixAll, /only a proven causal-independence classification followed by a recorded `\[OPPORTUNISTIC_DEFERRED\]` does/,
+    '"pre-existing" alone must still not remove the obligation');
+  // The scope paragraph must not re-bound the obligation by severity alone — that is the
+  // contradiction that lets an admitted P2 be dropped after the mandatory P1 is fixed.
+  assert.match(fixAll, /`fix_obligation=mandatory` at or above the tier's blocking severity, \*\*plus\*\* every `fix_obligation=admitted` finding at any severity/,
+    'the obligation definition must carry the admitted disjunct unbounded by severity');
+
+  // The exception table: the new row, and the two rows it must not silently widen.
+  const exceptions = section(fixAll, 'Exceptions');
+  assert.match(exceptions, /\| Opportunistic budget deferral \|/,
+    'the opportunistic deferral exception row must exist');
+  const row = exceptions.split('\n').find((l) => l.startsWith('| Opportunistic budget deferral'));
+  assert.match(row, /\[OPPORTUNISTIC_DEFERRED\]/, 'the row names its record');
+  for (const never of ['origin=in-diff', 'branch-introduced', '`uncertain`',
+    'change_relation=affected', 'P0', 'security', 'data-integrity']) {
+    assert.ok(row.includes(never), `the never-applies list must name ${never}`);
+  }
+  assert.match(row, /already `admitted`, which is owed at any severity/,
+    'an admitted finding must not be deferrable through this exception');
+  // Record selection is severity × obligation here too, or a standard-tier independent P2 is
+  // logged under the wrong disposition by the file an executor reads first.
+  assert.match(row, /`\[OPPORTUNISTIC_DEFERRED\]` when at or above the tier's blocking severity; a sub-threshold non-admitted candidate keeps `\[NIT_DEFERRED\]` \(one record per finding, never both\)/,
+    'the exception row must choose the record by severity');
+  // The below-threshold exception is where an admitted P2 would otherwise escape.
+  const below = exceptions.split('\n').find((l) => l.startsWith("| Below the tier's blocking severity"));
+  assert.match(below, /\*\*Not available to a `fix_obligation=admitted` finding\*\*/,
+    'the below-threshold exception must exclude admitted findings');
+
+  // Precedence: the closing paragraph must agree with the preamble.
+  const precedence = section(fixAll, 'Precedence');
+  assert.match(precedence, /\*\*in-scope, owed\*\* findings/, 'precedence is owed-scoped');
+  // The resident expansion must match the canonical predicate exactly: the severity bound belongs
+  // to `mandatory` alone. Dropping it here made a mandatory P2 owed under `standard`, manufacturing
+  // blocking work — the mirror of the escape the rest of this suite guards against.
+  assert.match(precedence, /`fix_obligation=mandatory` \*\*at or above the tier's blocking severity\*\*, or `fix_obligation=admitted` at \*\*any\*\* severity/,
+    'the resident expansion must carry the severity bound on mandatory only');
+  assert.match(precedence, /the severity bound applies to `mandatory` alone, exactly as in the preamble above/,
+    'the two resident copies must agree by construction');
+  assert.match(precedence, /except an `admitted` one/,
+    'the NIT_DEFERRED sentence must carve out admitted findings');
+  // Record selection in the Precedence paragraph too — an executor may read only this section.
+  assert.match(precedence, /`\[OPPORTUNISTIC_DEFERRED\]` \*\*when at or above the blocking line\*\* and with `\[NIT_DEFERRED\]` below it \(one record per finding, never both\)/,
+    'the Precedence paragraph must choose the record by severity, one per finding');
 });
