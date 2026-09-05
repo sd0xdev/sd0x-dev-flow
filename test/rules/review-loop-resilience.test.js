@@ -122,9 +122,9 @@ test('review-common.md Degradation Matrix is the all-family central authority wi
     'positive control: the parent section names the exemption');
   assert.match(reviewCommon, /`FALLBACK_CARRIERS`/,
     'the carrier order is anchored to scripts/lib/review-dispatch.js');
-  assert.match(reviewCommon, /\| `code` \| Codex MCP \| `strict-reviewer`[^|]*\| `pr-review-toolkit:code-reviewer`/,
+  assert.match(reviewCommon, /\| `code` \| Codex exec \| `strict-reviewer`[^|]*\| `pr-review-toolkit:code-reviewer`/,
     'the code carrier row matches FALLBACK_CARRIERS');
-  assert.match(reviewCommon, /`doc` \/ `plan` \/ `test:coverage` \/ `test:ac-trace` \| Codex MCP \| `contract-neutral-reviewer`/,
+  assert.match(reviewCommon, /`doc` \/ `plan` \/ `test:coverage` \/ `test:ac-trace` \| Codex exec \| `contract-neutral-reviewer`/,
     'the non-code carrier row matches FALLBACK_CARRIERS');
 });
 
@@ -220,7 +220,10 @@ test('test-review: Codex-unavailable rides the fallback first, Claude-only incon
 });
 
 test('doc-review: dispatch section carries the fallback branch and the grant is explained', () => {
-  assert.match(docSkill, /Codex unavailable → fallback carries the gate/);
+  // The trigger invariant is Guard 5's (codex-transport-guards.test.js), not this file's: the
+  // ticket freezes this file to the two carrier-label changes. Pin only that a fallback branch
+  // exists here.
+  assert.match(docSkill, /fallback carries the gate/);
   assert.match(docSkill, /validate-family-sentinel\.js doc/);
   assert.match(docSkill, /the boundary is now behavioural/,
     'the rewritten :69 paragraph explains why node is granted now');
