@@ -51,6 +51,16 @@ function allocDir() {
   return r.record;
 }
 const UUIDish = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// The failure diagnostic is identified by its TAG, not by being the first byte of stderr: since the
+// progress channel landed, `[CODEX_EXEC_PROGRESS]` lines may precede it. Every line before the
+// diagnostic must carry that tag — anything untagged there is stray output the contract forbids.
+function diagnostic(stderr) {
+  const lines = stderr.split('\n');
+  const i = lines.findIndex((l) => l.startsWith('[CODEX_EXEC_ERROR]') || l.startsWith('[CODEX_EXEC_USAGE]') || l.startsWith('[CODEX_EXEC_CONFIG]'));
+  assert.ok(i >= 0, `no diagnostic line in stderr: ${stderr.slice(0, 300)}`);
+  for (const l of lines.slice(0, i)) assert.ok(l.startsWith('[CODEX_EXEC_PROGRESS] '), `untagged stderr before the diagnostic: ${l}`);
+  return lines.slice(i).join('\n');
+}
 const startArgs = (a, extra = []) => ['--protocol', '1', 'start', '--class', 'review', '--prompt-file', a.promptFile, '--report-file', a.reportFile, ...extra];
 
 describe('alloc', () => {
@@ -91,6 +101,11 @@ describe('start / resume — happy paths', () => {
     assert.equal(r.record.reportFile, a.reportFile);
     assert.equal(r.record.protocol, 1);
     assert.equal(r.record.requestedProfile, 'review');
+    // The record's SHAPE, not a sample of its fields: the progress channel added two files to the
+    // alloc record and none to this one — a field leaking in here would change what every caller
+    // parses, and the field-by-field asserts above would not notice. Exactly one line, exactly these keys.
+    assert.equal(r.stdout.trim().split('\n').length, 1, 'stdout is exactly one control record');
+    assert.deepEqual(Object.keys(r.record).sort(), ['class', 'protocol', 'reportFile', 'requestedProfile', 'threadId']);
     assert.equal(fs.statSync(a.reportFile).mode & 0o777, 0o600);
     assert.equal(fs.statSync(a.promptFile).mode & 0o777, 0o600);
   });
@@ -128,6 +143,10 @@ describe('start / resume — happy paths', () => {
     assert.equal(r.record.threadId, id);
     assert.equal(r.record.reportFile, a.reportFile);
     assert.equal(r.record.protocol, 1);
+    // Same shape guard as `start`: resume is the other command that emits this record, and "exactly
+    // one line" was asserted for start alone until the AC trace pointed it out.
+    assert.equal(r.stdout.trim().split('\n').length, 1, 'stdout is exactly one control record');
+    assert.deepEqual(Object.keys(r.record).sort(), ['class', 'protocol', 'reportFile', 'requestedProfile', 'threadId']);
   });
 });
 
@@ -188,9 +207,11 @@ describe('exit 1 — codex_fail', () => {
       const a = allocDir();
       const r = adapter(startArgs(a), { FAKE_CODEX_MODE: mode });
       assert.equal(r.status, 1);
-      assert.ok(r.stderr.startsWith('[CODEX_EXEC_ERROR] reason=error'), r.stderr);
+      assert.ok(diagnostic(r.stderr).startsWith('[CODEX_EXEC_ERROR] reason=error'), r.stderr);
       assert.ok(r.stderr.includes(needle), r.stderr);
       assert.equal(r.stdout, '');
+      const prog = JSON.parse(fs.readFileSync(path.join(a.dir, 'progress.json'), 'utf8'));
+      assert.equal(prog.status, 'failed', 'a failed run must not leave progress.json saying running');
     });
   }
   test('stderr in the failure diagnostic is bounded to the last 20 lines, not unbounded', () => {
@@ -199,7 +220,7 @@ describe('exit 1 — codex_fail', () => {
     const a = allocDir();
     const r = adapter(startArgs(a), { FAKE_CODEX_MODE: 'verbose_stderr' });
     assert.equal(r.status, 1);
-    assert.ok(r.stderr.startsWith('[CODEX_EXEC_ERROR] reason=error'), r.stderr);
+    assert.ok(diagnostic(r.stderr).startsWith('[CODEX_EXEC_ERROR] reason=error'), r.stderr);
     const tailLines = r.stderr.split('\n').filter((l) => l.startsWith('stderr line '));
     // Not an exact byte count — how the pipe chunks 30 rapid writes is not this adapter's contract —
     // but the two properties the "bounded" clause actually promises: fewer than the 30 emitted
@@ -221,7 +242,7 @@ describe('exit 1 — codex_fail', () => {
     fs.writeFileSync(a.promptFile, big);
     const r = adapter(startArgs(a), { FAKE_CODEX_MODE: 'early_exit' });
     assert.equal(r.status, 1, r.stderr);
-    assert.ok(r.stderr.startsWith('[CODEX_EXEC_ERROR] reason=error'),
+    assert.ok(diagnostic(r.stderr).startsWith('[CODEX_EXEC_ERROR] reason=error'),
       `the failure must carry the adapter's own diagnostic, not a node stack — got: ${r.stderr.slice(0, 200)}`);
     assert.doesNotMatch(r.stderr, /EPIPE|at ChildProcess|at Socket/,
       'a raw stream exception must never reach stderr');
@@ -519,9 +540,40 @@ describe('cleanup', () => {
 });
 
 describe('size budget', () => {
-  test('adapter is ≤150 lines with no npm dependencies', () => {
+  test('adapter is ≤290 lines with no npm dependencies', () => {
+    // 150 → 220 (INV-002 amended 2026-09-05): the progress channel — per-line JSONL parsing,
+    // events.jsonl, progress.json, the tagged stderr line — is the whole of the growth, and it
+    // stays one file with no abstraction layer. Measured 209 on landing. 220 → 240 the same day
+    // for the alloc-time stale sweep (work item 8), then 240 → 260 in its review for the inode-bound
+    // quarantine deletion, then the per-entry verified unlink, then 260 → 280 for the owner-pid
+    // liveness check, then 280 → 290 for the tri-state owner probe and the re-decision on the
+    // quarantined inode; measured 289. Counted as `wc -l` counts: a trailing newline is not a line.
     const src = fs.readFileSync(ADAPTER, 'utf8');
-    assert.ok(src.split('\n').length <= 150, `adapter has ${src.split('\n').length} lines`);
+    const lines = (src.endsWith('\n') ? src.slice(0, -1) : src).split('\n').length;
+    assert.ok(lines <= 290, `adapter has ${lines} lines`);
+    // The budget is stated in three places and must agree, or the test guards a number the contract
+    // no longer names: INV-002 in the intent, the Size row in the spec, and this assertion. Reverting
+    // either document alone used to leave this test green.
+    const intent = fs.readFileSync(path.join(ROOT, 'docs/features/codex-exec-transport/intent-codex-exec-transport.md'), 'utf8');
+    const spec = fs.readFileSync(path.join(ROOT, 'docs/features/codex-exec-transport/2-tech-spec.md'), 'utf8');
+    assert.match(intent, /`INV-002`[\s\S]{0,200}≤290 lines/, 'INV-002 must state the ≤290 budget');
+    const sizeRow = spec.split('\n').find((l) => l.startsWith('| Size |'));
+    assert.ok(sizeRow, 'the spec § 3.2 table has a Size row');
+    assert.match(sizeRow, /≤290 lines/);
+    assert.match(sizeRow, /still one file, no abstraction layer/, 'the budget is a number AND a shape');
+    // The request ticket states the budget too (AC6, Related Files) — twice it lagged a raise and a
+    // reviewer caught the suite green under an AC that said otherwise.
+    const request = fs.readFileSync(path.join(ROOT, 'docs/features/codex-exec-transport/requests/2026-09-05-observer-lifecycle-and-stale-alloc.md'), 'utf8');
+    assert.match(request, /AC6:[^\n]*≤290/, 'the request AC6 names the same budget');
+    assert.match(request, /size budget 290/, 'and so does its Related Files row');
+  });
+  test('the stall advisory threshold is two silent ticks — pinned by value, because timing it would flake', () => {
+    // The held-child test proves the advisory appears; it deliberately does not prove WHEN, since
+    // under load the first 40 ms tick can already sit past the threshold. The constant is the
+    // contract's number (codex-transport.md § Progress: "after two silent ticks"), so pin the number.
+    const src = fs.readFileSync(ADAPTER, 'utf8');
+    assert.match(src, /^const STALL_TICKS = 2;$/m);
+    assert.match(src, /idleMs >= STALL_TICKS \* TICK_MS/, 'the advisory is derived from that constant, not a literal');
     // Two regex attempts failed in opposite directions — first too narrow (single-quoted `require`
     // only), then too broad (comments and strings read as imports). A reviewer then broke the
     // masking chain four ways, including `"import('left-pad')"` counted and a real `require` inside
@@ -589,5 +641,980 @@ describe('report path cannot escape the alloc directory', () => {
     assert.ok(r.stderr.includes('code=invalid_report_file'), r.stderr);
     assert.equal(r.launches.length, 0, 'the child must not run');
     assert.equal(fs.existsSync(outside), false, 'the symlink target was written outside the alloc dir');
+  });
+});
+
+describe('progress channel — observable while running, never a verdict', () => {
+  // Contract: codex-transport.md § Progress. stdout stays exactly one control record; everything
+  // observable rides on stderr (tagged) and on two 0600 files inside the alloc dir.
+  test('alloc names the two progress files inside the same directory', () => {
+    const a = allocDir();
+    assert.equal(path.dirname(a.progressFile), a.dir);
+    assert.equal(path.dirname(a.eventsFile), a.dir);
+    assert.equal(path.basename(a.progressFile), 'progress.json');
+    assert.equal(path.basename(a.eventsFile), 'events.jsonl');
+  });
+  test('a successful run leaves events.jsonl = the raw stream and progress.json = the final state, both 0600', () => {
+    const a = allocDir();
+    const emitted = path.join(a.dir, 'emitted.jsonl');   // what the fake ACTUALLY wrote, byte for byte
+    const r = adapter(startArgs(a), { FAKE_CODEX_EVENTS: emitted });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim().split('\n').length, 1, 'stdout is still exactly one control record');
+    assert.equal(fs.statSync(a.eventsFile).mode & 0o777, 0o600);
+    assert.equal(fs.statSync(a.progressFile).mode & 0o777, 0o600);
+    // Byte-equal to the child's own stream, not type-equal: a payload corrupted on the way to disk
+    // would keep its `type` and pass a type comparison, which is what this test used to do.
+    assert.equal(fs.readFileSync(a.eventsFile, 'utf8'), fs.readFileSync(emitted, 'utf8'),
+      'every raw line the child emitted, in order and unaltered — nothing is held in memory');
+    const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+    assert.equal(prog.status, 'done');
+    assert.equal(prog.threadId, r.record.threadId);
+    assert.equal(prog.events, 7);
+    assert.equal(prog.tools_completed, 1);
+    assert.equal(prog.tool, null, 'the tool closed, so nothing is "current"');
+    assert.equal(prog.errors, 1, 'an error item on a run that exited 0 is counted, never treated as failure');
+    assert.deepEqual(prog.usage, { input_tokens: 4070, cached_input_tokens: 2009, output_tokens: 82 }, 'usage is the turn.completed payload verbatim');
+    assert.equal(typeof prog.elapsed_s, 'number');
+    assert.equal(typeof prog.last_event_s_ago, 'number', 'after any event the age is a number; null is only for "no event yet"');
+    assert.deepEqual(Object.keys(prog).sort(),
+      ['elapsed_s', 'errors', 'events', 'last_event_s_ago', 'pid', 'protocol', 'status', 'threadId', 'tool', 'tools_completed', 'updated', 'usage']);
+  });
+  test('stderr carries a tagged start line as soon as thread.started arrives and a tagged done line at the end', () => {
+    const a = allocDir();
+    const r = adapter(startArgs(a, ['--profile', 'review']));
+    assert.equal(r.status, 0, r.stderr);
+    const lines = r.stderr.split('\n').filter(Boolean);
+    assert.ok(lines.every((l) => l.startsWith('[CODEX_EXEC_PROGRESS] ')), `every stderr line on a success is a tagged progress line: ${r.stderr}`);
+    assert.match(lines[0], new RegExp(`^\\[CODEX_EXEC_PROGRESS\\] started thread=${r.record.threadId} class=review profile=review$`));
+    assert.match(lines[lines.length - 1], /^\[CODEX_EXEC_PROGRESS\] done elapsed=\d\d:\d\d report=/);
+    assert.ok(lines[lines.length - 1].endsWith(a.reportFile));
+  });
+  // Held-child runs. The seam CODEX_EXEC_TICK_MS makes the 60 s cadence testable, and the fake's
+  // wait gate holds the child open so ticks fire while nothing arrives. `earlyLines` is how many
+  // stream lines the fake emits synchronously BEFORE blocking: 1 proves "started … as soon as
+  // thread.started arrives" (the line must be on stderr while the child is provably held, and
+  // `done` must not — a started line printed at close would pass an after-the-fact read); 7 puts
+  // the usage payload in front of the gate, so a tick fires AFTER it and `tokens=` must change.
+  // The tick budget is counted from the ADAPTER having consumed the early lines — progress.json
+  // reporting `events === earlyLines` — not from spawn and not from the fake's readiness marker:
+  // the fake writes its lines before that marker, but the adapter consumes them on its own loop, and
+  // under full-suite load a tick can fire in between. Asserting on "every periodic line" across that
+  // window is the flake the first full-suite run produced; the settled state is read off the LAST
+  // periodic line, and the no-event case off the FIRST.
+  function held(a, earlyLines, whileHeld, ticks = 5, env = {}) {
+    const gate = path.join(a.dir, 'gate');
+    const child = require('node:child_process').spawn(process.execPath, [ADAPTER, ...startArgs(a)], {
+      cwd: repo, env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, FAKE_CODEX_WAIT: gate, FAKE_CODEX_EARLY_LINES: String(earlyLines), CODEX_EXEC_TICK_MS: '40', ...env },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (d) => { err += d; });
+    const consumed = () => { try { return JSON.parse(fs.readFileSync(a.progressFile, 'utf8')).events === earlyLines; } catch { return false; } };
+    return new Promise((resolve, reject) => {
+      child.on('error', reject);
+      const deadline = Date.now() + 10000;
+      const poll = setInterval(() => {
+        if (!fs.existsSync(`${gate}.ready`) || !consumed()) {
+          if (Date.now() > deadline) { clearInterval(poll); child.kill('SIGKILL'); reject(new Error('the fake never reached its wait, or the adapter never consumed the early lines')); }
+          return;
+        }
+        clearInterval(poll);
+        setTimeout(() => {                       // ticks × 40 ms AFTER sync; advisory is at 2 silent ticks
+          try { whileHeld(err); } catch (e) { child.kill('SIGKILL'); return reject(e); }
+          // `heldErr` is stderr as it stood the instant the gate opened. Under full-suite load a tick
+          // can still fire between release and close, after the rest of the stream has landed — so
+          // "the last periodic line" of the whole run is NOT the settled held state; this is.
+          heldErr = err;
+          fs.writeFileSync(gate, 'go');
+        }, ticks * 40);
+      }, 5);
+      let heldErr = '';
+      child.on('close', (code) => resolve({ code, err, heldErr }));
+    });
+  }
+  const lastPeriodic = (err) => err.split('\n').filter((l) => /^\[CODEX_EXEC_PROGRESS\] t=/.test(l)).at(-1) ?? '';
+  test('the periodic line reports event age and, after silence, an advisory — and kills nothing', async () => {
+    const a = allocDir();
+    const { code, err, heldErr } = await held(a, 1, (soFar) => {
+      assert.match(soFar, /^\[CODEX_EXEC_PROGRESS\] started thread=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee class=review profile=default$/m,
+        `the started line must be on stderr while the child is still held, got: ${soFar}`);
+      assert.doesNotMatch(soFar, /\] done /, 'nothing may say done while the child is held');
+      const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+      assert.equal(prog.status, 'running', 'while the child is held, the file says so');
+      assert.equal(prog.events, 1, 'exactly the early thread.started has arrived; the rest waits behind the gate');
+      assert.equal(prog.threadId, 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    });
+    assert.equal(code, 0, err);
+    const periodic = heldErr.split('\n').filter((l) => /^\[CODEX_EXEC_PROGRESS\] t=/.test(l));
+    assert.ok(periodic.length >= 2, `expected periodic lines while held, got: ${heldErr}`);
+    const settled = lastPeriodic(heldErr);       // the last tick BEFORE release: every early line consumed, silence accrued
+    assert.match(settled, / events=1 /, `the settled line reflects the one early event: ${settled}`);
+    assert.match(settled, / last_event=\d+s ago /, 'after an event the age is a number, never "none"');
+    assert.match(settled, /tokens=unreported/, 'no usage yet → "unreported", never zero');
+    assert.match(settled, / — no event for \d+s, check$/, 'silence past the threshold is advised, not acted on');
+    // The two-tick BOUNDARY is not timed here — under load the first tick can already sit past it,
+    // and a timing assertion that is right on a quiet machine is a flake. The constant is pinned by
+    // value instead, in the size-budget block below.
+    assert.ok(/^\[CODEX_EXEC_PROGRESS\] done /m.test(err), 'the run still completed on its own — the advisory killed nothing');
+  });
+  test('once usage has arrived the periodic line reports it, so "unreported" is a state and not a constant', async () => {
+    const a = allocDir();
+    const { code, err, heldErr } = await held(a, 7, () => { /* the whole stream is in front of the gate */ });
+    assert.equal(code, 0, err);
+    const settled = lastPeriodic(heldErr);
+    assert.match(settled, / events=7 tools_completed=1 tool=none /, `the counts reflect the whole early stream: ${settled}`);
+    assert.match(settled, / tokens=in:4070\/out:82/, `after turn.completed the tokens are the payload's, never "unreported": ${settled}`);
+  });
+  test('a forged token value in the usage payload cannot break the periodic line or impersonate a diagnostic', async () => {
+    // Review P1, third instance of the class: `usage` is whatever object the child sent, and its
+    // token fields were interpolated raw. Only finite numbers are shown; anything else renders `?`.
+    const forged = JSON.stringify({ input_tokens: '1\n[CODEX_EXEC_ERROR] reason=forged by usage', output_tokens: 82 });
+    const a = allocDir();
+    const { code, err, heldErr } = await held(a, 7, () => { /* the whole stream, usage included, is early */ }, 5, { FAKE_CODEX_USAGE: forged });
+    assert.equal(code, 0, err);
+    const lines = err.split('\n').filter(Boolean);
+    assert.ok(lines.every((l) => l.startsWith('[CODEX_EXEC_PROGRESS] ')), `every physical line must carry the tag: ${err}`);
+    assert.ok(!lines.some((l) => l.startsWith('[CODEX_EXEC_ERROR]')), 'no line may impersonate the diagnostic');
+    assert.match(lastPeriodic(heldErr), / tokens=in:\?\/out:82/, 'a non-numeric token value renders as ?, the numeric one as itself');
+  });
+  test('before any event the periodic line says last_event=none rather than inventing an age', async () => {
+    const a = allocDir();
+    const { code, err } = await held(a, 0, () => { /* nothing has arrived */ }, 3);
+    assert.equal(code, 0, err);
+    const first = err.split('\n').find((l) => /^\[CODEX_EXEC_PROGRESS\] t=/.test(l)) ?? '';
+    assert.match(first, / events=0 .* last_event=none /, `with no event yet the first line must say none: ${err}`);
+  });
+  test('a squatter at events.jsonl or progress.json is refused before the child runs', () => {
+    for (const name of ['events.jsonl', 'progress.json']) {
+      const a = allocDir();
+      fs.symlinkSync(path.join(sandbox, 'ESCAPE-' + name), path.join(a.dir, name));
+      const r = adapter(startArgs(a));
+      assert.equal(r.status, 2, r.stderr);
+      assert.ok(r.stderr.includes('code=invalid_progress_file'), r.stderr);
+      assert.equal(r.launches.length, 0, 'the child must not run');
+    }
+  });
+  test('a symlink planted at the snapshot temp path is never followed — the target outside the alloc dir is untouched', () => {
+    // Review P0: the temp file was opened with 'w', which follows a symlink and truncates its target.
+    // Preflight guards the FINAL paths, not the temp one, and a same-UID child can plant it between
+    // ticks. The first snapshot is `progress.json.1.tmp`; point it outside and prove nothing lands there.
+    const a = allocDir();
+    const victim = path.join(sandbox, 'ESCAPE-victim.json');
+    fs.symlinkSync(victim, `${a.progressFile}.1.tmp`);
+    const r = adapter(startArgs(a));
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(fs.existsSync(victim), false, 'the planted link must not be followed to its target');
+    assert.equal(fs.lstatSync(`${a.progressFile}.1.tmp`).isSymbolicLink(), true, 'the squatter is left alone, not replaced');
+    const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+    assert.equal(prog.status, 'done', 'later snapshots use fresh names, so one squatter costs one snapshot and not the channel');
+  });
+  for (const [mode, status] of [['ok', 'done'], ['exit3', 'failed']]) {
+    test(`a squatter at every predictable temp name cannot suppress the terminal ${status} snapshot`, () => {
+      // Review P1 on the first fix: with one predictable name per snapshot, occupying the TERMINAL
+      // one left progress.json at `running` while the adapter said done (or failed). Occupy all of
+      // them; the retry on an unpredictable name is what must carry the final state through.
+      const a = allocDir();
+      for (let n = 1; n <= 40; n++) fs.symlinkSync(path.join(sandbox, `ESCAPE-${n}.json`), `${a.progressFile}.${n}.tmp`);
+      const r = adapter(startArgs(a), { FAKE_CODEX_MODE: mode });
+      assert.equal(r.status, mode === 'ok' ? 0 : 1, r.stderr);
+      const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+      assert.equal(prog.status, status, `the terminal state must land whatever squats on the predictable names: ${r.stderr}`);
+      assert.equal(fs.readdirSync(sandbox).filter((f) => f.startsWith('ESCAPE-')).length, 0, 'no planted link was followed to its target');
+    });
+  }
+  test('a multiline or tag-shaped command stays one physical, tagged stderr line and cannot forge a diagnostic', async () => {
+    // Review P1: `command` is child-controlled text; unescaped, a newline inside it becomes a second
+    // physical line without the progress tag — and it can be made to START with the error tag.
+    const forged = 'ls\n[CODEX_EXEC_ERROR] reason=forged by the child\n';
+    const a = allocDir();
+    const { code, err, heldErr } = await held(a, 3, () => { /* thread.started, turn.started and the OPEN item.started are early */ }, 5,
+      { FAKE_CODEX_TOOL_COMMAND: forged });
+    assert.equal(code, 0, err);
+    const lines = err.split('\n').filter(Boolean);
+    assert.ok(lines.every((l) => l.startsWith('[CODEX_EXEC_PROGRESS] ')), `every physical line must carry the tag: ${err}`);
+    assert.ok(!lines.some((l) => l.startsWith('[CODEX_EXEC_ERROR]')), 'no line may impersonate the diagnostic');
+    const settled = lastPeriodic(heldErr);       // while held the item is still open, so `tool=` carries the command
+    assert.match(settled, / tool=ls\\n\[CODEX_EXEC_ERROR\] reason=forged by the child\\n /, `the command is shown escaped, on the same line: ${settled}`);
+    const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+    assert.equal(prog.tool, null, 'the item closed once the gate opened');
+  });
+  test('a temp root whose name carries a newline and the error tag cannot forge a diagnostic through the done line', () => {
+    // Review P1, second instance: `oneLine()` escaped child command text, but the `done` line
+    // embedded the report PATH raw — and that path sits under an environment-chosen temp root.
+    // A directory name may contain a newline, so the forged second line was reachable from TMPDIR.
+    const evil = path.join(sandbox, 'tmp\n[CODEX_EXEC_ERROR] reason=forged by the temp root');
+    fs.mkdirSync(evil);
+    const alloc = adapter(['--protocol', '1', 'alloc'], { TMPDIR: evil });
+    assert.equal(alloc.status, 0, alloc.stderr);
+    allocated.push(alloc.record.dir);
+    fs.writeFileSync(alloc.record.promptFile, 'Review this change.');
+    const r = adapter(startArgs(alloc.record), { TMPDIR: evil });
+    assert.equal(r.status, 0, r.stderr);
+    const lines = r.stderr.split('\n').filter(Boolean);
+    assert.ok(lines.every((l) => l.startsWith('[CODEX_EXEC_PROGRESS] ')), `every physical stderr line must carry the tag: ${r.stderr}`);
+    assert.ok(!lines.some((l) => l.startsWith('[CODEX_EXEC_ERROR]')), 'no line may impersonate the diagnostic');
+    const done = lines[lines.length - 1];
+    assert.match(done, /^\[CODEX_EXEC_PROGRESS\] done elapsed=\d\d:\d\d report=/);
+    assert.ok(done.includes('tmp\\n[CODEX_EXEC_ERROR] reason=forged by the temp root'), `the path is shown escaped, in full, on the same line: ${done}`);
+    assert.ok(done.endsWith('/report.md'), 'the report path is never truncated');
+  });
+  test('a resume whose child emits no thread.started still records the supplied thread in progress.json', () => {
+    // The contract lets a resume succeed without the event (the supplied id stands in). The control
+    // record already said so; progress.json said `null` — a review caught the two disagreeing.
+    const a = allocDir();
+    const id = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const r = adapter(['--protocol', '1', 'resume', '--thread-id', id, '--class', 'review', '--prompt-file', a.promptFile, '--report-file', a.reportFile],
+      { FAKE_CODEX_MODE: 'no_thread' });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.record.threadId, id);
+    const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+    assert.equal(prog.threadId, id, 'the final state names the same thread the control record does');
+    assert.equal(prog.status, 'done');
+  });
+  test('a post-start failure that is not the child\'s still records failed — the prompt read stream erroring', () => {
+    // Review P1: the prompt-read and stdin error paths called fail() directly and left progress.json
+    // at `running`. One shared abort routine now owns every post-start exit 1; this injects the
+    // prompt-read case, which is the representative one (the stdin case shares the routine).
+    const a = allocDir();
+    const r = adapter(startArgs(a), { FS_FAULT: 'readstream', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+    assert.equal(r.status, 1, r.stderr);
+    assert.ok(diagnostic(r.stderr).startsWith('[CODEX_EXEC_ERROR] reason=error'), r.stderr);
+    assert.match(r.stderr, /injected prompt read failure/);
+    assert.equal(r.stdout, '', 'no control record for a failed run');
+    const prog = JSON.parse(fs.readFileSync(a.progressFile, 'utf8'));
+    assert.equal(prog.status, 'failed', 'AC4: a failure never leaves progress.json saying running');
+  });
+});
+
+describe('alloc reaps stale siblings — the caller that is gone never runs cleanup (work item 8)', () => {
+  // Measured 2026-09-05: 2180 `codex-exec-*` directories under the temp root, this suite leaking
+  // none of them (before=2180 after=2180). Each test gets an isolated temp root via TMPDIR, so the
+  // fixture below is the WHOLE population the sweep sees — nothing of the user's is touched here.
+  const DAY = 24 * 60 * 60 * 1000;
+  const old = new Date(Date.now() - 25 * 60 * 60 * 1000);
+  const isoRoot = () => fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'cx-sweep-root-'));
+  function population(root) {
+    const mk = (name, mode) => { const d = path.join(root, name); fs.mkdirSync(d); fs.chmodSync(d, mode); fs.writeFileSync(path.join(d, 'report.md'), 'unread'); return d; };
+    const f = { stale: mk('codex-exec-stale0', 0o700), fresh: mk('codex-exec-fresh0', 0o700), wide: mk('codex-exec-wide00', 0o755),
+      other: mk('not-codex-stale0', 0o700), victim: mk('victim', 0o700), link: path.join(root, 'codex-exec-link00'), file: path.join(root, 'codex-exec-file00') };
+    fs.symlinkSync(f.victim, f.link); fs.writeFileSync(f.file, 'not a directory');
+    for (const p of [f.stale, f.wide, f.other, f.victim, f.file]) fs.utimesSync(p, old, old);   // after the writes, or they refresh it
+    fs.lutimesSync(f.link, old, old);
+    return f;
+  }
+  test('a 0700 codex-exec-* sibling a day old is removed; a fresh, a 0755, a non-prefixed, a file and a symlink are kept — and the link is never followed', () => {
+    const root = isoRoot();
+    try {
+      const f = population(root);
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(path.dirname(fs.realpathSync(r.record.dir)), root, 'the sweep ran against the isolated root the alloc landed in');
+      assert.ok(!fs.existsSync(f.stale), 'the stale 0700 sibling is reaped');
+      for (const [k, p] of Object.entries(f)) if (k !== 'stale') assert.doesNotThrow(() => fs.lstatSync(p), `${k} must survive the sweep`);
+      assert.ok(fs.existsSync(path.join(f.victim, 'report.md')), 'the symlink target (a stale-looking 0700 dir) is untouched: lstat, never realpath');
+      assert.ok(fs.existsSync(r.record.dir), 'the new directory is created after the sweep and is not its own victim');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: the same population under an adapter whose sweep call is deleted keeps the stale sibling — the assertion above can go negative', () => {
+    // `@rules/testing.md` § Guards: prove the negative by mutating the production guard on its actual
+    // execution path. The mutant is the shipped adapter minus the one call, run the same way.
+    const root = isoRoot();
+    try {
+      const f = population(root);
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('sweepStale(tmpRoot()); ', '');
+      assert.notEqual(mutated, src, 'the call site must exist to be deleted');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(f.stale), 'without the sweep the stale sibling survives, so the reaping test is measuring the sweep');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a dispatch refreshes its directory mtime, so a running dispatch is never stale and a later alloc keeps it', () => {
+    const root = isoRoot();
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      fs.utimesSync(a.record.dir, old, old);
+      assert.ok(Date.now() - fs.statSync(a.record.dir).mtimeMs > DAY, 'precondition: the directory reads a day stale');
+      const r = adapter(startArgs(a.record), { TMPDIR: root });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(Date.now() - fs.statSync(a.record.dir).mtimeMs < 60000, 'the progress.json renames refreshed the directory mtime');
+      const b = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(b.status, 0, b.stderr);
+      assert.ok(fs.existsSync(a.record.reportFile), 'a later alloc keeps the directory whose dispatch just ran');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a sweep that cannot list the temp root leaves alloc succeeding — bookkeeping around the dispatch, never a condition on it', () => {
+    const root = isoRoot();
+    try {
+      const f = population(root);
+      fs.chmodSync(root, 0o300);   // write+search without read: readdir throws, mkdtemp still works (a root user would not throw — this test then proves less, not something false)
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      fs.chmodSync(root, 0o700);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(r.record.dir), 'alloc created its directory');
+      if (process.getuid() !== 0) assert.ok(fs.existsSync(f.stale), 'the listing threw, the sweep gave up, and the stale sibling shows it did');
+    } finally { fs.chmodSync(root, 0o700); fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  // Every best-effort catch in the sweep, driven deterministically through the same preload injector
+  // the alloc guard tests use (a root user's readdir succeeds on a 0300 directory, so the permission
+  // route above proves less there). The injector enumerates the target FIRST, so "the other stale
+  // entry was still reaped" proves the loop continued past the fault rather than that it ran first.
+  // Where the entry ends up is part of the contract (§ Alloc): under its own name when nothing moved
+  // it, under its quarantine name when the sweep could not finish deciding about it.
+  const FAULT_ENV = (fault, target) => ({ FS_FAULT: fault, FS_FAULT_TARGET: target, NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+  const oldPrivateDir = (root, name) => { const d = path.join(root, name); fs.mkdirSync(d); fs.chmodSync(d, 0o700); fs.writeFileSync(path.join(d, 'report.md'), 'unread'); fs.utimesSync(d, old, old); return d; };
+  const quarantined = (root) => fs.readdirSync(root).filter((n) => n.startsWith('.reap-'));
+  const RESIDUAL = {   // fault → where the faulted entry's contents must be afterwards
+    'sweep-readdir': 'own-name', 'sweep-lstat': 'own-name', 'sweep-rename': 'own-name',
+    'sweep-recheck': 'quarantine', 'sweep-cwd': 'quarantine', 'sweep-readdir-inner': 'quarantine', 'sweep-rm': 'quarantine',
+    'sweep-restore': 'quarantine-substitute',
+  };
+  // A quarantined entry's file may sit under its own inner `.reap-*` name (the per-entry rename ran
+  // before the fault), so the residual is identified by CONTENT, whatever the name.
+  const fileBodies = (dir) => fs.readdirSync(dir).filter((n) => fs.lstatSync(path.join(dir, n)).isFile()).map((n) => fs.readFileSync(path.join(dir, n), 'utf8'));
+  for (const [fault, residual] of Object.entries(RESIDUAL)) {
+    test(`alloc succeeds when ${fault} throws — the faulted entry survives (${residual})${fault === 'sweep-readdir' ? '' : ' and the sweep continues to the next one'}`, () => {
+      const root = isoRoot();
+      try {
+        const faulted = oldPrivateDir(root, 'codex-exec-faulted0'), other = oldPrivateDir(root, 'codex-exec-other00');
+        const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV(fault, 'codex-exec-faulted0') });
+        assert.equal(r.status, 0, r.stderr);
+        assert.ok(fs.existsSync(r.record.dir), 'alloc created its directory');
+        assert.equal(fs.existsSync(other), fault === 'sweep-readdir', fault === 'sweep-readdir' ? 'no listing, no sweep at all' : 'the loop went on to reap the next stale entry');
+        const q = quarantined(root);
+        if (residual === 'own-name') {
+          assert.ok(fs.existsSync(path.join(faulted, 'report.md')), 'the faulted entry is left alone under its own name');
+          assert.equal(q.length, 0, 'nothing left quarantined');
+        } else {
+          assert.equal(q.length, 1, 'exactly one entry stayed under its quarantine name — an evidence trail, not debris');
+          assert.ok(fileBodies(path.join(root, q[0])).includes(residual === 'quarantine-substitute' ? 'a dispatch in flight' : 'unread'), 'with its contents intact');
+          if (residual === 'quarantine-substitute') assert.ok(fs.existsSync(`${faulted}.orig/report.md`), 'and the original the neighbour moved aside is untouched');
+          else assert.ok(!fs.existsSync(faulted), 'and nothing is left under the checked name');
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+  test('CONTROL: without the per-entry catch a lstat fault aborts the whole sweep — the continuation assertions above measure the catch', () => {
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-faulted0'); const other = oldPrivateDir(root, 'codex-exec-other00');
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace("try { st = fs.lstatSync(d); } catch { continue; }", 'st = fs.lstatSync(d);');
+      assert.notEqual(mutated, src);
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-lstat', 'codex-exec-faulted0') } });
+      assert.notEqual(r.status, 0, 'the uncaught throw escapes alloc');
+      assert.ok(fs.existsSync(other), 'and the next entry is never reached');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a stale-looking directory owned by ANOTHER uid is never removed — the ownership guard can go negative', () => {
+    // Every directory a test creates is the test user's, so without this injection the uid predicate
+    // could be deleted and the suite would stay green. The Stats proxy changes only `uid`.
+    const root = isoRoot();
+    try {
+      const foreign = oldPrivateDir(root, 'codex-exec-foreign0'), mine = oldPrivateDir(root, 'codex-exec-mine000');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-foreign-uid', 'codex-exec-foreign0') });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(foreign), 'another user\'s directory survives whatever its name, mode and age');
+      assert.ok(!fs.existsSync(mine), 'the same-shaped directory that IS ours is reaped in the same run — the injection is targeted, not global');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a fresh directory swapped under the checked name between lstat and rename is renamed back, never erased', () => {
+    // The review's interleaving (thorough tier, P2): validate → a same-uid neighbour moves the stale
+    // dir aside and puts a live one under the same name → a path-based recursive delete erases the
+    // live one. The sweep renames first and compares {dev, ino} before deleting (workflow-orchestration
+    // 4-implementation.md §1.1); the injector lands the swap inside that rename.
+    const root = isoRoot();
+    try {
+      const stale = oldPrivateDir(root, 'codex-exec-swap000');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-swap', 'codex-exec-swap000') });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(path.join(stale, 'fresh.txt')), 'the substitute is back under the checked name with its contents');
+      assert.ok(fs.existsSync(`${stale}.orig/report.md`), 'the original the neighbour moved aside is untouched too');
+      assert.deepEqual(fs.readdirSync(root).filter((n) => n.startsWith('.reap-')), [], 'nothing left in quarantine');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: without the {dev, ino} comparison the same swap erases the substitute — the identity check is what the test above measures', () => {
+    const root = isoRoot();
+    try {
+      const stale = oldPrivateDir(root, 'codex-exec-swap000');
+      // Both identity checks go, not just the outer one: a review showed that with the pinned
+      // stat('.') check still in place the substitute was merely relocated to quarantine, and the
+      // control passed on the checked name disappearing. Erasure means: no fresh.txt anywhere.
+      const src = fs.readFileSync(ADAPTER, 'utf8');
+      // ...and the re-decision on the quarantined inode too: the injector's swap refreshes the directory
+      // mtime, and that alone would give the substitute back. Three protections off, one loss.
+      const mutated = src.replace('re.dev !== st.dev || re.ino !== st.ino || re.uid !== uid || (re.mode & 0o777) !== 0o700 || Date.now() - re.mtimeMs < STALE_MS || ownerAlive(q)', 'false').replace('here.dev === expect.dev && here.ino === expect.ino', 'true');
+      assert.notEqual(mutated, src, 'the identity checks must exist to be deleted');
+      assert.notEqual(mutated, src.replace('here.dev === expect.dev && here.ino === expect.ino', 'true'), 'both anchors were found');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-swap', 'codex-exec-swap000') } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(!fs.existsSync(stale), 'nothing is left under the checked name');
+      assert.deepEqual(quarantined(root).filter((n) => !n.endsWith('.orig')), [], 'and nothing under a quarantine name: the substitute was erased, not relocated');
+      assert.ok(fs.existsSync(`${stale}.orig/report.md`), 'the moved-aside original is still there');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a fresh directory swapped in at the QUARANTINE name after the re-check survives — the deletion is bound to the inode, not the name', () => {
+    // Round-2 finding (thorough, P2): rename-then-verify closed the first window, but rmSync(q,
+    // {recursive}) re-resolved q after the last identity check. The delete now runs from inside
+    // the pinned directory (chdir → stat('.') identity → relative unlinks) and closes with a
+    // non-recursive rmdir, which refuses the substitute's contents rather than erasing them.
+    const root = isoRoot();
+    try {
+      const stale = oldPrivateDir(root, 'codex-exec-swapq00');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-swap-q', 'codex-exec-swapq00') });
+      assert.equal(r.status, 0, r.stderr);
+      const q = quarantined(root).filter((n) => !n.endsWith('.orig'));   // the injector parks the moved-aside original at `<q>.orig`
+      assert.equal(q.length, 1, 'the substitute stays under the quarantine name');
+      assert.ok(fs.existsSync(path.join(root, q[0], 'fresh.txt')), 'with its contents intact — the non-recursive rmdir refused it');
+      assert.ok(fs.existsSync(path.join(root, `${q[0]}.orig`, 'report.md')), 'and the verified original the neighbour moved aside is untouched');
+      assert.ok(!fs.existsSync(stale), 'nothing is left under the checked name');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: without the pinned identity check the same post-recheck swap empties the substitute — the binding is what the test above measures', () => {
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-swapq00');
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('here.dev === expect.dev && here.ino === expect.ino', 'true');
+      assert.notEqual(mutated, src, 'the pinned identity check must exist to be deleted');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-swap-q', 'codex-exec-swapq00') } });
+      assert.equal(r.status, 0, r.stderr);
+      const left = quarantined(root);
+      assert.deepEqual(left.filter((n) => !n.endsWith('.orig')), [], 'the live substitute was erased — exactly the loss the inode binding prevents');
+      assert.equal(left.length, 1, 'while the moved-aside original still sits at its `.orig` name');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a fresh directory swapped in at the quarantine name AFTER the pin keeps its file — the relative unlinks act on the pinned inode, not on q', () => {
+    // Round-3 finding: the sweep-swap-q case is refused by stat('.') before any unlink runs, so it
+    // never proved that a rename of q after the pin cannot redirect the unlinks. Here the swap lands
+    // after the identity matched: the adapter's cwd is the original inode (now at `<q>.orig`), the
+    // substitute at q carries a file of the SAME name as the stale one, and only a path-based
+    // unlink through q could reach it.
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-afterpin');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-swap-after-pin', 'codex-exec-afterpin') });
+      assert.equal(r.status, 0, r.stderr);
+      const q = quarantined(root).filter((n) => !n.endsWith('.orig'));
+      assert.equal(q.length, 1);
+      assert.equal(fs.readFileSync(path.join(root, q[0], 'report.md'), 'utf8'), 'live substitute', 'the substitute keeps its same-named file');
+      assert.deepEqual(fs.readdirSync(path.join(root, `${q[0]}.orig`)), [], 'the stale file in the pinned original inode was the one removed');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: with the per-entry calls resolved through q instead of the pinned cwd, the same swap erases the substitute\'s file', () => {
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-afterpin');
+      // ALL THREE per-entry resolutions go through q, and each anchor is checked on its own: a
+      // review caught the first version leaving the initial lstat relative, so the mutant's rename
+      // merely relocated the substitute and the control passed without erasing anything.
+      const replaceRequired = (text, from, to) => { const next = text.replace(from, () => to); assert.notEqual(next, text, `mutation anchor missing: ${from}`); return next; };
+      let mutated = fs.readFileSync(ADAPTER, 'utf8');
+      mutated = replaceRequired(mutated, 'const st = fs.lstatSync(n);', 'const st = fs.lstatSync(path.join(q, n));');
+      mutated = replaceRequired(mutated, 'fs.renameSync(n, qn);', 'fs.renameSync(path.join(q, n), path.join(q, qn));');
+      mutated = replaceRequired(mutated, 'const re = fs.lstatSync(qn); if (re.dev === st.dev && re.ino === st.ino) fs.unlinkSync(qn);', 'const re = fs.lstatSync(path.join(q, qn)); if (re.dev === st.dev && re.ino === st.ino) fs.unlinkSync(path.join(q, qn));');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-swap-after-pin', 'codex-exec-afterpin') } });
+      assert.equal(r.status, 0, r.stderr);
+      const left = quarantined(root);
+      assert.deepEqual(left.filter((n) => !n.endsWith('.orig')), [], 'the path-resolved mutant deleted the live substitute\'s file and then removed the emptied substitute — erased, not relocated');
+      const original = left.find((n) => n.endsWith('.orig'));
+      assert.ok(original, 'the moved-aside original is still there');
+      assert.equal(fs.readFileSync(path.join(root, original, 'report.md'), 'utf8'), 'unread', 'with its stale file untouched — the mutant never looked at the pinned inode');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a file swapped under an entry name inside the pinned directory after its lstat is left quarantined inside, never unlinked', () => {
+    // One level down, the same ordering rule as the directory (necessity-audit cleanup.js
+    // unlinkVerified): rename → lstat → compare → unlink, so a substitute is relocated and refused.
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-child000');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-swap-child', 'codex-exec-child000') });
+      assert.equal(r.status, 0, r.stderr);
+      const q = quarantined(root);
+      assert.equal(q.length, 1, 'the directory stays quarantined: rmdir refused it');
+      const inner = fs.readdirSync(path.join(root, q[0]));
+      assert.ok(inner.includes('report.md.orig'), 'the original the neighbour moved aside is untouched');
+      const parked = inner.filter((n) => n.startsWith('.reap-'));
+      assert.equal(parked.length, 1, 'the substitute is parked under its inner quarantine name');
+      assert.equal(fs.readFileSync(path.join(root, q[0], parked[0]), 'utf8'), 'live child');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: without the per-entry {dev, ino} comparison the swapped-in child file is unlinked', () => {
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-child000');
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('if (re.dev === st.dev && re.ino === st.ino) fs.unlinkSync(qn);', 'fs.unlinkSync(qn);');
+      assert.notEqual(mutated, src);
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-swap-child', 'codex-exec-child000') } });
+      assert.equal(r.status, 0, r.stderr);
+      const q = quarantined(root);
+      assert.equal(q.length, 1);
+      assert.deepEqual(fs.readdirSync(path.join(root, q[0])), ['report.md.orig'], 'the live child is gone; only the moved-aside original remains');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a stale entry holding a nested directory stays quarantined with it — nothing recursive ever runs — and the sweep continues', () => {
+    const root = isoRoot();
+    try {
+      const nested = oldPrivateDir(root, 'codex-exec-nested00'); fs.mkdirSync(path.join(nested, 'sub')); fs.writeFileSync(path.join(nested, 'sub', 'deep.txt'), 'deep');
+      fs.utimesSync(nested, old, old);
+      const other = oldPrivateDir(root, 'codex-exec-other00');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(!fs.existsSync(other), 'the flat stale entry is reaped');
+      const q = quarantined(root);
+      assert.equal(q.length, 1, 'the nested one stays quarantined');
+      assert.equal(fs.readFileSync(path.join(root, q[0], 'sub', 'deep.txt'), 'utf8'), 'deep', 'with the nested directory intact');
+      assert.ok(!fs.existsSync(path.join(root, q[0], 'report.md')), 'its regular file was removed — only the directory branch was skipped');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('KNOWN LIMIT: a file swapped under the inner quarantine name AFTER its re-lstat is unlinked — the final unlink is name-based, guarded by unpredictability, not atomicity', () => {
+    // Stated rather than hidden, as the precedent states it (necessity-audit cleanup.js
+    // unlinkVerified: "the final unlink still resolves a name, and unpredictability — not atomicity —
+    // is what makes that safe"). Node exposes no unlink-by-descriptor, so no fully bound form exists.
+    // The injector lands the swap by hooking lstat itself; a real neighbour would have to guess a
+    // random name that exists for microseconds. If this test ever fails because the substitute
+    // survived, the adapter gained a binding this comment says it cannot have — update both.
+    const root = isoRoot();
+    try {
+      oldPrivateDir(root, 'codex-exec-childlate');
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-swap-child-after-recheck', 'codex-exec-childlate') });
+      assert.equal(r.status, 0, r.stderr);
+      const q = quarantined(root);
+      assert.equal(q.length, 1, 'the directory stays quarantined: the moved-aside original keeps it non-empty');
+      assert.deepEqual(fileBodies(path.join(root, q[0])), ['unread'], 'the moved-aside original survives; the substitute under the random name did not');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a SILENT live dispatch is refreshed by the periodic tick alone, and a later alloc keeps it', async () => {
+    // AC4's first test aged the directory before `start`, so preflight, the initial snapshot and the
+    // fake's events all refreshed it — a reviewer showed that dropping the tick's snapshot would
+    // leave that test green while a >24 h silent dispatch became reapable. Here the directory is
+    // aged only once the child is held with NO events pending, so the tick → snapshot → rename is
+    // the only thing that can move the mtime.
+    const { spawn } = require('node:child_process');
+    const { once } = require('node:events');
+    const root = isoRoot();
+    let child = null, closed = null;
+    const until = async (pred, msg) => { const deadline = Date.now() + 5000; while (!pred()) { if (Date.now() > deadline) throw new Error(msg); await new Promise((r) => setTimeout(r, 10)); } };
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const gate = path.join(a.record.dir, 'gate');
+      child = spawn(process.execPath, [ADAPTER, ...startArgs(a.record)], {
+        cwd: repo, stdio: 'ignore',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, TMPDIR: root, FAKE_CODEX_WAIT: gate, FAKE_CODEX_EARLY_LINES: '0', CODEX_EXEC_TICK_MS: '40' },
+      });
+      closed = once(child, 'close');
+      await until(() => fs.existsSync(`${gate}.ready`) && fs.existsSync(a.record.progressFile), 'the dispatch never reached its silent held state');
+      assert.equal(child.exitCode, null);
+      fs.utimesSync(a.record.dir, old, old);                              // only now: every start-time write has happened
+      assert.ok(Date.now() - fs.statSync(a.record.dir).mtimeMs > DAY, 'precondition: the directory reads a day stale');
+      await until(() => Date.now() - fs.statSync(a.record.dir).mtimeMs < 1000, 'no periodic tick refreshed the directory mtime');
+      assert.equal(child.exitCode, null, 'the dispatch is still live and still silent');
+      const b = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(b.status, 0, b.stderr);
+      assert.ok(fs.existsSync(a.record.progressFile), 'a later alloc keeps the live dispatch');
+      fs.writeFileSync(gate, 'go');
+      const [code] = await closed;
+      assert.equal(code, 0, 'and the held run still completes normally');
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (closed) await closed.catch(() => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('a LIVE dispatch whose heartbeat has stopped is never reaped — the owner pid is positive liveness the mtime cannot give', async () => {
+    // The mtime is a heartbeat, and a heartbeat can stop while its owner lives: a machine asleep
+    // for a day, every snapshot failing. Here the child is held with no events, the tick is set
+    // far beyond the test, and the directory is aged — the only thing that can keep it is the
+    // pid the adapter wrote at preflight.
+    const { spawn } = require('node:child_process');
+    const { once } = require('node:events');
+    const root = isoRoot();
+    let child = null, closed = null;
+    const until = async (pred, msg) => { const deadline = Date.now() + 5000; while (!pred()) { if (Date.now() > deadline) throw new Error(msg); await new Promise((r) => setTimeout(r, 10)); } };
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const gate = path.join(a.record.dir, 'gate');
+      child = spawn(process.execPath, [ADAPTER, ...startArgs(a.record)], {
+        cwd: repo, stdio: 'ignore',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, TMPDIR: root, FAKE_CODEX_WAIT: gate, FAKE_CODEX_EARLY_LINES: '0', CODEX_EXEC_TICK_MS: '3600000' },
+      });
+      closed = once(child, 'close');
+      await until(() => fs.existsSync(`${gate}.ready`) && fs.existsSync(a.record.progressFile), 'the dispatch never reached its silent held state');
+      assert.equal(JSON.parse(fs.readFileSync(a.record.progressFile, 'utf8')).pid, child.pid, 'progress.json names the adapter as owner');
+      fs.utimesSync(a.record.dir, old, old);
+      const b = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(b.status, 0, b.stderr);
+      assert.ok(fs.existsSync(a.record.progressFile), 'a day-stale directory with a living owner is kept');
+      assert.equal(child.exitCode, null);
+      fs.writeFileSync(gate, 'go');
+      const [code] = await closed;
+      assert.equal(code, 0);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (closed) await closed.catch(() => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('the preflight owner record is written before any child exists, and a dead owner does not protect a stale directory', () => {
+    const root = isoRoot();
+    try {
+      // A finished process's pid, so `kill(pid, 0)` fails: the record is there but its owner is not.
+      const dead = spawnSync(process.execPath, ['-e', '0']).pid;
+      const stale = oldPrivateDir(root, 'codex-exec-deadpid0');
+      fs.writeFileSync(path.join(stale, 'progress.json'), JSON.stringify({ protocol: 1, status: 'running', pid: dead }) + '\n');
+      fs.utimesSync(stale, old, old);
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(!fs.existsSync(stale), 'reaped: the owner pid no longer exists');
+      // And the record a real dispatch leaves: preflight writes it into the exclusively created file.
+      fs.writeFileSync(r.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const s = adapter(startArgs(r.record), { TMPDIR: root });
+      assert.equal(s.status, 0, s.stderr);
+      const first = fs.readFileSync(r.record.eventsFile, 'utf8');   // the run wrote events, so the file below is the final snapshot — the preflight record is proven by the held test above
+      assert.ok(first.length > 0);
+      assert.equal(typeof JSON.parse(fs.readFileSync(r.record.progressFile, 'utf8')).pid, 'number', 'every snapshot carries the owner pid');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('CONTROL: without the liveness check the held live dispatch IS reaped — the pid is what the test above measures', async () => {
+    const { spawn } = require('node:child_process');
+    const { once } = require('node:events');
+    const root = isoRoot();
+    let child = null, closed = null;
+    const until = async (pred, msg) => { const deadline = Date.now() + 5000; while (!pred()) { if (Date.now() > deadline) throw new Error(msg); await new Promise((r) => setTimeout(r, 10)); } };
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const gate = path.join(a.record.dir, 'gate');
+      child = spawn(process.execPath, [ADAPTER, ...startArgs(a.record)], {
+        cwd: repo, stdio: 'ignore',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, TMPDIR: root, FAKE_CODEX_WAIT: gate, FAKE_CODEX_EARLY_LINES: '0', CODEX_EXEC_TICK_MS: '3600000' },
+      });
+      closed = once(child, 'close');
+      await until(() => fs.existsSync(`${gate}.ready`) && fs.existsSync(a.record.progressFile), 'the dispatch never reached its silent held state');
+      fs.utimesSync(a.record.dir, old, old);
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace(' || ownerAlive(d)) continue;', ') continue;').replace(' || ownerAlive(q)) {', ') {');
+      assert.notEqual(mutated, src, 'the liveness call must exist to be deleted');
+      assert.notEqual(mutated, src.replace(' || ownerAlive(d)) continue;', ') continue;'), 'both probes (before and after quarantine) were found');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const r = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root } });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(!fs.existsSync(a.record.progressFile), 'the live dispatch lost its directory — exactly the loss the pid check prevents');
+      child.kill('SIGKILL');   // its gate is gone with the directory; nothing to release
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (closed) await closed.catch(() => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('the exact starting owner record exists BEFORE codex is spawned — deleting the preflight write cannot hide behind a later snapshot', async () => {
+    // The earlier "preflight owner record" test read a snapshot taken after spawn, so removing the
+    // preflight write while keeping the snapshots left it green (a review showed it). The adapter is
+    // held at the instant before its spawn call and the file is read while no child exists.
+    const { spawn } = require('node:child_process');
+    const { once } = require('node:events');
+    const root = isoRoot();
+    let child = null, closed = null;
+    const until = async (pred, msg) => { const deadline = Date.now() + 5000; while (!pred()) { if (Date.now() > deadline) throw new Error(msg); await new Promise((r) => setTimeout(r, 10)); } };
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      fs.writeFileSync(log, '');
+      const gate = path.join(a.record.dir, 'before-spawn');
+      child = spawn(process.execPath, [ADAPTER, ...startArgs(a.record)], {
+        cwd: repo, stdio: 'ignore',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, FAKE_CODEX_LOG: log, TMPDIR: root, FS_FAULT: 'pause-before-spawn', FS_FAULT_GATE: gate, NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` },
+      });
+      closed = once(child, 'close');
+      await until(() => fs.existsSync(`${gate}.ready`), 'the adapter never reached its spawn call');
+      assert.deepEqual(JSON.parse(fs.readFileSync(a.record.progressFile, 'utf8')), { protocol: 1, status: 'starting', pid: child.pid }, 'exactly the owner record, nothing else yet');
+      assert.equal(fs.readFileSync(log, 'utf8'), '', 'and the fake codex has not been launched');
+      // The record is not just serialized, it PARTICIPATES in liveness: a dispatch suspended for a
+      // day during preflight is still an owner. Dropping `starting` from the prefix fails here.
+      fs.utimesSync(a.record.dir, old, old);
+      const next = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(next.status, 0, next.stderr);
+      assert.ok(fs.existsSync(a.record.progressFile), 'a live pre-spawn owner with status=starting is kept');
+      assert.equal(child.exitCode, null);
+      fs.writeFileSync(gate, 'go');
+      const [code] = await closed;
+      assert.equal(code, 0, 'the run then completes normally');
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (closed) await closed.catch(() => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('a failed preflight owner-record write is invalid_progress_file, before any child exists', () => {
+    const root = isoRoot();
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const r = adapter(startArgs(a.record), { TMPDIR: root, FS_FAULT: 'progress-owner-write', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(diagnostic(r.stderr), /^\[CODEX_EXEC_USAGE\] code=invalid_progress_file/);
+      assert.equal(r.stdout, '', 'no control record');
+      assert.equal(r.launches.length, 0, 'codex never ran');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('EPERM from kill(pid, 0) counts as alive — a process that exists but is not ours to signal keeps its directory', () => {
+    const root = isoRoot();
+    try {
+      const guarded = oldPrivateDir(root, 'codex-exec-eperm00'), other = oldPrivateDir(root, 'codex-exec-other00');
+      fs.writeFileSync(path.join(guarded, 'progress.json'), JSON.stringify({ protocol: 1, status: 'running', pid: 424242 }) + '\n');
+      fs.utimesSync(guarded, old, old);
+      const env = { TMPDIR: root, FS_FAULT: 'sweep-kill-eperm', FS_FAULT_PID: '424242', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` };
+      const r = adapter(['--protocol', '1', 'alloc'], env);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(guarded), 'EPERM is fail-safe: kept');
+      assert.ok(!fs.existsSync(other), 'the sweep still handled the other entry');
+      // CONTROL: read EPERM as dead and the guarded directory goes.
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace("catch (e) { return e.code !== 'ESRCH'; }", 'catch { return false; }');
+      assert.notEqual(mutated, src, 'the kill-error classification must exist to be deleted');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, ...env } });
+      assert.equal(m.status, 0, m.stderr);
+      assert.ok(!fs.existsSync(guarded), 'without the branch the guarded directory is reaped — the branch is what the assertion above measures');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a live dispatch whose snapshot has grown past 64 KiB is still recognised as live — the owner is a fixed prefix, not a parsed whole', async () => {
+    // Round-6 finding: the first owner check parsed the whole file under a 64 KiB cap, so a snapshot
+    // carrying a large child command called its live owner dead. The record is now read as the
+    // fixed prefix every snapshot begins with; the size behind it is irrelevant.
+    const { spawn } = require('node:child_process');
+    const { once } = require('node:events');
+    const root = isoRoot();
+    let child = null, closed = null;
+    const until = async (pred, msg) => { const deadline = Date.now() + 5000; while (!pred()) { if (Date.now() > deadline) throw new Error(msg); await new Promise((r) => setTimeout(r, 10)); } };
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(a.status, 0, a.stderr);
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const gate = path.join(a.record.dir, 'gate');
+      child = spawn(process.execPath, [ADAPTER, ...startArgs(a.record)], {   // held after item.started (3 early lines), whose command is 70 KiB
+        cwd: repo, stdio: 'ignore',
+        env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, TMPDIR: root, FAKE_CODEX_WAIT: gate, FAKE_CODEX_EARLY_LINES: '3', FAKE_CODEX_TOOL_COMMAND: 'x'.repeat(70 * 1024), CODEX_EXEC_TICK_MS: '3600000' },
+      });
+      closed = once(child, 'close');
+      await until(() => { try { return fs.existsSync(`${gate}.ready`) && fs.statSync(a.record.progressFile).size > 65536; } catch { return false; } }, 'the snapshot never grew past 64 KiB while held');
+      fs.utimesSync(a.record.dir, old, old);
+      const b = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(b.status, 0, b.stderr);
+      assert.ok(fs.existsSync(a.record.progressFile), 'kept: the owner prefix was read, the size behind it ignored');
+      assert.equal(child.exitCode, null);
+      fs.writeFileSync(gate, 'go');
+      const [code] = await closed;
+      assert.equal(code, 0);
+    } finally {
+      if (child && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      if (closed) await closed.catch(() => {});
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+  test('an owner record that is not the adapter\'s prefix gives no liveness — a nested pid, a huge pid, a non-file — and alloc still succeeds', () => {
+    const root = isoRoot();
+    try {
+      const cases = {
+        'codex-exec-nested00': JSON.stringify({ protocol: 1, status: 'running', usage: { pid: process.pid } }) + '\n',   // our own live pid, but nested: not the owner
+        'codex-exec-hugepid0': '{"protocol":1,"status":"running","pid":99999999999}',
+        'codex-exec-string00': '{"protocol":1,"status":"running","pid":"' + process.pid + '"}',
+        'codex-exec-order000': JSON.stringify({ status: 'running', protocol: 1, pid: process.pid }) + '\n',              // right keys, wrong order: not written by the adapter
+        'codex-exec-zeropid0': '{"protocol":1,"status":"running","pid":0}',   // kill(0, 0) "succeeds" on our own process group: zero would protect debris forever
+        'codex-exec-int32000': '{"protocol":1,"status":"running","pid":2147483648}',   // kill() rejects it with a validation error, which the tri-state would read as "unknown, keep" — forever
+        'codex-exec-tendigit': '{"protocol":1,"status":"running","pid":9999999999}',
+        'codex-exec-leadzero': '{"protocol":1,"status":"running","pid":0' + process.pid + '}',   // a live pid, non-canonically encoded: not the adapter's record
+      };
+      const dirs = Object.entries(cases).map(([name, body]) => { const d = oldPrivateDir(root, name); fs.writeFileSync(path.join(d, 'progress.json'), body); fs.utimesSync(d, old, old); return d; });
+      const link = oldPrivateDir(root, 'codex-exec-linkpid0'); fs.unlinkSync(path.join(link, 'report.md'));
+      fs.symlinkSync(path.join(root, 'elsewhere.json'), path.join(link, 'progress.json')); fs.writeFileSync(path.join(root, 'elsewhere.json'), '{"protocol":1,"status":"running","pid":' + process.pid + '}'); fs.utimesSync(link, old, old);
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      assert.equal(r.status, 0, r.stderr);
+      for (const d of dirs) assert.ok(!fs.existsSync(d), `${path.basename(d)} carries no owner and is reaped`);
+      assert.ok(!fs.existsSync(link), 'a symlinked progress.json is not read: reaped');
+      assert.ok(fs.existsSync(path.join(root, 'elsewhere.json')), 'and its target outside the directory is untouched');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a FIFO swapped in at the owner-record path cannot hang the sweep — the open is non-blocking and the descriptor is judged, not the name', () => {
+    // Round-7 finding: lstat said "regular file", then a blocking open of the same NAME. A FIFO
+    // installed between the two parks the open until a writer appears, and alloc with it. The open
+    // is O_NONBLOCK|O_NOFOLLOW now and fstat on the descriptor decides; a FIFO reads as "no owner".
+    const root = isoRoot();
+    try {
+      // The candidate carries a LIVE owner record, so without the swap it would be kept: the FIFO
+      // landing is what changes the outcome, and a vacuous run (no record → the injector's rename
+      // throws before mkfifo) cannot pass — a first version of this test did exactly that.
+      const withOwner = (name) => { const d = oldPrivateDir(root, name); fs.writeFileSync(path.join(d, 'progress.json'), `{"protocol":1,"status":"running","pid":${process.pid}}\n`); fs.utimesSync(d, old, old); return d; };
+      const fifo = withOwner('codex-exec-fifo000'); const other = oldPrivateDir(root, 'codex-exec-other00');
+      const env = { TMPDIR: root, FS_FAULT: 'sweep-fifo-swap', FS_FAULT_TARGET: 'codex-exec-fifo000', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` };
+      const r = spawnSync(process.execPath, [ADAPTER, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', timeout: 10000, env: { ...process.env, ...env } });
+      assert.equal(r.status, 0, `alloc must finish, not hang: signal=${r.signal} ${r.stderr}`);
+      assert.ok(!fs.existsSync(fifo), 'a FIFO is not an owner record: no liveness, and the stale entry was reaped');
+      assert.ok(!fs.existsSync(other), 'the sweep went on to the next entry');
+      // CONTROL: a blocking open of the same name hangs until the deadline kills it — the flag is load-bearing.
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('fs.constants.O_RDONLY | fs.constants.O_NONBLOCK | fs.constants.O_NOFOLLOW', 'fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW');
+      assert.notEqual(mutated, src, 'the non-blocking flag must exist to be deleted');
+      withOwner('codex-exec-fifo000');   // a fresh candidate with its record: the first run consumed the previous one
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', timeout: 3000, env: { ...process.env, ...env } });
+      assert.notEqual(m.status, 0, 'without O_NONBLOCK the open parks on the FIFO and the deadline has to kill alloc');
+      assert.equal(m.signal, 'SIGTERM', 'killed by the test deadline, which is the hang made visible');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('owner liveness reads exactly the 96-byte prefix — a whole-file read or another length is refused by the injector', () => {
+    // A regression to `readFileSync` + regex would pass the oversized-snapshot test above (it only
+    // asks that a big file still yields liveness). Here every whole-file read of the owner record
+    // and every descriptor read of a different length throws, so only the bounded read finds the owner.
+    const root = isoRoot();
+    try {
+      const d = oldPrivateDir(root, 'codex-exec-readbound');
+      fs.writeFileSync(path.join(d, 'progress.json'), `{"protocol":1,"status":"running","pid":${process.pid},"padding":"${'x'.repeat(1024 * 1024)}"}`);
+      fs.utimesSync(d, old, old);
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, ...FAULT_ENV('sweep-owner-read-budget', 'codex-exec-readbound') });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(d), 'the bounded prefix read found the live owner and nothing else was read');
+      // CONTROL: a whole-file read through the open descriptor — the regression a path-only injector
+      // missed — is poisoned by the injector (not thrown: a throw reads as unknown-keep), so the live
+      // owner goes unseen and the candidate is reaped.
+      const src = fs.readFileSync(ADAPTER, 'utf8');
+      const mutated = src.replace("const buf = Buffer.alloc(96); const n = fs.readSync(fd, buf, 0, 96, 0);", 'const buf = fs.readFileSync(fd); const n = buf.length;');
+      assert.notEqual(mutated, src, 'the bounded read must exist to be mutated');
+      const d2 = oldPrivateDir(root, 'codex-exec-readbnd2');   // its own name: the live candidate above was kept and still exists
+      fs.writeFileSync(path.join(d2, 'progress.json'), `{"protocol":1,"status":"running","pid":${process.pid},"padding":"${'x'.repeat(1024 * 1024)}"}`);
+      fs.utimesSync(d2, old, old);
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-owner-read-budget', 'codex-exec-readbnd2') } });
+      assert.equal(m.status, 0, m.stderr);
+      assert.ok(!fs.existsSync(d2), 'the whole-file read was poisoned to {}, no owner was seen, the candidate was reaped — so the passing run above really read 96 bytes');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('the owner record is judged by the DESCRIPTOR: a directory swapped in at its path after the open changes nothing, and a stat by name would', () => {
+    const root = isoRoot();
+    try {
+      const withOwner = (name) => { const d = oldPrivateDir(root, name); fs.writeFileSync(path.join(d, 'progress.json'), `{"protocol":1,"status":"running","pid":${process.pid}}\n`); fs.utimesSync(d, old, old); return d; };
+      const d = withOwner('codex-exec-afteropen');
+      const env = { TMPDIR: root, ...FAULT_ENV('sweep-owner-swap-after-open', 'codex-exec-afteropen') };
+      const r = adapter(['--protocol', '1', 'alloc'], env);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(path.join(d, 'progress.json.orig')), 'kept: fstat on the open descriptor saw the regular file it opened, and the prefix was read from it');
+      // CONTROL: judge the NAME instead — it is a directory now — and the live candidate is lost.
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('if (!fs.fstatSync(fd).isFile()) return false;', "if (!fs.statSync(path.join(dir, 'progress.json')).isFile()) return false;");
+      assert.notEqual(mutated, src, 'the descriptor check must exist to be mutated');
+      const d2 = withOwner('codex-exec-afteropn2');   // its own name: the live candidate above was kept and still exists
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-owner-swap-after-open', 'codex-exec-afteropn2') } });
+      assert.equal(m.status, 0, m.stderr);
+      assert.ok(!fs.existsSync(path.join(d2, 'progress.json.orig')), 'judged by name, the live owner went unseen and the candidate lost its name — the descriptor is load-bearing');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  for (const [step, code] of [['open', 'EIO'], ['open', 'EMFILE'], ['fstat', 'EIO'], ['read', 'EIO'], ['kill', 'EINVAL']]) {
+    test(`an unexpected ${code} while probing the owner (${step}) is not proof of death — the candidate is kept and the sweep continues`, () => {
+      const root = isoRoot();
+      try {
+        const guarded = oldPrivateDir(root, 'codex-exec-probe000'), other = oldPrivateDir(root, 'codex-exec-other00');
+        fs.writeFileSync(path.join(guarded, 'progress.json'), '{"protocol":1,"status":"running","pid":424242}\n'); fs.utimesSync(guarded, old, old);
+        const env = { TMPDIR: root, FS_FAULT: 'sweep-probe-error', FS_FAULT_TARGET: 'codex-exec-probe000', FS_FAULT_STEP: step, FS_FAULT_CODE: code, FS_FAULT_PID: '424242', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` };
+        const r = adapter(['--protocol', '1', 'alloc'], env);
+        assert.equal(r.status, 0, r.stderr);
+        assert.ok(fs.existsSync(guarded), `${code} is unknown, not dead: kept`);
+        assert.ok(!fs.existsSync(other), 'the sweep still handled the other entry');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+  test('CONTROL: mapping an unexpected probe error to "dead" reaps the guarded candidate — the tri-state is what the tests above measure', () => {
+    const root = isoRoot();
+    try {
+      const guarded = oldPrivateDir(root, 'codex-exec-probe000');
+      fs.writeFileSync(path.join(guarded, 'progress.json'), '{"protocol":1,"status":"running","pid":424242}\n'); fs.utimesSync(guarded, old, old);
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace("catch (e) { return !['ENOENT', 'ENOTDIR', 'ELOOP'].includes(e.code); }", 'catch { return false; }');
+      assert.notEqual(mutated, src, 'the open-error classification must exist to be deleted');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, FS_FAULT: 'sweep-probe-error', FS_FAULT_TARGET: 'codex-exec-probe000', FS_FAULT_STEP: 'open', FS_FAULT_CODE: 'EIO', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` } });
+      assert.equal(m.status, 0, m.stderr);
+      assert.ok(!fs.existsSync(guarded), 'read as dead, the guarded candidate is gone');
+      // ...and the OUTER catch, the one behind fstat/read after the descriptor is open, separately.
+      const guarded2 = oldPrivateDir(root, 'codex-exec-probe002');
+      fs.writeFileSync(path.join(guarded2, 'progress.json'), '{"protocol":1,"status":"running","pid":424242}\n'); fs.utimesSync(guarded2, old, old);
+      const mutated2 = src.replace('} catch { return true; } finally {', '} catch { return false; } finally {');
+      assert.notEqual(mutated2, src, 'the outer probe catch must exist to be mutated');
+      fs.writeFileSync(mutant, mutated2);
+      const m2 = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, FS_FAULT: 'sweep-probe-error', FS_FAULT_TARGET: 'codex-exec-probe002', FS_FAULT_STEP: 'read', FS_FAULT_CODE: 'EIO', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` } });
+      assert.equal(m2.status, 0, m2.stderr);
+      assert.ok(!fs.existsSync(guarded2), 'mapping a read failure to dead reaps the candidate — the outer catch is load-bearing too');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a directory reactivated on the SAME inode between the checks and the rename is given back — the decision is re-made on the quarantined inode', () => {
+    const root = isoRoot();
+    try {
+      const d = oldPrivateDir(root, 'codex-exec-react000');
+      const env = { TMPDIR: root, ...FAULT_ENV('sweep-reactivate', 'codex-exec-react000') };
+      const r = adapter(['--protocol', '1', 'alloc'], env);
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(path.join(d, 'progress.json')), 'kept, under its own name, with the owner record the delayed start wrote');
+      assert.deepEqual(quarantined(root), [], 'nothing left in quarantine');
+      // CONTROL: decide only on identity after the rename and the reactivated directory is emptied and removed.
+      const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('Date.now() - re.mtimeMs < STALE_MS || ownerAlive(q)', 'false');
+      assert.notEqual(mutated, src, 'the re-decision must exist to be deleted');
+      const d2 = oldPrivateDir(root, 'codex-exec-react002');
+      const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+      const m = spawnSync(process.execPath, [mutant, '--protocol', '1', 'alloc'], { cwd: repo, encoding: 'utf8', env: { ...process.env, TMPDIR: root, ...FAULT_ENV('sweep-reactivate', 'codex-exec-react002') } });
+      assert.equal(m.status, 0, m.stderr);
+      assert.ok(!fs.existsSync(d2), 'without the re-decision the reactivated directory is reaped — exactly the loss it prevents');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  test('a failed close of the preflight-created report is invalid_report_file (exit 2), never an uncaught exit 1', () => {
+    const root = isoRoot();
+    try {
+      const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+      fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+      const r = adapter(startArgs(a.record), { TMPDIR: root, FS_FAULT: 'report-close', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+      assert.equal(r.status, 2, r.stderr);
+      assert.match(diagnostic(r.stderr), /^\[CODEX_EXEC_USAGE\] code=invalid_report_file/);
+      assert.equal(r.launches.length, 0, 'codex never ran');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+  for (const fault of ['snapshot-chmod', 'snapshot-rename']) {
+    test(`a snapshot that fails on every event (${fault}) still lets the run complete and leaves no temp debris or open descriptors behind`, () => {
+      // Review P2: createPrivate leaked the file and descriptor on a failed fchmod, and a failed
+      // rename left its temp file — four per snapshot, one snapshot per event and tick.
+      const root = isoRoot();
+      try {
+        const a = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+        fs.writeFileSync(a.record.promptFile, 'Review this change. Report format: ## Document Review …');
+        const r = adapter(startArgs(a.record), { TMPDIR: root, FAKE_CODEX_EXTRA_EVENTS: '40', FS_FAULT: fault, NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+        assert.equal(r.status, 0, `the verdict never depends on the snapshot: ${r.stderr}`);
+        assert.deepEqual(fs.readdirSync(a.record.dir).filter((n) => n.endsWith('.tmp')), [], 'no temp snapshot left behind');
+        if (fault === 'snapshot-chmod') {
+          // CONTROL: drop only the close branch of createPrivate — the path still disappears (unlink
+          // stays), but the descriptor stays open and the injector exits 97 at the next temp open.
+          const src = fs.readFileSync(ADAPTER, 'utf8'), mutated = src.replace('if (fd !== null) { try { fs.closeSync(fd); } catch { /* best effort */ } try { fs.unlinkSync(file); }', 'if (fd !== null) { try { fs.unlinkSync(file); }');
+          assert.notEqual(mutated, src, 'the close branch must exist to be deleted');
+          const b = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root });
+          fs.writeFileSync(b.record.promptFile, 'Review this change. Report format: ## Document Review …');
+          const mutant = path.join(root, 'mutant-adapter.js'); fs.writeFileSync(mutant, mutated);
+          const m = spawnSync(process.execPath, [mutant, ...startArgs(b.record)], { cwd: repo, encoding: 'utf8', env: { ...process.env, PATH: `${bin}${path.delimiter}${process.env.PATH}`, CODEX_HOME: codexHome, TMPDIR: root, FAKE_CODEX_EXTRA_EVENTS: '40', FS_FAULT: fault, NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` } });
+          assert.equal(m.status, 97, `without the close the failed descriptor is still open at the next snapshot — the injector saw it: ${m.stderr.slice(-200)}`);
+        }
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    });
+  }
+  test('the exact pid ceiling 2147483647 still reaches the liveness probe', () => {
+    const root = isoRoot();
+    try {
+      const guarded = oldPrivateDir(root, 'codex-exec-int32max');
+      fs.writeFileSync(path.join(guarded, 'progress.json'), '{"protocol":1,"status":"running","pid":2147483647}\n'); fs.utimesSync(guarded, old, old);
+      const r = adapter(['--protocol', '1', 'alloc'], { TMPDIR: root, FS_FAULT: 'sweep-kill-eperm', FS_FAULT_PID: '2147483647', NODE_OPTIONS: `--require ${path.join(ROOT, 'test/fixtures/codex-exec/fs-fault.js')}` });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(fs.existsSync(guarded), 'the maximum canonical pid was probed (EPERM → alive), not rejected as out of range');
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
   });
 });
