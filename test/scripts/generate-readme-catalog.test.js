@@ -243,11 +243,11 @@ test('README resource counts: Scripts row count matches top-level scripts/ inven
   const readme = readFileSync(README_PATH, 'utf8');
   const row = readme.split('\n').find((l) => l.startsWith('| Scripts |'));
   assert.ok(row, 'README should have a Scripts resource row');
-  assert.match(row, /^\| Scripts \| 22 \|/, 'script count must be 22');
+  assert.match(row, /^\| Scripts \| 23 \|/, 'script count must be 23');
   const scriptFiles = readdirSync(join(ROOT, 'scripts')).filter(
     (f) => statSync(join(ROOT, 'scripts', f)).isFile() && /\.(sh|js)$/.test(f)
   );
-  assert.equal(scriptFiles.length, 22, `scripts/ inventory drifted: ${scriptFiles.join(', ')}`);
+  assert.equal(scriptFiles.length, 23, `scripts/ inventory drifted: ${scriptFiles.join(', ')}`);
 });
 
 // === deep-explore regression: LOCALE READMEs must not drift from disk inventory ===
@@ -965,40 +965,43 @@ for (const file of ALL_READMES) {
   // `keepFenced` here and nowhere else: a shell command's home IS a fenced block, so blanking
   // fences would look for it in the one place it must not be. Comments are still blanked, which is
   // the hiding this guard has to see.
-  test(`${file}: naming Codex MCP a requirement means shipping the registration command`, () => {
+  test(`${file}: naming the Codex CLI a requirement means shipping the setup that makes it usable`, () => {
     const visible = renderMarkdown(readFileSync(join(ROOT, file), 'utf8'), { keepFenced: true }).join('\n');
-    assert.match(visible, CODEX_REQUIREMENT, `${file}: expected the Codex MCP requirement line`);
+    assert.match(visible, CODEX_REQUIREMENT, `${file}: expected the Codex CLI requirement line`);
     assert.match(
       visible,
-      CODEX_REGISTRATION,
-      `${file} calls Codex MCP a requirement for the review gates but never shows how to register it`
+      CODEX_SETUP,
+      `${file} calls the Codex CLI a requirement for the review gates but never shows how to set it up`
     );
   });
 }
 
-const CODEX_REQUIREMENT = /\[Codex MCP\]\(https:\/\/github\.com\/openai\/codex\)/;
-// The command's own tokens, contiguous, at the start of a line (bare or after a shell prompt).
-// Unanchored, `echo claude mcp add codex -- codex mcp-server` satisfied it while registering
-// nothing; anchored but non-contiguous, `claude mcp add codex -- false # codex mcp-server`
-// registered `false` and put the expected server name in a comment. `[ \t]` not `\s`, which spans
+const CODEX_REQUIREMENT = /\[Codex CLI\]\(https:\/\/github\.com\/openai\/codex\)/;
+// There is no registration command any more — `codex mcp-server` was deprecated in codex-cli
+// 0.149.0 — so the invariant moved rather than disappeared: a README that calls the Codex CLI a
+// requirement must show how to make it usable, which is the adapter install. The anti-evasion
+// shape is kept from the command guard it replaces: anchored at line start (bare or after a shell
+// prompt) and contiguous, so `echo /sd0x-dev-flow:install-scripts codex-exec.js` does not satisfy
+// it and neither does the name appearing in a trailing comment. `[ \t]` not `\s`, which spans
 // newlines and would let the two halves live on different lines.
-const CODEX_REGISTRATION = /^[ \t]*(?:\$[ \t]+)?claude mcp add codex[ \t]+--[ \t]+codex[ \t]+mcp-server(?=[ \t]|$)/m;
+const CODEX_SETUP = /^[ \t]*(?:\$[ \t]+)?\/sd0x-dev-flow:install-scripts[ \t]+codex-exec\.js(?=[ \t]|$)/m;
 
-test('the Codex-registration guard reads the command, not a mention of Codex MCP', () => {
-  // Negative control. Every README mentions "Codex MCP" many times — in the catalog rows, in the
-  // sequence diagram, in the category heading — so a guard that matched the phrase would be green
-  // on all six today and would stay green through exactly the omission it exists to catch.
+test('the Codex-setup guard reads the command, not a mention of Codex', () => {
+  // Negative control, carried over from the registration guard this replaces. Every README mentions
+  // Codex many times — catalog rows, the sequence diagram, the category heading — so a guard that
+  // matched the name would be green on all six today and would stay green through exactly the
+  // omission it exists to catch.
   const mentionOnly = [
-    '**Requirements**: Claude Code 2.1+ | [Codex MCP](https://github.com/openai/codex) (required for the review gates)',
-    '| `/codex-code-review` | Code review using Codex MCP. | - |',
+    '**Requirements**: Claude Code 2.1+ | [Codex CLI](https://github.com/openai/codex) (required for the review gates)',
+    '| `/codex-code-review` | Code review using Codex exec. | - |',
   ].join('\n');
   assert.match(mentionOnly, CODEX_REQUIREMENT, 'positive control: the requirement link is detected');
-  assert.doesNotMatch(mentionOnly, CODEX_REGISTRATION, 'a mention of Codex MCP is not a registration command');
-  assert.match(
-    "claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort=\"high\"'",
-    CODEX_REGISTRATION,
-    'positive control: the real registration command is detected'
-  );
+  assert.doesNotMatch(mentionOnly, CODEX_SETUP, 'a mention of Codex is not a setup command');
+  assert.doesNotMatch(mentionOnly, /mcp-server/, 'and the deprecated server is not named as setup');
+  assert.match('/sd0x-dev-flow:install-scripts codex-exec.js', CODEX_SETUP,
+    'positive control: the real setup command is detected');
+  assert.doesNotMatch('echo /sd0x-dev-flow:install-scripts codex-exec.js', CODEX_SETUP,
+    'and an echoed command is not a setup instruction');
 });
 
 // Negative controls for the two extractors above. Without these the parity guards are only ever
@@ -1021,13 +1024,13 @@ test('visibleMarkerBlockIn reads the rendered block, not the source', () => {
 });
 
 test('renderMarkdown keepFenced keeps commands in fences and still hides commented ones', () => {
-  const cmd = "claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort=\"high\"'";
+  const cmd = '/sd0x-dev-flow:install-scripts codex-exec.js';
   const fenced = '```bash\n' + cmd + '\n```';
-  assert.match(renderMarkdown(fenced, { keepFenced: true }).join('\n'), CODEX_REGISTRATION,
-    'positive control: a fenced command is visible to the registration guard');
-  assert.doesNotMatch(renderMarkdown('<!--\n' + fenced + '\n-->', { keepFenced: true }).join('\n'), CODEX_REGISTRATION,
+  assert.match(renderMarkdown(fenced, { keepFenced: true }).join('\n'), CODEX_SETUP,
+    'positive control: a fenced command is visible to the setup guard');
+  assert.doesNotMatch(renderMarkdown('<!--\n' + fenced + '\n-->', { keepFenced: true }).join('\n'), CODEX_SETUP,
     'a commented-out fence publishes no command');
-  assert.doesNotMatch(renderMarkdown(fenced).join('\n'), CODEX_REGISTRATION,
+  assert.doesNotMatch(renderMarkdown(fenced).join('\n'), CODEX_SETUP,
     'the default mode still blanks fenced content — the count guards depend on it');
 });
 
@@ -2394,14 +2397,14 @@ test('the tool-gating guard resolves row 5 by its number, not by which row menti
     'row 5 losing its mechanism signature is reported, not silently matched elsewhere');
 });
 
-test('the registration guard rejects a command that is only quoted, not run', () => {
-  const cmd = 'claude mcp add codex -- codex mcp-server';
-  assert.match(renderMarkdown('```bash\n' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_REGISTRATION,
-    'positive control: the command itself registers Codex');
-  assert.match(renderMarkdown('```bash\n$ ' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_REGISTRATION,
+test('the setup guard rejects a command that is only quoted, not run', () => {
+  const cmd = '/sd0x-dev-flow:install-scripts codex-exec.js';
+  assert.match(renderMarkdown('```bash\n' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_SETUP,
+    'positive control: the command itself installs the adapter');
+  assert.match(renderMarkdown('```bash\n$ ' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_SETUP,
     'a shell prompt in front of it is still the command');
-  assert.doesNotMatch(renderMarkdown('```bash\necho ' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_REGISTRATION,
-    'echoing the command prints it and registers nothing — same words, wrong direction');
+  assert.doesNotMatch(renderMarkdown('```bash\necho ' + cmd + '\n```', { keepFenced: true }).join('\n'), CODEX_SETUP,
+    'echoing the command prints it and installs nothing — same words, wrong direction');
 });
 
 test('marker blocks may not interleave across keys', () => {
@@ -2488,14 +2491,14 @@ test("the What's-Included category column is checked whole, including the rows n
     'Hooks and Scripts are read by no count guard, so only the label sequence can catch their swap');
 });
 
-test('the registration guard rejects a longer server name and a prompt with no space', () => {
+test('the setup guard rejects a longer script name and a prompt with no space', () => {
   const fenced = (cmd) => renderMarkdown('```bash\n' + cmd + '\n```', { keepFenced: true }).join('\n');
-  assert.match(fenced('claude mcp add codex -- codex mcp-server -c \'model_reasoning_effort="high"\''), CODEX_REGISTRATION,
+  assert.match(fenced('/sd0x-dev-flow:install-scripts codex-exec.js --force'), CODEX_SETUP,
     'positive control: the shipped command, options and all');
-  assert.doesNotMatch(fenced('claude mcp add codex -- codex mcp-server-fake'), CODEX_REGISTRATION,
-    'mcp-server-fake is a different server, and a word boundary does not say so');
-  assert.doesNotMatch(fenced('$claude mcp add codex -- codex mcp-server'), CODEX_REGISTRATION,
-    '`$claude` is not a prompt followed by the command; it is a different command');
+  assert.doesNotMatch(fenced('/sd0x-dev-flow:install-scripts codex-exec.js.bak'), CODEX_SETUP,
+    'codex-exec.js.bak is a different file, and a word boundary does not say so');
+  assert.doesNotMatch(fenced('$/sd0x-dev-flow:install-scripts codex-exec.js'), CODEX_SETUP,
+    '`$/sd0x-dev-flow:...` is not a prompt followed by the command; it is a different word');
 });
 
 test('a delimiter row whose cells are each valid may still be the wrong delimiter', () => {

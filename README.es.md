@@ -20,7 +20,7 @@ Control plane completo en Claude Code. Distribución solo de skills para Codex C
 
 ## Inicio rápido
 
-```bash
+```text
 # Claude Code — control plane completo
 /plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
@@ -50,17 +50,38 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | Kernel AGENTS.md + hook commit-msg (la puerta pre-push es opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
-**Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex MCP](https://github.com/openai/codex) (opcional para instalar el plugin; es el reviewer por defecto de los gates de review `/codex-*` — cuando Codex no está disponible, un reviewer de respaldo consciente del contrato asume el gate con el mismo mecanismo, fail-closed según el contrato de cada familia y registrando `[REVIEWER_FALLBACK]`; solo cuando ningún revisor alternativo produce un veredicto válido la review emite `⚠️ Need Human` en lugar de un veredicto)
+**Requisitos**: Claude Code 2.1+ | Node.js 18+ | `jq` (`pre-edit-guard` y `post-edit-format` procesan el payload del hook con él — sin `jq` ambos terminan con código 0, así que la protección de rutas sensibles y el formateo automático quedan desactivados en silencio) | [Codex CLI](https://github.com/openai/codex) (opcional para instalar el plugin; es el reviewer por defecto de los gates de review `/codex-*` — ante `codex_fail` — que el `start` o el `resume` del adaptador terminen con código 1, y nada más — un reviewer de respaldo consciente del contrato asume el gate con el mismo mecanismo, fail-closed según el contrato de cada familia y registrando `[REVIEWER_FALLBACK]`; si falta el adaptador, hay un error de configuración, la ejecución no concluye o falla un `alloc`/`cleanup`, no se despacha ningún respaldo, no se registra marcador alguno y el gate queda abierto; solo cuando ningún revisor alternativo produce un veredicto válido la review emite `⚠️ Need Human` en lugar de un veredicto)
 
-### Registro de Codex MCP
+### Configuración de Codex exec
+
+El bucle de revisión habla con Codex a través de `codex exec`, mediante un adaptador pequeño. **No hay ningún servidor MCP que registrar**: este plugin ya no despacha a través de `codex mcp-server`.
+
+**1. En una shell** — instala el CLI de Codex (>= 0.149.0) e inicia sesión:
 
 ```bash
-claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+codex --version
 ```
 
-`-c 'model_reasoning_effort="high"'` es el valor por defecto aquí porque la revisión es la tarea en la que compensa razonar en profundidad (`rules/auto-loop.md` § Review Dispatch aplica el mismo principio al frontmatter de `agents/`). Es un valor por defecto, no un requisito: ajústalo o quítalo según tu equilibrio entre esfuerzo y latencia. `-c` funciona tanto antes como después del subcomando `mcp-server`.
+**2. En Claude Code** — instala el adaptador de transporte en el proyecto. Es un slash command, no
+un comando de shell: escrito en una terminal intentaría ejecutar una ruta absoluta:
 
-En cambio, `--profile` **no puede** usarse con `codex mcp-server`; sobrescribe la configuración directamente con `-c` en el comando de registro. El mensaje de error completo está en el [README en inglés](README.md#codex-mcp-registration).
+```text
+/sd0x-dev-flow:install-scripts codex-exec.js
+```
+
+El paso 2 es opcional: la primera revisión que necesite el adaptador lo instala automáticamente, con la misma búsqueda de tres niveles que `precommit-fast` usa para su runner. Ejecútalo de forma explícita solo si prefieres que la instalación no ocurra durante una revisión.
+
+**El modelo y el esfuerzo de razonamiento viven ahora en un perfil de Codex, no en un comando de registro.** Indica uno en `rules/auto-loop-project.md`:
+
+```markdown
+## Codex Profile
+
+review
+```
+
+Ese nombre se resuelve a `$CODEX_HOME/<name>.config.toml`: la forma profile-v2 que `codex exec -p` superpone a tu configuración base (`codex exec --help`: «Layer `$CODEX_HOME/<name>.config.toml` on top of the base user config»). Así, un perfil `review` con `model_reasoning_effort = "high"` da al bucle de revisión la misma profundidad que daba el antiguo `-c`, sin tocar tus sesiones interactivas de Codex. Dejar `## Codex Profile` vacío también es válido: el adaptador no pasa `-p` y Codex usa su propia configuración por defecto.
+
+El adaptador fija por sí mismo el sandbox y la política de aprobación en cada despacho, así que ninguno es una decisión de configuración; el contrato completo está en `skills/codex-code-review/references/codex-transport.md`.
 
 ## Por qué v4
 
@@ -112,7 +133,7 @@ sd0x-dev-flow es una reference implementation. Cada fila de la tabla mapea un su
 | 2 | **Digest-bound reminder state** | Los veredictos los anota el modelo (`node scripts/review-state.js note <plane> <pass\|fail>`) y quedan ligados al digest del árbol — una edición reabre el recordatorio de su plano porque el digest cambió; los sentinels de gate (`✅ Ready` / `## Overall: ✅ PASS`) siguen siendo señales de la capa de comportamiento | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
 | 3 | **Context recovery across compaction** | Línea base de git (rama + archivos sin commit) y recordatorios de gates pendientes re-inyectados tras SessionStart(compact) | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 tipos de hook event despachados a 6 scripts — cuatro hooks de recordatorio consultivos, un auto-formateador y un guard de seguridad bloqueante (SessionStart ejecuta además `scripts/namespace-hint.sh`): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 scripts) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 90 de 99 skills públicas declaran `allowed-tools` |
+| 5 | **Capability-based tool gating** | Frontmatter de skill `allowed-tools` — p. ej., `/ask` no tiene Edit/Write | 91 de 99 skills públicas declaran `allowed-tools` |
 | 6 | **Defense-in-depth safety** | Los guards a nivel de git instalados siguen siendo duros — commit-msg-guard siempre, y pre-push-gate sobre `/dev/tty` cuando se ha optado por él; pre-edit-guard sigue bloqueando las ediciones de rutas sensibles (un guard de seguridad, no enforcement de workflow — requiere `jq`; sin jq, el guard no se activa); el Stop hook recuerda — las capas que custodian acciones irreversibles conservaron sus dientes, la capa de review se volvió consultiva por diseño | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex revisa lo que escribió Claude e investiga el repositorio por su cuenta — nunca recibe una conclusión que confirmar | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | Disciplina de estancamiento basada en evidencia: tres rondas de revisión que no cierran ningún hallazgo — contadas por el modelo a partir de los reportes de review — disparan una clasificación estructurada más un ajuste acotado. El presupuesto de rondas por tier (por defecto 6 / 15 / 30, sobrescribible 3–50) queda como red de seguridad ante un bucle desbocado y ejecuta el mismo diagnóstico en su primer hit, con salidas humanas enumeradas | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection and Diagnosis; detalles en `skills/codex-code-review/references/loop-diagnostics.md`) |
@@ -150,7 +171,7 @@ Un segundo reviewer está disponible vía `/codex-review-branch --dual` y viene 
 sequenceDiagram
     participant D as Developer
     participant C as Claude
-    participant X as Codex MCP
+    participant X as Codex exec
     participant H as Hooks
 
     D->>C: Edit code
@@ -168,7 +189,7 @@ sequenceDiagram
             C->>C: Reconciliar los findings antiguos con el informe nuevo y re-derivar el gate
             C->>C: Registrar [THREAD_ROTATED] (old → new threadId)
         else Bajo el umbral
-            C->>X: --continue threadId
+            C->>X: codex exec resume <threadId>
             X-->>C: Re-verificación
         end
         Note over C,X: La rotación conserva la scope baseline congelada; las rachas de stall y los topes de rondas no se reinician
@@ -295,7 +316,7 @@ Escenarios reales que muestran qué habilidades combinar y en qué orden.
 | Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 23 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile, codex-exec adapter |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### Mínimo consumo de context
@@ -347,7 +368,7 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/code-explore` | Pure Claude code investigation. |
 | `/code-investigate` | Dual-perspective code investigation. |
 | `/codex-architect` | Codex architecture consulting. |
-| `/codex-implement` | Implement features via Codex MCP. |
+| `/codex-implement` | Implement features via Codex exec. |
 | `/codex-setup` | Initialize sd0x-dev-flow infrastructure for Codex CLI and other non-Claude agents. |
 | `/create-pr` | Create or update GitHub PR with gh CLI. |
 | `/debug` | Interactive debugging workflow with hypothesis-driven probe loop. |
@@ -375,25 +396,25 @@ Los skills se cargan bajo demanda. Los skills inactivos no consumen tokens.
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### Revisión (Codex MCP) (15)
+### Revisión (Codex exec) (15)
 
 | Skill | Descripción | Soporte de loop |
 |-------|-------------|-----------------|
 | `/codex-cli-review` | Code review via Codex CLI with full disk access. | - |
-| `/codex-code-review` | Code review using Codex MCP. | - |
-| `/codex-explain` | Explain complex code via Codex MCP. | - |
-| `/codex-review` | Full second-opinion using Codex MCP (with lint:fix + build). | `--continue <threadId>` |
-| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex MCP | - |
-| `/codex-review-doc` | Review documents using Codex MCP. | `--continue <threadId>` |
-| `/codex-review-fast` | Quick second-opinion using Codex MCP (diff only, no tests). | `--continue <threadId>` |
-| `/codex-security` | OWASP Top 10 security review using Codex MCP. | `--continue <threadId>` |
-| `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
-| `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
-| `/doc-review` | Document review via Codex MCP. | - |
-| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
-| `/security-review` | Security review via Codex MCP. | - |
+| `/codex-code-review` | Code review using Codex exec. | - |
+| `/codex-explain` | Explain complex code via Codex exec. | - |
+| `/codex-review` | Full second-opinion using Codex exec (with lint:fix + build). | `--continue <threadId>` |
+| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex exec | - |
+| `/codex-review-doc` | Review documents using Codex exec. | `--continue <threadId>` |
+| `/codex-review-fast` | Quick second-opinion using Codex exec (diff only, no tests). | `--continue <threadId>` |
+| `/codex-security` | OWASP Top 10 security review using Codex exec. | `--continue <threadId>` |
+| `/codex-test-gen` | Generate unit tests for specified functions using Codex exec | - |
+| `/codex-test-review` | Review test case sufficiency using Codex exec, suggest additional edge cases. | `--continue <threadId>` |
+| `/doc-review` | Document review via Codex exec. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex exec. | - |
+| `/security-review` | Security review via Codex exec. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
-| `/test-review` | Test coverage review via Codex MCP. | - |
+| `/test-review` | Test coverage review via Codex exec. | - |
 
 ### Verificación (13)
 

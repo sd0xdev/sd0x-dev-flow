@@ -230,7 +230,7 @@ function buildWhatsIncludedCount({ publicCount, bundledCount, disk }) {
     `| Agents | ${disk.agents} | strict-reviewer, verify-app, coverage-analyst, architecture-designer |`,
     `| Hooks | ${disk.hooks} | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |`,
     `| Rules | ${disk.rules} | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |`,
-    `| Scripts | ${disk.scripts} | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |`,
+    `| Scripts | ${disk.scripts} | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile, codex-exec adapter |`,
   ].join('\n');
 }
 

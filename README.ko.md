@@ -20,7 +20,7 @@ Claude Code에서는 전체 control plane을 제공합니다. Codex CLI와 기�
 
 ## 빠른 시작
 
-```bash
+```text
 # Claude Code — 전체 control plane
 /plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
@@ -50,17 +50,38 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md 커널 + commit-msg hook (pre-push 게이트는 opt-in) |
 <!-- END:INSTALL-COVERAGE -->
 
-**요구 사항**: Claude Code 2.1+ | Node.js 18+ | `jq`(`pre-edit-guard`와 `post-edit-format`이 hook 페이로드를 이것으로 파싱합니다 — `jq`가 없으면 둘 다 exit 0 하므로, 민감 경로 가드와 자동 포매팅이 조용히 꺼집니다) | [Codex MCP](https://github.com/openai/codex)(플러그인 설치에는 선택 사항입니다. `/codex-*` 리뷰 게이트의 기본 리뷰어이며, Codex를 사용할 수 없으면 컨트랙트를 인지하는 폴백 리뷰어가 같은 메커니즘으로 게이트를 이어받아 패밀리 컨트랙트에 따라 fail-closed로 동작하고 `[REVIEWER_FALLBACK]`을 기록합니다. 모든 대체 리뷰어가 유효한 판정을 내리지 못한 경우에만 리뷰가 판정 대신 `⚠️ Need Human`을 냅니다)
+**요구 사항**: Claude Code 2.1+ | Node.js 18+ | `jq`(`pre-edit-guard`와 `post-edit-format`이 hook 페이로드를 이것으로 파싱합니다 — `jq`가 없으면 둘 다 exit 0 하므로, 민감 경로 가드와 자동 포매팅이 조용히 꺼집니다) | [Codex CLI](https://github.com/openai/codex)(플러그인 설치에는 선택 사항입니다. `/codex-*` 리뷰 게이트의 기본 리뷰어이며, `codex_fail`(어댑터의 `start` 또는 `resume` exit 1)일 때만 컨트랙트를 인지하는 폴백 리뷰어가 같은 메커니즘으로 게이트를 이어받아 패밀리 컨트랙트에 따라 fail-closed로 동작하고 `[REVIEWER_FALLBACK]`을 기록합니다. 어댑터를 찾지 못했거나 설정 오류이거나 실행이 끝나지 않았거나 `alloc`/`cleanup`이 실패한 경우에는 폴백을 보내지 않고, 마커도 기록하지 않으며, 게이트를 열어 둡니다. 모든 대체 리뷰어가 유효한 판정을 내리지 못한 경우에만 리뷰가 판정 대신 `⚠️ Need Human`을 냅니다)
 
-### Codex MCP 등록
+### Codex exec 설정
+
+리뷰 루프는 작은 어댑터를 통해 `codex exec` 와 통신합니다. **등록할 MCP 서버는 없습니다** —— 이 플러그인은 더 이상 `codex mcp-server` 를 거쳐 디스패치하지 않습니다.
+
+**1. 셸에서** — Codex CLI(>= 0.149.0)를 설치하고 로그인합니다:
 
 ```bash
-claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+codex --version
 ```
 
-`-c 'model_reasoning_effort="high"'`를 기본값으로 둔 이유는 리뷰는 깊이 있는 추론에 투자할 가치가 있는 작업이기 때문입니다(`rules/auto-loop.md` § Review Dispatch가 `agents/` frontmatter에 같은 원칙을 적용합니다). 요구 사항이 아니라 기본값이므로 effort/지연 시간 트레이드오프에 맞춰 조정하거나 빼도 됩니다. `-c`는 `mcp-server` 하위 명령 앞뒤 어디에 놓아도 동작합니다.
+**2. Claude Code에서** — 트랜스포트 어댑터를 프로젝트에 설치합니다. 셸 명령이 아니라 슬래시 명령이며,
+터미널에 입력하면 절대 경로를 실행하려고 합니다:
 
-반면 `--profile`은 `codex mcp-server`와 **함께 쓸 수 없습니다**. 설정은 등록 명령에서 `-c`로 직접 덮어쓰세요. 전체 오류 메시지는 [English README](README.md#codex-mcp-registration)에 있습니다.
+```text
+/sd0x-dev-flow:install-scripts codex-exec.js
+```
+
+2단계는 선택 사항입니다. 어댑터가 필요한 첫 리뷰가 `precommit-fast` 가 러너에 사용하는 것과 같은 3단계 조회로 자동 설치합니다. 설치가 리뷰 도중에 일어나지 않기를 원할 때만 직접 실행하세요.
+
+**모델과 추론 강도는 이제 등록 명령이 아니라 Codex 프로필에 있습니다.** `rules/auto-loop-project.md` 에 이름을 지정합니다:
+
+```markdown
+## Codex Profile
+
+review
+```
+
+이 이름은 `$CODEX_HOME/<name>.config.toml` 로 해석됩니다 —— `codex exec -p` 가 기본 사용자 설정 위에 얹는 profile-v2 형식입니다(`codex exec --help`: "Layer `$CODEX_HOME/<name>.config.toml` on top of the base user config"). 따라서 `model_reasoning_effort = "high"` 를 담은 `review` 프로필은 이전 `-c` 재정의와 같은 깊이를 리뷰 루프에 주면서, 대화형 Codex 세션에는 영향을 주지 않습니다. `## Codex Profile` 을 비워 두어도 됩니다. 그러면 어댑터는 `-p` 를 전달하지 않고 Codex 가 자체 기본 설정을 사용합니다.
+
+sandbox 와 approval policy 는 디스패치마다 어댑터가 직접 고정하므로 설정 단계의 결정이 아닙니다 —— 전체 계약은 `skills/codex-code-review/references/codex-transport.md` 를 보세요.
 
 ## 왜 v4인가
 
@@ -112,7 +133,7 @@ sd0x-dev-flow는 그 reference implementation입니다. 아래 각 행은 harnes
 | 2 | **Digest 기반 reminder 상태** | Verdict는 모델이 기록하고(`node scripts/review-state.js note <plane> <pass\|fail>`) tree digest에 바인딩됩니다 — 편집하면 digest가 바뀌므로 해당 plane의 reminder가 다시 열립니다; gate sentinel(`✅ Ready` / `## Overall: ✅ PASS`)은 동작 레이어 신호로 유지 | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
 | 3 | **Context 압축 후 복구** | SessionStart(compact) 이후 git baseline(브랜치 + 미커밋 파일)과 미완료 gate reminder를 재주입 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptor** | 5가지 hook event type을 6개 스크립트로 디스패치 — 4개의 권고형 reminder hook, 1개의 자동 포매터, 1개의 차단형 보안 가드(SessionStart는 추가로 `scripts/namespace-hint.sh`를 실행): PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6개 스크립트) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 99개 skill 중 90개가 `allowed-tools`를 선언 |
+| 5 | **Capability 기반 tool gating** | Skill frontmatter의 `allowed-tools` — 예: `/ask`는 Edit/Write 없음 | 공개된 99개 skill 중 91개가 `allowed-tools`를 선언 |
 | 6 | **Defense-in-depth 안전장치** | 설치된 git 레벨 가드는 그대로 강제됩니다 — commit-msg-guard는 항상 설치되고, `/dev/tty`를 통한 pre-push-gate는 opt-in한 경우에 작동합니다; 편집 시점의 pre-edit-guard는 민감 경로 편집을 여전히 차단하고(보안 가드이며 워크플로 강제가 아님 — `jq`가 필요하며, jq가 없으면 가드가 작동하지 않음), Stop hook은 reminder를 출력합니다 — 되돌릴 수 없는 동작을 막는 레이어는 강제력을 유지하고, 리뷰 레이어는 의도적으로 권고형이 되었습니다 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator 분리** | Codex가 Claude의 결과물을 리뷰하며 저장소를 직접 조사 — 결론을 건네받아 승인만 하는 일은 없음 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **점진적 진행 추적** | 증거 기반 정체 규율: finding을 하나도 닫지 못한 리뷰 라운드가 3회 연속되면 — 모델이 리뷰 리포트로부터 직접 셉니다 — 구조화된 정체(stall) 분류와 한 번의 제한된 조정을 트리거합니다. Tier별 라운드 예산 (기본 6 / 15 / 30, 3–50으로 오버라이드 가능) 은 폭주 방지용 백스톱으로 물러나며, 첫 상한 도달 시에도 같은 진단을 수행하고, human exit는 열거되어 있음 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection and Diagnosis; 자세한 내용은 `skills/codex-code-review/references/loop-diagnostics.md`) |
@@ -150,7 +171,7 @@ Hooks는 **명령이 아니라 사실**을 보고합니다: reminder와 `[AUTO_L
 sequenceDiagram
     participant D as Developer
     participant C as Claude
-    participant X as Codex MCP
+    participant X as Codex exec
     participant H as Hooks
 
     D->>C: Edit code
@@ -168,7 +189,7 @@ sequenceDiagram
             C->>C: 이전 findings를 새 리포트에 대조하고 gate 재도출
             C->>C: [THREAD_ROTATED] 기록(old → new threadId)
         else 임계값 미만
-            C->>X: --continue threadId
+            C->>X: codex exec resume <threadId>
             X-->>C: 재검증
         end
         Note over C,X: 로테이션은 동결된 scope baseline을 유지; 스톨 연속 카운트와 라운드 상한은 리셋되지 않음
@@ -295,7 +316,7 @@ flowchart TD
 | Agents | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | Hooks | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | Rules | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| Scripts | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| Scripts | 23 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile, codex-exec adapter |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 최소한의 Context 사용량
@@ -347,7 +368,7 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 | `/code-explore` | Pure Claude code investigation. |
 | `/code-investigate` | Dual-perspective code investigation. |
 | `/codex-architect` | Codex architecture consulting. |
-| `/codex-implement` | Implement features via Codex MCP. |
+| `/codex-implement` | Implement features via Codex exec. |
 | `/codex-setup` | Initialize sd0x-dev-flow infrastructure for Codex CLI and other non-Claude agents. |
 | `/create-pr` | Create or update GitHub PR with gh CLI. |
 | `/debug` | Interactive debugging workflow with hypothesis-driven probe loop. |
@@ -375,25 +396,25 @@ Skills는 온디맨드로 로드됩니다. 미사용 Skills는 토큰을 소비�
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### 리뷰 (Codex MCP) (15)
+### 리뷰 (Codex exec) (15)
 
 | Skill | Description | 루프 지원 |
 |-------|-------------|----------|
 | `/codex-cli-review` | Code review via Codex CLI with full disk access. | - |
-| `/codex-code-review` | Code review using Codex MCP. | - |
-| `/codex-explain` | Explain complex code via Codex MCP. | - |
-| `/codex-review` | Full second-opinion using Codex MCP (with lint:fix + build). | `--continue <threadId>` |
-| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex MCP | - |
-| `/codex-review-doc` | Review documents using Codex MCP. | `--continue <threadId>` |
-| `/codex-review-fast` | Quick second-opinion using Codex MCP (diff only, no tests). | `--continue <threadId>` |
-| `/codex-security` | OWASP Top 10 security review using Codex MCP. | `--continue <threadId>` |
-| `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
-| `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
-| `/doc-review` | Document review via Codex MCP. | - |
-| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
-| `/security-review` | Security review via Codex MCP. | - |
+| `/codex-code-review` | Code review using Codex exec. | - |
+| `/codex-explain` | Explain complex code via Codex exec. | - |
+| `/codex-review` | Full second-opinion using Codex exec (with lint:fix + build). | `--continue <threadId>` |
+| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex exec | - |
+| `/codex-review-doc` | Review documents using Codex exec. | `--continue <threadId>` |
+| `/codex-review-fast` | Quick second-opinion using Codex exec (diff only, no tests). | `--continue <threadId>` |
+| `/codex-security` | OWASP Top 10 security review using Codex exec. | `--continue <threadId>` |
+| `/codex-test-gen` | Generate unit tests for specified functions using Codex exec | - |
+| `/codex-test-review` | Review test case sufficiency using Codex exec, suggest additional edge cases. | `--continue <threadId>` |
+| `/doc-review` | Document review via Codex exec. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex exec. | - |
+| `/security-review` | Security review via Codex exec. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
-| `/test-review` | Test coverage review via Codex MCP. | - |
+| `/test-review` | Test coverage review via Codex exec. | - |
 
 ### 검증 (13)
 
