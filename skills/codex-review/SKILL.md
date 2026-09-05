@@ -1,7 +1,7 @@
 ---
 name: codex-review
 description: "Full second-opinion using Codex exec (with lint:fix + build). Supports review loop with context preservation."
-allowed-tools: Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Read, Grep, Glob, Task
+allowed-tools: Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor
 ---
 
 # Codex Review

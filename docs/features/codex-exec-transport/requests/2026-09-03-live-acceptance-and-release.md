@@ -2,7 +2,7 @@
 
 > **Doc class**: Request ticket (date-prefixed non-lifecycle — per `@rules/docs-numbering.md`). Per-task work breakdown unit for progress tracking. **Not** a feature-level requirements doc.
 > **Created**: 2026-09-03
-> **Status**: In Progress
+> **Status**: Candidate Complete
 > **Note**: Work item 6 of 6 in the tech spec's § 5. Items 1, 3 and 4 each carry a narrow live smoke run for their own slice; this is the one ticket dedicated to the complete consuming-project acceptance (auto-install, protocol mismatch, profile paths) and the release evidence — the live JSONL schema cannot be exercised by the fake CLI, so this run closes the feature, then the version bump.
 > **Priority**: P1
 > **Tech Spec**: [2-tech-spec.md](../2-tech-spec.md) <- § 6 Testing Strategy — Acceptance bullet; § 7 Open Questions
@@ -90,21 +90,19 @@ auto-install path. This ticket runs the intent's acceptance sketch for real and 
 - [x] `4.5.0` → **`4.6.0`** in `package.json`, `.claude-plugin/plugin.json` and
   `.sd0x/install-state.json` — one string, all three files (the manifest included, which is what
   stops the SessionStart drift sentinel firing after a bump)
-- [ ] **Blocked on your approval, not on work.** This AC needs commits to exist and to be pushed:
-  `release.yml` generates the notes from the commit subjects between the previous tag and the bump,
-  so there is nothing to inspect until the change is committed and pushed. Committing needs
-  `/smart-commit --execute` and pushing needs `/push-ci`, each with an explicit per-use approval
-  (Anchor Register #4). **Nothing is committed.** The suggested subjects, which are what the notes
-  would say, are drafted in Progress below
-- [ ] `/codex-review-doc` — **unchecked on purpose, and it cannot be checked here.** Writing this
-  row is an edit to a file the doc batch owns, so it moves the doc digest and re-opens the plane:
-  any tick would claim a verdict for the digest it is itself creating. The last verdict obtained was
-  `⛔ Needs revision` from `contract-neutral-reviewer`, carrying the gate under
-  `[REVIEWER_FALLBACK] plane=doc_review from=codex to=contract-neutral-reviewer reason=quota` after
-  the adapter exited 1 on a Codex account usage limit — its report validated with
-  `[SENTINEL_VALID] contract=doc`, and its one blocking finding was **this AC**, checked with
-  exactly the claim this paragraph now refuses to make. The gate closes on the next pass at the
-  resulting digest and not before
+- [x] **Closed by live evidence, 2026-09-05.** `/smart-commit --execute` (14 commits, user-approved,
+  no AI attribution) then `/push-ci` (user-approved, plain push to `main`, `PUSH_GATE=absent` so the
+  in-session approval was the sole credential) landed `885f6c9..3d3c4c7`. `release.yml` ran as
+  `Auto Release` (run `33936914381`, conclusion `success`) and published
+  [`v4.6.0`](https://github.com/sd0xdev/sd0x-harness/releases/tag/v4.6.0), generated from exactly
+  the 14 commit subjects — `New Features` (7), `Bug Fixes` (1), `Documentation` (4), `Tests` (1),
+  `Chores` (1). `CI` (run `33936914473`) also passed at the same SHA
+- [x] `/codex-review-doc` — **at the moment the note below was made**, Codex itself (not a fallback)
+  returned `✅ Mergeable` at digest `sha256:06ae8b83…` on the release-notes edit above, no 🔴
+  findings, one sub-threshold 🟡 on wording logged as `[NIT_DEFERRED]` below and not fixed here.
+  **This checkbox is itself a doc-plane edit** — the caveat this AC has carried throughout this
+  ticket — so by the time it is read the digest has already moved again; `review-state.js check`
+  is the live source of truth, not this line
 - [x] `/precommit` — `## Overall: ✅ PASS` at code-plane digest `sha256:e4ced391…`, self-noted by
   the runner; `/codex-review-fast` returned `✅ Ready` on the same code plane and is noted at that
   digest too (the version bump touches code-plane files, so the code gate is owed here as well as
@@ -117,7 +115,7 @@ auto-install path. This ticket runs the intent's acceptance sketch for real and 
 | Analysis | Done | Script = the intent's acceptance sketch; spike on 2026-09-03 already showed live `start`/`resume` continuity outside a consuming project |
 | Development | Done | `/bump-version minor` → 4.6.0 across the three files; § 7 items 1 and 3 decided in the spec; § 4's live-schema risk row rewritten around the measurement |
 | Testing | Done | Five live runs against codex-cli 0.149.0, all recorded above with their ids and exit codes: auto-install + `start`, `resume` on the same thread, `protocol_mismatch` (exit 2), `profile_missing` (exit 2, nothing dispatched), valid `--profile cli` (`requestedProfile` in the record), plus `cleanup` accepting an alloc dir and refusing `/tmp` |
-| Acceptance | In Progress | **Two ACs are unchecked.** (1) Release notes — blocked on a user approval this workflow cannot give itself: it needs a commit and a push, each with an explicit per-use approval (Anchor Register #4), and nothing is committed. (2) `/codex-review-doc` — structurally uncheckable from inside a file the doc batch owns, since writing the tick re-opens the plane; see that AC. **Closed and checked**: `/codex-review-fast` `✅ Ready` and `/precommit` `## Overall: ✅ PASS`, both at code-plane digest `sha256:e4ced391…`, both noted. The header keeps the bare `In Progress` token — status is parsed from it |
+| Acceptance | Done | All ACs checked, 2026-09-05: release notes by live evidence (`v4.6.0` published from the 14 commit subjects), `/codex-review-doc` by a fresh Codex dispatch (`✅ Mergeable` at digest `sha256:06ae8b83…`, one sub-threshold 🟡 logged below), `/codex-review-fast` `✅ Ready` and `/precommit` `## Overall: ✅ PASS` both at code-plane digest `sha256:e4ced391…`. Every checkbox above is itself a doc-plane edit, so the header's `Candidate Complete` token — not this row — is what a reader should trust; re-run `review-state.js check` for the live gate state |
 
 ### Live run ledger (2026-09-04, codex-cli 0.149.0)
 
@@ -153,6 +151,17 @@ records" of three files. The burndown ticket's numbers are the model the reviewe
 verifies against a stated grep. Fixing the five here would edit three documents this ticket does not
 own, which is why they are recorded rather than swept.
 
+### Deferred finding from the doc review that closed this ticket (2026-09-05)
+
+Codex itself (no fallback this round) returned `✅ Mergeable` at digest `sha256:06ae8b83…` on the
+release-notes-AC edit, one sub-threshold 🟡, logged and passed per `@rules/auto-loop.md`
+§ Sub-Threshold Findings rather than fixed on the spot (fixing it would move the digest again and
+reopen the plane this note is closing):
+
+```
+[NIT_DEFERRED] docs/features/codex-exec-transport/requests/2026-09-03-live-acceptance-and-release.md:95 | User approval is described as a credential rather than an authorization gate | reason: sub-threshold-doc | 2026-09-05T01:47:50Z
+```
+
 ### Fallback code review (2026-09-04) — verdict and its deferrals
 
 Codex was out of quota for this round on both planes, so the contract-aware carriers ran:
@@ -172,10 +181,13 @@ Both belong to items 1 and 3 rather than to this ticket, and both are below the 
 three files — is recorded in item 2 beside the § Locator fix, since that is the item that owns the
 class.
 
-### Suggested commit subjects (drafted, not executed)
+### Commit subjects as drafted on 2026-09-04 (historical — executed 2026-09-05)
 
-`release.yml` turns the subjects between the previous tag and the bump into the notes, so these are
-what the release would say. They are a **draft for your approval** — no commit exists:
+`release.yml` turns the subjects between the previous tag and the bump into the notes, so these were
+what the release was expected to say when this block was written and **no commit existed yet**. The
+release-notes AC above records what actually happened: `/smart-commit --execute` grouped the change
+into **14** commits with subjects of its own, and `v4.6.0`'s notes were generated from those. This
+list is kept as the record of the draft, not as a description of the commits:
 
 ```
 feat(codex-transport): Replace the deprecated MCP server with a codex exec adapter

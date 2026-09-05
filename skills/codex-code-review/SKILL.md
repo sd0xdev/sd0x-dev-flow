@@ -1,7 +1,7 @@
 ---
 name: codex-code-review
 description: "Code review using Codex exec. Use when: PR review, code audit, second opinion on changes. Not for: doc review (use doc-review), security audit (use security-review). Output: severity-grouped findings + merge gate."
-allowed-tools: Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Bash(node:*), Read, Grep, Glob, Task, Write
+allowed-tools: Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Bash(node:*), Read, Grep, Glob, Task, Write, Monitor
 ---
 
 # Codex Code Review
@@ -282,7 +282,7 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 ### Step 3.5: Await Results
 
-**Single reviewer (default dispatch):** await Codex. Its verdict is the gate *for this dispatch*. Go to Step 4.
+**Single reviewer (default dispatch):** await Codex. Its verdict is the gate *for this dispatch*. Go to Step 4. A dispatch that runs in the background is **observed, not polled**: launch it with nothing redirected (stderr on the task panel is the live 60 s view), arm the `persistent` self-terminating Monitor recipe of `references/codex-transport.md` § Progress on the adapter-owned `progress.json` (state changes only — `started`, five-minute marks, the stall advisory, the terminal status — so the operator can keep talking between them), treat the task's completion notification as the end of the run, and `cleanup` — which ends the Monitor by itself, since the recipe exits once `progress.json` has been unreadable for three polls, a full 60 s; `TaskStop` only silences it sooner. This skill and its three entry points run in the parent session and grant `Monitor` for exactly this step. A progress line, whatever it reports, is never a verdict and notes nothing (INV-005).
 
 If the transport reports `codex_fail` — **adapter exit 1 only** (`references/codex-transport.md` § Completion state machine): quota, network, an unreachable CLI, a malformed stream. A pending or unknown completion keeps the gate **open** and dispatches nothing; exit 2 is a configuration error to fix, not a Codex failure; an `alloc`/`cleanup` failure is a lifecycle error surfaced to the operator. On `codex_fail` the gate does **not** stop: a contract-aware fallback carries it (`@rules/auto-loop.md` § Review Dispatch). Named steps, in order:
 

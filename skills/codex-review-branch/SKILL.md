@@ -1,7 +1,7 @@
 ---
 name: codex-review-branch
 description: "Fully automated review of an entire feature branch using Codex exec"
-allowed-tools: Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task
+allowed-tools: Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor
 ---
 
 # Codex Review Branch

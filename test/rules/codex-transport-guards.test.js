@@ -460,9 +460,12 @@ const OWNERS = ['codex-brainstorm', 'codex-architect', 'codex-explain', 'codex-i
 // adding `Bash(node:*)` + `Write` to three of them passed the earlier presence-only check, which is
 // exactly the permission growth INV-007 forbids delegating skills.
 const ROUTER_TOOLS = {
-  'codex-review': 'Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Read, Grep, Glob, Task',
-  'codex-review-fast': 'Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task',
-  'codex-review-branch': 'Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task',
+  // `Monitor` (2026-09-05, work item 7) is an OBSERVATION grant, not a transport one: it lets the
+  // parent-session review family arm codex-transport.md § Progress's recipe, and it is pinned here
+  // so it cannot spread to a `context: fork` router where the notifications would never arrive.
+  'codex-review': 'Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor',
+  'codex-review-fast': 'Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor',
+  'codex-review-branch': 'Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor',
   'codex-review-doc': 'Bash(git:*), Read, Glob',
   'codex-test-review': 'Bash(git:*), Read, Grep, Glob',
   debug: 'Read, Grep, Glob, Edit, Write, Bash, Skill',
