@@ -211,7 +211,7 @@ Runtime verification of [FEATURE/BRANCH] after deployment.
 3. Were all HTTP methods GET or explicitly allowlisted POST? Flag any deviation.
 
 ## Questions for Codex
-1. Do you agree with the overall verdict? What would you challenge?
+1. What overall verdict follows from this evidence, and what would you challenge in it?
 2. What blind spots might this verification have missed?
 3. Could the test parameters have hidden issues? (e.g., edge cases not covered)
 4. Is the confidence level appropriate given the evidence?

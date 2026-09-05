@@ -1,7 +1,7 @@
 ---
 name: codex-test-review
-description: "Review test case sufficiency using Codex MCP, suggest additional edge cases. Supports review loop with context preservation."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
+description: "Review test case sufficiency using Codex exec, suggest additional edge cases. Supports review loop with context preservation."
+allowed-tools: Bash(git:*), Read, Grep, Glob
 ---
 
 # Codex Test Review

@@ -38,11 +38,16 @@
 
 ## Clarify Intent — Mapping
 
-| Codex Assessment | Confidence | Result |
-|-----------------|-----------|--------|
-| Describes broad or critical impact | >= 0.70 | `HIGH_IMPACT` |
-| Describes narrow or negligible impact | >= 0.70 | `LOW_IMPACT` |
-| Cannot determine impact / low confidence | any | `UNCERTAIN` |
+Read from the dispatch's `impact_assessment` field — the one `verdict-prompt.md` § Output requires a
+`clarify` dispatch to fill in. `codex_verdict` does not answer this question and never did: it says
+whether the finding is actionable, which is the other axis.
+
+| `impact_assessment` | Confidence | Result |
+|---------------------|-----------|--------|
+| `HIGH_IMPACT` — broad or critical reach | >= 0.70 | `HIGH_IMPACT` |
+| `LOW_IMPACT` — narrow or negligible reach | >= 0.70 | `LOW_IMPACT` |
+| `UNCERTAIN`, or below the confidence floor | any | `UNCERTAIN` |
+| `NOT_ASSESSED` — the dispatch was not a clarify | any | `UNCERTAIN`, and say the intent was mismatched |
 
 Confirm/clarify intents are **informational only** — they produce no dismiss authorization and do not create exceptions in `fix-all-issues.md`.
 
@@ -114,12 +119,15 @@ Confirm/clarify intents are **informational only** — they produce no dismiss a
 
 ## Rebuttal Mechanism
 
-If Codex returns `FIX_REQUIRED` but Claude has counter-evidence:
+When this table maps Codex's raw `ACTIONABLE` to `FIX_REQUIRED` and Claude has counter-evidence.
+The trigger is the **mapped** result: `verdict-prompt.md` § Output lets Codex return only
+`ACTIONABLE`, `NON_ACTIONABLE` or `UNCERTAIN`, so a rebuttal waiting for Codex to say
+`FIX_REQUIRED` would wait forever:
 
 | Rule | Detail |
 |------|--------|
 | Max rounds | **1 round only** |
-| Channel | `mcp__codex__codex-reply` (same verdict thread) |
+| Channel | `@skills/codex-code-review/references/codex-transport.md` § Resume (same verdict thread) |
 | Allowed content | Objective artifacts: tests, specs, language semantics |
 | Prohibited content | "Please confirm me", opinion-based arguments |
-| After rebuttal | Still FIX_REQUIRED -> fix; Still ambiguous -> `NEED_HUMAN` |
+| After rebuttal | Map the new raw answer again: still `FIX_REQUIRED` -> fix; still ambiguous -> `NEED_HUMAN` |
