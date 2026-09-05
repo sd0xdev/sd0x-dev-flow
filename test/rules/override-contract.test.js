@@ -485,8 +485,11 @@ const CANONICAL_AUTO_LOOP_OVERRIDE =
   'Protocol, which carries the checklist ' +
   '| Default | | `## Review Thread Rotation` | Setting — the R-a rotation threshold (2–6, unset = ' +
   '3) read behaviourally by `review-common.md` § Review Loop; counted in conversation, no hook ' +
-  'reads it | Default | No row is a section replacement: `## Tier` is deliberately **not** this ' +
-  'file\'s `## Tiers`, and the other six name no section at all. A user who does want a section replacement ' +
+  'reads it | Default | | `## Codex Profile` | Setting — the Codex profile every dispatch carries, ' +
+  'read by `skills/codex-code-review/references/codex-transport.md` § Profile; unset means Codex\'s ' +
+  'own default configuration, and selection is not tier-dependent in v1 | Default | No row is a ' +
+  'section replacement: `## Tier` is deliberately **not** this ' +
+  'file\'s `## Tiers`, and the other seven name no section at all. A user who does want a section replacement ' +
   'restates that section\'s exact heading — the mechanism is available, the scaffold just does not ' +
   'ship one.';
 
@@ -1122,6 +1125,7 @@ test('auto-loop mapping table when parsed → covers preamble plus every templat
     '`## Git Memory`',
     '`## Think Harder`',
     '`## Review Thread Rotation`',
+    '`## Codex Profile`',
   ], 'the mapping is closed: exactly these rows, in template order');
   assert.equal(new Set(headings).size, headings.length, 'no duplicate mapping rows');
   for (const [heading, , tier] of rows) {
@@ -1130,7 +1134,7 @@ test('auto-loop mapping table when parsed → covers preamble plus every templat
   // Completeness against the template on disk: every ## heading in the template (live or
   // commented) must have a mapping row — a heading added to the template without a row fails.
   const tplHeadings = templateHeadings(autoLoopTpl);
-  assert.deepEqual(tplHeadings, ['Tier', 'Max Rounds', 'Plan Review', 'Plan Review Max Rounds', 'Git Memory', 'Think Harder', 'Review Thread Rotation'],
+  assert.deepEqual(tplHeadings, ['Tier', 'Max Rounds', 'Plan Review', 'Plan Review Max Rounds', 'Git Memory', 'Think Harder', 'Review Thread Rotation', 'Codex Profile'],
     'template heading inventory drifted — update the mapping table AND this test together');
   for (const h of tplHeadings) {
     assert.ok(headings.includes(`\`## ${h}\``), `template heading "${h}" missing from the mapping table`);

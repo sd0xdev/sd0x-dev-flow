@@ -72,3 +72,14 @@ to be restated.
      conversation per thread; no hook reads it, and review-state.js rounds does not participate. -->
 
 <!-- 3 -->
+
+## Codex Profile
+
+<!-- One Codex profile name applied to every Codex dispatch. Bare name, no trailing comment:
+     [A-Za-z0-9][A-Za-z0-9._-]*. Unset = Codex's own default configuration.
+     What a name must resolve to, what happens when it does not, and why selection is not
+     tier-dependent in v1: skills/codex-code-review/references/codex-transport.md § Profile — the
+     sole authority for the file and exit contracts. Restating them here is the drift surface that
+     reference exists to remove. -->
+
+<!-- review -->
