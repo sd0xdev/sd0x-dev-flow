@@ -31,8 +31,8 @@ test('SKILL.md allowed-tools includes AskUserQuestion + Codex MCP + Skill', () =
     'Glob',
     'Skill',
     'AskUserQuestion',
-    'mcp__codex__codex',
-    'mcp__codex__codex-reply',
+    'Bash(node:*)',
+    'Write',
   ]) {
     assert.ok(atBlock.includes(tool), `allowed-tools should include ${tool}; got: ${atBlock}`);
   }
@@ -280,13 +280,15 @@ test('qa-prompt.md exists and follows codex-invocation rule', () => {
   );
   assert.match(
     content,
-    /mcp__codex__codex/,
-    'must reference the Codex MCP call signature',
+    /codex-transport\.md` § Start/,
+    'must cite the canonical transport rather than naming a tool',
   );
-  assert.match(
+  // Inverted for the exec transport: the adapter pins the sandbox, and a template restating it is
+  // the duplication this migration removed — one authority, not a copy per prompt file.
+  assert.doesNotMatch(
     content,
     /sandbox:\s*['"]read-only['"]/,
-    'must set sandbox to read-only',
+    'the transport pins the sandbox; the template must not restate it',
   );
 });
 

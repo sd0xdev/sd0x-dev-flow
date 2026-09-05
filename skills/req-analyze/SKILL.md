@@ -1,7 +1,7 @@
 ---
 name: req-analyze
 description: "Requirements analysis — problem decomposition, stakeholder scan, requirement structuring. Produces 1-requirements.md (Phase 1 lifecycle doc, NOT the per-task request ticket — for those use /create-request). Use when: analyzing needs before tech spec, decomposing requirements, stakeholder analysis, 需求分析. Not for: solution comparison (use feasibility-study), tech design (use tech-spec), per-task tracking tickets (use create-request), issue root cause (use issue-analyze)."
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(bash:*), Write, Agent, Skill, AskUserQuestion, WebSearch, WebFetch, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(bash:*), Write, Agent, Skill, AskUserQuestion, WebSearch, WebFetch
 ---
 
 # Requirements Analysis Skill

@@ -6,7 +6,7 @@ LLM synthesis prompt for `/recap-doc` Phase 4b. Governs composition of §1 Overv
 
 ## When This Prompt Runs
 
-Phase 4b composes the full markdown body *after* Phase 4a already produced per-file explanations via `/codex-explain` (Skill call). The synthesis model (Claude, or Codex for second-opinion mode) receives the template plus the collected evidence.
+Phase 4b composes the full markdown body *after* Phase 4a already produced per-file explanations via `/codex-explain` (Skill call). The synthesis model is **Claude** — Phase 4b runs in the model already executing `/recap-doc`, and there is no second-opinion mode any more (see the removal record below).
 
 ## Template Variables
 
@@ -24,11 +24,12 @@ Phase 4b composes the full markdown body *after* Phase 4a already produced per-f
 ## Core Prompt (Claude, first-pass synthesis)
 
 > **Codex not invoked here.** The first-pass synthesis runs inside Claude (the
-> model already executing `/recap-doc`), so no `mcp__codex__codex` call is
-> issued. The codex-invocation "independently research" mandate applies only to
-> the Codex Second-Opinion Prompt below. If you ever adapt this prompt to drive
-> Codex, you **must** insert the research block (see that section for the
-> verbatim text).
+> model already executing `/recap-doc`), so no transport dispatch is
+> issued, and `@rules/codex-invocation.md`'s "independently research" mandate therefore does not
+> apply to this template as it stands — that rule governs dispatches to Codex, and this template
+> makes none. **If this prompt is ever adapted to drive Codex, the research block becomes
+> mandatory**, and the adaptation needs its own dispatch contract; the removal record below says why
+> retrofitting one onto an existing prompt was the wrong move.
 
 ```
 You are composing a post-development recap document. The target reader is the
@@ -81,49 +82,20 @@ Emit the recap markdown following `references/output-template.md` exactly:
 Return only the markdown body. Do not wrap in code fences. Do not add preamble.
 ```
 
-## Codex Second-Opinion Prompt (optional, for --strict mode)
+## Codex Second-Opinion Prompt — removed 2026-09-04
 
-When the user opts into a Codex review pass over the synthesized recap, use this
-prompt. It obeys `@rules/codex-invocation.md`: no conclusions are fed, and Codex
-must research the project independently.
+This template used to carry a second-opinion prompt for a `--strict` mode that `recap-doc` never
+defined: no flag, no dispatch step, no binding. A doc reviewer offered two resolutions — wire it, or
+remove the orphan — and wiring it was tried first. That produced three findings in three rounds, two
+of them security-relevant: the prompt pasted the Claude-authored draft verbatim, which
+`@rules/codex-invocation.md` forbids for a judgement dispatch and whose exception is closed to
+`feature-verify` and `necessity-audit`; and the path-based replacement composed a shell command
+around a user-selectable `--output` path, where double quotes are not a defence because `$(…)` runs
+inside them.
 
-```
-You are reviewing a draft recap document for internal consistency with the
-actual repository state. You are NOT asked to confirm Claude's analysis.
-
-## Draft recap (verbatim)
-{{DRAFT_RECAP_MARKDOWN}}
-
-## ⚠️ Important: You must independently research the project ⚠️
-
-When reviewing, you **must** perform the following research:
-
-### Git Exploration (Priority)
-1. Check change status: `git status`
-2. Check changed files: `git diff --name-only HEAD`
-3. Check full changes for specific file: `git diff HEAD -- <file-path>`
-4. Read changed files: `cat <changed file> | head -200`
-
-### Project Research
-- Search related code: `grep -r "keyword" src/ --include="*.js" -l`
-- Read related files: `cat <file-path> | head -100`
-
-## Review dimensions
-
-- Does §2 Changed Files match the real `git diff --name-only` output? Any file
-  missing? Any hallucinated path?
-- Do `file:line` references in §2/§3 actually exist at those lines?
-- Is §4 Drift accurate against `docs/features/<key>/2-tech-spec.md` (read it
-  yourself)?
-- Are §5 Blind Spots justified by the evidence, or speculative?
-- Are §6 Anticipated Questions grounded in the scope, or generic?
-
-## Output
-
-Emit a short verdict: ✅ Consistent | ⚠️ Minor drift | ⛔ Misleading.
-For ⚠️ / ⛔, list specific file:line or section references that need correction.
-Do not rewrite the recap; only flag issues.
-```
+Removing it is the other resolution, and the better one here: the mode was never reachable, so
+nothing regresses, and a reviewed second-opinion pass can be specified deliberately if it is wanted —
+with its own dispatch contract rather than a prompt retrofitted to one.
 
 ## Prompt-Time Safeguards
 

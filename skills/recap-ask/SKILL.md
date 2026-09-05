@@ -1,7 +1,7 @@
 ---
 name: recap-ask
 description: "Interactive Q&A over an existing recap document. Use when: user wants to ask follow-up questions about a briefing-recap-<date>.md produced by /recap-doc, with recap-bounded context + out-of-scope redirect + optional promote-to-request. Not for: generating a new recap (use /recap-doc), general project Q&A (use /ask), code tracing (use /code-explore). Output: per-turn answer referencing file:line + end-of-session promote prompt."
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Skill, AskUserQuestion, Write
 ---
 
 # `/recap-ask` — Recap-Bounded Q&A
@@ -115,7 +115,10 @@ Follow-up turns on the same thread (`--continue <threadId>`) **re-run classifica
 
 ### Phase 3 — Synthesis + Redact + Emit
 
-1. For `recap-scoped`: dispatch to Codex via `mcp__codex__codex` (first turn) or `mcp__codex__codex-reply` (subsequent turns). Prompt must follow `@rules/codex-invocation.md` — independently research, no leading conclusions. See `references/qa-prompt.md`.
+**Bind every placeholder before writing `prompt.md`** — the template is body-only and evaluates
+nothing. `${FEATURE_KEY}` becomes `session` when the recap resolved no feature key.
+
+1. For `recap-scoped`: dispatch to Codex per `@skills/codex-code-review/references/codex-transport.md` § Start (first turn) or its § Resume (subsequent turns). Prompt must follow `@rules/codex-invocation.md` — independently research, no leading conclusions. See `references/qa-prompt.md`.
 2. Lazy-fetch is gated: Codex may Read only files listed in the recap §7 Evidence. Out-of-allowlist reads are refused; fall back to emitting a citation-only answer.
 3. Run the complete response through `scripts/security-redact.js` → `redact(text)`. On `AbortError` (high-confidence secret) emit the fingerprint and refuse to respond.
 4. Emit the redacted answer with inline `file:line` citations. Every claim about code must cite a recap-evidenced location.

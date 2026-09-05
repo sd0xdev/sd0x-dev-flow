@@ -1,7 +1,7 @@
 ---
 name: recap-doc
 description: "Post-development recap document generator. Use when: AI/Codex has implemented a feature and the user needs a guided walkthrough of what changed and why, with blind-spot detection and anticipated questions. Not for: Q&A follow-up (use /recap-ask), technical share-out for teammates (use /tech-brief), or generic code explanation (use /codex-explain). Output: briefing-recap-<YYYY-MM-DD>.md with file-level walkthrough, design intents, spec drift, blind spots (mandatory), and anticipated questions."
-allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(node:*), Skill, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Write, Bash(git:*), Bash(node:*), Skill
 ---
 
 # `/recap-doc` — Recap Document Generator

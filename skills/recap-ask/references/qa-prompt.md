@@ -37,46 +37,50 @@ Keep the exact opening phrase `此問題超出本輪 recap 範圍` — downstrea
 
 ## Codex Prompt Template (Phase 3, recap-scoped only)
 
-Used with `mcp__codex__codex` for the first turn. Subsequent turns in the same session use `mcp__codex__codex-reply` with the same threadId.
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Start for the first turn. Subsequent turns in the same session use `@skills/codex-code-review/references/codex-transport.md` § Resume with the same threadId.
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior engineer answering a follow-up question about a recently produced Recap document.
+You are a senior engineer answering a follow-up question about a recently produced Recap document.
 
 ## Recap Context (primary)
+
 - Recap path: ${RECAP_PATH}
-- Feature key: ${FEATURE_KEY || 'session'}
+- Feature key: ${FEATURE_KEY}
 - Depth: ${DEPTH}
 - Evidence file-index (ALLOWED lazy-fetch targets, others are forbidden):
 ${EVIDENCE_FILE_INDEX}
 
 ## Question
+
 ${USER_QUESTION}
 
 ## ⚠️ Important: You must independently research the project ⚠️
 
-Per \`@rules/codex-invocation.md\`: the recap is your primary context, but you must still **independently** verify any claim by reading the referenced code. Do NOT rely on my framing of the question.
+Per `@rules/codex-invocation.md`: the recap is your primary context, but you must still **independently** verify any claim by reading the referenced code. Do NOT rely on my framing of the question.
 
 **Scope note**: "independent research" here is **bounded to the §7 Evidence allowlist by design**. This is not a contradiction of the codex-invocation rule — it is the rule's narrowing for recap-bounded Q&A. If the allowlist is insufficient to answer, emit the out-of-scope response (see Out-of-Scope Redirect Template above) rather than guessing or broadening scope.
 
 ### Git Exploration (Priority)
-1. \`git status\` — see if the repo has uncommitted context that may affect the answer
-2. \`git diff --name-only HEAD\` — identify files currently in flux
-3. \`git log --oneline -10 -- \${RECAP_PATH}\` — recap authorship / freshness
-4. \`git blame\` on allowed files when specific-line attribution matters
+
+1. `git status` — see if the repo has uncommitted context that may affect the answer
+2. `git diff --name-only HEAD` — identify files currently in flux
+3. `git log --oneline -10 -- ${RECAP_PATH}` — recap authorship / freshness
+4. `git blame` on allowed files when specific-line attribution matters
 
 ### Recap reading (required)
-1. \`cat ${RECAP_PATH}\` — read the full recap
+
+1. `cat ${RECAP_PATH}` — read the full recap
 2. Identify which sections (§1-§7) the question touches
 
 ### Code verification (bounded)
+
 You may only Read files listed in the Evidence file-index above. If you need information from a file NOT in the index, respond with: "此問題需要 recap 範圍外的檔案：<path>. 建議改用 /ask". Do not attempt to read outside the allowlist.
 
 For allowed files:
-- \`cat <allowed-path>\` (head -200 for size)
-- \`grep -n "<keyword>" <allowed-path>\` for specific lines
+- `cat <allowed-path>` (head -200 for size)
+- `grep -n "<keyword>" <allowed-path>` for specific lines
 
 ## Prohibited
+
 - Do NOT guess at file contents you have not read.
 - Do NOT speculate about code paths that are not in §2 / §7.
 - Do NOT answer "Yes, that's correct" or "The fix looks good" — the user asked a question, not for confirmation.
@@ -84,44 +88,44 @@ For allowed files:
 ## Output Format
 
 ### Answer
+
 <2-6 sentence answer citing specific recap sections and file:line>
 
 ### Sources
-- \`<path>:<line>\` — <what this reference demonstrates>
+
+- `<path>:<line>` — <what this reference demonstrates>
 - ...
 
 ### Follow-up hints
+
 - If the user likely wants to see the diff: note the commit SHA from §7.
-- If the recap already has an Anticipated Question matching this: cite that §6 entry.`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+- If the recap already has an Anticipated Question matching this: cite that §6 entry.
+
 
 ## Loop / Continue Prompt (follow-up turns)
 
-```typescript
-mcp__codex__codex-reply({
-  threadId: PRIOR_THREAD_ID,
-  prompt: `Follow-up question in the same recap-ask session.
+Follow-up question in the same recap-ask session.
 
 ## New Question
+
 ${USER_QUESTION}
 
 ## ⚠️ Still bounded by the same recap
+
 - Recap path: ${RECAP_PATH}
 - Evidence file-index (unchanged):
 ${EVIDENCE_FILE_INDEX}
 
 ## Reminder
+
 - **Re-run intent classification on this new question**: the prior turn's class does not carry over. Apply the Decision Algorithm above and emit exactly one of `recap-scoped` / `out-of-scope` / `ambiguous` for this question before synthesis.
 - The allowlist has not expanded. Reject reads outside it.
 - If this new question feels out-of-scope vs the prior turn, say so explicitly at the top of your answer.
 
 ## Output format
-Same as the initial turn: Answer → Sources → Follow-up hints.`,
-});
-```
+
+Same as the initial turn: Answer → Sources → Follow-up hints.
+
 
 ## Promote Digest Template (Phase 4, end-of-session)
 

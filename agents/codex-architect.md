@@ -1,7 +1,7 @@
 ---
 name: codex-architect
 description: Codex architecture consulting expert (third brain). Uses Codex CLI to obtain architecture advice and integrates dual perspectives.
-tools: Read, Grep, Glob, Bash(codex *), Bash(bash *), Bash(git *)
+tools: Read, Grep, Glob, Bash(bash *), Bash(git *), Bash(node:*), Write
 skills: codex-architect
 model: opus
 effort: high
