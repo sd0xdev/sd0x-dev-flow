@@ -22,7 +22,7 @@ test('SKILL.md exists with valid frontmatter', () => {
   assert.match(fm[1], /allowed-tools:/, 'should have allowed-tools');
 });
 
-test('SKILL.md allowed-tools includes core tools plus Skill + Codex MCP', () => {
+test('SKILL.md allowed-tools includes core tools plus Skill, and no transport grant', () => {
   const content = readFileSync(SKILL, 'utf8');
   const fm = content.match(/^---\s*\n([\s\S]*?)\n---\s*\n/)[1];
   // Tolerate both YAML styles: inline `allowed-tools: Read, Grep` and list
@@ -31,7 +31,7 @@ test('SKILL.md allowed-tools includes core tools plus Skill + Codex MCP', () => 
   const atMatch = fm.match(/allowed-tools:\s*([\s\S]*?)(?=\n[a-zA-Z_-]+:|\n*$)/);
   assert.ok(atMatch, 'frontmatter should declare allowed-tools');
   const atBlock = atMatch[1];
-  for (const tool of ['Read', 'Grep', 'Glob', 'Write', 'Skill', 'mcp__codex__codex']) {
+  for (const tool of ['Read', 'Grep', 'Glob', 'Write', 'Skill', 'Bash(node:*)']) {
     assert.ok(atBlock.includes(tool), `allowed-tools should include ${tool}; got: ${atBlock}`);
   }
   assert.match(atBlock, /Bash\(git:/, 'allowed-tools should permit git bash commands');
@@ -276,10 +276,38 @@ test('source-guide.md specifies top-N selection by depth', () => {
 
 // --- prompt-template.md obeys codex-invocation rule ---
 
-test('prompt-template.md includes independently-research block for Codex', () => {
+test('prompt-template.md drives Claude only — the Codex second-opinion mode is gone', () => {
   const content = readFileSync(PROMPT_TPL, 'utf8');
-  assert.match(content, /independently research/i, 'must include independent-research mandate');
-  assert.match(content, /codex-invocation\.md/, 'should cite codex-invocation rule');
+  // This test used to require an "independently research" block for a Codex second-opinion prompt.
+  // That prompt was an unreachable orphan and is removed; the assertion then passed against the
+  // REMOVAL RECORD's own prose, which is a false green — a reviewer caught it. Assert the current
+  // contract instead: no dispatch, no draft placeholder, no flag, and the research mandate cited as
+  // the condition on any future adaptation rather than as something this template satisfies today.
+  assert.doesNotMatch(content, /\{\{DRAFT_RECAP_(PATH|MARKDOWN)\}\}/,
+    'the draft placeholder went with the removed mode');
+  assert.doesNotMatch(content, /codex-transport\.md` § (Start|Resume)/,
+    'this template dispatches nothing');
+  assert.match(content, /synthesis model is \*\*Claude\*\*/,
+    'and it says so, rather than leaving a reader to infer it');
+  // Third instance of the same defect, and a reviewer proved it: a bare `codex-invocation.md` match
+  // is satisfied by the removal record and by the `## Prohibited Patterns` heading, so deleting the
+  // live adaptation note left it green. Scope it to the LIVE region — everything above the removal
+  // record — and require the citation and the adaptation condition together there. (A first attempt
+  // cut at `## Core Prompt` instead, which excludes the adaptation note that sits inside that
+  // section; the suite caught it. The boundary below is the one that works.)
+  const removalAt = content.indexOf('## Codex Second-Opinion Prompt — removed');
+  assert.notEqual(removalAt, -1, 'the removal record must still be present as the historical note');
+  const live = content.slice(0, removalAt);   // everything above the record is live content
+  assert.match(live, /codex-invocation\.md/,
+    'the live prompt must cite the rule, not merely the removal record below it');
+  assert.match(live, /adapted to drive Codex[\s\S]{0,160}mandatory/,
+    'and must state the condition: adapting this prompt makes the research block mandatory');
+});
+
+test('recap-doc declares no --strict flag and no transport grant', () => {
+  const skill = readFileSync(SKILL, 'utf8');
+  assert.doesNotMatch(skill, /--strict/, 'the flag went with the mode');
+  assert.doesNotMatch(skill, /codex-transport\.md` § (Start|Resume)/, 'and the skill dispatches nothing');
 });
 
 test('prompt-template.md lists prohibited patterns (no feeding conclusions)', () => {
