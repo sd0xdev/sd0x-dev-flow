@@ -374,33 +374,50 @@ test('isCryptoField: tokenId field always true (regardless of value pattern)', (
 });
 
 // ---------- PII class: credential (JSON form leak closure) ----------
+// Rewritten 2026-09-05. These five originally asserted `<redacted:credential>` for every field,
+// written when the base layer's quote-boundary bug meant it never caught a quoted JSON key — so
+// the structural classifier (classifyByFieldName) was always the one that fired, uncontested. That
+// bug was fixed 2026-09-04 (the base layer now catches `{"password":"…"}` etc. directly), which
+// means these five fields are now caught by the BASE layer first for every keyword the base
+// patterns name (password/passwd/pwd/token/api_key/secret/credential — substring, no `\b`, so
+// `accessToken` and `apiKey` both qualify). The pre-existing, deliberate design for a base-caught
+// value is cooperative short-circuit — return `[REDACTED]` unchanged, no re-classification — proven
+// by the older test right below this block ("fallback: base redact catches apiKey, credential class
+// does not double-mask"). `privateKey` names none of the base keywords, so it is the one field here
+// still classified structurally, and is the test that proves the credential class still works when
+// nothing upstream has already caught it.
 
-test('credential: password field in JSON is masked', () => {
+test('credential: password field in JSON is caught by the base layer, cooperatively', () => {
   const input = JSON.stringify({ password: 'foo123_sec' });
   const r = redact(input, { inputFormat: 'json_sample' });
-  assert.equal(JSON.parse(r.maskedText).password, '<redacted:credential>');
-  assert.ok(r.summary.maskedClasses.includes('credential'));
+  assert.equal(JSON.parse(r.maskedText).password, '[REDACTED]');
+  assert.doesNotMatch(r.maskedText, /foo123_sec/);
+  assert.equal(r.summary.maskedClasses.includes('credential'), false,
+    'a base-caught value is not double-masked into a PII class');
 });
 
-test('credential: secret field in JSON is masked', () => {
-  const input = JSON.stringify({ secret: 'shh' });
+test('credential: secret field in JSON is caught by the base layer, cooperatively', () => {
+  const input = JSON.stringify({ secret: 'shh_dont_tell' });
   const r = redact(input, { inputFormat: 'json_sample' });
-  assert.equal(JSON.parse(r.maskedText).secret, '<redacted:credential>');
+  assert.equal(JSON.parse(r.maskedText).secret, '[REDACTED]');
+  assert.doesNotMatch(r.maskedText, /shh_dont_tell/);
 });
 
-test('credential: apiKey (camelCase) field in JSON is masked', () => {
+test('credential: apiKey (camelCase) field in JSON is caught by the base layer', () => {
   const input = JSON.stringify({ apiKey: 'ak_live_xxxxx' });
   const r = redact(input, { inputFormat: 'json_sample' });
-  assert.equal(JSON.parse(r.maskedText).apiKey, '<redacted:credential>');
+  assert.equal(JSON.parse(r.maskedText).apiKey, '[REDACTED]');
+  assert.doesNotMatch(r.maskedText, /ak_live_xxxxx/);
 });
 
-test('credential: api_key (snake_case) field in JSON is masked', () => {
+test('credential: api_key (snake_case) field in JSON is caught by the base layer', () => {
   const input = JSON.stringify({ api_key: 'ak_live_xxxxx' });
   const r = redact(input, { inputFormat: 'json_sample' });
-  assert.equal(JSON.parse(r.maskedText).api_key, '<redacted:credential>');
+  assert.equal(JSON.parse(r.maskedText).api_key, '[REDACTED]');
+  assert.doesNotMatch(r.maskedText, /ak_live_xxxxx/);
 });
 
-test('credential: accessToken, privateKey, token all masked', () => {
+test('credential: accessToken and token are base-caught; privateKey is not and stays structural', () => {
   const input = JSON.stringify({
     accessToken: 'atok_123',
     privateKey: 'pk_xyz',
@@ -408,10 +425,17 @@ test('credential: accessToken, privateKey, token all masked', () => {
   });
   const r = redact(input, { inputFormat: 'json_sample' });
   const parsed = JSON.parse(r.maskedText);
-  assert.equal(parsed.accessToken, '<redacted:credential>');
+  // `accessToken` and `token` both name the base keyword `token` as a substring — base-caught.
+  assert.equal(parsed.accessToken, '[REDACTED]');
+  assert.equal(parsed.token, '[REDACTED]');
+  // `privateKey` names no base keyword (password/passwd/pwd/token/api_key/secret/credential), so
+  // only the structural field-name classifier catches it, and it alone earns the PII class.
   assert.equal(parsed.privateKey, '<redacted:credential>');
-  assert.equal(parsed.token, '<redacted:credential>');
-  assert.equal(r.summary.totalMasks, 3);
+  assert.ok(r.summary.maskedClasses.includes('credential'),
+    'the class is reported for the one field the base layer never touched');
+  for (const raw of ['atok_123', 'pk_xyz', 'bearer_abc']) {
+    assert.doesNotMatch(r.maskedText, new RegExp(raw), `${raw} must not survive`);
+  }
 });
 
 // ---------- Crypto allowlist vs explicit value PII (priority reorder) ----------

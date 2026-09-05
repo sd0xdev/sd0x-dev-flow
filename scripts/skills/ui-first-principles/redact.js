@@ -175,7 +175,17 @@ function decideLeaf(path, value, ctx) {
   // non-PII leaves keep their original formatting.
   const trimmed = value.trim();
 
-  // a. Placeholder short-circuit — never re-classify already-masked values
+  // a. Placeholder short-circuit — never re-classify already-masked values. A value the base layer
+  //     already caught and masked to `[REDACTED]` is returned as-is, uncounted in `maskedClasses`:
+  //     layered defense, not double masking. This is deliberate and symmetric with the manual/KV
+  //     text path below — reverted here 2026-09-05 after a relabel patch (2026-09-04) broke that
+  //     symmetry: it made the JSON path emit `<redacted:credential>` for a base-caught value while
+  //     the KV path kept `[REDACTED]`, so the same credential classified differently depending only
+  //     on which input mode carried it, contradicting this file's own pre-existing test
+  //     ("fallback: base redact catches apiKey, credential class does not double-mask" —
+  //     "correct cooperative behavior"). The base layer widened on 2026-09-04 to catch quoted JSON
+  //     keys it previously missed; that widening is what exposed the asymmetry, not a reason to add
+  //     a second one.
   if (PLACEHOLDER_RE.test(trimmed)) {
     ctx.fieldDecisions.push(trace);
     return value;
@@ -258,6 +268,9 @@ function fallbackStringMode(text, ctx) {
       const trimmed = rawValue.trim();
       const trace = { path: fieldName, fieldName, action: 'keep' };
 
+      // Placeholder short-circuit — never re-classify a value the base layer already masked. This
+      // is the file's original, deliberate design (see the pre-existing test right below this
+      // function's use site), unchanged.
       if (PLACEHOLDER_RE.test(trimmed)) {
         ctx.fieldDecisions.push(trace);
         return full;

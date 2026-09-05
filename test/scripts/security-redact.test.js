@@ -173,3 +173,98 @@ test('64-char hex (SHA-256) still redacted — not exempted', () => {
   const out = redact(`digest=${sha256Hex}`);
   assert.match(out, /\[REDACTED\]/, '64-char hex should redact');
 });
+
+// Two credential shapes the medium-confidence patterns missed entirely until 2026-09-04, both
+// routine in a real config file. Found when `/codex-implement` began printing created files through
+// this module: the scan was the only thing between a Codex-written `credentials.json` and the
+// transcript, and it left both of these untouched.
+const MISSED = [
+  ['{"token":"abcdefghijklmnop"}', 'abcdefghijklmnop', 'a quote sits between the key and the colon'],
+  ['{"password":"hunter2extra"}', 'hunter2extra', 'same shape, password key'],
+  ['API_TOKEN=abcdefghijklmnop', 'abcdefghijklmnop', '`\\btoken\\b` finds no boundary inside API_TOKEN'],
+  ['DATABASE_PASSWORD=hunter2extra', 'hunter2extra', 'same, with an underscore-prefixed key'],
+  ["client_secret: 'sk-not-a-real-one'", 'sk-not-a-real-one', 'prefixed secret with a quoted value'],
+];
+for (const [input, value, why] of MISSED) {
+  test(`${input} — ${why}`, () => {
+    const out = redact(input);
+    assert.doesNotMatch(out, new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      'the value must not survive');
+    assert.match(out, /\[REDACTED\]/, 'and it is replaced rather than dropped');
+  });
+}
+
+test('ordinary prose and identifiers containing the key words are left alone', () => {
+  // The other direction, because a redactor that masks everything is unusable: these have no
+  // assignment, so nothing is redacted.
+  for (const clean of ['const tokenizer = makeTokenizer()', 'see docs/token.md',
+    'the password policy is documented', 'secretive naming is a smell']) {
+    assert.equal(redact(clean), clean, `${clean} must pass through unchanged`);
+  }
+});
+
+// The value equal to, or a substring of, its own key. `match.replace(captured, …)` replaced the
+// first equal substring anywhere in the match, so `{"password":"pass"}` came back as
+// `{"[REDACTED]word":"pass"}` — key mangled, secret intact. Found by review 2026-09-04; the fix
+// replaces by capture position, so these are the cases that pin it.
+const VALUE_INSIDE_KEY = [
+  ['{"password":"pass"}', 'password', 'pass'],
+  ['API_TOKEN=TOKEN', 'API_TOKEN', 'TOKEN'],
+  ['{"token":"tok"}', 'token', 'tok'],
+  ['{"secret":"sec"}', 'secret', 'sec'],
+];
+for (const [input, key, value] of VALUE_INSIDE_KEY) {
+  test(`${input} — the value is masked and the key survives intact`, () => {
+    const out = redact(input);
+    assert.match(out, new RegExp(key), 'the key must not be mangled');
+    assert.match(out, /\[REDACTED\]/, 'the value is masked');
+    assert.doesNotMatch(out, new RegExp(`["'=:]\\s*${value}\\b`),
+      'and the value must not survive in value position');
+  });
+}
+
+test('several assignments on one line are each masked at their own position', () => {
+  const out = redact('a=1 password=p1 token=t2');
+  assert.equal(out, 'a=1 password=[REDACTED] token=[REDACTED]',
+    'positional replacement must not shift or drop the text between matches');
+});
+
+// P0, 2026-09-05: `VALUE` grew a `,;}` exclusion aimed at stopping a JSON value at the next key —
+// the closing quote already did that job, so the exclusion was pure loss: a secret containing one
+// of those three characters had its tail printed. A redactor must over-capture, never under-capture.
+const TRUNCATION_REGRESSION = [
+  ['password=p@ss;word', ';word'],
+  ['pwd=a,b,c', ',b,c'],
+  ['token=sk;live;xyz', ';live;xyz'],
+];
+for (const [input, mustNotSurvive] of TRUNCATION_REGRESSION) {
+  test(`${input} — the whole value is masked, none of it survives after the mask`, () => {
+    const out = redact(input);
+    assert.doesNotMatch(out, new RegExp(mustNotSurvive.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+      'a truncated exclusion set let the tail of the secret through');
+    assert.match(out, /\[REDACTED\]$/, 'the whole value, to the end of the input, is masked');
+  });
+}
+
+// P1, 2026-09-05: `\b[A-Za-z0-9_-]*` anchored a prefix scan before the keyword. `-` is not a word
+// character, so every hyphen re-opened a boundary the star could restart from, and matching went
+// quadratic — a 239 KB kebab-case or base64url input (its alphabet is exactly this class) took
+// 40s / 4.5s against 0ms one line earlier in git history, with no length cap or timeout guarding the
+// call site. Timed, not just re-derived: a regression here has to fail on wall-clock, or it is not
+// proof the backtracking is gone.
+test('a large kebab-case value does not cause quadratic backtracking', () => {
+  const evil = 'a-'.repeat(120_000) + 'x';
+  const start = Date.now();
+  redact(`token=${evil}`);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 1000, `expected well under 1s, took ${elapsed}ms — the prefix-scan ReDoS is back`);
+});
+
+test('a large base64url value does not cause quadratic backtracking', () => {
+  // base64url's alphabet is exactly [A-Za-z0-9_-], the class the old prefix scan restarted on.
+  const evil = require('crypto').randomBytes(150_000).toString('base64url');
+  const start = Date.now();
+  redact(`secret=${evil}`);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 1000, `expected well under 1s, took ${elapsed}ms — the prefix-scan ReDoS is back`);
+});
