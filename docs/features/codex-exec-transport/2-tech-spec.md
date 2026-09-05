@@ -1,0 +1,157 @@
+# codex-exec-transport Technical Spec
+
+> **Intent**: [intent-codex-exec-transport.md](./intent-codex-exec-transport.md) — INV-001…007 bind every section below.
+> **Origin**: `/deep-research` + `/codex-brainstorm` Nash equilibrium, 2026-09-03 (thread `01a06728-03b9-7c20-8c2c-f451b842a639`, 3 rounds, pure-strategy equilibrium).
+
+## 1. Requirement Summary
+
+- **Problem**: every Codex dispatch in this plugin goes through `codex mcp-server`, exposed to Claude Code as `mcp__codex__codex` / `mcp__codex__codex-reply`. Since codex-cli 0.149.0 (PR openai/codex#39657, 2026-08-20) the subcommand prints `warning: codex mcp-server is deprecated and will be removed in a future release.`; the official docs page carries a "Deprecated — use the Codex app server or the Codex plugin for Claude Code" banner; on 2026-08-26 the maintainer closed every open mcp-server bug as won't-fix. No removal version is set (0.153.0 still ships it). When it goes, `review-dispatch.js` silently degrades every review to the Claude-subagent fallback — the independent second reviewer disappears with only a `[REVIEWER_FALLBACK]` line as evidence.
+- **Goals**: (G1) reach Codex through `codex exec` (Stable) so the reviewer survives removal; (G2) preserve thread continuation (`exec resume <id>` measured to keep context, 2026-09-03); (G3) change the carrier only — prompts, dispatch policy, sentinels, rotation, degradation, anchors unchanged; (G4) keep the new script thin (maintainer constraint: no heavy scripts, trust the model).
+- **Scope — in**: adapter script, one transport reference, conversion of the 31 MCP-authorizing skills (33 `SKILL.md` files carry the token — `best-practices` and `seek-verdict` mention it without a grant) and their call bodies — 22 files with `mcp__codex__codex({`, 11 files with `codex-reply({` (15 occurrences; 12 files if any `codex-reply(` argument shape is counted) — permission sweep, README ×6 locales, the tests that pin MCP names or the registration command, one `## Codex Profile` project setting.
+- **Scope — out**: app-server client, SDK, codex-plugin-cc as a transport, a self-hosted MCP shim, `codex review` as transport, tier→profile mapping, changes to `run-skill.sh`, `review-dispatch.js`, `validate-family-sentinel.js`, Degradation Matrix, rotation thresholds.
+
+## 2. Existing Code Analysis
+
+| Surface | Today | Change |
+|---|---|---|
+| 31 Codex-authorizing `skills/*/SKILL.md` frontmatters | 30 grant `mcp__codex__codex`, 29 grant `codex-reply`, 28 both; `necessity-audit` is reply-only, `issue-analyze` / `load-pr-review` start-only | direct owners → `Bash(node:*)` + Write + Read; delegators (e.g. `codex-test-gen`, `feature-dev`) → no Codex grant; the reply-only case is swept explicitly |
+| 22 files with `mcp__codex__codex({…})` bodies, 11 with `codex-reply({…})` (15 occurrences) — mostly `skills/*/references/codex-prompt-*.md`, `review-common.md`, `review-loop-*.md`, `verdict-prompt.md`, `qa-prompt.md`, `codex-discussion-guide.md` | prompt + MCP envelope (`sandbox`, `approval-policy`, `threadId`) | body-only prompt; call site says "dispatch per codex-transport.md § Start / § Resume" |
+| `rules/codex-invocation.md` | names the MCP tools; § Loop review exception scoped to the MCP thread | terminology swap + one pointer line; anti-anchoring sentences byte-preserved |
+| `skills/codex-code-review/references/review-common.md` | § Review Loop, § Degradation Matrix name "Codex MCP" | rename to "Codex exec"; priorities, outcomes, R-a/R-b untouched |
+| `scripts/lib/review-dispatch.js`, `scripts/validate-family-sentinel.js` | transport-neutral (`'codex'` string; stdin text) | **none** |
+| `skills/codex-cli-review/scripts/review.sh` | only CLI consumer; `codex review` via `eval` | untouched (stays a niche skill); not reused |
+| `README.md` + 5 locale mirrors § Codex MCP registration; `test/scripts/readme-codex-mcp.test.js`, `generate-readme-catalog.test.js` | pin `claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'` | replace with install-scripts + profile guidance; re-pin |
+| 7 tests pinning `mcp__codex` names (`review-spec`, `recap-ask`, `recap-doc`, `debug`, `plan-review`, `testing-rules`, `best-practices/skill-contract`) | positive and negative pins | rewrite against the transport contract; keep the "only the conversation owner holds the capability" structural assertion |
+| `skills/sharingan/scripts/scan-repo.js` — the `mcp__*__*` dependency extractor and its known-local tool allowlist | hardcodes both MCP tool names as known-local | drop the entries |
+| `skills/precommit-fast/SKILL.md` § Step 1 "NOT found → Auto-install attempt", `test/skills/runner-auto-install.test.js` | three-level plugin-cache Glob, copy only when missing, skip on conflict | **reused as-is** for the adapter locator |
+| `skills/smart-commit/SKILL.md` § Step 5c, **execute-mode branch** | Write tool → file → script (the manual branch still emits heredocs; only execute mode forbids them) | reused as the prompt-file choreography |
+| `docs/features/codex-mcp-config/` | reasoning-effort default via `mcp-server -c` | superseded by `## Codex Profile`; record left as-is |
+
+Reusable: the auto-install cascade, the `.claude/scripts/` installed-first locator (`precommit/SKILL.md` § Step 2, the `CHECKER` self-note line), the file-then-script pattern, `node:test` fake-binary fixtures.
+
+## 3. Technical Solution
+
+### 3.1 Architecture
+
+```mermaid
+sequenceDiagram
+    participant S as Skill (behaviour layer)
+    participant T as codex-transport.md
+    participant A as scripts/codex-exec.js
+    participant X as codex exec
+    S->>T: locate adapter (installed → auto-install → source → setup-required)
+    S->>A: node codex-exec.js --protocol 1 alloc → {dir (0700), promptFile, reportFile}
+    S->>S: Write prompt.md
+    S->>A: node codex-exec.js --protocol 1 start|resume --class review|implement --prompt-file --report-file [--profile]
+    A->>A: preflight: protocol, class, profile file, prompt lstat+chmod 0600, report CREATED O_EXCL + fchmod 0600
+    A->>X: argv spawn: [-p prof] -s <class sandbox> -c approval_policy="never" -C top --color never --json -o report [resume id] -
+    X-->>A: JSONL (thread.started.thread_id) + report written into the pre-created file
+    A->>A: success requires the report still reads 0600
+    A-->>S: stdout {"protocol":1,"threadId","reportFile","requestedProfile","class"} / exit 0|1|2
+    S->>S: Read report.md → gate derivation (unchanged) → review-state note
+    S->>A: cleanup <dir>
+    S->>A: next round: fresh alloc → Write prompt → resume --thread-id <id> (rotation → start) → Read → cleanup
+```
+
+The behaviour layer keeps everything it owns today (prompt rendering, scope baseline, obligation derivation, `review-dispatch.js` decision, sentinel validation of fallback reports, `[THREAD_ROTATED]`). The adapter is a carrier.
+
+### 3.2 Adapter contract — `scripts/codex-exec.js` (INV-002, INV-003, INV-006)
+
+| Item | Contract |
+|---|---|
+| Subcommands | `alloc` · `start` · `resume --thread-id <uuid>` · `cleanup <dir>` — all after `--protocol 1` |
+| `alloc` | `fs.mkdtempSync(path.join(os.tmpdir(), 'codex-exec-'))` (created by `mkdtempSync`, then explicitly `chmodSync(0700)` and the mode verified before the record is emitted — mkdtemp's mode is umask-masked, measured `umask 277` -> 0500; a post-creation failure removes the directory and exits 1 `reason=fs`); prints `{"protocol":1,"dir","promptFile","reportFile"}`; the skill then writes `promptFile` with the Write tool — except `plan-review`, the single exemption INV-007 records, which writes it by heredoc because plan mode withholds Write. **One `alloc` per dispatch** — a `resume` never reuses a directory, because preflight rejects an existing report. Exit 0 on success, 2 on protocol mismatch, 1 on a filesystem failure (`[CODEX_EXEC_ERROR] reason=fs`) — never a probe result |
+| `start` / `resume` | `--class review\|implement --prompt-file <abs> --report-file <abs> [--profile <name>]`; both paths must be the fixed basenames `prompt.md` / `report.md` of **one and the same `alloc`-shaped directory** under `os.tmpdir()` (so the adapter never `chmod`s or writes outside a directory it allocated); the prompt is checked with `lstat` — a regular file, never a symlink — and chmod'd `0600`; the **report is created by the adapter at preflight**, `O_CREAT\|O_EXCL` plus `fchmod 0600`, which is also what refuses a squatter or dangling symlink at that path; prompt streamed to the child's stdin (`-`), never an argv word. There is no post-exit chmod: the file is private before the child exists, and a success record additionally requires it to still read `0600`. Confidentiality is layered and its limits are stated in `codex-transport.md` § Files — a same-UID child can still widen the file, and the `0700` directory is the boundary that holds |
+| Operation classes | fixed, skill-selected, no passthrough: `review` → `-s read-only` (every reviewer, brainstorm, explain, recap…); `implement` → `-s workspace-write` (`codex-implement` only — the negative guard pins that). Both pin `-c approval_policy="never"`: `codex exec` is non-interactive, so the MCP-era `on-failure` (ask on failure) has no headless equivalent and `never` (fail the command instead of prompting) is the honest mapping — the one sanctioned policy delta of this migration |
+| Child argv | `[ '-p', profile? ] + ['-s',<class>,'-c','approval_policy="never"','-C',toplevel,'--color','never']` then `['--json','-o',report,'-']` for start, or `['resume','--json','-o',report,id,'-']` for resume — safety flags after the profile so a profile cannot relax them |
+| Preflight (exit 2) | `[CODEX_EXEC_CONFIG] code=protocol_mismatch expected=1 received=<n>` · `code=profile_missing profile=<name>` (file `${CODEX_HOME:-~/.codex}/<name>.config.toml` absent) · `[CODEX_EXEC_USAGE] code=invalid_class` · `code=invalid_profile_name` (must match `^[A-Za-z0-9][A-Za-z0-9._-]*$`) · `code=invalid_prompt_file` (not `<alloc dir>/prompt.md`, symlink, empty, unreadable) · `code=invalid_report_file` (not `<the same alloc dir>/report.md`, or the exclusive create failed — anything already there, symlink or directory included) · `code=invalid_thread_id` · `code=invalid_dir` (`cleanup` target not an `alloc`-shaped path under `os.tmpdir()`) · `code=no_git_toplevel` (`git rev-parse --show-toplevel` did not answer, so `-C` has no value to pin) — protocol is checked first, before any child spawns |
+| JSONL | every non-empty stdout line must parse as JSON; the only semantic event is `thread.started` → `thread_id` (UUID). `start` without it fails closed (exit 1); `resume` requires it to equal the supplied id when present |
+| Success (exit 0) — `start`/`resume` | child exit 0 ∧ thread id ∧ report file regular, non-empty and still exactly 0600 ∧ the prompt stream reached `finish` (written whole, no write error — it does **not** prove the child read it; see `codex-transport.md` § Completion for that limit); stdout exactly one line `{"protocol":1,"threadId":"…","reportFile":"…","requestedProfile":"…"\|null,"class":"review"\|"implement"}` — this, and only this, is `codex_ok` |
+| Failure (exit 1) — `start`/`resume` | child nonzero, malformed JSONL, missing id, empty report, prompt stream never finished; stderr `[CODEX_EXEC_ERROR] reason=error` plus a bounded tail of the child's stderr — this is `codex_fail`; the scratch dir is left for the skill to `cleanup` after it has read whatever exists |
+| `cleanup <dir>` | `fs.rmSync(dir, {recursive:true})` only when `dir` is an `alloc`-shaped path under `os.tmpdir()` (else exit 2 `invalid_dir`); exit 1 on a filesystem failure; exit 0 prints nothing. Called once per dispatch, after that dispatch's report has been read — for a background call, after its completion notification was consumed. Never a probe result |
+| Not present | timeout, retry, `--last`, `--ephemeral`, `-c` passthrough, model flag, sandbox passthrough, state file, logging subsystem, TOML parsing |
+| Size | ≤150 lines (raised from the equilibrium's 120 to hold `alloc`/`cleanup` and the mode enforcement — still one file, no abstraction layer), `node:child_process` / `node:fs` / `node:path` / `node:os` only; a test asserts the line count |
+
+### 3.3 Transport reference — `skills/codex-code-review/references/codex-transport.md` (INV-001, INV-005)
+
+Sections, each the single authority for its subject:
+
+1. **Locator** — Glob `.claude/scripts/codex-exec.js`; absent → the `precommit-fast` three-level Glob (`~/.claude/plugins/**/sd0x-dev-flow/scripts/codex-exec.js`, `${REPO_ROOT}/node_modules/sd0x-dev-flow/scripts/…`, plugin-relative) → copy **only into a missing destination** → in the source repo `scripts/codex-exec.js` → else `setup-required` (surfaced; never `codex_fail`). `protocol_mismatch` → tell the operator `/sd0x-dev-flow:install-scripts codex-exec.js --force`; never overwrite. Locator and install run **before** the scope baseline is frozen.
+2. **Files** — the per-dispatch lifecycle is `alloc → write prompt → start|resume → Read report → cleanup` (with the Write tool everywhere but `plan-review` — INV-007), and it repeats in full for every round: a `resume` gets a fresh `alloc`, never the previous directory (dir 0700 under `os.tmpdir()`, never in the tree). The adapter chmods the caller-written prompt `0600` at preflight and **creates** the report itself, exclusively, at `0600`, before the child exists; the guarantee is layered rather than absolute and § Files in the reference states each layer's limit. `cleanup` runs only after that dispatch's report has been read — for a background call, only after its completion notification was consumed. No `mktemp`, `chmod` or `rm` shell grant is needed or given.
+3. **§ Alloc / § Start / § Resume / § Cleanup** — the command lines above, verbatim, the only place they are spelled; § Start names which skill may pass `--class implement`.
+4. **Completion state machine — for `start`/`resume` only** — `launched → pending`; `exit 0 → codex_ok`; `exit 1 → codex_fail` (then `review-dispatch.js` with `probe:'codex_fail'`, sticky per change); `exit 2 → fix configuration, no dispatch`; completion unknown → gate stays open, no fallback, no note. An `alloc` or `cleanup` failure is a lifecycle error surfaced to the operator: it never calls `review-dispatch.js`, never sets the probe, and never counts as a Codex outcome. Long calls (`thorough`, large diffs) use `Bash(run_in_background: true)`; the model waits for the completion notification.
+5. **Profile** — read `## Codex Profile` from `rules/auto-loop-project.md`; unset → no `-p`. "Profile selection is not tier-dependent in v1; a tier→profile map is a future setting." Profile is project-selected, user-defined configuration: `requestedProfile` in the record is the audit trail.
+6. **Permission** — direct owners `Bash(node:*)`, Write, Read; delegators nothing. `plan-review` is the one direct owner without `Write` (INV-007's recorded exemption): plan mode withholds that tool before `ExitPlanMode`, so it writes the prompt by heredoc under the `Bash(bash:*)` it already held.
+
+`rules/codex-invocation.md` gains one pointer and swaps "MCP thread" → "exec thread"; its anti-anchoring text is unchanged. `rules/auto-loop.md` § Override Contract gains the row `## Codex Profile` — Setting — consumed by `codex-transport.md` § Profile — Default.
+
+### 3.4 Call-site shape (INV-001, INV-004)
+
+Every prompt template loses its `mcp__codex__codex({ prompt: \`…\`, sandbox:…, 'approval-policy':… })` envelope and keeps the prompt body byte-for-byte. Every direct caller states only:
+
+> Render the prompt body into a private prompt file, then dispatch per `codex-transport.md` § Start (first dispatch / rotation) or § Resume with the remembered `threadId`.
+
+Mapping: `mcp__codex__codex` → § Start · returned `threadId` → `thread.started.thread_id` · `codex-reply({threadId})` → § Resume · R-a/R-b rotation → § Start on a new thread + `[THREAD_ROTATED]` · fallback carriers → unchanged Task dispatch.
+
+Three guards, all negative, all with explicit allowlists: (1) no operational `codex exec` command line appears outside `codex-transport.md`, `scripts/codex-exec.js` and `test/scripts/codex-exec*`; (2) no `mcp__codex` token survives in active `skills/`, `agents/`, `rules/` (records under `docs/` allow-listed); (3) the token `--class implement` appears only in `codex-transport.md` § Start (which names the owner) and under `skills/codex-implement/`; every other direct owner's call-site text resolves to `review` — proven both ways per `@rules/testing.md` § Guards. Guard allowlists are inventories of **paths that carry the token today** (33 `SKILL.md`, the reference files, `sharingan/scan-repo.js`), never the authorization count; each ticket removes its own paths and item 5 owns the empty state.
+
+## 4. Risks and Dependencies
+
+| Risk | Mitigation |
+|---|---|
+| `mcp-server` removed before migration lands | migrate now; no removal version exists, 0.153.0 still ships it |
+| JSONL event shape drifts | one event, fail-closed on absence; fake-CLI fixtures pin the shape; maintainer acceptance run per release |
+| Stale installed adapter after plugin upgrade | `--protocol 1` handshake; mismatch is exit 2 with an explicit reinstall instruction, never a silent misread and never an auto-overwrite |
+| Unknown profile silently runs (measured) | adapter checks the profile-v2 file before spawning |
+| `Bash(node:*)` is not a security boundary | accepted: equivalent in effective authority to `Bash(bash:*)`; the pinned safety flags and the class sandbox are the real boundary |
+| `on-failure` → `never` changes `codex-implement` / `codex-brainstorm` behaviour | sanctioned delta (§ 3.2 Operation classes): in headless `exec` nobody can answer an approval prompt, so `on-failure` could only ever hang or fail; `codex-implement` keeps `workspace-write`, and its Step 3b accept/reject loop (`git diff` → user) remains the human control |
+| Long reviews vs the 10-minute Bash ceiling | background launch + completion state machine; no adapter timeout |
+| Resume depends on `~/.codex/sessions` | failure → `codex_fail` → sticky fallback; never `--last`, never a fresh thread posing as a reply |
+| Self-hosting: this repo reviews its own transport change | adapter + fake-CLI tests land unused first; the transport flip is one reviewed slice |
+| `codex-plugin-fallback` feature (plugin-cc cascade layer) overlaps | that feature stays scoped to the plugin as a *fallback* carrier; this one owns the primary transport — § 7 item 1 decided 2026-09-04: priorities unchanged |
+| The live JSONL schema cannot be exercised by the fake CLI | **Measured 2026-09-04 against codex-cli 0.149.0** in a throwaway consuming project: `start` returned a real `threadId` and wrote the report at `-o`; `resume` on that same id continued the thread (its report referred back to the first turn's finding); both scratch files came out `0600` under an `0700` directory. The schema risk is closed by observation, not by assumption — item 6's Progress carries the ids and exit codes |
+
+Dependencies: codex-cli ≥ 0.149 with `exec resume` and `--json`; Node 18+ (already required); `/install-scripts` for consuming projects.
+
+## 5. Work Breakdown
+
+| # | Item | Size | Ships |
+|---|---|---|---|
+| 1 | `scripts/codex-exec.js` + `test/scripts/codex-exec.test.js` (fake `codex` on PATH: alloc dir mode 0700, start, resume, both classes' argv, safety-after-profile, thread extraction, `-o` report, prompt/report 0600, missing binary, nonzero exit, malformed JSONL, empty report, id mismatch, `--protocol 0` → exit 2 with the fake binary never launched, profile missing, invalid class, report-in-tree, cleanup of an alloc path and refusal of any other, ≤150-line assertion) — lands **unused** | M | first |
+| 2 | `codex-transport.md`; `rules/codex-invocation.md` pointer; `rules/auto-loop.md` `## Codex Profile` row + `auto-loop-project.md` heading; the three negative-guard tests of § 3.4 (guards 1–2 initially allow-listing the still-MCP skills; guard 3 pins `--class implement` to `codex-implement` from day one) | M | second |
+| 3 | Core review family as one slice: `codex-code-review`, `codex-review{,-fast,-branch,-doc}`, `doc-review`, `plan-review`, `test-review`, `codex-test-review`, `review-common.md`, `codex-prompt-*.md`, `review-loop-*.md`, `seek-verdict`; their tests (incl. the two transport-label strings in `review-loop-resilience.test.js`) | L | third |
+| 4 | Non-gate conversations: `codex-brainstorm`, `codex-architect`, `codex-explain`, `codex-implement`, `feasibility-study`, `issue-analyze`, `recap-*` (incl. `post-dev-recap`), `fp-brief`, `req-analyze`, `architecture`, `debug`, `code-investigate`, `security-review`, `codex-security`, `necessity-audit`, `feature-verify`, `load-pr-review`, `review-spec`; `best-practices` terminology (no grant); the three `Bash(codex:*)` agents | L | fourth |
+| 5 | Sweep: the two delegator frontmatters items 3–4 leave untouched (`codex-test-gen`, `feature-dev`) lose the grant — every other thin entry point is classified per file inside items 3–4; `sharingan/scan-repo.js`; README ×6 + `readme-codex-mcp.test.js` / `generate-readme-catalog.test.js`; `docs/skill-catalog.yml` category label regenerate; negative guards go allowlist-free — this item owns the empty-tree state | M | fifth |
+| 6 | Maintainer acceptance: one real `start` + `resume` on a live change; `/bump-version minor` | S | last |
+
+Items 3 and 4 may each be split into request tickets of ≤8 ACs; item 1 is the first ticket.
+
+## 6. Testing Strategy
+
+- **Adapter** (`node:test`, fake binary): every row of § 3.2, both directions — the fake emits a valid stream and the test asserts the control record; then mutates one property (drops `thread.started`, exits 3, writes an empty report) and asserts the mapped exit code and diagnostic. Protocol mismatch is an adapter-input test, not a fake-CLI response: invoke with `--protocol 0`, assert exit 2, the `[CODEX_EXEC_CONFIG] code=protocol_mismatch` line, and that the fake binary recorded no launch. Mode tests stat the dir (0700) and both files (0600); cleanup tests assert removal of an alloc path and refusal (exit 2) of a non-alloc path. Guard tests delete the production check on its real path (`@rules/testing.md` § Guards).
+- **Contract pins**: `codex-transport.md` sections exist and carry the state-machine sentences; `codex-invocation.md` anti-anchoring sentences unchanged (byte pin); `auto-loop.md` override table has the new row with its consumer.
+- **Negative guards** (§ 3.4): no `codex exec` command line outside the allowlist; no `mcp__codex` in active surfaces (allowlist shrinks per work item; final state empty); `--class implement` only in `skills/codex-implement/` — each guard self-tested by planting the forbidden token in a fixture and asserting the failure.
+- **Existing suites unchanged in expectation**: `review-dispatch.test.js`, `review-loop-resilience.test.js`, `contract-routing.test.js`, `scope-*` — the transport swap must not move a single assertion there.
+- **Acceptance** (manual, recorded in the item-6 ticket): real start/resume, `threadId` reuse across two rounds, a forced `protocol_mismatch` producing exit 2 without fallback.
+
+## 7. Open Questions
+
+1. **Decided 2026-09-04 — unchanged.** `codex-plugin-fallback` keeps its Degradation Matrix
+   priorities. The two features are orthogonal by construction: this one owns the **primary**
+   transport (how a dispatch is carried), that one is a **fallback carrier** (who reviews when Codex
+   is out), and item 6's live acceptance exercised only the primary path. The upstream repository's
+   inactivity since 2026-07-08 is a reason to watch that carrier's health, not a reason to reorder a
+   matrix whose ordering nothing in this change touched. Reordering it would be its own request,
+   with its own evidence.
+2. **Closed by item 4.** `necessity-audit` runs on the exec transport — `resume` per debate turn —
+   and its exclusion from *fallback* is unchanged and separate (`@rules/auto-loop.md` § Review
+   Dispatch). Verified by that item's necessity-audit AC; no MCP dispatch remains anywhere
+   (`grep -rn "mcp__codex" skills agents rules` is empty, pinned by Guard 2).
+3. **Decided 2026-09-04 — no watcher.** A periodic `codex mcp-server` presence check would monitor
+   a command this plugin no longer calls, so its signal could not change any behaviour here: the
+   exec transport does not degrade when that server changes, and the README no longer instructs
+   anyone to register it. What a watcher would really be watching is `codex exec`'s own contract —
+   the `thread.started` event, `--json`, `-o`, `exec resume` — and that is already watched where it
+   matters, by every dispatch: a breaking change surfaces as adapter exit 1 with a diagnostic, on
+   the next review anyone runs. The version bump plus the README setup block is the whole
+   announcement.
