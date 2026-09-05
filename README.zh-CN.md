@@ -20,7 +20,7 @@ v4 在一个封闭、由测试钉住的 anchor 集合之内给予 Claude 自由�
 
 ## 快速开始
 
-```bash
+```text
 # Claude Code — 完整控制平面
 /plugin marketplace add sd0xdev/sd0x-harness
 /plugin install sd0x-dev-flow@sd0xdev-marketplace
@@ -50,17 +50,38 @@ $codex-setup init
 | `$codex-setup init` | Codex CLI | AGENTS.md kernel + commit-msg hook（pre-push 守卫为 opt-in） |
 <!-- END:INSTALL-COVERAGE -->
 
-**环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex MCP](https://github.com/openai/codex)（安装 plugin 可不装；它是 `/codex-*` review gate 的默认 reviewer——Codex 不可用时，由契约感知的 fallback reviewer 以同一机制承接 gate，按 family contract fail-closed 并记录 `[REVIEWER_FALLBACK]`；只有当所有备用 reviewer 均无法给出有效判定时，review 才输出 `⚠️ Need Human` 而非 verdict）
+**环境要求**：Claude Code 2.1+ | Node.js 18+ | `jq`（`pre-edit-guard` 与 `post-edit-format` 用它解析 hook payload——没有 `jq` 时两者都直接 exit 0，敏感路径防护与自动格式化等于悄悄关闭）| [Codex CLI](https://github.com/openai/codex)（安装 plugin 可不装；它是 `/codex-*` review gate 的默认 reviewer——仅在 `codex_fail`（adapter 的 `start` 或 `resume` exit 1）时，由契约感知的 fallback reviewer 以同一机制承接 gate，按 family contract fail-closed 并记录 `[REVIEWER_FALLBACK]`；找不到 adapter、配置错误、执行未完成或 `alloc`/`cleanup` 失败都不会派发 fallback，也不会记录任何标记，gate 保持开启；只有当所有备用 reviewer 均无法给出有效判定时，review 才输出 `⚠️ Need Human` 而非 verdict）
 
-### 注册 Codex MCP
+### Codex exec 配置
+
+审查循环通过 `codex exec` 与 Codex 通信，由一个小型 adapter 驱动。**无需注册 MCP server** —— 本 plugin 不再经由 `codex mcp-server` 派发。
+
+**1. 在 shell 中** —— 安装 Codex CLI（>= 0.149.0）并登录：
 
 ```bash
-claude mcp add codex -- codex mcp-server -c 'model_reasoning_effort="high"'
+codex --version
 ```
 
-`-c 'model_reasoning_effort="high"'` 是这里的默认值——review 正是值得投入深度的工作（`rules/auto-loop.md` § Review Dispatch 对 `agents/` frontmatter 套用同一个原则）。它是默认值而非硬性要求，你可以按自己的 effort/latency 取舍调整或去掉。`-c` 放在 `mcp-server` 子命令前后都有效。
+**2. 在 Claude Code 中** —— 将传输 adapter 安装到项目中。这是 slash command，不是 shell 命令；在终端
+里输入会被当成执行一个绝对路径：
 
-`--profile` 则**完全无法**与 `codex mcp-server` 并用，请直接在注册命令上用 `-c` 覆盖配置；完整错误信息见 [English README](README.md#codex-mcp-registration)。
+```text
+/sd0x-dev-flow:install-scripts codex-exec.js
+```
+
+第 2 步是可选的：第一次需要用到 adapter 的审查会自动安装它，使用的是 `precommit-fast` 为其 runner 采用的同一套三层查找。如果你不希望安装发生在审查过程中，就先手动执行。
+
+**模型与推理强度现在写在 Codex profile 里，而不是注册命令上。** 在 `rules/auto-loop-project.md` 指定一个：
+
+```markdown
+## Codex Profile
+
+review
+```
+
+这个名称会解析到 `$CODEX_HOME/<name>.config.toml` —— 也就是 `codex exec -p` 叠加在你的基础用户配置之上的 profile-v2 形式（`codex exec --help`：“Layer `$CODEX_HOME/<name>.config.toml` on top of the base user config”）。所以一个包含 `model_reasoning_effort = "high"` 的 `review` profile，能给审查循环与旧的 `-c` 覆盖相同的深度，同时不影响你自己的交互式 Codex 会话。`## Codex Profile` 留空也可以：adapter 就不传 `-p`，Codex 使用它自己的默认配置。
+
+sandbox 与 approval policy 由 adapter 为每次派发自行固定，因此都不是配置阶段的决定 —— 完整契约见 `skills/codex-code-review/references/codex-transport.md`。
 
 ## 为什么是 v4
 
@@ -112,7 +133,7 @@ sd0x-dev-flow 是一个 reference implementation。下表的每一行都把一�
 | 2 | **Digest-bound reminder state** | Verdict 由模型记录（`node scripts/review-state.js note <plane> <pass\|fail>`）并与 tree digest 绑定——一次编辑会因 digest 变化而重新打开其 plane 的提醒；gate sentinel（`✅ Ready` / `## Overall: ✅ PASS`）保持为行为层信号 | [`scripts/review-state.js`](scripts/review-state.js) + [`rules/auto-loop.md`](rules/auto-loop.md) (§ Gate Sentinels, § Enforcement) |
 | 3 | **Context recovery across compaction** | SessionStart(compact) 之后重新注入 git 基线（分支 + 未提交文件）与待偿 gate 提醒 | [`hooks/post-compact-auto-loop.sh`](hooks/post-compact-auto-loop.sh) |
 | 4 | **Lifecycle interceptors** | 5 类 hook 事件分派到 6 个脚本——4 个建议性提醒 hook、1 个自动格式化、1 个会阻断的安全守卫（SessionStart 另外执行 `scripts/namespace-hint.sh`）：PreToolUse / PostToolUse / Stop / SessionStart / UserPromptSubmit | [`hooks/`](hooks/) (6 个脚本) + [`.claude/settings.json`](.claude/settings.json) |
-| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具备 Edit/Write 权限 | 99 个公开 skills 中有 90 个声明了 `allowed-tools` |
+| 5 | **Capability-based tool gating** | Skill frontmatter 的 `allowed-tools` — 例如 `/ask` 不具备 Edit/Write 权限 | 99 个公开 skills 中有 91 个声明了 `allowed-tools` |
 | 6 | **Defense-in-depth safety** | 已安装的 git 层守卫保持硬性——commit-msg-guard 始终安装，走 `/dev/tty` 的 pre-push-gate 则在 opt-in 后生效；编辑期的 pre-edit-guard 仍会阻断敏感路径编辑（安全守卫，非工作流强制——需要 `jq`，缺 jq 时守卫不会启动）；Stop hook 只做提醒——把守不可逆操作的那几层保留了牙齿，审查层则按设计转为建议性 | [`scripts/pre-push-gate.sh`](scripts/pre-push-gate.sh) + [`scripts/commit-msg-guard.sh`](scripts/commit-msg-guard.sh) + [`hooks/stop-guard.sh`](hooks/stop-guard.sh) |
 | 7 | **Generator-evaluator split** | Codex 审查 Claude 写的东西，自行研究 repo——绝不喂结论让它确认 | [`rules/codex-invocation.md`](rules/codex-invocation.md) + [`rules/auto-loop.md`](rules/auto-loop.md) (Review Dispatch) |
 | 8 | **Incremental progress tracking** | 证据驱动的卡壳纪律：连续三轮 review 都没关掉任何 finding——由模型根据 review 报告自行计数——触发结构化的停滞分类与一次有边界的调整。按 tier 的轮次预算（默认 6 / 15 / 30，可覆写为 3–50）退居 runaway backstop，首次触发上限时跑同一套诊断，并保留列举出的人类出口 | [`rules/auto-loop.md`](rules/auto-loop.md) (§ Stall Detection and Diagnosis；详见 `skills/codex-code-review/references/loop-diagnostics.md`) |
@@ -150,7 +171,7 @@ Hooks 报告的是**事实，不是命令**：它们打印提醒和一行 `[AUTO
 sequenceDiagram
     participant D as Developer
     participant C as Claude
-    participant X as Codex MCP
+    participant X as Codex exec
     participant H as Hooks
 
     D->>C: Edit code
@@ -168,7 +189,7 @@ sequenceDiagram
             C->>C: 在编排侧将旧 findings 对映到新报告并重新推导 gate
             C->>C: 记录 [THREAD_ROTATED]（old → new threadId）
         else 未达阈值
-            C->>X: --continue threadId
+            C->>X: codex exec resume <threadId>
             X-->>C: 重新验证
         end
         Note over C,X: 轮换保留冻结的 scope baseline；stall 连续计数与轮次上限不重置
@@ -295,7 +316,7 @@ flowchart TD
 | 代理 | 16 | strict-reviewer, verify-app, coverage-analyst, architecture-designer |
 | 钩子 | 6 | pre-edit-guard, auto-format, stop reminder, post-compact-auto-loop, post-skill-auto-loop, user-prompt-review-guard |
 | 规则 | 16 | auto-loop, auto-loop-project, codex-invocation, scope-discipline, security, testing, git-workflow, self-improvement, context-management |
-| 脚本 | 22 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile |
+| 脚本 | 23 | precommit runner, verify runner, review-state CLI, dep audit, namespace hint, skill runner, commit-msg guard, pre-push gate, build-codex-artifacts, resolve-feature (node entrypoint + shell shim + CLI), classify-docs, detect-scope, migration-audit, migrate-hook-lightweighting, security-redact, readme-catalog, check-doc-links, resolve-review-profile, codex-exec adapter |
 <!-- END:WHATS-INCLUDED-COUNT -->
 
 ### 极小的 Context 占用
@@ -347,7 +368,7 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/code-explore` | Pure Claude code investigation. |
 | `/code-investigate` | Dual-perspective code investigation. |
 | `/codex-architect` | Codex architecture consulting. |
-| `/codex-implement` | Implement features via Codex MCP. |
+| `/codex-implement` | Implement features via Codex exec. |
 | `/codex-setup` | Initialize sd0x-dev-flow infrastructure for Codex CLI and other non-Claude agents. |
 | `/create-pr` | Create or update GitHub PR with gh CLI. |
 | `/debug` | Interactive debugging workflow with hypothesis-driven probe loop. |
@@ -375,25 +396,25 @@ Skills 按需加载。闲置 Skill 不占用任何 Token。
 | `/smart-rebase` | Smart partial rebase for squash-merge repositories. |
 | `/watch-ci` | Monitor GitHub Actions CI runs until completion. |
 
-### 审查 (Codex MCP) (15)
+### 审查 (Codex exec) (15)
 
 | Skill | Description | 循环支持 |
 |-------|-------------|----------|
 | `/codex-cli-review` | Code review via Codex CLI with full disk access. | - |
-| `/codex-code-review` | Code review using Codex MCP. | - |
-| `/codex-explain` | Explain complex code via Codex MCP. | - |
-| `/codex-review` | Full second-opinion using Codex MCP (with lint:fix + build). | `--continue <threadId>` |
-| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex MCP | - |
-| `/codex-review-doc` | Review documents using Codex MCP. | `--continue <threadId>` |
-| `/codex-review-fast` | Quick second-opinion using Codex MCP (diff only, no tests). | `--continue <threadId>` |
-| `/codex-security` | OWASP Top 10 security review using Codex MCP. | `--continue <threadId>` |
-| `/codex-test-gen` | Generate unit tests for specified functions using Codex MCP | - |
-| `/codex-test-review` | Review test case sufficiency using Codex MCP, suggest additional edge cases. | `--continue <threadId>` |
-| `/doc-review` | Document review via Codex MCP. | - |
-| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex MCP. | - |
-| `/security-review` | Security review via Codex MCP. | - |
+| `/codex-code-review` | Code review using Codex exec. | - |
+| `/codex-explain` | Explain complex code via Codex exec. | - |
+| `/codex-review` | Full second-opinion using Codex exec (with lint:fix + build). | `--continue <threadId>` |
+| `/codex-review-branch` | Fully automated review of an entire feature branch using Codex exec | - |
+| `/codex-review-doc` | Review documents using Codex exec. | `--continue <threadId>` |
+| `/codex-review-fast` | Quick second-opinion using Codex exec (diff only, no tests). | `--continue <threadId>` |
+| `/codex-security` | OWASP Top 10 security review using Codex exec. | `--continue <threadId>` |
+| `/codex-test-gen` | Generate unit tests for specified functions using Codex exec | - |
+| `/codex-test-review` | Review test case sufficiency using Codex exec, suggest additional edge cases. | `--continue <threadId>` |
+| `/doc-review` | Document review via Codex exec. | - |
+| `/plan-review` | Pre-ExitPlanMode adversarial plan review loop via Codex exec. | - |
+| `/security-review` | Security review via Codex exec. | - |
 | `/seek-verdict` | Independent second-opinion verification for any finding. | - |
-| `/test-review` | Test coverage review via Codex MCP. | - |
+| `/test-review` | Test coverage review via Codex exec. | - |
 
 ### 验证 (13)
 
