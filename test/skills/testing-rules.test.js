@@ -114,9 +114,10 @@ test('codex-prompt-ac-trace.md exists with required elements', () => {
   assert.ok(existsSync(path), 'codex-prompt-ac-trace.md should exist');
   const content = readFileSync(path, 'utf8');
   assert.match(content, /independently research/, 'should have independent research block');
-  assert.match(content, /mcp__codex__codex/, 'should use fresh codex thread');
+  assert.match(content, /§ Start/, 'should dispatch a fresh thread per codex-transport.md § Start');
   assert.match(content, /VALID_EXCEPTION/, 'should include VALID_EXCEPTION in output schema');
-  assert.match(content, /sandbox.*read-only/i, 'should set read-only sandbox');
+  // Body-only since the exec transport landed: the sandbox is pinned by codex-transport.md § Start.
+  assert.doesNotMatch(content, /sandbox: '/, 'the template must not choose a sandbox');
 });
 
 // --- Phase C: Adequacy Gate in auto-loop ---

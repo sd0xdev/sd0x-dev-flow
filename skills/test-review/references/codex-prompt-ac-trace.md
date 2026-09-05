@@ -4,21 +4,22 @@
 
 ## Verification Prompt
 
-**Initial verification**: Use `mcp__codex__codex` (fresh thread — never reuse a code review session thread).
-**Re-verification after gap closure**: Use `mcp__codex__codex-reply` with the AC trace threadId (see Continue Review Prompt below).
+**Initial verification**: dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start (fresh thread — never reuse a code review session thread).
+**Re-verification after gap closure**: dispatch per that reference's § Resume with the AC trace threadId (see Continue Review Prompt below).
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior test engineer performing AC-to-evidence traceability verification.
+You are a senior test engineer performing AC-to-evidence traceability verification.
 
 ## Request Document
+
 - Path: ${REQUEST_PATH}
 - Total ACs: ${TOTAL_AC_COUNT} (${NON_QG_COUNT} non-quality-gate)
 
 ## Acceptance Criteria (non-quality-gate only)
+
 ${AC_LIST}
 
 ## Related Test Files
+
 ${TEST_FILE_LIST}
 
 ## ⚠️ Important: You must independently research the project ⚠️
@@ -26,14 +27,16 @@ ${TEST_FILE_LIST}
 When verifying AC-to-evidence traceability, you **must** perform the following research:
 
 ### Research Steps
-1. Read the request document: \`cat ${REQUEST_PATH}\`
-2. Check project test structure: \`ls test/\`, \`ls test/unit/\`, \`ls test/integration/\`
-3. For each AC, search for matching test assertions: \`grep -r "relevant keyword" test/ -l | head -10\`
-4. Read candidate test files: \`cat <test path> | head -150\`
-5. Check for runtime verification results: \`grep -r "feature-verify" docs/ -l | head -5\`
-6. Search for exception annotations in the request doc: \`grep -i "exception" ${REQUEST_PATH}\`
+
+1. Read the request document: `cat ${REQUEST_PATH}`
+2. Check project test structure: `ls test/`, `ls test/unit/`, `ls test/integration/`
+3. For each AC, search for matching test assertions: `grep -r "relevant keyword" test/ -l | head -10`
+4. Read candidate test files: `cat <test path> | head -150`
+5. Check for runtime verification results: `grep -r "feature-verify" docs/ -l | head -5`
+6. Search for exception annotations in the request doc: `grep -i "exception" ${REQUEST_PATH}`
 
 ### Verification Focus
+
 - Does each AC have at least one matching test assertion?
 - Are test assertions covering the AC behavior, not just a function name?
 - For manual exceptions: is the reason class valid? Is the expiry future?
@@ -61,11 +64,7 @@ Final summary:
 - exception_count: <N> / <cap>
 
 Then end the report with exactly one unbulleted gate line, alone as the final line:
-gate: Adequate | Adequate_with_exceptions | Need_Human | Inadequate`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+gate: Adequate | Adequate_with_exceptions | Need_Human | Inadequate
 
 ## Anti-Anchoring Enforcement
 
@@ -76,9 +75,8 @@ Per `@rules/codex-invocation.md`:
 | Prompt does NOT contain Claude's evidence mapping conclusions | ✅ |
 | Prompt does NOT ask "is this mapping correct?" | ✅ |
 | Prompt includes "independently research" section | ✅ |
-| Initial verification uses fresh `mcp__codex__codex`; re-verification uses `codex-reply` | ✅ |
-| `sandbox: 'read-only'` set | ✅ |
-| `approval-policy: 'never'` set | ✅ |
+| Initial verification uses a fresh thread (§ Start); re-verification uses § Resume | ✅ |
+| Sandbox and approval policy are the transport's to pin, and are not restated here | ✅ |
 
 ## AC List Formatting
 
@@ -92,7 +90,7 @@ Provide only the raw AC text with checkbox state. Do NOT include Claude's eviden
 
 ## Continue Review Prompt
 
-Used with `mcp__codex__codex-reply` when re-verifying after gap closure — same thread only.
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Resume when re-verifying after gap closure — same thread only.
 Rotation: per the central contract (`skills/codex-code-review/references/review-common.md`
 § Review Loop — Thread Rotation), at the R-a threshold (3 replies on this thread;
 `## Review Thread Rotation` override, 2–6) or on R-b judged context overrun, dispatch the initial
@@ -104,19 +102,16 @@ Raw → public mapping: the raw `gate:` line this prompt requires is what
 fallback); the public sentinels (`✅ Adequate` …) are derived from it exclusively by
 `../SKILL.md` § Step 6, never emitted raw by the reviewer.
 
-```typescript
-mcp__codex__codex-reply({
-  threadId: THREAD_ID,
-  prompt: `ACs were updated. Please re-verify evidence traceability.
+ACs were updated. Please re-verify evidence traceability.
 
 ## Updated AC List
+
 ${UPDATED_AC_LIST}
 
 ## Changes Since Last Review
+
 ${DIFF_SUMMARY}
 
 Check: Did gap closure introduce new evidence? Did fixes introduce new issues?
 
-Re-output the full AC traceability matrix and updated gate.`,
-});
-```
+Re-output the full AC traceability matrix and updated gate.

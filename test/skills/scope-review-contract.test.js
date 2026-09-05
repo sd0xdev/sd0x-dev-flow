@@ -32,7 +32,18 @@ const STEERING = /prefer\s+`?(independent|affected)|should be (independent|affec
 test('step 1 when collecting metadata → the baseline is frozen once and BASE_BRANCH resolution is total', () => {
   assert.match(skill, /\*\*Scope baseline \(frozen here\)\.\*\*/, 'Step 1 must own the freeze');
   assert.match(skill, /git ls-files --others --exclude-standard/, 'untracked files join the baseline');
-  assert.match(skill, /git merge-base \$\{BASE_BRANCH\} HEAD/, 'branch baseline diffs against the merge base');
+  // The branch baseline is still measured from the merge base — but the ref never reaches a shell.
+  // It is resolved once, single-quoted, verified to be an object id, and only that id travels
+  // (review 2026-09-04: a valid ref may contain `;` or backticks, and placeholders bind textually,
+  // so a rendered ref was a command-injection surface no amount of quoting-after-the-fact closes).
+  assert.match(skill, /git merge-base -- 'the\/resolved\/ref' HEAD/,
+    'the base is resolved from a single-quoted ref, not an interpolated one');
+  assert.match(skill, /\*\*verify the result is 40 hex characters\*\*/i,
+    'and the result is verified to be an object id before use');
+  assert.match(skill, /git diff --name-only \$MERGE_BASE/,
+    'branch baseline diffs against that resolved merge base');
+  assert.doesNotMatch(skill, /merge-base \$\{BASE_BRANCH\}|merge-base "\$\{BASE_BRANCH\}"/,
+    'no site may recompute the base from the raw ref');
   assert.match(skill, /git symbolic-ref --short\s+refs\/remotes\/origin\/HEAD/, 'origin HEAD is the second candidate');
   assert.match(skill, /`git rev-parse --verify`/, 'every candidate is verified before use');
   assert.match(skill, /\*\*parameter error\*\*/, 'exhausted candidates abort as a parameter error');
@@ -222,7 +233,11 @@ test('scope fields when defined → contract present in review-common and every 
 test('re-review template when continued → carries the frozen baseline and active dispositions', () => {
   assert.match(common, /## Scope Baseline \(frozen — unchanged for this task, do NOT recompute\)/);
   assert.match(common, /## Active Dispositions/);
-  assert.match(common, /\$\{DISPOSITIONS \|\| 'None'\}/);
+  assert.match(common, /\$\{DISPOSITIONS\}/);
+  // This line used to pin `${DISPOSITIONS || 'None'}` — the JavaScript form that only worked while
+  // the template lived inside a literal. Stripping the envelope left the expression unevaluated and
+  // shippable to Codex as text, and this assertion was preserving that rather than detecting it.
+  assert.doesNotMatch(common, /\$\{[A-Z_]+\s*\|\|/, 'no unevaluated default expression may survive');
   assert.match(common, /judged against the frozen baseline above/);
   assert.match(common, /including the gate_reason line/);
   assert.match(common, /Re-evaluate `change_relation` for every finding against the \*\*current\*\* primary diff\n/,
@@ -561,7 +576,7 @@ test('assurance boundary when dispatched → both first-dispatch templates and t
   // material-defects framing and the Assurance Boundary are deliberately fast/full-scoped: those
   // two are the auto-loop first-dispatch templates the converged package named.
   for (const [name, body] of Object.entries(prompts)) {
-    assert.match(body, /## Task \(frozen\)\n\$\{TASK_DESCRIPTION\}/,
+    assert.match(body, /## Task \(frozen\)\s+\$\{TASK_DESCRIPTION\}/,   // \s+: body-only markdown puts a blank line after a heading
       `${name}: every dispatch carries the frozen task contract — metadata without the task lets a coherent but task-incorrect change pass`);
   }
   for (const [name, body] of Object.entries({ fast: prompts.fast, full: prompts.full })) {

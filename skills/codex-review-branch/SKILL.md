@@ -1,7 +1,7 @@
 ---
 name: codex-review-branch
-description: "Fully automated review of an entire feature branch using Codex MCP"
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task
+description: "Fully automated review of an entire feature branch using Codex exec"
+allowed-tools: Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task
 ---
 
 # Codex Review Branch

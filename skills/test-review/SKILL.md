@@ -1,7 +1,7 @@
 ---
 name: test-review
-description: "Test coverage review via Codex MCP. Use when: reviewing test sufficiency, identifying coverage gaps, test quality audit. Not for: generating tests (use codex-test-gen), code review (use codex-code-review). Output: coverage analysis + gap report."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(node:*), Read, Grep, Glob, Write, Task
+description: "Test coverage review via Codex exec. Use when: reviewing test sufficiency, identifying coverage gaps, test quality audit. Not for: generating tests (use codex-test-gen), code review (use codex-code-review). Output: coverage analysis + gap report."
+allowed-tools: Bash(git:*), Bash(node:*), Read, Grep, Glob, Write, Task
 context: fork
 agent: Explore
 ---
@@ -49,13 +49,12 @@ Smart detect target → Read test + source → Codex review (5 dimensions) → C
 
 ### Step 3: Codex Review
 
-**First review**: `mcp__codex__codex` with test review prompt. See `references/codex-prompt-test-review.md`.
+**First review**: dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start with the test review prompt. See `references/codex-prompt-test-review.md`.
 
-**Loop review**: `mcp__codex__codex-reply` with re-review template. See `references/codex-prompt-test-review.md`. Rotation applies per the central contract (see § Review Loop below).
+**Loop review**: dispatch per § Resume with the re-review template. See `references/codex-prompt-test-review.md`. Rotation applies per the central contract (see § Review Loop below).
 
-**Codex unavailable → fallback carries the gate** (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'test:coverage'`), record `[REVIEWER_FALLBACK]`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-test-review.md` as the governing template (P3 = one retry, fresh instance), and validate the raw report with `node scripts/validate-family-sentinel.js test:coverage` before adopting the verdict. Carriers exhausted → no gate sentinel, behaviour-layer `⚠️ Need Human`.
+**`codex_fail` → fallback carries the gate** (adapter **exit 1** only — `@skills/codex-code-review/references/codex-transport.md` § Completion state machine: a pending or unknown completion keeps the gate **open** with no fallback, exit 2 is a configuration error, and an `alloc`/`cleanup` failure is a lifecycle error) (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'test:coverage'`), record `[REVIEWER_FALLBACK]`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-test-review.md` as the governing template (P3 = one retry, fresh instance), and validate the raw report with `node scripts/validate-family-sentinel.js test:coverage` before adopting the verdict. Carriers exhausted → no gate sentinel, behaviour-layer `⚠️ Need Human`.
 
-Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
 **Save the returned `threadId`.**
 
@@ -93,15 +92,14 @@ For each non-quality-gate AC:
 
 ### Step 4: Codex Verify (independent)
 
-Fresh thread (`mcp__codex__codex`). See `references/codex-prompt-ac-trace.md`.
+Fresh thread (§ Start). See `references/codex-prompt-ac-trace.md`.
 
 | Rule | Detail |
 |------|--------|
 | Cache | `request-path + git diff hash` key; same session reuse |
-| Timeout / Unavailable | Fallback carries the verification (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'test:ac-trace'`), record `[REVIEWER_FALLBACK]`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-ac-trace.md` as the governing template (P3 = one retry, fresh instance); validate the raw report with `node scripts/validate-family-sentinel.js test:ac-trace` before deriving the public sentinel |
+| `codex_fail` — adapter **exit 1 only** (`@skills/codex-code-review/references/codex-transport.md` § Completion state machine: pending/unknown keeps the gate open with no fallback; exit 2 is a configuration error; `alloc`/`cleanup` failures are lifecycle errors) | Fallback carries the verification (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'test:ac-trace'`), record `[REVIEWER_FALLBACK]`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-ac-trace.md` as the governing template (P3 = one retry, fresh instance); validate the raw report with `node scripts/validate-family-sentinel.js test:ac-trace` before deriving the public sentinel |
 | Carriers exhausted | No validated raw report exists, so **no raw or public AC gate sentinel is derived** — mark all items `⚠️ Inconclusive` in the body and surface behaviour-layer `⚠️ Need Human` only (whatever the mode); note nothing |
 
-Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
 **Save the returned `threadId`.**
 
@@ -137,9 +135,14 @@ Read source → Derive test path → Codex generate → Save test file → Sugge
 
 1. Read source file
 2. Derive test path: `src/service/xxx.ts` → `test/unit/service/xxx.test.ts`
-3. Codex generates tests. See `references/codex-prompt-test-gen.md`.
-4. Save to target path
-5. Suggest: run tests then `/codex-test-review`
+3. **Bind `FUNCTION_NAME` before rendering the prompt**: the function named in the invocation, or
+   the literal `all` when the caller supplied only a path — `/codex-test-gen src/service/xxx.ts`
+   is the documented file-only form, so the placeholder must resolve to something. It used to carry
+   its own default inside the template; nothing evaluates the template now, so the binding is the
+   caller's and it is stated here.
+4. Codex generates tests. See `references/codex-prompt-test-gen.md`.
+5. Save to target path
+6. Suggest: run tests then `/codex-test-review`
 
 ## Review Dimensions
 
@@ -173,7 +176,7 @@ Read source → Derive test path → Codex generate → Save test file → Sugge
 
 ⛔ Needs additions → add tests → `/codex-test-review --continue <threadId>` → repeat until ✅ Sufficient.
 
-**Thread rotation** — central contract (`@skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation): at the R-a threshold (3 replies on this thread; `auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, dispatch the first-review template on a **new** thread instead of replying — no old findings fed, reconciliation orchestration-side — and record `[THREAD_ROTATED]`.
+**Thread rotation** — central contract (`@skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation): at the R-a threshold (3 replies on this thread; `@rules/auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, dispatch the first-review template on a **new** thread instead of replying — no old findings fed, reconciliation orchestration-side — and record `[THREAD_ROTATED]`.
 
 **Sentinel alias union** (no canonicalization): `✅ Tests sufficient` / `✅ Sufficient` carry one pass semantic, `⛔ Tests need supplementation` / `⛔ Needs additions` one fail semantic. Both shapes stay legal exactly as written — nothing rewrites one into the other — and every report carries exactly one terminal (`validate-family-sentinel.js test:coverage` rejects mixing).
 
@@ -192,13 +195,17 @@ Max 3 rounds. Still failing → report blocker.
 ✅ Tests sufficient
 ```
 
-The report ends with **exactly one** terminal — `✅ Tests sufficient` or `⛔ Needs additions` —
-alone at column 0 on the final line. Never place both alternatives on one line.
+The report ends with **exactly one** terminal, alone at column 0 on the final line, drawn from the
+alias union above — pass: `✅ Tests sufficient` **or** `✅ Sufficient`; fail: `⛔ Tests need
+supplementation` **or** `⛔ Needs additions`. All four are legal exactly as written, which is why
+this list must match the union rather than name a preferred pair: `validate-family-sentinel.js
+test:coverage` accepts all four, and the first-pass prompt emits `⛔ Tests need supplementation`, so
+a two-form list here would reject the template's own output. Never place two alternatives on one line.
 
 ## Verification
 
 - [ ] Coverage assessment includes all dimensions
-- [ ] Exactly one gate terminal (`✅ Tests sufficient` or `⛔ Needs additions`), alone at column 0 on the final line
+- [ ] Exactly one gate terminal from the four-form alias union (`✅ Tests sufficient` / `✅ Sufficient` / `⛔ Tests need supplementation` / `⛔ Needs additions`), alone at column 0 on the final line
 - [ ] Missing tests have specific code suggestions
 - [ ] Codex independently researched source code branches
 

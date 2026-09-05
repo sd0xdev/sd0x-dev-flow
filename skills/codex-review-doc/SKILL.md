@@ -1,7 +1,7 @@
 ---
 name: codex-review-doc
-description: "Review documents using Codex MCP. Supports review loop with context preservation."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Glob
+description: "Review documents using Codex exec. Supports review loop with context preservation."
+allowed-tools: Bash(git:*), Read, Glob
 ---
 
 # Codex Review Doc

@@ -1,5 +1,6 @@
 ---
 name: seek-verdict
+allowed-tools: Bash(node:*), Bash(git:*), Read, Grep, Glob, Write
 description: "Independent second-opinion verification for any finding. Use when: Claude or user wants independent Codex verification of a review finding — dismiss (false positive check), confirm (does this issue exist?), or clarify (what's the impact?). Triggers: dismiss verification, seek verdict, verify dismiss, false positive check, second opinion, confirm finding, clarify impact. Not for: general code review (use codex-code-review), architecture debates (use codex-brainstorm). Output: [DISMISS_VERDICT] or [SEEK_VERDICT] audit trail with verdict, confidence, and evidence refs."
 ---
 
@@ -78,9 +79,7 @@ Use the prompt template in [Verdict Prompt](references/verdict-prompt.md).
 
 | Requirement | Detail |
 |-------------|--------|
-| Thread | **Fresh** `mcp__codex__codex` (never reuse review thread) |
-| Sandbox | `read-only` |
-| Approval policy | `never` |
+| Thread | **Fresh** — dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start (never reuse a review thread) |
 | Anti-anchoring | No Claude conclusions in prompt |
 
 ### Phase C: Policy Mapping
@@ -97,11 +96,14 @@ Output audit trail per [Policy Mapping](references/policy-mapping.md).
 
 ## Rebuttal
 
-If Codex returns `FIX_REQUIRED` and Claude has objective counter-evidence:
+When Phase C maps the verdict to `FIX_REQUIRED` (raw `ACTIONABLE` at or above the confidence
+floor — `FIX_REQUIRED` is the mapping's word, never Codex's) and Claude has objective
+counter-evidence:
 
-- **1 round max** via `mcp__codex__codex-reply` (same verdict thread)
+- **1 round max** via § Resume (same verdict thread)
 - Only objective artifacts (tests, specs, language semantics)
-- After rebuttal: still FIX_REQUIRED -> fix; ambiguous -> `NEED_HUMAN`
+- The rebuttal names Codex's own verdict, `ACTIONABLE`, not the mapped result
+- After rebuttal: map the new answer again — still `FIX_REQUIRED` -> fix; ambiguous -> `NEED_HUMAN`
 
 ## Anti-Abuse Guard
 
