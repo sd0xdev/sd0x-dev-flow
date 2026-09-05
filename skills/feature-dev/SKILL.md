@@ -1,7 +1,7 @@
 ---
 name: feature-dev
 description: "Feature development workflow. Use when: implementing features, writing code, running dev loop. Not for: understanding code (use code-explore), reviewing code (use codex-code-review). Output: implemented feature + tests + review gate."
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, AskUserQuestion
 ---
 
 # Feature Development Skill

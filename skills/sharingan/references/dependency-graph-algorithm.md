@@ -17,7 +17,7 @@ A ──→ B    means B depends on A (B references /A in its body)
 |------|--------------|---------|
 | Skill reference | see scan-repo.js:270 | `/codex-review-fast` |
 | Rule reference | `@rules/[a-z0-9_.-]+\.md` | `@rules/auto-loop.md` |
-| MCP server | `mcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_-]+` | `mcp__codex__codex` |
+| MCP server | `mcp__[a-zA-Z0-9_]+__[a-zA-Z0-9_-]+` | `mcp__example__tool` — the pattern still recognises MCP tools in a scanned project; this plugin no longer declares any of its own |
 | Tool (frontmatter) | `allowed-tools:` comma-separated | `Read, Grep, Glob` |
 
 ## DAG Construction

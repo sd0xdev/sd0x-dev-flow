@@ -737,7 +737,7 @@ function main() {
     localTools: [
       'Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'Bash(git:*)', 'Bash(node:*)',
       'Bash(gh:*)', 'Bash(bash:*)', 'Agent', 'WebSearch', 'WebFetch', 'AskUserQuestion',
-      'Skill', 'mcp__codex__codex', 'mcp__codex__codex-reply',
+      'Skill',
     ],
   };
   try {

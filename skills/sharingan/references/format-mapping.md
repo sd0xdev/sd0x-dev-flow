@@ -47,8 +47,7 @@ Minimum 2 cues required for skill-lint P1 pass.
 
 ```
 Read, Grep, Glob, Edit, Write, Bash, Bash(git:*), Bash(node:*), Bash(gh:*),
-Agent, WebSearch, WebFetch, AskUserQuestion, Skill,
-mcp__codex__codex, mcp__codex__codex-reply
+Agent, WebSearch, WebFetch, AskUserQuestion, Skill
 ```
 
 ## Untranslatable Element Flags
