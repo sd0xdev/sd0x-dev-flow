@@ -1,7 +1,7 @@
 ---
 name: codex-review-fast
 description: "Quick second-opinion using Codex exec (diff only, no tests). Supports review loop with context preservation."
-allowed-tools: Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task
+allowed-tools: Bash(git:*), Bash(bash:*), Read, Grep, Glob, Task, Monitor
 ---
 
 # Codex Review Fast
