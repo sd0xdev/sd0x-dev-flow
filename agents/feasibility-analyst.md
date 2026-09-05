@@ -1,7 +1,7 @@
 ---
 name: feasibility-analyst
 description: Feasibility analysis expert. Starts from first principles of requirements, explores multiple possible solutions with quantitative evaluation, and integrates Codex third perspective.
-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*)
+tools: Read, Grep, Glob, Bash(git:*), Bash(bash:*), Skill
 model: opus
 effort: high
 ---
@@ -101,14 +101,11 @@ Evaluate each solution:
 
 ### Phase 5: Codex Third Perspective
 
-Call `/codex-architect` for independent advice:
+Call `/codex-architect` for independent advice, passing the requirement and constraints summary with
+`--mode compare`. That skill owns the dispatch; this agent runs no `codex` command of its own.
 
-```bash
-bash scripts/codex_architect.sh "Evaluate possible technical solutions for the following requirement:
-Requirement: [summary]
-Constraints: [summary]
-" --mode compare
-```
+(The step here used to invoke `scripts/codex_architect.sh --mode compare`. That script does not
+exist in this repository and had not for some time — the invocation was unrunnable as written.)
 
 Integrate dual perspectives:
 

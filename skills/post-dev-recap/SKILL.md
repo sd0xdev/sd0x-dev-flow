@@ -1,7 +1,7 @@
 ---
 name: post-dev-recap
 description: "Post-development recap wrapper. Use when: AI/Codex just finished implementing a feature and the user wants a guided walkthrough with scope detection + doc generation + follow-up Q&A. Not for: generating only a doc (use /recap-doc), Q&A over an existing recap (use /recap-ask), technical share-out (use /tech-brief), first-principles reasoning of an existing doc (use /fp-brief), general code tracing (use /code-explore). Output: ScopeReport → briefing-recap-<date>.md → interactive Q&A session."
-allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(git:*), Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(git:*), Skill, AskUserQuestion
 ---
 
 # `/post-dev-recap` — Guided Post-Development Recap

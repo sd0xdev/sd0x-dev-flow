@@ -100,7 +100,11 @@ test('codex-verify-prompt.md exists with mandatory fields', () => {
   assert.match(content, /independently research/i, 'should have independent research instruction');
   assert.match(content, /git status/, 'should include git status command');
   assert.match(content, /git diff/, 'should include git diff command');
-  assert.match(content, /sandbox.*read-only/i, 'should specify read-only sandbox');
+  // Inverted for the exec transport: the adapter pins the sandbox, so a prompt template naming it is
+  // restating an authority it does not own. Guard 6 in codex-transport-guards.test.js enforces this
+  // across every converted surface; this line keeps the file's own suite honest about it too.
+  assert.doesNotMatch(content, /sandbox['"]?\s*:/i, 'the transport pins the sandbox; the template must not restate it');
+  assert.match(content, /codex-transport\.md` § Start/, 'and it must cite the canonical transport');
 });
 
 // --- Catalog registration ---

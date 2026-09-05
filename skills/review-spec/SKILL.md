@@ -1,7 +1,7 @@
 ---
 name: review-spec
 description: "Review technical spec documents from completeness, feasibility, risk, and code consistency perspectives."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bash(git:*), Bash(node:*)
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Write
 ---
 
 # Review Spec
@@ -19,28 +19,32 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bas
 ## Relationship to `/codex-review-doc`
 
 Both are **doc-plane producers of the same gate**, dispatched over the same
-`mcp__codex__codex` route and emitting the same sentinel pair. They differ only in review
+Codex exec transport (`@skills/codex-code-review/references/codex-transport.md`) and emitting the same sentinel pair. They differ only in review
 depth and dimensions: `/review-spec` is the design-landing depth (completeness, feasibility,
 risk, code consistency, test strategy), `/codex-review-doc` is the general document depth.
 Loop mechanics, severity calibration and `[NIT_DEFERRED]` handling are shared — see
 `@skills/doc-review/SKILL.md`.
 
-**Why not an Agent dispatch.** A built-in agent's output closes no gate: the receipt hook
-recognizes a doc-plane producer either by command name on the legacy Bash/Skill route, or —
-on the MCP route this skill takes — by all three of: a request asking for a `Document Review`,
-an output whose own header claims that namespace (`_mcp_output_is_doc_review`), and a parsed
-verdict sentinel in it. An Agent dispatch is neither route, so it recorded no verdict at all,
-pass or fail. Dispatching Codex over the shared route is what makes the verdict recordable.
-See `@rules/auto-loop.md` § Review Dispatch.
+**Why not an Agent dispatch.** The gate verdict is behaviour-layer: it comes from the reviewer's
+report, and `review-state.js note` records it (`@rules/auto-loop.md` § Enforcement — nothing parses
+reviewer output; hooks are reminders). What makes a verdict *usable* is that a contract-aware
+reviewer produced it against this family's template and sentinels. A built-in agent dispatched
+ad hoc is not that reviewer and its output closes nothing. Dispatching Codex over the shared
+transport is what makes the verdict this skill's to note. See `@rules/auto-loop.md` § Review Dispatch.
 
 ## Codex Dispatch
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior technical spec reviewer. Perform a **Document Review** of the
+**Bind every placeholder before writing `prompt.md`.** The body below is body-only, so nothing
+evaluates an expression inside it: `${FILE_PATH}` and `${PROJECT_ROOT}` must carry real values by the
+time the file is written, or the `cat ${FILE_PATH}` instructions reach Codex as literal text and
+cannot be run.
+
+
+You are a senior technical spec reviewer. Perform a **Document Review** of the
 technical specification below, at design-landing depth.
 
 ## Document Info
+
 - Path: ${FILE_PATH}
 - Type: technical specification
 - Project root: ${PROJECT_ROOT}
@@ -52,14 +56,16 @@ using your sandbox access. The spec makes concrete claims about this repository 
 them against the actual files rather than taking them on trust.
 
 ### Document Reading (Priority)
-1. Read the full document: \`cat ${FILE_PATH}\`
-2. If long: \`cat ${FILE_PATH} | head -300\` then \`cat ${FILE_PATH} | tail -200\`
+
+1. Read the full document: `cat ${FILE_PATH}`
+2. If long: `cat ${FILE_PATH} | head -300` then `cat ${FILE_PATH} | tail -200`
 
 ### Code-Documentation Consistency Research
-1. Project structure: \`ls src/\`, \`ls scripts/\`, \`ls skills/\`
+
+1. Project structure, discovered rather than assumed: `ls` at the repository root, then the directories it actually shows — do not assume a `src/` layout; many repositories, this one included, have none
 2. Search for every file, function, flag and command the spec names:
-   \`grep -rn "keyword" . -l --include="*.ts" --include="*.js" --include="*.sh" | head -10\`
-3. Read related files: \`cat <file-path> | head -100\`
+   `grep -rn "keyword" . -l --include="*.ts" --include="*.js" --include="*.sh" | head -10`
+3. Read related files: `cat <file-path> | head -100`
 4. Verify: do referenced files exist? Are names correct? Do described behaviours match code?
 
 ## Review Dimensions
@@ -89,9 +95,10 @@ Do not manufacture findings to fill a section. An empty 🔴 section is a normal
 
 ## Output Format
 
-Your report **must** begin with the literal line \`## Document Review\`. The state hook uses
-that header to tell a document review apart from a code or security review; a report without
-it is recorded as no verdict at all, and the review has to be run again.
+Your report **must** begin with the literal line `## Document Review`. Nothing parses it — the
+verdict is behaviour-layer and `review-state.js` records only an explicit `note`
+(`@rules/auto-loop.md` § Enforcement). The header matters for the reader: it is what tells a
+document review apart from a code or security review in a transcript.
 
 ## Document Review
 
@@ -109,7 +116,7 @@ it is recorded as no verdict at all, and the review has to be run again.
 
 - [Section/Line] Issue description -> Fix recommendation
 
-(Write \`None\` if there are none.)
+(Write `None` if there are none.)
 
 ### 🟡 Suggested Changes (non-blocking)
 
@@ -123,24 +130,24 @@ it is recorded as no verdict at all, and the review has to be run again.
 
 For every 🟡 and ⚪ above, emit one line here, starting at column 0:
 
-\`\`\`
+```
 [NIT_DEFERRED] <file:line> | <issue> | reason: sub-threshold-doc | <ISO8601 UTC>
-\`\`\`
+```
 
 Do not reorder the fields and do not use a different tag. Omit this section entirely if
 there are no 🟡 or ⚪ items.
 
 ### Gate
 
-- ✅ Mergeable: No 🔴 items
-- ⛔ Needs revision: Has 🔴 items`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+End the report with **exactly one** verdict terminal, alone at column 0 on the final line — the
+same rule as `@skills/doc-review/references/review-loop-doc.md`, and what
+`scripts/validate-family-sentinel.js doc` accepts. As list items they are not a legal terminal.
 
-**Save the returned `threadId`.** Loop re-review continues the same thread via
-`mcp__codex__codex-reply` — see `@skills/doc-review/references/review-loop-doc.md`.
+- No 🔴 findings → final line `✅ Mergeable`
+- Any 🔴 finding → final line `⛔ Needs revision`
+
+
+Dispatch this body per `@skills/codex-code-review/references/codex-transport.md` § Start; the transport pins the sandbox and approval policy, so nothing is chosen here. **Save the returned `threadId`** — loop re-review continues the same thread per that reference's § Resume; see `@skills/doc-review/references/review-loop-doc.md`.
 
 ## Task
 
@@ -160,17 +167,21 @@ If no path is given, auto-detect: git-modified `2-*.md` under `docs/features/` �
 | `✅ Mergeable` | No 🔴 items — the spec may proceed to implementation |
 | `⛔ Needs revision` | 🔴 items present — fix, then re-review on the same thread |
 
-These are the doc-plane sentinels the receipt hook parses (`@rules/auto-loop.md` § Gate
-Sentinels). Emit them verbatim; no other verdict vocabulary is recorded.
+These are the doc-plane sentinels (`@rules/auto-loop.md` § Gate Sentinels). **No hook parses them** —
+the verdict is behaviour-layer and `review-state.js` records only an explicit `note`. One thing does
+read them mechanically, and it is not a hook: `scripts/validate-family-sentinel.js doc` validates a
+**fallback carrier's** raw report before its verdict may be adopted. That is why the shape is fixed
+in both directions — a paraphrase reads as no verdict to a human, and fails the validator outright
+when a fallback produced it. Emit them verbatim.
 
 **🔴 only.** 🟡 and ⚪ are non-blocking: log them via `[NIT_DEFERRED]` and proceed
-(`@rules/auto-loop.md` § Sub-Threshold Findings). Max 3 rounds at `fast` tier; still failing
+(`@rules/auto-loop.md` § Sub-Threshold Findings). Round cap and its `## Max Rounds` override come from the shared contract (`@rules/auto-loop.md` § Tiers); still failing
 → report the blocker rather than spending another round.
 
 ## Verification
 
-- [ ] Dispatched via `mcp__codex__codex`, not an Agent
-- [ ] The prompt asks for a `Document Review` (the hook's request-side discriminator)
+- [ ] Dispatched over the Codex exec transport (§ Start), not an Agent
+- [ ] The prompt asks for a `Document Review`, and the report opens with that header
 - [ ] Codex verified code-documentation consistency independently
 - [ ] Gate is one of `✅ Mergeable` / `⛔ Needs revision`
 

@@ -27,7 +27,13 @@ test('debug SKILL.md has correct frontmatter', () => {
   assert.match(content, /description:/, 'should have description');
   assert.match(content, /allowed-tools:.*Read, Grep, Glob, Edit, Write, Bash/, 'should have base tools');
   assert.match(content, /allowed-tools:.*Skill/, 'should include Skill for sub-skill dispatch');
-  assert.match(content, /allowed-tools:.*mcp__codex__codex/, 'should include Codex MCP');
+  // Corrected twice: this skill held MCP grants, and my first re-pin swapped them for the adapter
+  // grant. A doc reviewer showed both were wrong — `debug` dispatches nothing itself. Phase 2 goes
+  // through `/codex-brainstorm` and Phase 3 through `/seek-verdict`, both via the Skill tool, so it
+  // is a router and `codex-transport.md` § Permission gives a router no transport grant.
+  assert.match(content, /allowed-tools:.*\bSkill\b/, 'it routes through other skills');
+  assert.doesNotMatch(content, /allowed-tools:.*Bash\(node:\*\)/, 'a router gets no adapter grant');
+  assert.doesNotMatch(content, /mcp__codex/, 'the MCP grants are retired');
 });
 
 // --- SKILL.md structure ---
