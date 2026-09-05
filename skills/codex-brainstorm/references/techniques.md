@@ -29,14 +29,14 @@
 
 ### Standard Template
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a critical-thinking technical architect.
+You are a critical-thinking technical architect.
 
 ## Problem
+
 ${problem}
 
 ## Constraints
+
 ${constraints}
 
 ## ⚠️ Important: You must research independently ⚠️
@@ -44,20 +44,24 @@ ${constraints}
 Before forming any conclusions, you **must** perform the following research:
 
 ### 1. Project Structure Understanding
-- Run \`ls src/\` to understand directory structure
-- Run \`ls src/service/\` and \`ls src/provider/\` to understand existing modules
+
+- Discover the directory structure: `ls` at the repository root, then list the directories it actually shows — do not assume a `src/` or `test/unit/` layout; many repositories, this one included, have neither
+- List the directories the discovery step surfaced to understand the existing modules, rather than a fixed set of paths
 
 ### 2. Related Code Search
-- Search keywords related to the topic: \`grep -r "keyword" src/ --include="*.ts" -l | head -10\`
-- Read relevant file contents: \`cat <file-path> | head -100\`
+
+- Search keywords related to the topic: `grep -rn "keyword" . -l | head -10` — rooted at the repository, or at a directory the discovery step above actually surfaced; never at an assumed `src/`
+- Read relevant file contents: `cat <file-path> | head -100`
 
 ### 3. Existing Implementation Analysis
+
 - Find similar feature implementations
 - Confirm naming conventions, DI patterns, error handling patterns
 
 ## Output Requirements
 
 ### Research Summary
+
 | Research Item      | Findings |
 |--------------------|----------|
 | Related modules    | ...      |
@@ -65,76 +69,79 @@ Before forming any conclusions, you **must** perform the following research:
 | Reusable components | ...     |
 
 ### My Position
+
 Based on research results, I believe the optimal solution is: [Position B]
 
 ### Arguments
+
 1. [Argument based on code research]
 2. [Argument based on existing architecture]
 3. [Argument based on constraints]
 
 ### Potential Risks
-1. ...`,
-  sandbox: 'read-only',
-  'approval-policy': 'on-failure',
-});
-```
+
+1. ...
+
 
 ### Key Settings
 
-| Setting           | Value        | Description                      |
-| ----------------- | ------------ | -------------------------------- |
-| `sandbox`         | `read-only`  | Allow file reads, prohibit writes |
-| `approval-policy` | `on-failure` | Approval needed only on failure  |
+None are chosen here. The adapter pins the sandbox and the approval policy for every dispatch, and
+`@skills/codex-code-review/references/codex-transport.md` § Start is where their values live — this file naming them again would be a second authority
+that can drift from the first.
 
 ## Phase 3: Adversarial Debate Prompts
 
 ### Claude Attacks Codex
 
-```typescript
-mcp__codex__codex_reply({
-  threadId: '<threadId>',
-  prompt: `I am Claude, and I disagree with your proposal.
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Resume on the saved `threadId`:
+
+I am Claude, and I disagree with your proposal.
 
 ## Your Proposal
+
 ${codexSolution}
 
 ## My Attacks
+
 1. **Fatal flaw**: [identify the biggest issue]
 2. **Ignored constraint**: [what you did not consider]
 3. **Assumption challenge**: [your assumption may be wrong]
 
 ## My Proposal
+
 ${claudeSolution}
 
 ## Why Mine Is Better
+
 [argument]
 
-Please rebut my attacks, or concede and update your position.`,
-});
-```
+Please rebut my attacks, or concede and update your position.
+
 
 ### Subsequent Rounds
 
-```typescript
-mcp__codex__codex_reply({
-  threadId: '<threadId>',
-  prompt: `## Your Rebuttal
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Resume on the saved `threadId`:
+
+## Your Rebuttal
+
 ${codexRebuttal}
 
 ## My Response
+
 - Regarding [argument 1]: [agree/rebut + reason]
 - Regarding [argument 2]: [agree/rebut + reason]
 
 ## Whether I Update My Position
+
 - [Yes/No]
 - If yes, new position: [...]
 - If no, new attack: [...]
 
 ## Equilibrium Check
+
 Can I still raise new attacks? [Yes/No]
-Can you still raise new attacks? Please respond.`,
-});
-```
+Can you still raise new attacks? Please respond.
+
 
 ## Attack Techniques
 

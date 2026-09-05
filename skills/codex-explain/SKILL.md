@@ -1,7 +1,7 @@
 ---
 name: codex-explain
-description: "Explain complex code via Codex MCP. Use when: understanding complex logic, tracing data flow, onboarding to unfamiliar code. Not for: code review (use codex-code-review), exploration (use code-explore). Output: structured explanation at chosen depth."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob
+description: "Explain complex code via Codex exec. Use when: understanding complex logic, tracing data flow, onboarding to unfamiliar code. Not for: code review (use codex-code-review), exploration (use code-explore). Output: structured explanation at chosen depth."
+allowed-tools: Read, Grep, Glob, Bash(node:*), Write
 ---
 
 # Codex Explain Skill
@@ -28,9 +28,8 @@ Read file content. If `--lines` specified, extract only that range.
 
 ### Step 2: Codex Explanation
 
-Use `mcp__codex__codex` with explanation prompt. See `references/codex-prompt-explain.md`.
+Dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start with the explanation prompt. See `references/codex-prompt-explain.md`.
 
-Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
 ## Depth Levels
 

@@ -1,8 +1,8 @@
 # Codex Architecture Research Prompt
 
-Used in Phase 1 Track C with `mcp__codex__codex`.
+Dispatched in Phase 1 Track C per `@skills/codex-code-review/references/codex-transport.md` § Start.
 
-`${DESIGN_RECORD_PATH}` is `docs/features/<key>/` joined with the `file` of the tech-spec entry
+DESIGN_RECORD_PATH is `docs/features/<key>/` joined with the `file` of the tech-spec entry
 `SKILL.md` selects from `design_records` — its four candidate cases, and **not** `canonical_docs.tech_spec`,
 which is role-blind. When that selection finds **no** such entry, pass the literal string
 `(none — do not read a spec)` rather than a guessed path: a Codex told to find the spec itself will
@@ -13,11 +13,10 @@ the ⚠️ Need Human exit there, so Track C is never reached and there is no pr
 earlier version of this paragraph offered a substitute value for it, which read as permission to
 continue into a Codex research pass on a corpus nobody could enumerate.
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior software architect. Provide architecture recommendations for the feature described below.
+You are a senior software architect. Provide architecture recommendations for the feature described below.
 
 ## Feature Context
+
 - Feature: ${FEATURE_KEY}
 - Tech spec (design record): ${DESIGN_RECORD_PATH}
 - Related files: ${RELATED_FILES}
@@ -27,23 +26,25 @@ mcp__codex__codex({
 You **must** read the actual code and project structure yourself. Do NOT rely on the context above alone.
 
 ### Git Exploration (Priority)
-1. Check change status: \`git status\`
-2. Check changed files: \`git diff --name-only HEAD\`
-3. Check full changes for specific file: \`git diff HEAD -- <file-path>\`
-4. Read changed files: \`cat <changed file> | head -200\`
-5. Check project structure: \`ls src/ skills/ scripts/ hooks/\`
-6. Read architecture docs: \`cat docs/architecture.md | head -100\`
+
+1. Check change status: `git status`
+2. Check changed files: `git diff --name-only HEAD`
+3. Check full changes for specific file: `git diff HEAD -- <file-path>`
+4. Read changed files to the end: `cat <changed file>` (chunk with `sed -n` when long)
+5. Check the project structure, discovered rather than assumed: `ls` at the repository root, then the directories it actually shows — do not assume a `src/` layout; many repositories, this one included, have none
+6. Read architecture docs: `cat docs/architecture.md | head -100`
 7. Read the tech spec **at the path given above**, when one is given:
-   \`cat ${DESIGN_RECORD_PATH} | head -200\`. Do not go looking for it by name — the resolver already
-   chose it from \`design_records\`, and the filename does not identify the role. A feature can hold a
-   \`2-tech-spec.md\` that has been marked a history record beside a \`2-tech-spec-v2.md\` that is the
+   `cat ${DESIGN_RECORD_PATH}` (chunk with `sed -n` when long). Do not go looking for it by name — the resolver already
+   chose it from `design_records`, and the filename does not identify the role. A feature can hold a
+   `2-tech-spec.md` that has been marked a history record beside a `2-tech-spec-v2.md` that is the
    live design, and listing the directory picks the wrong one of the two
-8. Trace related modules: \`cat <related file> | head -150\`
+8. Trace related modules: `cat <related file> | head -150`
 
 ### Project Research
-- Search for integration patterns: \`grep -r "import.*${FEATURE_KEY}" . -l --include="*.ts" --include="*.js" --include="*.md" | head -10\`
-- Find similar architecture patterns: \`grep -r "flowchart\\|sequenceDiagram" docs/ --include="*.md" -l | head -5\`
-- Read existing component implementations: \`cat <file> | head -100\`
+
+- Search for integration patterns: `grep -r "import.*${FEATURE_KEY}" . -l --include="*.ts" --include="*.js" --include="*.md" | head -10`
+- Find similar architecture patterns: `grep -r "flowchart\|sequenceDiagram" docs/ --include="*.md" -l | head -5`
+- Read existing component implementations: `cat <file> | head -100`
 
 ## Architecture Analysis Required
 
@@ -58,17 +59,17 @@ Provide independent recommendations for:
 ## Output Format
 
 ### Component Recommendations
+
 | Component | Responsibility | Rationale |
 
 ### Data Flow Analysis
+
 <describe primary flow>
 
 ### Integration Assessment
+
 | Integration Point | Risk Level | Notes |
 
 ### Architecture Risks
-| Risk | Impact | Recommendation |`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+
+| Risk | Impact | Recommendation |
