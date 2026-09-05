@@ -121,7 +121,16 @@ The `forbiddenFingerprints` array is the Phase 7 input that catches LLM-fabricat
 
 Phase 1 and Phase 7 use *different* detection sets — keep them straight or you will misread Phase 7 violations. The validator file (`scripts/skills/ui-first-principles/validate-report.js`) is the source of truth for Phase 7; this table is a quick reference.
 
-**Phase 1 (`redact.js`) — masking authority.** Combines regex content scan + field-name heuristics. Classes emitted as `<redacted:{class}>` placeholders + added to `forbiddenFingerprints` are exactly: `email`, `phone`, `address`, `account_id`, `national_id`, `credential`. Independent of these classes, `scripts/security-redact.js` runs as a base layer: high-confidence matches (PEM private keys, AWS `AKIA…`, OpenAI `sk-…`, GitHub `ghp_…` / `github_pat_…`, Slack `xox*`, Google `AIza…`) abort with `high_confidence_secret`; medium-confidence matches (`password=`, `token:`/`api_key=`/`secret=` assignments, JWT-like `eyJ…`, ≥32-char hex non-SHA1) are masked as `[REDACTED]` and counted as `baseRedactHits`. Base matches are not PII classes — they do not appear in `<redacted:{class}>` form.
+**Phase 1 (`redact.js`) — masking authority.** Combines regex content scan + field-name heuristics. Classes emitted as `<redacted:{class}>` placeholders + added to `forbiddenFingerprints` are exactly: `email`, `phone`, `address`, `account_id`, `national_id`, `credential`. Independent of these classes, `scripts/security-redact.js` runs as a base layer: high-confidence matches (PEM private keys, AWS `AKIA…`, OpenAI `sk-…`, GitHub `ghp_…` / `github_pat_…`, Slack `xox*`, Google `AIza…`) abort with `high_confidence_secret`; medium-confidence matches (`password=`, `token:`/`api_key=`/`secret=` assignments, JWT-like `eyJ…`, ≥32-char hex non-SHA1) are masked as `[REDACTED]` and counted as `baseRedactHits`. Base matches are not PII classes — they do not appear in `<redacted:{class}>` form, whichever entry
+path (JSON or the manual key=value / `"key":"value"` text mode) catches them. This is deliberate,
+cooperative layering, not an oversight: `security-redact.js` widened on 2026-09-04 to catch quoted
+JSON keys and prefixed environment names it previously missed (`{"password":"…"}`, `API_TOKEN=…`),
+so a field named for one of the six PII classes may now be masked to `[REDACTED]` by the base layer
+before `redact.js` ever sees it — and when that happens, `redact.js` leaves it alone rather than
+re-wrapping it as `<redacted:{class}>`. A structural PII class is only ever assigned to a field the
+base layer did **not** already catch (an earlier revision briefly relabeled base matches to close
+this gap and was reverted 2026-09-05 — it broke the symmetry between the two entry paths, which this
+sentence exists to keep true).
 
 **Phase 7 (`validate-report.js`) — leak rescan.** Two complementary checks:
 
