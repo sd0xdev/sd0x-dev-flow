@@ -2,24 +2,21 @@
 
 ## Required Parameters
 
-| Parameter         | Value       | Description                          |
-| ----------------- | ----------- | ------------------------------------ |
-| `sandbox`         | `read-only` | Force read-only, prevent accidental modification |
-| `approval-policy` | `never`     | Auto-approve shell commands          |
-| `cwd`             | Project root| Codex exploration starting point     |
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Start; the transport pins the sandbox, the approval policy and the
+working directory, so none of them appears here.
 
 ## Standard Investigation Prompt
 
-```typescript
-mcp__codex__codex({
-  prompt: `# Code Investigation Task
+## Code Investigation Task
 
 ## Question
-${userQuestion}
+
+${USER_QUESTION}
 
 ## Project Info
-- Path: ${cwd}
-- Tech Stack: {FRAMEWORK} + TypeScript + {DATABASE}
+
+- Path: ${PROJECT_PATH}
+- Tech Stack: ${TECH_STACK}  <!-- bound by ../SKILL.md from the repository's own manifest and layout; omit the line rather than guess. The old `{FRAMEWORK} + TypeScript + {DATABASE}` form was not in the binding contract, so it dispatched literally, and asserted TypeScript for every project. -->
 
 ## Investigation Requirements
 
@@ -38,20 +35,14 @@ Please **independently explore** the codebase and answer the following:
 - Read related service/provider files
 - Pay attention to DI-injected dependencies
 
-Please provide your complete analysis.`,
-  cwd: process.cwd(),
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+Please provide your complete analysis.
+
 
 ## Specific Feature Investigation
 
-```typescript
-mcp__codex__codex({
-  prompt: `# Feature Investigation: ${featureName}
+## Feature Investigation: ${FEATURE_NAME}
 
-Project path: ${cwd}
+Project path: ${PROJECT_PATH}
 
 Please independently explore this feature's implementation:
 
@@ -60,21 +51,16 @@ Please independently explore this feature's implementation:
 3. Understand data structures
 4. Identify external dependencies
 
-No hints needed from me -- please explore on your own and provide your analysis.`,
-  cwd: process.cwd(),
-  sandbox: 'read-only',
-});
-```
+No hints needed from me -- please explore on your own and provide your analysis.
+
 
 ## Problem Tracking Investigation
 
-```typescript
-mcp__codex__codex({
-  prompt: `# Problem Tracking
+## Problem Tracking
 
-Problem description: ${problemDescription}
+Problem description: ${PROBLEM_DESCRIPTION}
 
-Project path: ${cwd}
+Project path: ${PROJECT_PATH}
 
 Please investigate independently:
 1. Potentially involved code areas
@@ -82,17 +68,14 @@ Please investigate independently:
 3. Related logic branches
 4. Possible root causes
 
-Please explore on your own and provide your diagnosis.`,
-  cwd: process.cwd(),
-  sandbox: 'read-only',
-});
-```
+Please explore on your own and provide your diagnosis.
+
 
 ## Prohibited Prompt Patterns
 
 | Pattern            | Problem                           | Bad Example                                       |
 | ------------------ | --------------------------------- | ------------------------------------------------- |
-| Feeding conclusion | Claude's findings leak to Codex   | `Claude found these files: ${findings}, confirm`  |
+| Feeding conclusion | Claude's findings leak to Codex   | `Claude found these files: ${FINDINGS}, confirm`  |
 | Leading question   | Presupposes answer, limits exploration | `I think problem is in cache, please verify`  |
 | Scope restriction  | Prevents independent exploration  | `Only look at src/service/ directory`             |
 | Confirmation question| Not exploration, just validation | `Is this understanding correct?`                  |

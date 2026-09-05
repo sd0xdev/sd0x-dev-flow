@@ -1,7 +1,7 @@
 ---
 name: code-investigate
 description: "Dual-perspective code investigation. Use when: deep code analysis needing both Claude and Codex perspectives. Not for: quick exploration (use code-explore), code review (use codex-code-review). Output: integrated findings from dual analysis."
-allowed-tools: Read, Grep, Glob, Bash(git:*), mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Write
 context: fork
 ---
 
@@ -52,31 +52,32 @@ Codex must explore independently. Feeding Claude's conclusions to Codex is prohi
 | ----- | --------------- | ----------------------------------- | --------------------------- |
 | 1     | Claude Explore  | Grep/Glob/Read to search code       | Related files list          |
 | 2     | Claude Conclude | Analyze logic, form understanding   | Initial conclusion (internal)|
-| 3     | Codex Explore   | Invoke Codex MCP to explore independently | Codex analysis report  |
+| 3     | Codex Explore   | Invoke Codex exec to explore independently | Codex analysis report  |
 | 4     | Integrate       | Compare both perspectives, mark differences | Consolidated report   |
 
 ## Codex Invocation Rules
 
-### Required Parameters
+Dispatch Phase 3 per `@skills/codex-code-review/references/codex-transport.md` § Start with the template in `references/prompts.md`. The transport
+pins the sandbox and the approval policy, and it derives the working directory from
+`git rev-parse --show-toplevel` — none of the three is chosen here, and this skill no longer
+restates them.
 
-| Parameter         | Value       | Description     |
-| ----------------- | ----------- | --------------- |
-| `sandbox`         | `read-only` | Force read-only |
-| `approval-policy` | `never`     | Auto-execute    |
-| `cwd`             | Project root| Exploration start point |
+**Bind every placeholder before writing `prompt.md`.** The template is body-only, so nothing
+evaluates an expression inside it: `${USER_QUESTION}` and `${PROJECT_PATH}` must carry real values
+by the time the file is written.
 
 ### Correct Approach
 
-```typescript
-mcp__codex__codex({
-  prompt: `# Code Investigation Task
+## Code Investigation Task
 
 ## Question
-${userQuestion}
+
+${USER_QUESTION}
 
 ## Project Info
-- Path: ${cwd}
-- Tech Stack: {FRAMEWORK} + TypeScript + {DATABASE}
+
+- Path: ${PROJECT_PATH}
+- Tech Stack: ${TECH_STACK}  <!-- one bound value, read from the repository's own manifest and layout. `{FRAMEWORK}`/`{DATABASE}` were never in this file's binding contract and rendered literally, and the hard-coded `TypeScript` was false for any repository that is not one — this project is JavaScript. Omit the line entirely rather than guess. -->
 
 Please **independently explore** the codebase and answer:
 1. What files are related?
@@ -84,12 +85,8 @@ Please **independently explore** the codebase and answer:
 3. What is the data flow?
 4. What are the key dependencies?
 
-Please grep/read and explore on your own, then provide your analysis.`,
-  cwd: '/path/to/project',
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+Please grep/read and explore on your own, then provide your analysis.
+
 
 ### Prohibited Approaches
 

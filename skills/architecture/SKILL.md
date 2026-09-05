@@ -1,7 +1,7 @@
 ---
 name: architecture
 description: "Architecture design and documentation. Produces 3-architecture.md with component diagrams, data flow, integration points, and architecture decisions. Reads existing tech-spec as input. Use when: designing system architecture, documenting component interactions, creating architecture docs, producing 3-architecture.md. Not for: tech spec writing (use tech-spec), code implementation (use feature-dev), architecture consulting only (use codex-architect)."
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(bash:*), Write, Agent, Skill, AskUserQuestion, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(node:*), Bash(bash:*), Write, Agent, Skill, AskUserQuestion
 ---
 
 # Architecture Design Skill
@@ -169,19 +169,23 @@ If no tech-spec: skip (code-only mode).
 
 ### Track C: Codex Architecture Advice (after A+B)
 
-```
-mcp__codex__codex({
-  prompt: <from references/codex-prompt.md>,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-})
-```
+Dispatch `references/codex-prompt.md` per `@skills/codex-code-review/references/codex-transport.md`
+§ Start. The transport pins the sandbox and approval policy, so nothing is chosen here.
 
 Provide feature context metadata only — never feed Claude's conclusions (per `@rules/codex-invocation.md`).
 
-Save `threadId` for potential follow-up.
+Save `threadId` for potential follow-up — a continuation goes through that reference's § Resume.
 
-Graceful degradation: Codex unavailable → proceed without (warn in output).
+Graceful degradation is **per outcome**, subordinate to `@skills/codex-code-review/references/codex-transport.md`
+§ Completion state machine — a single "Codex unavailable" rule flattened four different states into
+one action:
+
+| Outcome | Action |
+|---------|--------|
+| `setup-required` (adapter not located) or **exit 2** (configuration/usage) | Surface it to the operator and fix the setup. This is not a Codex failure and nothing degrades on it |
+| **exit 1** (`codex_fail`) | Proceed without the third perspective and say so in the output — this advice is not a gate, so there is no fallback carrier to dispatch |
+| Completion unknown (a launch with no consumed result) | Wait for it. A launch is not a verdict, and an unknown completion is not an absence |
+| exit 0 | Integrate the advice as normal |
 
 ## Phase 2: Architecture Design
 
@@ -272,7 +276,13 @@ After Write completes, auto-trigger `/codex-review-doc` per `@rules/auto-loop.md
 ## Verification
 
 - [ ] Feature context resolved (create/update mode determined)
-- [ ] Research completed (code + tech-spec + Codex)
+- [ ] Code research completed; the resolved tech spec read when one exists (§ Phase 0 says what
+      "resolved" means, and a feature with no spec has none to read)
+- [ ] Codex advice integrated — **or** its absence recorded as the `exit 1` degradation of § Phase 1
+      Track C, which is this skill's only path to a design without it. There is no flag that skips
+      Track C: `--skip-debate` skips Phase 3, and the no-tech-spec mode still dispatches Track C with
+      `(none — do not read a spec)`. Integrated or recorded, never neither — an unrecorded absence is
+      indistinguishable from a dispatch nobody made
 - [ ] Architecture design includes all required sections
 - [ ] Mermaid diagrams are valid
 - [ ] Architecture decisions use AD-N format with rationale

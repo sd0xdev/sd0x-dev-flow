@@ -86,9 +86,16 @@ test('architecture Codex prompt template exists with research instructions', () 
     content.includes('independently research'),
     'should include independent research mandate'
   );
+  // Inverted for the exec transport: the adapter pins the sandbox, so a template that still names it
+  // is restating an authority it does not own. What the template must do instead is cite § Start.
   assert.ok(
-    content.includes('read-only'),
-    'should use read-only sandbox'
+    !content.includes('read-only'),
+    'the transport pins the sandbox; this template must not restate it'
+  );
+  assert.match(
+    content,
+    /codex-transport\.md` § Start/,
+    'and it must cite the canonical transport'
   );
 });
 

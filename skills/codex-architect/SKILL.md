@@ -1,7 +1,7 @@
 ---
 name: codex-architect
 description: "Codex architecture consulting. Use when: designing features, evaluating architecture, getting second opinion on design. Not for: implementation (use codex-implement), code review (use codex-code-review). Output: architecture advice + design recommendations."
-allowed-tools: Read, Grep, Glob, mcp__codex__codex, mcp__codex__codex-reply, Agent
+allowed-tools: Read, Grep, Glob, Agent, Bash(node:*), Write
 ---
 
 # Codex Architect Skill (Third Brain)
@@ -42,16 +42,16 @@ User -> Claude -> Codex -> Integrate
 
 ## Codex Prompt Template
 
-When using `mcp__codex__codex`, must include the following:
+When dispatching per `@skills/codex-code-review/references/codex-transport.md` § Start, the prompt must include the following:
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior architect. Please provide architecture advice for the following question.
+You are a senior architect. Please provide architecture advice for the following question.
 
 ## Question
+
 ${QUESTION}
 
 ## Mode
+
 ${MODE} (design/review/compare)
 
 ## IMPORTANT: You must independently research the project
@@ -59,12 +59,14 @@ ${MODE} (design/review/compare)
 Before providing architecture advice, you **must** perform the following research:
 
 ### Research Steps
-1. Understand project structure: \`ls src/\`, \`ls src/service/\`, \`ls src/provider/\`
-2. Search related modules: \`grep -r "keyword" src/ --include="*.ts" -l | head -10\`
-3. Read existing implementations: \`cat <relevant files> | head -150\`
+
+1. Understand the project structure by discovering it: `ls` at the repository root, then list the directories it actually shows — do not assume a `src/` or `test/unit/` layout; many repositories, this one included, have neither
+2. Search related modules: `grep -rn "keyword" . -l | head -10` — rooted at the repository, or at a directory the discovery step above actually surfaced; never at an assumed `src/`
+3. Read existing implementations: `cat <relevant files> | head -150`
 4. Understand existing architecture patterns and conventions
 
 ### Verification Focus
+
 - What does the existing architecture look like?
 - What are the existing code style and patterns?
 - What similar features can be referenced?
@@ -75,11 +77,8 @@ Before providing architecture advice, you **must** perform the following researc
 2. Provide advice based on current project state
 3. Consider consistency with existing architecture
 
-...(other review dimensions)`,
-  sandbox: 'read-only',
-  'approval-policy': 'never',
-});
-```
+...(other review dimensions)
+
 
 ## Workflow Integration
 

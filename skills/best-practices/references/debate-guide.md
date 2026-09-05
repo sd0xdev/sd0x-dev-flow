@@ -2,9 +2,9 @@
 
 ## Canonical Mechanism
 
-Invoke `/codex-brainstorm` command. The Skill tool is a Claude Code built-in (always available, no `allowed-tools` declaration needed). Do NOT use raw `mcp__codex__codex` calls as a substitute — `/codex-brainstorm` handles MCP orchestration internally.
+Invoke `/codex-brainstorm` command. The Skill tool is a Claude Code built-in (always available, no `allowed-tools` declaration needed). Do NOT dispatch the transport directly from this skill.
 
-> `mcp__codex__codex` / `mcp__codex__codex-reply` are **not** in this skill's `allowed-tools` — `/codex-brainstorm` declares them itself and a Skill-tool invocation carries the sub-skill's own permissions. Omitting them **removes pre-approval**, narrowing this skill's declared surface; it does not make the call impossible (`allowed-tools` is a pre-approval list, not a deny list — see `skills/orchestrate/SKILL.md`). The prohibition here is normative, and the frontmatter is what stops it from being pre-authorized by default.
+> The transport grants (`Bash(node:*)`, `Write`) are **not** in this skill's `allowed-tools`. `/codex-brainstorm` declares them itself and owns the dispatch lifecycle — the `alloc` → write prompt → dispatch → read report → `cleanup` cycle is entirely its business, not this skill's — and a Skill-tool invocation runs under the sub-skill's own permissions.
 
 ## Debate Topic Template
 

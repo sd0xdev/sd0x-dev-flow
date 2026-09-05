@@ -42,12 +42,12 @@ function allowedTools(md) {
 test('best-practices allowed-tools omits raw Codex MCP tools → Rule 2 is structural', () => {
   const tools = allowedTools(skill);
   assert.ok(
-    !tools.includes('mcp__codex__codex'),
-    'mcp__codex__codex must NOT be pre-approved — Rule 2 declares a raw MCP debate invalid, so granting the tool contradicts the rule it is meant to enforce'
+    !tools.includes('Bash(node:*)'),
+    'the adapter grant must NOT be pre-approved — Rule 2 declares a raw transport debate invalid, so granting it contradicts the rule it is meant to enforce'
   );
   assert.ok(
-    !tools.includes('mcp__codex__codex-reply'),
-    'mcp__codex__codex-reply must NOT be pre-approved — this skill makes no direct reply call; /codex-brainstorm owns the whole MCP conversation'
+    !tools.includes('Write'),
+    'the prompt-writing grant must NOT be pre-approved — this skill makes no direct dispatch; /codex-brainstorm owns the whole MCP conversation'
   );
 });
 
@@ -76,7 +76,7 @@ test('best-practices makes no direct Codex MCP call anywhere in its own assets',
   for (const f of files) {
     const body = fs.readFileSync(f, 'utf8');
     for (const m of body.matchAll(/```[a-z]*\n([\s\S]*?)```/g)) {
-      if (/mcp__codex__codex/.test(m[1])) offenders.push(path.relative(dir, f));
+      if (/Bash\(node:\*\)|mcp__codex__codex/.test(m[1])) offenders.push(path.relative(dir, f));
     }
   }
   assert.deepEqual(
@@ -91,6 +91,6 @@ test('the /codex-brainstorm sub-skill still declares the MCP tools it needs', ()
   // removal becomes a real break rather than a tightening — this test goes red first.
   const brainstorm = fs.readFileSync(path.join(SKILLS_DIR, 'codex-brainstorm', 'SKILL.md'), 'utf8');
   const tools = allowedTools(brainstorm);
-  assert.ok(tools.includes('mcp__codex__codex'), '/codex-brainstorm must own mcp__codex__codex');
-  assert.ok(tools.includes('mcp__codex__codex-reply'), '/codex-brainstorm must own mcp__codex__codex-reply');
+  assert.ok(tools.includes('Bash(node:*)'), '/codex-brainstorm must own the adapter grant');
+  assert.ok(tools.includes('Write'), '/codex-brainstorm must own the prompt-writing grant');
 });

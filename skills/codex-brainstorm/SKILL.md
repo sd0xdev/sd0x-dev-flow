@@ -1,7 +1,7 @@
 ---
 name: codex-brainstorm
 description: "Adversarial brainstorming via Claude+Codex debate. Use when: exploring solutions, feasibility analysis, exhaustive enumeration. Not for: implementation (use feature-dev), architecture only (use codex-architect). Output: Nash equilibrium consensus + action items."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Read, Grep, Glob, Bash(ls:*), Bash(find:*)
+allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*), Bash(node:*), Write
 ---
 
 # Codex Brainstorm Skill
@@ -38,30 +38,35 @@ Nash Equilibrium = Neither party can unilaterally change strategy to achieve a b
 
 **⚠️ Must let Codex research independently; do NOT feed Claude's analysis results ⚠️**
 
-```typescript
-mcp__codex__codex({
-  prompt: `You are a senior architect. Conduct an **independent analysis** of the following topic.
+Dispatch this body per `@skills/codex-code-review/references/codex-transport.md` § Start — a **fresh** thread for Phase 2. The transport pins the
+sandbox and the approval policy, so nothing is chosen here. **Save the returned `threadId`**; the
+Phase 3 debate rounds continue that same thread per its § Resume (`references/techniques.md`).
+Bind every placeholder before writing `prompt.md` — nothing evaluates an expression in a body-only
+template.
+
+You are a senior architect. Conduct an **independent analysis** of the following topic.
 
 ## Topic
+
 ${TOPIC}
 
 ## Constraints
+
 ${CONSTRAINTS}
 
 ## ⚠️ Important: You must research independently ⚠️
+
 Before forming conclusions, you **must** first:
-1. Run \`ls src/\` to understand the directory structure
-2. Search related code: \`grep -r "keyword" src/ --include="*.ts" -l | head -10\`
+1. Discover the directory structure: `ls` at the repository root, then list the directories it actually shows — do not assume a `src/` or `test/unit/` layout; many repositories, this one included, have neither
+2. Search related code: `grep -rn "keyword" . -l | head -10` — rooted at the repository, or at a directory the discovery step above actually surfaced; never at an assumed `src/`
 3. Read relevant files to confirm existing implementations
 
 ## Output Requirements
+
 1. Research summary (related modules, existing patterns)
 2. Your position + supporting arguments
-3. Potential risks`,
-  sandbox: 'read-only',
-  'approval-policy': 'on-failure',
-});
-```
+3. Potential risks
+
 
 ### Phase 3: Adversarial Debate
 

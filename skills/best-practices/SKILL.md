@@ -24,7 +24,7 @@ Check for N+1 queries, memory leaks, blocking operations, and caching issues.`
 | # | Rule | Violation = |
 |---|------|-------------|
 | 1 | **Phase 0 Comprehension Gate**: Before any Phase 1–4 investigative call, output the audit plan block (see command definition) | Audit invalid |
-| 2 | Phase 3 **must** invoke `/codex-brainstorm` via Skill tool — raw `mcp__codex__codex` debate is **invalid** | Audit invalid |
+| 2 | Phase 3 **must** invoke `/codex-brainstorm` via Skill tool — a raw transport debate is **invalid** | Audit invalid |
 | 3 | Phase 4 **must** include `Debate threadId` (non-empty, from Phase 3 session) | Report rejected |
 | 4 | Phase 4 **must** include `Debate Conclusion` referencing specific Phase 3 rounds (not blank, not placeholder) | Report rejected |
 
@@ -142,7 +142,7 @@ Print effective scope in the Phase 2 output header.
 
 Invoke `/codex-brainstorm` via Skill tool (`Skill` is pre-approved in this skill's `allowed-tools` to avoid a permission prompt; per Claude Code, omitting it would not remove availability but could trigger a normal permission check). See [debate-guide.md](references/debate-guide.md) for debate topic template, constraints, and completion criteria.
 
-> **Phase 3 must use `/codex-brainstorm` (Skill tool). Raw `mcp__codex__codex` calls for debate are invalid.** This is a **normative routing rule backed by a least-pre-approval posture** — not a capability boundary. `mcp__codex__codex` / `mcp__codex__codex-reply` are **not** in this skill's `allowed-tools`, which *removes pre-approval* and narrows the declared surface; consistent with line 140 above and with `skills/orchestrate/SKILL.md`, an omitted tool remains reachable through the normal permission flow. What the removal buys is that the forbidden call is no longer silently pre-authorized, so taking it requires stepping outside this skill's declared surface. A sub-skill invoked through the Skill tool carries its own `allowed-tools` — `/codex-brainstorm` declares both MCP tools itself and does its own orchestration — so pre-approving them here was never needed for that inheritance either way.
+> **Phase 3 must use `/codex-brainstorm` (Skill tool). A direct transport dispatch for debate is invalid here.** This is a **normative routing rule backed by a least-pre-approval posture** — not a capability boundary. The transport grants (`Bash(node:*)` and `Write`) are not in this skill's `allowed-tools`: `/codex-brainstorm` declares them itself and owns the whole dispatch lifecycle, and a Skill-tool invocation runs under the sub-skill's own permissions. So this skill owns the route and nothing else — which is also why nothing here needs to name what the transport pins.
 >
 > **Phase 4 is blocked until Phase 3 is complete.**
 
