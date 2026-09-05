@@ -9,7 +9,7 @@
 | Timing                   | Action                                           |
 | ------------------------ | ------------------------------------------------ |
 | Before starting analysis | `/codex-brainstorm` to enumerate all possibilities |
-| When new idea emerges    | `mcp__codex__codex-reply` to ask Codex's opinion |
+| When new idea emerges    | `@skills/codex-code-review/references/codex-transport.md` § Resume to ask Codex's opinion |
 | After proposal forms     | `/codex-architect --mode review` to evaluate     |
 | Comparing proposals      | `/codex-architect --mode compare` to compare     |
 | When modifying proposal  | Ask Codex again to verify changes are reasonable |
@@ -21,7 +21,7 @@
 | ------------------------- | ---------------------------------- | ------------------------- |
 | `/codex-brainstorm`       | Enumerate all options              | **Required** — at start   |
 | `/codex-architect`        | Architecture advice, evaluate design | **Required** — after proposal |
-| `mcp__codex__codex-reply` | Continue conversation, ask details | **Anytime** — ask whenever |
+| `@skills/codex-code-review/references/codex-transport.md` § Resume | Continue conversation, ask details | **Anytime** — ask whenever |
 
 ## Discussion Flow
 
@@ -44,16 +44,12 @@ flowchart LR
 /codex-brainstorm "requirement summary + constraints"
 
 # 2. New idea: ask Codex
-mcp__codex__codex-reply({
-  threadId: "<threadId>",
-  prompt: "I thought of Option C, using Redis distributed locks. What do you think? Any potential issues?"
-});
+# § Resume on <threadId> with:
+#   "I thought of Option C, using Redis distributed locks. What do you think? Any potential issues?"
 
 # 3. Proposal update: verify again
-mcp__codex__codex-reply({
-  threadId: "<threadId>",
-  prompt: "Based on your suggestion, I changed Option A to xxx. Is this modification reasonable?"
-});
+# § Resume on <threadId> with:
+#   "Based on your suggestion, I changed Option A to xxx. Is this modification reasonable?"
 
 # 4. Proposal formed: evaluate architecture
 /codex-architect "Evaluate Option A architecture" --mode review
@@ -62,10 +58,8 @@ mcp__codex__codex-reply({
 /codex-architect "Option A vs Option B vs Option C" --mode compare
 
 # 6. Still have questions: keep asking
-mcp__codex__codex-reply({
-  threadId: "<threadId>",
-  prompt: "If we need to support xxx in the future, which option is easier to extend?"
-});
+# § Resume on <threadId> with:
+#   "If we need to support xxx in the future, which option is easier to extend?"
 ```
 
 ## Discussion Principles

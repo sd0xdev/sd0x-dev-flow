@@ -2,7 +2,7 @@
 
 ## Invocation (MANDATORY)
 
-Use `Skill("codex-brainstorm", <topic>)`. Never call `mcp__codex__codex` directly for Phase B — the codex-brainstorm skill enforces bilateral stance tracking + Nash equilibrium detection.
+Use `Skill("codex-brainstorm", <topic>)`. Never dispatch the transport directly for Phase B — the codex-brainstorm skill enforces bilateral stance tracking + Nash equilibrium detection.
 
 ## Topic construction
 
