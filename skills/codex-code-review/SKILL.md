@@ -1,7 +1,7 @@
 ---
 name: codex-code-review
-description: "Code review using Codex MCP. Use when: PR review, code audit, second opinion on changes. Not for: doc review (use doc-review), security audit (use security-review). Output: severity-grouped findings + merge gate."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Bash(node:*), Read, Grep, Glob, Task
+description: "Code review using Codex exec. Use when: PR review, code audit, second opinion on changes. Not for: doc review (use doc-review), security audit (use security-review). Output: severity-grouped findings + merge gate."
+allowed-tools: Bash(git:*), Bash(yarn:*), Bash(npm:*), Bash(bash:*), Bash(node:*), Read, Grep, Glob, Task, Write
 ---
 
 # Codex Code Review
@@ -32,7 +32,7 @@ allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(yar
 ## Shared Workflow
 
 ```
-Collect changes → [Pre-checks if Full] → Codex Review → Gate: derive sentinel × gate_reason (Step 4.5)
+Resolve adapter → [Pre-checks if Full] → Collect changes & freeze baseline → Codex Review → Gate: derive sentinel × gate_reason (Step 4.5)
   → Ready × NONE → next gate | Blocked × IN_SCOPE_BLOCKING × untriggered → fix loop | other Blocked outcomes → E1/E2
 ```
 
@@ -58,6 +58,42 @@ Dual dispatch adds a second reviewer, and is opt-in:
 
 See `@rules/auto-loop.md § Review Dispatch` for why single is the default.
 
+### Step 0.5: Resolve the adapter locator (before any snapshot)
+
+Resolve the adapter through `references/codex-transport.md` § Locator **now**, and let any
+auto-install that section prescribes happen here — before Step 1 freezes anything.
+
+The ordering is the transport contract's, not a preference: in a consuming repository whose first
+review predates the installed adapter, § Locator's second step *writes* it into the tree. Resolve it
+at dispatch time instead and that write lands after Step 1 froze the changed-file set and the scope
+baseline, so the new untracked file is a tree change no baseline contains and no reviewer prompt
+lists — a review whose own snapshot went stale while it ran.
+
+A `setup-required` locator outcome (no adapter at any step) stops here and is surfaced to the
+operator. It is **not** `codex_fail`: nothing was dispatched, so no fallback reviewer runs and no
+verdict is noted.
+
+### Step 0.7: Pre-checks (Full variant only)
+
+```bash
+{LINT_FIX_COMMAND}
+{BUILD_COMMAND}
+```
+
+These placeholders are resolved from the host project's `CLAUDE.md` or `package.json` scripts. Record
+results as `LOCAL_CHECKS`.
+
+**It is numbered before Step 1 for the same reason Step 0.5 is.** `{LINT_FIX_COMMAND}` writes — a
+project-wide lint fix edits files, and a build can regenerate them. Run it after Step 1 and those
+edits land outside the frozen changed-file set and scope baseline: delivered changes every reviewer
+dispatch then misses or misclassifies as out-of-scope. Settle the tree first — adapter, then
+pre-checks — and freeze once, over the tree that will actually be reviewed. It was numbered Step 2
+until 2026-09-04, which put it after the freeze.
+
+If anything writes to the tree *after* Step 1 has run, Step 1 is redone in full. The baseline is
+frozen once per review session, and a baseline computed over a tree that has since changed is not
+the one this review is judging.
+
 ### Step 1: Collect Change Metadata
 
 Collect **metadata only** — Codex reads the actual diffs and file contents itself via sandbox access.
@@ -67,20 +103,55 @@ the whole review session** — every first, fallback, and rotated dispatch carri
 and it is never rewritten from review findings (`rules/codex-invocation.md`, the three-part
 dispatch shape).
 
+`CHANGED_FILES` is the **frozen baseline set itself**, not a narrower query — the two are computed
+from the same expression below, because a manifest that is a subset of the baseline hands the
+reviewer a shorter change than the one it is told to judge. The change that added this paragraph
+proves it: the transport adapter, its reference and their tests were all untracked, so
+`git diff --name-only HEAD` alone omitted every one of them.
+
 | Variant | Collection Method |
 |---------|-------------------|
-| Fast    | `CHANGED_FILES`: `git diff --name-only HEAD` + `DIFF_STAT`: `git diff --stat HEAD` |
+| Fast    | `CHANGED_FILES`: `git diff --name-only HEAD` ∪ `git ls-files --others --exclude-standard` + `DIFF_STAT`: `git diff --stat HEAD`, plus a line count for each untracked file (`wc -l`), which no diff stat covers |
 | Full    | Same as Fast |
-| Branch  | Same + `CURRENT_BRANCH` + `BASE_BRANCH` + `COMMIT_COUNT` |
+| Branch  | Resolve `MERGE_BASE` **once**, per § Resolving the Branch base below, then use only that object id: `CHANGED_FILES`: `git diff --name-only $MERGE_BASE` ∪ the same uncommitted and untracked sets + `DIFF_STAT`: `git diff --stat $MERGE_BASE` + `CURRENT_BRANCH` + `BASE_BRANCH` + `COMMIT_COUNT` |
 
-Codex independently reads full diffs and file contents via `git diff HEAD -- <file>` + `cat` (per research instructions).
+Codex reads the diffs and file contents itself, and **which command shows them depends on the
+variant and on whether the file is tracked** — one blanket `git diff HEAD -- <file>` is wrong for two
+of the three cases:
+
+| What | How Codex reads it |
+|------|--------------------|
+| Fast / Full, tracked file | `git diff HEAD -- <file>` |
+| Branch, tracked file | `git diff $MERGE_BASE -- <file>` for the committed part, plus `git diff HEAD -- <file>` for what is uncommitted on top — the id resolved once below, never a fresh `git merge-base` here |
+| Untracked file, any variant | `cat <file>` — git has no diff for a file it does not track, so the whole file is the change |
+
+The variant's prompt template carries the same instruction; this row exists so the metadata step and
+the prompt cannot drift apart.
 
 **Scope baseline (frozen here).** Compute the baseline file set once, now, and freeze it for the whole review session (`skills/codex-code-review/references/scope-contract.md` § Scope Baseline):
 
 | Variant | Baseline set |
 |---------|-------------|
 | Fast / Full | `git diff --name-only HEAD` ∪ untracked (`git ls-files --others --exclude-standard`) |
-| Branch (incl. `--dual`) | `git diff --name-only $(git merge-base ${BASE_BRANCH} HEAD)` ∪ the same uncommitted + untracked set |
+| Branch (incl. `--dual`) | `git diff --name-only $MERGE_BASE` ∪ the same uncommitted + untracked set — the same single id, not a second computation |
+
+#### Resolving the Branch base
+
+**`${BASE_BRANCH}` is resolved to an object id here, once, and only that id travels onward.** A ref
+name is not safe to render into shell source: git accepts `;`, backticks and parentheses in a valid
+ref, `rev-parse --verify` accepts such a ref, and placeholders are bound *textually* before the
+command runs — so double quotes around a rendered ref do not help, since the metacharacters are
+already in the source when the shell parses it. Only never rendering the ref does.
+
+1. Run the resolution with the ref as a **shell-single-quoted literal**, which suppresses expansion:
+   `git merge-base -- 'the/resolved/ref' HEAD` (an embedded apostrophe is written `'\''`).
+2. **Verify the result is 40 hex characters** before using it. Anything else is a parameter error:
+   abort and ask for an explicit base.
+3. Bind that id as `MERGE_BASE` and use it everywhere above and in every prompt. No later step
+   recomputes it — one baseline, one id, which is also what the frozen-baseline contract requires.
+
+`${BASE_BRANCH}` itself still travels to the reviewer as **metadata** (a name in the prompt's Task
+and Scope sections); what it must never do is appear inside a command the reviewer will run.
 
 `${BASE_BRANCH}` resolution (Branch variant): explicit argument first (e.g. `/codex-review-branch origin/develop`); else `git symbolic-ref --short refs/remotes/origin/HEAD`; else `origin/main` — verify each candidate with `git rev-parse --verify` before use. All candidates failing → abort as a **parameter error** and ask for an explicit base; never continue on an empty baseline (an empty baseline would misread every unmodified file as out-of-scope), and the abort is not a human exit. Record the resolved base and the frozen file list in the review report metadata, and inject the list into every reviewer prompt as `SCOPE_BASELINE`.
 
@@ -92,7 +163,7 @@ The gate is tier-derived, and the **reviewer** has to be told which severities b
 
 | Tier | `BLOCKING` | Source |
 |------|-----------|--------|
-| `fast` | `P0` | `auto-loop-project.md ## Tier` |
+| `fast` | `P0` | `@rules/auto-loop-project.md ## Tier` |
 | `standard` (default) | `P0/P1` | unset, unrecognized, or explicit |
 | `thorough` | `P0/P1/P2` | explicit, **or** the Branch variant, **or** a security / data-integrity change |
 
@@ -118,22 +189,23 @@ If `has_requests=true` AND `confidence` in (high, medium):
 
 Graceful degradation: resolve-feature fails / no requests / no AC section / parse error → `SPEC_CHECKLIST = null` (skip silently).
 
-### Step 2: Pre-checks (Full variant only)
 
-```bash
-{LINT_FIX_COMMAND}
-{BUILD_COMMAND}
-```
-
-These placeholders are resolved from the host project's `CLAUDE.md` or `package.json` scripts. Record results as `LOCAL_CHECKS`.
 
 ### Step 3: Dispatch
+
+**Bind every placeholder before writing `prompt.md` — both cases below.** The templates are body-only
+now, so no expression in them is evaluated by anything: a `${X || 'default'}` is copied into the
+prompt literally and shipped to Codex as text (it was, until a doc review caught it). Two have no
+natural empty form and the dispatcher supplies it — `${LOCAL_CHECKS}` becomes `Skipped` when no local
+checks ran, and `${DISPOSITIONS}` becomes `None` when there are none. This sits **above** the Case A /
+Case B split deliberately: `${DISPOSITIONS}` is consumed by Case B, so a `--continue` dispatcher that
+skipped Case A would otherwise never have read its binding rule.
 
 **Case A: First review (no `--continue`)**
 
 Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
-1. **Codex MCP (primary)**: Use `mcp__codex__codex` with variant-specific prompt:
+1. **Codex (primary)**: dispatch per `references/codex-transport.md` § Start with the variant-specific prompt:
 
    | Variant | Prompt Template |
    |---------|-----------------|
@@ -141,7 +213,6 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
    | Full    | `references/codex-prompt-full.md` |
    | Branch  | `references/codex-prompt-branch.md` |
 
-   Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
    **Save the returned `threadId`.**
 
@@ -204,8 +275,8 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 **Case B: Loop review (has `--continue`)**
 
-- **Rotation check first**: before each reply, apply `references/review-common.md` § Review Loop — Thread Rotation (central contract): at the R-a threshold (3 replies on this thread; `auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, do **not** reply — dispatch Case A's first-review template on a **new** thread (frozen baseline only; old findings and dispositions reconciled orchestration-side after the fresh report) and record `[THREAD_ROTATED]`.
-- **Codex**: otherwise use `mcp__codex__codex-reply` with re-review template from `references/review-common.md`
+- **Rotation check first**: before each reply, apply `references/review-common.md` § Review Loop — Thread Rotation (central contract): at the R-a threshold (3 replies on this thread; `@rules/auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, do **not** reply — dispatch Case A's first-review template on a **new** thread (frozen baseline only; old findings and dispositions reconciled orchestration-side after the fresh report) and record `[THREAD_ROTATED]`.
+- **Codex**: otherwise dispatch per `references/codex-transport.md` § Resume with the re-review template from `references/review-common.md`
 - **Under fallback** (sticky carrier for this change): agents are stateless — every re-review is a fresh Step 3.5-style dispatch to the same carrier, so rotation is automatically satisfied; validate each report the same way before noting. **Reconcile it like a rotated report** (`references/review-common.md` § Thread Rotation step 3): an old unclosed finding the fresh report omits is closed if its fix is in the diff, and otherwise re-enters this round with its identity and severity and `change_relation=uncertain` — a fresh carrier's silence never retires an unfixed owed finding.
 - **Secondary** (`--dual` only): re-dispatch in parallel, fresh context. Cycle resets on any code edit.
 
@@ -213,7 +284,7 @@ Dispatch Codex. Launch the secondary reviewer **only** when `--dual` was passed:
 
 **Single reviewer (default dispatch):** await Codex. Its verdict is the gate *for this dispatch*. Go to Step 4.
 
-If Codex is unavailable (quota, network, MCP unreachable, timeout — detected by the dispatch call itself failing), the gate does **not** stop: a contract-aware fallback carries it (`@rules/auto-loop.md` § Review Dispatch). Named steps, in order:
+If the transport reports `codex_fail` — **adapter exit 1 only** (`references/codex-transport.md` § Completion state machine): quota, network, an unreachable CLI, a malformed stream. A pending or unknown completion keeps the gate **open** and dispatches nothing; exit 2 is a configuration error to fix, not a Codex failure; an `alloc`/`cleanup` failure is a lifecycle error surfaced to the operator. On `codex_fail` the gate does **not** stop: a contract-aware fallback carries it (`@rules/auto-loop.md` § Review Dispatch). Named steps, in order:
 
 1. **Decide** — call `scripts/lib/review-dispatch.js` (`node -e "console.log(JSON.stringify(require('./scripts/lib/review-dispatch.js').decide({contract:'code',probe:'codex_fail',sticky:'none'})))"` shape) for the next action. Record `[REVIEWER_FALLBACK] plane=code_review from=codex to=<agent> reason=<quota|timeout|error> | <ISO8601>`; the selection is **sticky for this change** — re-reviews do not re-probe, the next change probes Codex afresh.
 2. **Dispatch** the carrier via Task with this variant's own prompt template and the frozen `SCOPE_BASELINE` (the same template Codex would have received — the template is the contract):
@@ -338,7 +409,7 @@ This loop converges on the **review result**. Reaching Ready ends it — a stale
 
 | Reviewer | Loop Behavior |
 |----------|---------------|
-| Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context; rotation R-a/R-b (`references/review-common.md § Thread Rotation`) swaps in a fresh first dispatch on a new thread |
+| Codex exec | Stateful → `references/codex-transport.md` § Resume with the remembered `threadId` continues context; rotation R-a/R-b (`references/review-common.md § Thread Rotation`) swaps in a fresh first dispatch on a new thread |
 | Fallback carrier (Codex out, sticky per change) | Stateless → the family's first-dispatch template is re-dispatched each round; no thread exists, rotation does not apply |
 | Secondary (`--dual` only) | Re-dispatched every iteration, fresh context |
 
@@ -391,6 +462,6 @@ Action: branch diff + history → Codex → Rating table + Findings + Gate
 Input: /codex-review-branch origin/develop --dual
 Action: branch diff + history → Codex + Task parallel → merge findings → Rating table + Findings + Gate → note verdict
 
-Input: /codex-review-fast (Codex unavailable)
+Input: /codex-review-fast (transport reports codex_fail — adapter exit 1)
 Action: [REVIEWER_FALLBACK] → strict-reviewer (P2) runs the fast template → validate-family-sentinel.js code → validated report carries the gate (gate_source=fallback:strict-reviewer)
 ```

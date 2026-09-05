@@ -1,7 +1,7 @@
 ---
 name: plan-review
-description: "Pre-ExitPlanMode adversarial plan review loop via Codex MCP. Use when: in plan mode, before presenting a plan to the user; reviewing an in-context plan draft. Not for: .md file review (use doc-review), code review (use codex-code-review), lifecycle spec review (use review-spec). Output: review trail summary + plan gate (✅ Plan Ready / ⛔ Plan Blocked / ⚠️ Plan Needs Human)."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(bash:*), Bash(git:*), Bash(node:*), Read, Grep, Glob, Task, Skill
+description: "Pre-ExitPlanMode adversarial plan review loop via Codex exec. Use when: in plan mode, before presenting a plan to the user; reviewing an in-context plan draft. Not for: .md file review (use doc-review), code review (use codex-code-review), lifecycle spec review (use review-spec). Output: review trail summary + plan gate (✅ Plan Ready / ⛔ Plan Blocked / ⚠️ Plan Needs Human)."
+allowed-tools: Bash(bash:*), Bash(git:*), Bash(node:*), Read, Grep, Glob, Task, Skill
 ---
 
 # Plan Review Skill
@@ -11,7 +11,7 @@ Adversarial review gate for plan-mode drafts: the plan is challenged by an indep
 ## Trigger
 
 - Keywords: plan review, review plan, plan-review, pre-ExitPlanMode review
-- Self-invoke: in plan mode, before calling `ExitPlanMode`, when the project opts in via `auto-loop-project.md ## Plan Review: enabled` or the user asks for plan review
+- Self-invoke: in plan mode, before calling `ExitPlanMode`, when the project opts in via `@rules/auto-loop-project.md ## Plan Review: enabled` or the user asks for plan review
 
 ## When NOT to Use
 
@@ -46,7 +46,7 @@ User escape (NFR-5): any explicit "skip review" / "直接看 plan" instruction �
 sequenceDiagram
     participant C as Claude (plan mode)
     participant RD as security-redact
-    participant CX as Codex MCP
+    participant CX as Codex exec
     participant SA as Secondary (Task)
 
     C->>C: Step 1: tier + round counter (in conversation)
@@ -67,13 +67,13 @@ sequenceDiagram
         loop until ✅ Plan Ready or max_rounds (default 5)
             CX-->>C: findings + ## Plan Review sentinel
             C->>C: revise plan (author-side), increment round
-            C->>CX: re-review (codex-reply, references/review-loop-plan.md)
+            C->>CX: re-review (§ Resume, references/review-loop-plan.md)
         end
         alt converged
             C->>C: ✅ Plan Ready → trail summary → ExitPlanMode
         else max_rounds reached
             C->>C: ⚠️ Plan Needs Human + residual findings → user arbitrates
-        else reviewer unreachable
+        else codex_fail (adapter exit 1)
             C->>C: [PLAN_REVIEW_DEGRADED] → ExitPlanMode
         end
     end
@@ -125,20 +125,34 @@ PLAN_EOF_<random-hex>
 
 Rationale: argv leaks the un-redacted plan into system-wide process listings (`ps`); heredoc stdin never appears in argv. The quoted delimiter prevents shell *interpolation* of plan content — but quoting does **not** stop the plan from **terminating** the heredoc. A plan containing a bare line `PLAN_EOF` ends the here-document early, and every line after it is handed to the shell as commands under this skill's `Bash` permission. That is arbitrary command execution driven by plan text, which in this skill is frequently drafted from untrusted material (issue bodies, PR descriptions, pasted logs). A fixed delimiter makes the attack a copy-paste; a randomized-and-checked one makes it unreachable.
 
-The plan draft already exists in the session transcript (it is in-context text), so the heredoc adds no new exposure surface — and a temp-file path is not viable here because `Write` is unavailable in plan mode. Forbidden anti-pattern: judging high-confidence via `redact(text, {abortOnHigh: false})` return value (high is already masked, indistinguishable from medium).
+The plan draft already exists in the session transcript (it is in-context text), so the heredoc adds no new exposure surface — and handing this step its input through a file is not available, because the `Write` tool is what plan mode withholds. Step 3 writes the transport's `prompt.md` by *this same heredoc* for *this same reason*: an application of the reasoning here, not an exception to it. Forbidden anti-pattern: judging high-confidence via `redact(text, {abortOnHigh: false})` return value (high is already masked, indistinguishable from medium).
 
 ### Step 3: Review dispatch (tier ladder)
 
 | Tier | Reviewer | Loop |
 |------|----------|------|
-| quick | Codex MCP ×1 | 1-pass |
-| **standard** (default) | Codex MCP | fix → re-review (`codex-reply`) |
+| quick | Codex exec ×1 | 1-pass |
+| **standard** (default) | Codex exec | fix → re-review (§ Resume) |
 | deep | `Skill("codex-brainstorm", ...)` | brainstorm termination (Nash attack/defense) |
 
-- First Codex call: `mcp__codex__codex` with `references/codex-prompt-plan.md`. Config: `sandbox: 'read-only'`, `approval-policy: 'never'`. **Save the threadId.**
-- Re-review rounds: `mcp__codex__codex-reply` with `references/review-loop-plan.md`.
+- First Codex call: dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start with `references/codex-prompt-plan.md` — the transport pins the sandbox and approval policy, so no call site chooses them. **Save the threadId.**
+- **`prompt.md` is written by heredoc here, not by the Write tool** — this skill runs before
+  `ExitPlanMode`, where Write is unavailable, so the transport reference names this skill as its one
+  exemption and carries the two-command recipe (`@skills/codex-code-review/references/codex-transport.md`
+  § Files), along with every file-lifecycle guarantee that goes with it. Follow it there; **no other**
+  lifecycle guarantee is restated here — only that this skill writes the prompt by heredoc rather
+  than by Write, which its own plan-mode workflow turns on.
+- **The delimiter is generated per § Redaction's table but checked against a different payload**:
+  that step scans the plan text, while this heredoc carries the whole rendered prompt — template
+  sections and plan together. Scan the exact bytes going into `prompt.md`.
+- **What is rendered into it is the redaction step's output, never `planText`.** Under the MCP
+  envelope the redaction boundary and the send were the same act; the prompt file is now an artifact
+  that lands on disk before the dispatch, so it is the boundary. A high-confidence hit is decided in
+  Step 2, **before anything is allocated** — so nothing is written, there is no scratch directory to
+  clean up, and the run degrades straight through the existing `[PLAN_REVIEW_DEGRADED]` path.
+- Re-review rounds: dispatch per `@skills/codex-code-review/references/codex-transport.md` § Resume with `references/review-loop-plan.md`.
 - Secondary — **only under `--dual`**: Task agent (`Explore` or `strict-reviewer`), prompt follows the same independent-research mandate; runs in background, does not block the Codex gate; a late secondary P0/P1 re-opens the loop. Without the flag there is no secondary and Codex is the gate.
-- **Codex unreachable → fallback carries the gate** (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'plan'`), record `[REVIEWER_FALLBACK] plane=plan from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-plan.md` as the governing template (P3 = one retry on a fresh instance), and validate the raw report fail-closed with `node scripts/validate-family-sentinel.js plan` before adopting its verdict. Only when **every** carrier is exhausted does the run degrade: emit `[PLAN_REVIEW_DEGRADED]` and hand the plan to the user — that marker means "no validated verdict exists", never "a fallback reviewed it".
+- **`codex_fail` → fallback carries the gate** (adapter **exit 1** only — `@skills/codex-code-review/references/codex-transport.md` § Completion state machine: a pending or unknown completion keeps the gate **open** with no fallback, exit 2 is a configuration error, and an `alloc`/`cleanup` failure is a lifecycle error) (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'plan'`), record `[REVIEWER_FALLBACK] plane=plan from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>`, dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-plan.md` as the governing template (P3 = one retry on a fresh instance), and validate the raw report fail-closed with `node scripts/validate-family-sentinel.js plan` before adopting its verdict. Only when **every** carrier is exhausted does the run degrade: emit `[PLAN_REVIEW_DEGRADED]` and hand the plan to the user — that marker means "no validated verdict exists", never "a fallback reviewed it".
 - The plan text is handed over as a **candidate artifact to attack** — never as "Claude's conclusion to confirm" (per `rules/codex-invocation.md`).
 
 ### Step 4: Convergence (independent budget)
@@ -147,7 +161,7 @@ Decision table applied to the conversation's own round count (never the code/doc
 
 | # | Condition | Action |
 |---|-----------|--------|
-| 1 | `current_round >= max_rounds` (default 5; `auto-loop-project.md ## Plan Review Max Rounds`) | `⚠️ Plan Needs Human` + residual findings (never silently pass) — the user arbitrates, so nothing further is owed |
+| 1 | `current_round >= max_rounds` (default 5; `@rules/auto-loop-project.md ## Plan Review Max Rounds`) | `⚠️ Plan Needs Human` + residual findings (never silently pass) — the user arbitrates, so nothing further is owed |
 | 2 | No P0/P1 findings this round | `✅ Plan Ready` → trail summary → ExitPlanMode |
 | 3 | Findings remain | Revise plan → re-review (continue loop) |
 
@@ -173,7 +187,7 @@ Default output before ExitPlanMode (3 columns minimum):
 
 | Source | Action |
 |--------|--------|
-| Reviewer unreachable (connection error / 401 / timeout) | Max 1 retry → **fallback dispatch first** (Step 3: `contract-neutral-reviewer` + `references/codex-prompt-plan.md`, validated via `validate-family-sentinel.js plan`); only with every carrier exhausted → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
+| `codex_fail` — adapter **exit 1 only** (`@skills/codex-code-review/references/codex-transport.md` § Completion state machine; a pending or unknown completion keeps the gate open and dispatches nothing, exit 2 is a configuration error, an `alloc`/`cleanup` failure is a lifecycle error) | **fallback dispatch first** (Step 3: `contract-neutral-reviewer` + `references/codex-prompt-plan.md`, validated via `validate-family-sentinel.js plan`); only with every carrier exhausted → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
 | High-confidence secret in plan (Step 2) | NO reviewer send → output `[PLAN_REVIEW_DEGRADED]` → proceed to ExitPlanMode |
 
 Degradation never blocks plan mode: the plan is always delivered to the user in the same turn, with a grep-able degradation marker.

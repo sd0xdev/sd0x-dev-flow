@@ -69,7 +69,10 @@ const promptVariants = [
 for (const variant of promptVariants) {
   test(`${variant.name} prompt has SPEC_CHECKLIST conditional injection`, () => {
     const content = readFileSync(variant.path, 'utf8');
-    assert.match(content, /SPEC_CHECKLIST \?/);
+    // The templates became body-only markdown with the exec transport, so the JS ternary that
+    // carried this conditionality is now an explicit INCLUDE-ONLY-IF marker. The property pinned
+    // is unchanged: the section is conditional, not unconditional.
+    assert.match(content, /INCLUDE ONLY IF a request doc with acceptance criteria/);
     assert.match(content, /Specification Checklist/);
   });
 
@@ -134,7 +137,60 @@ test('review-common.md AC Coverage has omission conditions', () => {
 test('all prompt templates use conditional injection (not unconditional)', () => {
   for (const variant of promptVariants) {
     const content = readFileSync(variant.path, 'utf8');
-    // SPEC_CHECKLIST uses ternary
-    assert.match(content, /SPEC_CHECKLIST \? [`'"]/, `${variant.name}: SPEC_CHECKLIST should use conditional`);
+    // Balance alone was not enough: deleting BOTH markers around `### AC Coverage` left the
+    // remaining markers balanced, so that section could silently become unconditional. Pin the
+    // exact ordered schema instead — which regions exist, in which order, and around what.
+    const regions = [];
+    const re = /<!-- INCLUDE ONLY IF ([^>]*?) -->([\s\S]*?)<!-- END conditional section -->/g;
+    for (const m of content.matchAll(re)) regions.push({ cond: m[1].trim(), body: m[2] });
+    assert.equal(regions.length, 3,
+      `${variant.name}: expected exactly the FOCUS, Specification Checklist and AC Coverage regions`);
+    assert.match(regions[0].cond, /\$\{FOCUS\} was supplied/, `${variant.name}: region 1 is FOCUS`);
+    assert.match(regions[0].body, /## Focus Area/, `${variant.name}: region 1 wraps the Focus Area`);
+    assert.match(regions[1].cond, /request doc with acceptance criteria/, `${variant.name}: region 2 is the checklist`);
+    assert.match(regions[1].body, /## Specification Checklist/, `${variant.name}: region 2 wraps the checklist`);
+    assert.match(regions[2].cond, /request doc with acceptance criteria/, `${variant.name}: region 3 is AC Coverage`);
+    assert.match(regions[2].body, /### AC Coverage/, `${variant.name}: region 3 wraps AC Coverage`);
+    // Counting `##` headings was still a heuristic: the AC-Coverage region is followed only by
+    // `###` sections, so moving its END to EOF kept the count at zero while Deferred Findings,
+    // Out-of-Scope Findings, Merge Gate and Structured Summary all became conditional. Enumerate
+    // instead — each region's body must contain EXACTLY the headings it is supposed to wrap.
+    // Heading enumeration alone still let a START marker move EARLIER across heading-free content:
+    // putting it before `${SCOPE_BASELINE}` made the frozen scope value conditional while the
+    // heading list stayed identical. So also require adjacency — a region's first non-blank line
+    // must BE its heading, and it must still carry the section's own content — an END moved up
+    // above `Pay special attention to: ${FOCUS}` left only the heading conditional while the
+    // instruction it guards became unconditional.
+    for (const [i, r] of regions.entries()) {
+      const lines = r.body.split('\n').filter((l) => l.trim() !== '');
+      assert.match(lines[0] || '', /^#{1,6} /,
+        `${variant.name}: region ${i + 1} opens on content before its heading — the START marker is too early`);
+      assert.ok(lines.length >= 2,
+        `${variant.name}: region ${i + 1} holds only its heading — the END marker is too early, so the ` +
+        'content the section exists to make conditional is now unconditional');
+    }
+    const headingsIn = (body) => (body.match(/^#{1,6} .*/gm) || []).map((h) => h.trim());
+    assert.deepEqual(headingsIn(regions[0].body), ['## Focus Area'],
+      `${variant.name}: the FOCUS region must wrap the Focus Area heading and nothing else`);
+    assert.deepEqual(headingsIn(regions[1].body), ['## Specification Checklist'],
+      `${variant.name}: the checklist region must wrap exactly its own heading`);
+    assert.deepEqual(headingsIn(regions[2].body), ['### AC Coverage'],
+      `${variant.name}: the AC Coverage region must wrap exactly its own heading — an END at EOF ` +
+      'would silently make Deferred Findings, Out-of-Scope Findings and the Merge Gate conditional');
+    // An unmatched marker cannot show up as a region, so count them independently too.
+    assert.equal((content.match(/<!-- INCLUDE ONLY IF/g) || []).length, 3, `${variant.name}: no stray START`);
+    assert.equal((content.match(/<!-- END conditional section -->/g) || []).length, 3, `${variant.name}: no stray END`);
   }
+});
+
+test('review-common.md re-review template: the Local Check Results region is closed and wraps its section', () => {
+  const content = readFileSync(resolve(root, 'skills/codex-code-review/references/review-common.md'), 'utf8');
+  const regions = [...content.matchAll(/<!-- INCLUDE ONLY IF ([^>]*?) -->([\s\S]*?)<!-- END conditional section -->/g)];
+  assert.equal(regions.length, 1, 'exactly one conditional region');
+  assert.match(regions[0][1], /\$\{LOCAL_CHECKS\} is non-empty/);
+  assert.match(regions[0][2], /## Local Check Results/, 'the region wraps the section it guards');
+  assert.doesNotMatch(regions[0][2], /## New Git Diff/, 'the mandatory diff section must sit OUTSIDE the conditional');
+  // Count BOTH markers: counting only ENDs let an unmatched START pass.
+  assert.equal((content.match(/<!-- INCLUDE ONLY IF/g) || []).length, 1, 'no stray START');
+  assert.equal((content.match(/<!-- END conditional section -->/g) || []).length, 1, 'no stray END');
 });

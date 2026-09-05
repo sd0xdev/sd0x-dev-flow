@@ -2,18 +2,18 @@
 
 ## Re-review Prompt Template
 
-Used with `mcp__codex__codex-reply` when the documents are revised. **One thread per batch** — the
+Dispatched per `@skills/codex-code-review/references/codex-transport.md` § Resume when the documents are revised. **One thread per batch** — the
 `threadId` belongs to the batch that produced the findings, so re-review goes back to that thread
 with that batch's files, never to a merged one.
 
-```typescript
-mcp__codex__codex-reply({
-  threadId: '<the threadId this batch returned>',
-  prompt: `I have revised the documents in this batch. Please re-review:
+I have revised the documents in this batch. Please re-review:
 
 ## Batch
+
 | # | Path | Profile |
 |---|------|---------|
+<!-- markdownlint-disable-next-line MD055 MD056 -- BATCH_MANIFEST expands to the table's
+     rows at dispatch time; as a template it is one placeholder line, not a malformed row. -->
 ${BATCH_MANIFEST}
 
 Profiles are unchanged from the first round unless the table above says otherwise; a fix that
@@ -31,9 +31,7 @@ an internal contradiction, a broken cross-reference). Do not re-raise the previo
 🟡/⚪ items, and do not open a fresh general critique of a document that has already been
 through this loop: report only what the revision broke and what it failed to fix.
 
-Begin your report with the literal line \`## Document Review\`, exactly as in the first round.`,
-});
-```
+Begin your report with the literal line `## Document Review`, exactly as in the first round.
 
 > Both prompts carry the phrase `Document Review` by construction — the header is what tells a
 > document review apart from a code or security review in the report and the conversation
@@ -46,7 +44,7 @@ When review result is ⛔ Needs revision:
 
 1. Remember the `threadId` — one per batch
 2. Revise the documents
-3. Re-review each batch that came back ⛔, using `--continue <that batch's threadId>` — **unless a rotation condition holds**: per the central contract (`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation), at the R-a threshold (3 replies on that batch's thread; `auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, open a **new** thread for that batch with the first-dispatch template (`codex-prompt-doc.md`) instead — frozen batch manifest only, old findings reconciled orchestration-side — and record `[THREAD_ROTATED] plane=doc_review …`. The batch's per-thread count restarts; one-thread-per-batch is unchanged (the rotation swaps which thread, never how many)
+3. Re-review each batch that came back ⛔, using `--continue <that batch's threadId>` — **unless a rotation condition holds**: per the central contract (`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation), at the R-a threshold (3 replies on that batch's thread; `@rules/auto-loop-project.md ## Review Thread Rotation` overrides, 2–6) or on R-b judged context overrun, open a **new** thread for that batch with the first-dispatch template (`codex-prompt-doc.md`) instead — frozen batch manifest only, old findings reconciled orchestration-side — and record `[THREAD_ROTATED] plane=doc_review …`. The batch's per-thread count restarts; one-thread-per-batch is unchanged (the rotation swaps which thread, never how many)
 4. Repeat until every batch is ✅ Mergeable
 
 A batch that already passed is not re-dispatched unless the fixes touched one of its files. The

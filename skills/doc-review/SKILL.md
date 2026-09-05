@@ -1,7 +1,7 @@
 ---
 name: doc-review
-description: "Document review via Codex MCP. Use when: reviewing .md docs, tech spec audit, document quality check. Not for: code review (use codex-code-review), test review (use test-review). Output: 5-dimension rating table + gate."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Bash(node:*), Read, Grep, Glob, Task
+description: "Document review via Codex exec. Use when: reviewing .md docs, tech spec audit, document quality check. Not for: code review (use codex-code-review), test review (use test-review). Output: 5-dimension rating table + gate."
+allowed-tools: Bash(git:*), Bash(node:*), Read, Grep, Glob, Task, Write
 context: fork
 agent: Explore
 ---
@@ -109,15 +109,14 @@ Three things this step decides, and none of them is negotiable afterwards:
 
 ### Step 4: Codex Review, One Dispatch Per Batch
 
-**First review**: `mcp__codex__codex` with the doc review prompt. See `references/codex-prompt-doc.md`.
+**First review**: dispatch per `@skills/codex-code-review/references/codex-transport.md` § Start with the doc review prompt. See `references/codex-prompt-doc.md`.
 
-Config: `sandbox: 'read-only'`, `approval-policy: 'never'`
 
 **Save the returned `threadId`** — one per batch.
 
-**Loop review**: `mcp__codex__codex-reply` with the re-review template. See `references/review-loop-doc.md` — its Loop Rules carry the thread-rotation clause (central contract).
+**Loop review**: dispatch per § Resume with the re-review template. See `references/review-loop-doc.md` — its Loop Rules carry the thread-rotation clause (central contract).
 
-**Codex unavailable → fallback carries the gate** (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'doc'`), record `[REVIEWER_FALLBACK] plane=doc_review from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>` (sticky for this change), dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-doc.md` as the governing template — batch manifest, profiles and frozen file list included (P3 = one retry on a fresh instance) — and validate the raw report with `node scripts/validate-family-sentinel.js doc` before adopting the verdict (exactly one of `✅ Mergeable` / `⛔ Needs revision`, no foreign terminal). Fallback agents are stateless, so each loop round is a fresh dispatch. Carriers exhausted → no gate sentinel, behaviour-layer `⚠️ Need Human`, nothing noted.
+**`codex_fail` → fallback carries the gate** (adapter **exit 1** only — `@skills/codex-code-review/references/codex-transport.md` § Completion state machine: a pending or unknown completion keeps the gate **open** with no fallback, exit 2 is a configuration error, and an `alloc`/`cleanup` failure is a lifecycle error) (`@rules/auto-loop.md` § Review Dispatch): decide via `scripts/lib/review-dispatch.js` (`contract:'doc'`), record `[REVIEWER_FALLBACK] plane=doc_review from=codex to=contract-neutral-reviewer reason=<…> | <ISO8601>` (sticky for this change), dispatch `contract-neutral-reviewer` via Task with `references/codex-prompt-doc.md` as the governing template — batch manifest, profiles and frozen file list included (P3 = one retry on a fresh instance) — and validate the raw report with `node scripts/validate-family-sentinel.js doc` before adopting the verdict (exactly one of `✅ Mergeable` / `⛔ Needs revision`, no foreign terminal). Fallback agents are stateless, so each loop round is a fresh dispatch. Carriers exhausted → no gate sentinel, behaviour-layer `⚠️ Need Human`, nothing noted.
 
 Stop `cat`-ing whole existing files into the prompt. Codex has sandbox access; the prompt carries the
 file list, each file's profile, and what that profile says to read.
