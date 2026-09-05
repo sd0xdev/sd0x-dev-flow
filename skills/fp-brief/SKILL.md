@@ -1,7 +1,7 @@
 ---
 name: fp-brief
 description: "First-principles briefing from technical documents. Use when: understanding why decisions were made, onboarding to feature reasoning, reviewing decision chains, explaining doc from first principles. Not for: PM/CTO summary (use project-brief), pre-doc analysis (use feasibility-study), code explanation (use codex-explain). Output: structured reasoning chain with sensitivity analysis."
-allowed-tools: Read, Grep, Glob, Write, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Write, Bash(node:*)
 ---
 
 # First-Principles Briefing Skill
@@ -95,7 +95,7 @@ For long documents (>500 lines): split by `##` headings, extract per-section, me
 1. Apply depth filter (section inclusion matrix)
 2. Apply source citations (reference source doc section headings)
 3. Apply Evidence Insufficient Rule — never fabricate content for thin sections
-4. Write output file (or stdout if `--no-save`)
+4. Write output file (or stdout if `--no-save` — which `--verify codex` rejects, see § Save Behavior)
 5. If `--verify codex`: dispatch verification per `references/codex-verify-prompt.md`
 
 ## Depth Levels
@@ -134,7 +134,7 @@ See `references/output-template.md` for full template.
 |-----------|------------|
 | Default | Same directory as source, `-fp-brief.md` suffix |
 | `--output <path>` | Specified path |
-| `--no-save` | stdout only, no file written |
+| `--no-save` | stdout only, no file written. **Incompatible with `--verify codex`** — refuse the combination and say why: the verification prompt is built around `${OUTPUT_PATH}` and instructs Codex to `cat` that file, so with nothing on disk there is no subject to verify. Run them separately, or drop `--no-save` for the verified run |
 
 Example: `docs/features/auth/2-tech-spec.md` → `docs/features/auth/2-tech-spec-fp-brief.md`
 

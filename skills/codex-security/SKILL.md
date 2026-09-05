@@ -1,7 +1,7 @@
 ---
 name: codex-security
-description: "OWASP Top 10 security review using Codex MCP. Supports review loop with context preservation."
-allowed-tools: mcp__codex__codex, mcp__codex__codex-reply, Bash(git:*), Read, Grep, Glob
+description: "OWASP Top 10 security review using Codex exec. Supports review loop with context preservation."
+allowed-tools: Bash(git:*), Read, Grep, Glob
 ---
 
 # Codex Security

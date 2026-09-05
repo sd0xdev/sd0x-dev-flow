@@ -1,7 +1,7 @@
 ---
 name: feature-verify
 description: "Feature verification (READ-ONLY, P0-P5). Use when: verifying feature behavior after deployment, validating API responses, diagnosing production issues, post-deploy smoke test. Not for: modifying data (use feature-dev), code review (use codex-review-fast), writing tests (use codex-test-gen), security audit (use codex-security)."
-allowed-tools: Read, Grep, Glob, Bash, WebFetch, Task, Skill, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Bash, WebFetch, Task, Skill
 context: fork
 ---
 
@@ -86,10 +86,18 @@ Read [safety-rules.md](references/safety-rules.md) and [environments.md](referen
 | Check | Method | Fail Action |
 | ----- | ------ | ----------- |
 | Environment select | `--env` flag or ask user; load from `references/environments.md` | Default to test |
+| Read-only confirmed | Review `references/safety-rules.md` and load the endpoint allowlist. **This row runs before any request is made** — see below | — |
 | API reachable | Deterministic health-check (3x, 2s timeout — see `references/environments.md`) | Unreachable + Log config → L2-OBS; Unreachable + no Log → L1 |
 | Deployment aligned | Compare local HEAD with deployed version | Mismatch → warn, lower confidence |
-| Read-only confirmed | Review `references/safety-rules.md`, confirm all planned operations are read-only | — |
 | Degradation level | Check `references/environments.md` for log/metrics config | Set level (L1-L4) |
+
+**The health check is a request, so the allowlist gates it too.** A reviewer found this skill
+calling the configured health endpoint *before* enforcing its own deny-all policy — which is the one
+request the policy could never have approved, because nothing had loaded the allowlist yet. Validate
+the health endpoint and its method against the allowlist first; if the allowlist is missing, or the
+health endpoint is not on it, **make no request** and degrade on that basis (unreachable-equivalent),
+recording why. "It is only a health check" is exactly the reasoning the deny-all policy exists to
+refuse.
 
 ## P1: Diff-Lite Scoping
 
@@ -136,13 +144,13 @@ For each test case:
 # Example execution pattern
 make_headers
 REQ_ID=$(extract_request_id)
-START=$(date +%s%3N)
-RESP=$(curl -s -w "\n%{http_code}" -X {{ METHOD }} "$HOST/{{ ENDPOINT }}" \
+# Timing comes from curl, not from `date`: `date +%s%3N` is GNU-only and on macOS prints a literal
+# `3N`, so the subtraction that used to live here produced garbage on the platform this repo runs on.
+RESP=$(curl -s -w "\n%{http_code}\n%{time_total}" -X {{ METHOD }} "$HOST/{{ ENDPOINT }}" \
   "${HEADERS[@]}" -d '{{ PAYLOAD }}')
-HTTP_CODE=$(echo "$RESP" | tail -1)
-BODY=$(echo "$RESP" | sed '$d')
-END=$(date +%s%3N)
-LATENCY=$((END - START))
+LATENCY=$(echo "$RESP" | tail -1)          # seconds, millisecond resolution
+HTTP_CODE=$(echo "$RESP" | tail -2 | head -1)
+BODY=$(echo "$RESP" | sed '$d' | sed '$d')
 ```
 
 ## P4: Observation Correlate

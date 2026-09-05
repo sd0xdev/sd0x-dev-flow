@@ -8,8 +8,8 @@
 | Field | Value |
 |-------|-------|
 | Category | code_change / doc_update / question / disagree / nit |
-| Verdict | ACTIONABLE / NON_ACTIONABLE / UNCERTAIN |
-| Confidence | 0.XX |
+| Verdict | ACTIONABLE / NON_ACTIONABLE / UNCERTAIN / UNAVAILABLE (codex_fail) |
+| Confidence | 0.XX — **omit this row entirely when the verdict is `UNAVAILABLE`**: no dispatch produced a confidence, and `0.00` would read as a measured one |
 | Reasoning | <brief justification citing specific code evidence> |
 | Evidence | <file:line references> |
 ```
@@ -54,10 +54,10 @@
 
 | Field | Value |
 |-------|-------|
-| Verdict | ACTIONABLE / NON_ACTIONABLE / UNCERTAIN |
-| Confidence | 0.XX |
+| Verdict | ACTIONABLE / NON_ACTIONABLE / UNCERTAIN / UNAVAILABLE (codex_fail) |
+| Confidence | 0.XX — **omitted when the verdict is `UNAVAILABLE`** (see above) |
 | Evidence | <file:line references> |
-| Mapping Result | FIX_REQUIRED / DISMISS_VERIFIED / NEED_HUMAN |
+| Mapping Result | FIX_REQUIRED / DISMISS_VERIFIED / NEED_HUMAN — **`UNAVAILABLE` when the verdict is `UNAVAILABLE`**: the mapping is a function of a verdict, so with no verdict there is nothing to map, and reporting one of the three would attribute a decision to a policy step that never ran |
 | Reasoning | <brief justification> |
 
 ## Root Cause Analysis

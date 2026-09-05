@@ -1,7 +1,7 @@
 ---
 name: necessity-audit
 description: "Necessity audit for over-designed spec elements. Use when: auditing lifecycle spec (1-requirements / 2-tech-spec / 3-architecture) for YAGNI/KISS violations, challenging necessity of FRs/NFRs/abstractions/configs via Codex adversarial debate. Not for: FP reasoning validity (use /codex-review-spec), completeness check (use /feature-completeness), detail review (use /codex-review-doc), or code-level simplification (use /simplify)."
-allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), mcp__codex__codex-reply, Skill
+allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), Skill
 ---
 
 # Necessity Audit
@@ -15,7 +15,7 @@ allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), mcp__codex
 | # | Rule | Violation = |
 |---|------|-------------|
 | 1 | Phase A classification output **must NOT** appear in Phase B debate topic | Audit invalid |
-| 2 | Phase B **must** invoke `/codex-brainstorm` via Skill tool — raw `mcp__codex__codex` for debate is invalid | Audit invalid |
+| 2 | Phase B **must** invoke `/codex-brainstorm` via Skill tool — a raw transport dispatch for debate is invalid | Audit invalid |
 | 3 | Phase C report **must** include non-empty `debate.threadId` | Report rejected |
 | 4 | Phase C report **must** include `Debate Conclusion` referencing specific rounds (not blank / placeholder) | Report rejected |
 | 5 | Output **must** start with `## Necessity Audit` header and end with `✅ Audit Clear` OR `⛔ Audit Revise` sentinel | Auto-loop cannot parse |
@@ -46,7 +46,7 @@ allowed-tools: Read, Grep, Glob, Write, Bash(node:*), Bash(mktemp:*), mcp__codex
 |-----|----------|---------|---------|
 | `<path>` | Yes | — | Target lifecycle spec (repo-relative) |
 | `--depth brief\|normal\|deep` | No | `normal` | Dimension coverage + equilibrium strictness |
-| `--continue <threadId>` | No | — | Resume Phase C via `mcp__codex__codex-reply` |
+| `--continue <threadId>` | No | — | Resume Phase C per `@skills/codex-code-review/references/codex-transport.md` § Resume |
 | `--skip-preflight` | No | false | Skip state-read advisory; emits `[PREFLIGHT SKIPPED]` banner |
 | `--include-feasibility` | No | false | Accept `0-feasibility-study.md` (emits override banner) |
 | `--override <id>:<rationale>` | No (repeatable, `;`-separated) | — | Mark Cut element as kept with justification |
@@ -185,7 +185,7 @@ Invariant: `⚠️ Need Human` NEVER appears as the final gate — only as a nar
 
 ## Review Loop (`--continue`)
 
-After user revises the spec, re-run with `--continue <threadId>` to reuse the Codex debate context via `mcp__codex__codex-reply`. See `references/review-loop.md`.
+After user revises the spec, re-run with `--continue <threadId>` to reuse the Codex debate context via `@skills/codex-code-review/references/codex-transport.md` § Resume. See `references/review-loop.md`.
 
 ## References
 
@@ -199,7 +199,7 @@ After user revises the spec, re-run with `--continue <threadId>` to reuse the Co
 
 ## Verification
 
-- [ ] Phase B used `Skill("codex-brainstorm")`, not raw `mcp__codex__codex`
+- [ ] Phase B used `Skill("codex-brainstorm")`, not a raw transport dispatch
 - [ ] Report contains non-empty `debate.threadId`
 - [ ] Report contains non-empty Debate Conclusion
 - [ ] Output starts with `## Necessity Audit` header
@@ -215,7 +215,7 @@ Input: /necessity-audit docs/features/foo/2-tech-spec.md
 Action: Phase 0 preflight → Phase A classify → Phase B debate → Phase C consolidate → report + redact → emit with sentinel
 
 Input: /necessity-audit docs/features/foo/2-tech-spec.md --continue 019dab42-xxxx
-Action: Resume via codex-reply; re-run Phase C with updated spec; emit diff-focused report
+Action: Resume per `@skills/codex-code-review/references/codex-transport.md` § Resume; re-run Phase C with updated spec; emit diff-focused report
 
 Input: /necessity-audit docs/features/foo/1-requirements.md --depth brief --skip-preflight
 Action: Only challenge dims 1-3; skip state advisory; emit [PREFLIGHT SKIPPED] banner

@@ -26,10 +26,10 @@ Research existing code capabilities:
 
 ```bash
 # Search related modules
-grep -r "related keyword" src/ -l | head -20
+grep -rln "related keyword" . | head -20   # rooted at the repository, not an assumed src/
 
 # Check existing implementations
-ls src/service/ src/provider/
+ls   # then list the directories this actually shows; there is no assumed src/ layout
 ```
 
 **Must verify**:

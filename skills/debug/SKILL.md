@@ -1,7 +1,7 @@
 ---
 name: debug
 description: "Interactive debugging workflow with hypothesis-driven probe loop. Use when: unknown bugs, script errors, silent failures, troubleshooting. Not for: known bugs (use bug-fix), GitHub issue analysis (use issue-analyze), code understanding (use code-explore). Output: debug report with probe journal + root cause + fix."
-allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill, mcp__codex__codex, mcp__codex__codex-reply
+allowed-tools: Read, Grep, Glob, Edit, Write, Bash, Skill
 ---
 
 # Debug Skill
@@ -106,7 +106,7 @@ When ≥2 equally credible hypotheses exist:
 Invoke `/seek-verdict --intent confirm` for independent root cause verification.
 
 **Anti-anchoring contract** (per `@skills/seek-verdict/SKILL.md`):
-- **Fresh thread**: new `mcp__codex__codex` call, never reuse
+- **Fresh thread**: a new § Start dispatch, never a § Resume onto an existing thread
 - **No Claude conclusions**: prompt must not contain Claude's probe findings or root cause judgment
 - **Finding packet only**: provide symptoms, files, observed behavior — let Codex judge independently
 

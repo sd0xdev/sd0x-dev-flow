@@ -1,7 +1,7 @@
 ---
 name: issue-analyze
 description: "GitHub Issue and PR review thread deep analysis with Codex blind verdict. Use when: analyzing issue root cause, classifying problems, investigation planning, triaging PR review comments for actionability. Not for: fixing bugs (use bug-fix), code exploration (use code-explore). Output: classified analysis + verdict assessment + investigation strategy."
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), mcp__codex__codex
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(gh:*), Bash(node:*), Write
 ---
 
 # Issue Analyze Skill
@@ -67,7 +67,7 @@ When input is a **Review Thread**:
 │ Phase 2.5: Verdict Assessment (NEW)                             │
 ├─────────────────────────────────────────────────────────────────┤
 │ Codex blind verification: ACTIONABLE / NON_ACTIONABLE / UNCERTAIN│
-│ Fresh mcp__codex__codex thread, read-only, anti-anchoring       │
+│ Fresh exec thread (§ Start), anti-anchoring                     │
 │ Pattern: @skills/seek-verdict/references/verdict-prompt.md      │
 │ Thresholds: @skills/seek-verdict/references/policy-mapping.md   │
 │                                                                 │
@@ -132,9 +132,8 @@ After classification, run Codex blind verification to independently assess actio
 
 | Requirement | Detail |
 |-------------|--------|
-| Thread | **Fresh** `mcp__codex__codex` (never reuse existing thread) |
-| Sandbox | `read-only` |
-| Approval policy | `never` |
+| Thread | **Fresh** — `@skills/codex-code-review/references/codex-transport.md` § Start, never a § Resume onto an existing thread |
+| Sandbox and approval policy | pinned by the adapter — see `@skills/codex-code-review/references/codex-transport.md` § Start; not chosen here |
 | Anti-anchoring | Never send Claude's Phase 2 classification to Codex |
 
 **Prompt construction**: follow `@skills/seek-verdict/references/verdict-prompt.md` pattern, adapting input:
@@ -162,7 +161,18 @@ After classification, run Codex blind verification to independently assess actio
 
 **`--triage` mode**: stop after Phase 2.5, output classification + verdict only.
 
-**Graceful degradation**: if Codex call fails, log warning and proceed to Phase 3 without verdict.
+**Graceful degradation — on `codex_fail` only**, which is adapter **exit 1** and nothing else
+(`@skills/codex-code-review/references/codex-transport.md` § Completion state machine): log a warning
+and continue **by mode**, because the two modes have different next steps and one instruction cannot
+serve both. **Full mode** proceeds to Phase 3 with the verdict explicitly recorded as unavailable.
+**`--triage` mode has no Phase 3 to proceed to** — it stops at Phase 2.5 by definition — so it stops
+here and emits the classification with `verdict: UNAVAILABLE (codex_fail)`, which the Output and
+Verification sections below admit as a complete triage result. Telling triage mode to "proceed to
+Phase 3" was an instruction it could not execute. This is a non-gate dispatch, so there is no fallback
+carrier to route to. The other outcomes are **not** this branch: **exit 2** is a configuration or
+usage error to fix — surface it and stop; an **unknown completion** is not a failure at all — wait
+for it, because a launch is not a verdict. "If the Codex call fails" flattened all three into one
+action, which is the reading this line now refuses.
 
 ## Output
 
@@ -171,7 +181,8 @@ After classification, run Codex blind verification to independently assess actio
 ```markdown
 ## Issue Analysis: <title>
 - **Classification**: <problem type>
-- **Verdict**: ACTIONABLE / NON_ACTIONABLE / UNCERTAIN (confidence: 0.XX)
+- **Verdict**: ACTIONABLE / NON_ACTIONABLE / UNCERTAIN / UNAVAILABLE (codex_fail) (confidence: 0.XX
+  — omitted for UNAVAILABLE, where no dispatch produced one)
 - **Root cause hypothesis**: <analysis>
 - **Investigation strategy**: <tools + plan>
 - **Priority**: P0 / P1 / P2
@@ -182,23 +193,36 @@ After classification, run Codex blind verification to independently assess actio
 ```markdown
 ## Triage: <file>:<line> (or issue title)
 - **Category**: <classification>
-- **Verdict**: ACTIONABLE / NON_ACTIONABLE / UNCERTAIN
-- **Confidence**: 0.XX
+- **Verdict**: ACTIONABLE / NON_ACTIONABLE / UNCERTAIN / UNAVAILABLE (codex_fail)
+- **Confidence**: 0.XX  <!-- omitted when the verdict is UNAVAILABLE: no dispatch produced one -->
 - **Reasoning**: <brief justification>
 - **Evidence**: <file:line references>
 ```
+
+`UNAVAILABLE (codex_fail)` is a complete result in either mode, not a failure to report one: the
+classification stands on its own and the verdict line says plainly that **no usable Codex verdict was
+produced or accepted**. That is the accurate claim, and it is narrower than it looks — adapter exit 1
+covers failures that happen *after* the child may have started (a nonzero child exit, a half-written
+prompt, malformed JSONL, a missing thread event, an empty report), so `codex_fail` does not say
+whether a reviewer ran. Only **exit 2** means nothing was dispatched
+(`@skills/codex-code-review/references/codex-transport.md` § Completion state machine), and exit 2 is
+not this branch. Reporting a verdict nobody produced would be the alternative, and it is worse.
 
 ## Verification
 
 - [ ] Issue / review thread content fully extracted
 - [ ] Problem type correctly classified
-- [ ] Verdict assessment executed (Codex blind verification)
-- [ ] Codex prompt contains no Claude conclusions (anti-anchoring)
-- [ ] Fresh Codex thread used (not reusing existing thread)
+- [ ] Verdict assessment executed (Codex blind verification) — **or** the report carries
+      `UNAVAILABLE (codex_fail)`, which is this item satisfied by the degradation branch rather than
+      unsatisfied: exit 1 can land before any verdict exists to assess
+- [ ] Codex prompt contains no Claude conclusions (anti-anchoring) — applies to the dispatch that was
+      made; on `codex_fail` there may be no completed dispatch to check
+- [ ] Fresh Codex thread used (not reusing existing thread) — same condition
 - [ ] Investigation strategy reasonably selected (or skipped if NON_ACTIONABLE)
 - [ ] Report includes root cause analysis + verdict
 - [ ] Contains specific fix recommendations
-- [ ] `--triage` mode: outputs classification + verdict only
+- [ ] `--triage` mode: outputs classification + verdict only — and on `codex_fail`, stops there with
+      `verdict: UNAVAILABLE (codex_fail)` rather than continuing to a phase this mode does not have
 
 ## References
 

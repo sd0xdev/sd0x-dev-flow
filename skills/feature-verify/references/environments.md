@@ -32,10 +32,26 @@ make_headers() {
 
 ## Health Check
 
-```bash
-HOST="{{ BASE_URL }}"
-curl -s -o /dev/null -w '%{http_code}' "$HOST/{{ HEALTH_ENDPOINT }}"
-```
+**There is one health-check execution path, and it is § Deterministic Health-Check Algorithm
+below** — not this section. What used to stand here was a second, copyable `curl` with no allowlist
+prerequisite in front of it, which is exactly the unapproved request the deny-all policy forbids
+(`../SKILL.md` § P0): a reader who reached this section first made the request the policy could
+never have approved, before anything had loaded the allowlist. Two copies of a command where only
+one carries its gate is the shape that defect takes, so the copy is gone rather than gated twice.
+
+The host and endpoint this environment entry defines:
+
+| Key | Value |
+|-----|-------|
+| Host | `{{ BASE_URL }}` |
+| Health endpoint | `{{ HEALTH_ENDPOINT }}` (method `GET`) |
+
+**`{{ HEALTH_ENDPOINT }}` with method `GET` must appear in the Endpoint Allowlist below** before any
+request is made — that entry, and nothing else. The allowlist has three columns (`Endpoint`,
+`Method`, `Read-Only Rationale`) and its examples are paths, so it has no host field to satisfy: the
+host comes from this entry, and requiring one here would make every health check withhold for a
+missing row that cannot exist. This sentence and the prerequisite in § Deterministic Health-Check
+Algorithm state the same condition, deliberately in the same words.
 
 ## Log System (Optional — enables L3/L4 degradation)
 
@@ -120,6 +136,23 @@ P0 uses the following algorithm to determine API reachability (fail-closed):
 | 2 | 2s | — |
 | 3 | 2s | 3/3 fails → unreachable |
 
+**The allowlist check comes first, and it gates this loop.** The health check is a request like any
+other, so the deny-all policy applies to it: resolve the Endpoint Allowlist section, and confirm it
+lists `{{ HEALTH_ENDPOINT }}` **with the method used below**, before the first `curl` runs. Missing
+section, missing entry, or a method mismatch ⇒ **make no request** and treat the API as unreachable
+on that basis, recording why. Calling the endpoint to find out whether calling it was allowed is the
+one order this policy can never permit (`../SKILL.md` § P0).
+
+**Prerequisite, checked before the fence below is entered — not a command inside it.** Read the
+Endpoint Allowlist section of this file's environment entry and confirm it lists
+`{{ HEALTH_ENDPOINT }}` with method `GET`. If the section is absent, the endpoint is not on it, or
+it is listed with a different method: **do not run the loop**, set `REACHABLE=false`, and record
+that the health check was withheld rather than failed. There is no `allowlisted` command to call —
+the check is the model reading the allowlist, and writing it as a shell word would be an invocation
+of something that does not exist.
+
+Only once that prerequisite holds:
+
 ```bash
 REACHABLE=false
 for i in 1 2 3; do
@@ -141,7 +174,7 @@ done
 | **Unreachable** | **Yes** | — | **L2-OBS** |
 | Unreachable | No | — | L1 |
 
-**P0 fail-closed rule**: If API Endpoints section is missing, degrade to L1. If API is unreachable: check Log System section — present → L2-OBS, absent → L1. If Endpoint Allowlist section is missing, skip P3 (cannot call unverified endpoints).
+**P0 fail-closed rule**: If API Endpoints section is missing, degrade to L1. If the Endpoint Allowlist section is missing — or does not list the health endpoint with the method above — **P0 makes no request**: the API is treated as unreachable and P3 is skipped, both for the same reason (nothing may call an unverified endpoint, and the health check is one). If API is unreachable, whether measured or withheld: check Log System section — present → L2-OBS, absent → L1.
 
 ## Notes
 

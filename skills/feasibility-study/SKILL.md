@@ -1,7 +1,7 @@
 ---
 name: feasibility-study
 description: "Feasibility analysis from first principles. Use when: evaluating solutions before tech-spec, comparing approaches, risk assessment. Not for: implementation (use feature-dev), architecture advice (use codex-architect). Output: quantitative comparison + recommendation."
-allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(codex:*), Bash(bash:*), Write, mcp__codex__codex, mcp__codex__codex-reply, Agent
+allowed-tools: Read, Grep, Glob, Bash(git:*), Bash(bash:*), Write, Agent, Bash(node:*)
 ---
 
 # Feasibility Study Skill
@@ -40,11 +40,11 @@ The sets Phase 1 reads have to come from somewhere, and this skill is invoked di
 itself rather than assuming a caller supplied them:
 
 ```bash
-# The shim over the wrapper. This skill grants `Bash(bash:*)` and no node permission, and the rule
-# is that a skill names the entrypoint it is permitted to run — which is also why the shared
-# algorithm reference is deliberately not linked from here: it teaches the node entrypoint, and a
-# file of commands this skill cannot execute has no business in its reachable graph.
-bash scripts/resolve-feature.sh [--feature <key>]
+# The node entrypoint. The shell wrapper's own header tells skills to prefer this one once they hold
+# `Bash(node:*)` — and this skill now does, for its transport dispatches. The wrapper was named here
+# only while that grant was absent; keeping it afterwards would have instructed a second-choice
+# entrypoint for a reason that had stopped being true.
+node scripts/resolve-feature.js [--feature <key>]
 ```
 
 The reply is one JSON document. What this skill reads out of it: `scan_error` **first** — the gate
@@ -120,7 +120,7 @@ See `references/codex-discussion-guide.md` for full rules and examples.
 |------|---------|------|
 | `/codex-brainstorm` | Enumerate all options | At start |
 | `/codex-architect` | Evaluate design | After proposal forms |
-| `mcp__codex__codex-reply` | Ask details | Anytime |
+| `@skills/codex-code-review/references/codex-transport.md` § Resume | Ask details | Anytime |
 
 ### Phase 6: Comparative Decision
 
