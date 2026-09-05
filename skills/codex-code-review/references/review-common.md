@@ -52,9 +52,9 @@ Codex **must** perform its own research, not rely only on provided diff/context:
 ### Git Exploration (Priority)
 
 1. Check change status: `git status`
-2. Check changed files: `git diff --name-only HEAD`
+2. Check changed files — the **union**, because `git diff` never lists an untracked file and this change's adapter, transport reference and their tests arrived untracked: `git diff --name-only HEAD` **and** `git ls-files --others --exclude-standard`
 3. Check full changes for specific file: `git diff HEAD -- <file-path>`
-4. Check full content of changed files: `cat <changed file> | head -200`
+4. Read changed files to the end: `cat <changed file>` (chunk with `sed -n '1,200p'`, `sed -n '201,400p'`, … when long — `head -200` truncates)
 
 ### Project Research
 
@@ -83,7 +83,7 @@ condition holds, checked before each re-review:
 
 | # | Condition | Measurement | Tier |
 |---|-----------|-------------|------|
-| R-a | The same thread has already carried **3** reply re-reviews (the next dispatch opens a new thread) | **Behaviour-layer per-thread count**: the orchestrator counts replies per thread in conversation and resets to zero on a new thread; the `[THREAD_ROTATED]` line is the counting anchor. `review-state.js`'s `rounds` does **not** participate — it carries no threadId and accumulates across threads, so it can neither anchor nor bound a per-thread count | Default — threshold set by `auto-loop-project.md ## Review Thread Rotation` (2–6; unset = 3) |
+| R-a | The same thread has already carried **3** reply re-reviews (the next dispatch opens a new thread) | **Behaviour-layer per-thread count**: the orchestrator counts replies per thread in conversation and resets to zero on a new thread; the `[THREAD_ROTATED]` line is the counting anchor. `review-state.js`'s `rounds` does **not** participate — it carries no threadId and accumulates across threads, so it can neither anchor nor bound a per-thread count | Default — threshold set by `@rules/auto-loop-project.md ## Review Thread Rotation` (2–6; unset = 3) |
 | R-b | The context is judged too long to review well (early rotation) | Model judgment: batch bytes exceed the `resolve-review-profile.js` budget, or the report shows degradation signs (uncomparable findings, shrinking specificity). State the judgment when rotating on R-b | Default — the statement is the record |
 
 **Rotation procedure**:
@@ -137,36 +137,40 @@ one, and the obligation of each is whatever the current report derives.
 
 ### Re-review Prompt Template
 
-Used with `mcp__codex__codex-reply`:
+Dispatched per `codex-transport.md` § Resume:
 
-```typescript
-mcp__codex__codex-reply({
-  threadId: '<from --continue parameter>',
-  prompt: `The task state has changed since your last review (fixes applied, or a disposition recorded). Please re-review:
+The task state has changed since your last review (fixes applied, or a disposition recorded). Please re-review:
 
-## ${LOCAL_CHECKS ? 'Local Check Results\n' + LOCAL_CHECKS + '\n\n##' : ''} New Git Diff
-\`\`\`diff
+<!-- INCLUDE ONLY IF ${LOCAL_CHECKS} is non-empty: -->
+## Local Check Results
+
+${LOCAL_CHECKS}
+<!-- END conditional section -->
+
+## New Git Diff
+
+```diff
 ${GIT_DIFF}
-\`\`\`
+```
 
 ## Scope Baseline (frozen — unchanged for this task, do NOT recompute)
+
 ${SCOPE_BASELINE}
 
 ## Active Dispositions
-${DISPOSITIONS || 'None'}
+
+${DISPOSITIONS}
 
 Please verify:
 1. Have the previously identified blocking issues been correctly fixed?
 2. Did the fixes introduce new issues?
 3. Keep the scope fields on every finding (origin / scope_reason / scope / change_relation / evidence), judged against the frozen baseline above. Re-evaluate `change_relation` for every finding against the **current** primary diff
 4. The assurance boundary from the first dispatch still applies: a blocking guard finding needs a violated behavior/AC/invariant plus a counterexample on the real path; further hardening of demonstrated properties is Nit
-5. Update Merge Gate status, including the gate_reason line`,
+5. Update Merge Gate status, including the gate_reason line
 
 > These five items are the whole re-review ask — fixed across rounds. The dispatcher never appends
 > round-specific attack directions here (`rules/codex-invocation.md` § Prohibited patterns, cumulative
 > attack list).
-});
-```
 
 > The re-review deliberately does **not** ask for a status roll-call of sub-threshold findings. They were already logged as `[NIT_DEFERRED]` and are not what the loop is converging on; asking re-surfaces them and buys another round.
 
@@ -179,13 +183,17 @@ When a finding is verified via `/seek-verdict`, output:
 **Dismiss intent**:
 
 ```
+
 [DISMISS_VERDICT] key=<file|canonical_issue> | severity=<P0-Nit> | verdict=<DISMISS_VERIFIED|DISMISS_CANDIDATE|FIX_REQUIRED|NEED_HUMAN> | confidence=<0..1> | codex_thread=<id> | evidence=<brief> | timestamp=<ISO8601> | intent=dismiss | authorization=<automated|human-required|human-confirmed>
+
 ```
 
 **Confirm/Clarify intent**:
 
 ```
+
 [SEEK_VERDICT] key=<file|canonical_issue> | severity=<P0-Nit> | intent=<confirm|clarify> | verdict=<CONFIRMED|DISPUTED|HIGH_IMPACT|LOW_IMPACT|UNCERTAIN> | confidence=<0..1> | codex_thread=<id> | evidence=<brief> | timestamp=<ISO8601>
+
 ```
 
 | Field | Redaction |
@@ -197,7 +205,9 @@ When a finding is verified via `/seek-verdict`, output:
 ## Output Findings Format
 
 ```
+
 - [P0/P1/P2/Nit] <file:line> <issue description> -> <fix recommendation> | origin=<...> scope_reason=<...> scope=<...> change_relation=<...> evidence=<...> [source: codex|toolkit|both]
+
 ```
 
 > Note: `[source: ...]` is required under `--dual` aggregation (Codex healthy) and omitted in single-reviewer mode — the default Codex dispatch **and** the fallback-alone path alike: no carrier prompt requests the tag, so a fallback report carries none, and its provenance rides on `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record instead. The five scope fields (§ Scope Fields) are never omitted: a source that lacked them normalizes to `uncertain` fail-closed.
@@ -269,13 +279,18 @@ Normalize each reviewer's findings **fail-closed first** (§ Scope Fields), then
 
 The central degradation authority for **every family**, not only `--dual`: a single-reviewer loop
 consumes the Codex-❌ rows below directly (it simply has no Secondary column to aggregate).
+
+**When these rows apply**: on `codex_fail` — the transport's own outcome, **adapter exit 1 only**
+(`codex-transport.md` § Completion state machine). A pending or unknown completion keeps the gate
+open and dispatches nothing; exit 2 is a configuration error to fix; an `alloc`/`cleanup` failure is
+a lifecycle error surfaced to the operator. None of those three reaches this matrix.
 Carrier order per family is decided by `scripts/lib/review-dispatch.js` (`FALLBACK_CARRIERS`):
 
 | Contract | Priority 1 | Priority 2 | Priority 3 | Priority 4 |
 |----------|-----------|-----------|-----------|------------|
-| `code` | Codex MCP | `strict-reviewer` (repo-owned, frontmatter-pinned opus/high) | `pr-review-toolkit:code-reviewer` (plugin; pin best-effort at call site) | exhausted — no validated verdict |
-| `doc` / `plan` / `test:coverage` / `test:ac-trace` | Codex MCP | `contract-neutral-reviewer` | `contract-neutral-reviewer` (one retry, fresh instance) | exhausted — no validated verdict |
-| `necessity` | Codex MCP | — excluded from fallback in v1 (constitutive debate pipeline) | — | ⚠️ Need Human directly |
+| `code` | Codex exec | `strict-reviewer` (repo-owned, frontmatter-pinned opus/high) | `pr-review-toolkit:code-reviewer` (plugin; pin best-effort at call site) | exhausted — no validated verdict |
+| `doc` / `plan` / `test:coverage` / `test:ac-trace` | Codex exec | `contract-neutral-reviewer` | `contract-neutral-reviewer` (one retry, fresh instance) | exhausted — no validated verdict |
+| `necessity` | Codex exec | — excluded from fallback in v1 (constitutive debate pipeline) | — | ⚠️ Need Human directly |
 
 Each carrier runs the family's **first-dispatch template**, and its raw report must pass
 `scripts/validate-family-sentinel.js <contract>` before adoption; a failing report moves to the
@@ -307,7 +322,7 @@ Every finding in a **dual aggregate** (Codex healthy) includes a source tag:
 
 | Source | Meaning |
 |--------|---------|
-| `codex` | Found by Codex MCP only |
+| `codex` | Found by Codex only |
 | `toolkit` | Found by secondary reviewer only |
 | `both` | Found by both reviewers (deduplicated) |
 | *(fallback — record-level, not a finding tag)* | When a fallback carrier holds the gate (with or without `--dual`) there is no aggregate and the report stays in single-reviewer format with **no** per-finding tags — no carrier prompt requests one. Provenance is `gate_source=fallback:<agent>` plus the `[REVIEWER_FALLBACK]` record |
@@ -318,7 +333,7 @@ Output format: `- [P0] file:line issue → fix | origin=<...> scope_reason=<...>
 
 | Reviewer | Loop Behavior |
 |----------|---------------|
-| Codex MCP | Stateful → `mcp__codex__codex-reply(threadId)` continues context |
+| Codex exec | Stateful → `codex-transport.md` § Resume with the remembered `threadId` continues context |
 | Secondary | Re-dispatched every iteration (fresh context), for as long as `--dual` stays in effect for this review session |
 
 On the **Codex-healthy path** the Codex gate is authoritative for timing: the secondary runs

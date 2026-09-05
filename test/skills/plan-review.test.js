@@ -16,7 +16,8 @@ test('plan-review SKILL.md exists with valid frontmatter', () => {
   assert.match(fmMatch[1], /^name:\s*plan-review/m, 'name should be plan-review');
   assert.match(fmMatch[1], /^description:/m, 'should have description');
   assert.match(fmMatch[1], /^allowed-tools:/m, 'should have allowed-tools');
-  assert.match(fmMatch[1], /mcp__codex__codex/, 'allowed-tools should include Codex MCP');
+  assert.match(fmMatch[1], /Bash\(node:\*\)/, 'allowed-tools should include the transport grant');
+  assert.doesNotMatch(fmMatch[1], /mcp__codex/, 'the MCP transport grant is retired');
 });
 
 test('plan-review SKILL.md has Trigger and When NOT to Use sections', () => {
@@ -94,8 +95,11 @@ test('codex-prompt-plan.md exists with independent research mandate and plan sen
   const content = readFileSync(path, 'utf8');
   assert.match(content, /independently research/i, 'must mandate independent research (codex-invocation rule)');
   assert.match(content, /git status/, 'research block should include git commands');
-  assert.match(content, /sandbox: 'read-only'/, 'must set read-only sandbox');
-  assert.match(content, /'approval-policy': 'never'/, 'must set approval-policy never');
+  // The template is body-only since the exec transport landed: the sandbox and approval policy are
+  // pinned by codex-transport.md § Start, so a prompt template must NOT carry them.
+  assert.doesNotMatch(content, /sandbox: '/, 'the template must not choose a sandbox');
+  assert.doesNotMatch(content, /'approval-policy':/, 'the template must not choose an approval policy');
+  assert.doesNotMatch(content, /mcp__codex/, 'the template must not name a transport tool');
   assert.ok(content.includes('## Plan Review'), 'output format must use ## Plan Review header');
   assert.ok(content.includes('✅ Plan Ready'), 'must define ✅ Plan Ready gate');
   assert.ok(content.includes('⛔ Plan Blocked'), 'must define ⛔ Plan Blocked gate');
@@ -113,7 +117,7 @@ test('review-loop-plan.md exists with verify-not-confirm loop contract', () => {
   const path = resolve(root, 'skills/plan-review/references/review-loop-plan.md');
   assert.ok(existsSync(path), 'review-loop-plan.md should exist');
   const content = readFileSync(path, 'utf8');
-  assert.match(content, /codex-reply/, 'loop rounds use codex-reply');
+  assert.match(content, /§ Resume/, 'loop rounds use the transport § Resume');
   assert.match(content, /threadId/i, 'must reference saved threadId');
   assert.match(content, /introduce NEW issues/i, 'must ask whether fixes introduced new issues');
   assert.ok(content.includes('## Plan Review'), 'loop output must keep ## Plan Review header');

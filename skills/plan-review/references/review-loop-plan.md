@@ -1,11 +1,6 @@
 # Codex Re-Review Loop: Plan Review
 
-Used with `mcp__codex__codex-reply` after plan revision (loop exception per `rules/codex-invocation.md`: providing the revised plan is acceptable because Codex already has full project context from the first round — but VERIFY, never CONFIRM).
-
-```typescript
-mcp__codex__codex-reply({
-  threadId: SAVED_THREAD_ID,  // from the first codex-prompt-plan.md round
-  prompt: `The plan has been revised in response to your findings. The full revised plan (redacted) is below. Re-review it as a fresh candidate artifact — do NOT assume the revisions are correct.
+The plan has been revised in response to your findings. The full revised plan (redacted) is below. Re-review it as a fresh candidate artifact — do NOT assume the revisions are correct.
 
 ## Revised Plan (round ${ROUND})
 
@@ -27,22 +22,21 @@ ${REVISED_PLAN_TEXT}
 ### New Findings
 
 #### P0 / P1 / P2 / Nit
+
 - [Section] Issue -> evidence -> fix direction
 
 ### Gate
 
-End your reply with the line \`## Plan Review\` followed by exactly ONE verdict line: \`✅ Plan Ready\` if all previous P0/P1 are resolved AND no new ones were introduced, or \`⛔ Plan Blocked\` if P0/P1 remain or were introduced.
+End your reply with the line `## Plan Review` followed by exactly ONE verdict line: `✅ Plan Ready` if all previous P0/P1 are resolved AND no new ones were introduced, or `⛔ Plan Blocked` if P0/P1 remain or were introduced.
 
-⚠️ Sentinel constraints (hard requirement): output exactly one verdict line, never both — ambiguous output containing both markers is treated as blocked. NEVER output the bare strings "✅ Ready", "✅ Mergeable", "⛔ Blocked", or "## Gate:" anywhere in your reply.`,
-});
-```
+⚠️ Sentinel constraints (hard requirement): output exactly one verdict line, never both — ambiguous output containing both markers is treated as blocked. NEVER output the bare strings "✅ Ready", "✅ Mergeable", "⛔ Blocked", or "## Gate:" anywhere in your reply.
 
 ## Loop Rules
 
 | Rule | Detail |
 |------|--------|
-| Same thread — until rotation | `codex-reply` with the saved `threadId` preserves context across rounds, **but** the central rotation contract applies (`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation): at the R-a threshold (3 replies on this thread; `## Review Thread Rotation` override, 2–6) or on R-b judged context overrun, dispatch `codex-prompt-plan.md` afresh on a **new** thread (redacted plan as candidate artifact, no old findings fed), reconcile prior-round resolution status orchestration-side, and record `[THREAD_ROTATED] plane=plan …` (plan has no state plane; the record lives in the transcript) |
+| Same thread — until rotation | `@skills/codex-code-review/references/codex-transport.md` § Resume with the saved `threadId` preserves context across rounds, **but** the central rotation contract applies (`skills/codex-code-review/references/review-common.md` § Review Loop — Thread Rotation): at the R-a threshold (3 replies on this thread; `## Review Thread Rotation` override, 2–6) or on R-b judged context overrun, dispatch `codex-prompt-plan.md` afresh on a **new** thread (redacted plan as candidate artifact, no old findings fed), reconcile prior-round resolution status orchestration-side, and record `[THREAD_ROTATED] plane=plan …` (plan has no state plane; the record lives in the transcript) |
 | Verify, not confirm | Ask "is it resolved?" + "did fixes introduce new issues?" — never "are my fixes correct?" |
 | Redaction every round | `REVISED_PLAN_TEXT` re-passes the Step 2 redaction contract before each send |
-| Round budget | The round counter lives in the conversation — state "round n/max" in each dispatch so the count survives in the transcript; cap = `max_rounds` (default 5, `auto-loop-project.md ## Plan Review Max Rounds`) |
+| Round budget | The round counter lives in the conversation — state "round n/max" in each dispatch so the count survives in the transcript; cap = `max_rounds` (default 5, `@rules/auto-loop-project.md ## Plan Review Max Rounds`) |
 | User escape check | Before dispatching each round, check for explicit user skip intent (NFR-5) |
